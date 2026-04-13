@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "agent-bridge": {
+      "command": "python",
+      "args": ["-m", "agent_bridge_mcp.server"],
+      "cwd": "/home/chenjian/.openclaw/workspace-browser/projects/active/agent-bridge/agent_bridge_mcp",
+      "env": {
+        "PATH": "/home/chenjian/.local/bin:/usr/local/bin:/usr/bin:/bin"
+      }
+    }
+  }
+}

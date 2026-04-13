@@ -1,0 +1,258 @@
+openapi: 3.0.3
+info:
+  title: Agent Bridge API
+  description: |
+    Agent Bridge API - 供其他 AI Agent 调用 DeepSeek 进行对话
+    
+    使用方式:
+    1. 发送 POST /api/v1/deepseek/ask 请求
+    2. 等待 DeepSeek 回复 (同步，约 5-30 秒)
+    3. 获取 JSON 响应
+    
+    基础 URL: http://localhost:8787
+  version: 1.0.0
+  contact:
+    name: Agent Bridge Team
+
+servers:
+  - url: http://localhost:8787
+    description: 本地开发环境
+
+paths:
+  /api/v1/deepseek/health:
+    get:
+      summary: 健康检查
+      description: 检查 DeepSeek Bridge 是否可用
+      operationId: healthCheck
+      responses:
+        '200':
+          description: 服务正常
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SuccessResponse'
+              example:
+                success: true
+                data:
+                  platform: "deepseek"
+                  initialized: true
+                meta:
+                  timestamp: "2026-04-06T04:22:47Z"
+                  request_id: "req_xxx"
+        '503':
+          description: 服务不可用
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/v1/deepseek/ask:
+    post:
+      summary: 发送消息给 DeepSeek
+      description: |
+        发送消息给 DeepSeek 并获取回复。
+        
+        **注意事项:**
+        - 请求必须包含 `template` 字段
+        - 同步调用，等待 DeepSeek 回复 (5-30 秒)
+        - 首次调用会自动启动 Chrome 并登录
+      operationId: askDeepSeek
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AskRequest'
+            examples:
+              simple:
+                summary: 简单查询
+                value:
+                  template: "general_query"
+                  message: "你好 DeepSeek！"
+              element_locating:
+                summary: 元素定位咨询
+                value:
+                  template: "element_locating"
+                  message: "如何定位登录按钮？"
+                  selector_type: "text"
+                  selector_value: "登录"
+      responses:
+        '200':
+          description: 对话成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SuccessResponse'
+              example:
+                success: true
+                data:
+                  response: "你好！很高兴见到你..."
+                  template: "general_query"
+                meta:
+                  timestamp: "2026-04-06T04:22:47Z"
+                  request_id: "req_9fd1438a42e1"
+        '400':
+          description: 请求参数错误 (缺少 template 等)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                success: false
+                error:
+                  code: "TEMPLATE_MISSING"
+                  message: "请求缺少 template 字段"
+                meta:
+                  timestamp: "2026-04-06T04:22:47Z"
+        '500':
+          description: 服务器内部错误
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+components:
+  schemas:
+    AskRequest:
+      type: object
+      required:
+        - template
+        - message
+      properties:
+        template:
+          type: string
+          description: 咨询模板类型
+          enum:
+            - general_query
+            - element_locating
+            - error_handling
+            - code_review
+            - architecture_design
+          example: "general_query"
+        message:
+          type: string
+          description: 要发送给 DeepSeek 的消息
+          example: "你好 DeepSeek！"
+        topic_id:
+          type: string
+          description: 可选，指定话题 ID
+          example: "topic_abc123"
+    
+    SuccessResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+          example: true
+        data:
+          type: object
+          properties:
+            response:
+              type: string
+              description: DeepSeek 的回复内容
+              example: "你好！很高兴见到你..."
+            template:
+              type: string
+              example: "general_query"
+            metadata:
+              type: object
+              description: 可选的元数据
+        meta:
+          type: object
+          properties:
+            timestamp:
+              type: string
+              format: date-time
+            request_id:
+              type: string
+    
+    ErrorResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+          example: false
+        error:
+          type: object
+          properties:
+            code:
+              type: string
+              enum:
+                - TEMPLATE_MISSING
+                - TEMPLATE_INVALID
+                - PLATFORM_NOT_FOUND
+                - CHAT_FAILED
+                - INTERNAL_ERROR
+            message:
+              type: string
+            details:
+              type: object
+        meta:
+          type: object
+          properties:
+            timestamp:
+              type: string
+              format: date-time
+            request_id:
+              type: string
+
+  examples:
+    SimpleQuery:
+      summary: 简单查询示例
+      value:
+        template: "general_query"
+        message: "你好！"
+
+# 机器使用指南 (供 AI Agent 解析)
+x-agent-instructions:
+  base_url: "http://localhost:8787"
+  
+  quick_start:
+    - step: "发送 POST 请求到 /api/v1/deepseek/ask"
+    - step: "包含 template 和 message 字段"
+    - step: "等待 5-30 秒获取响应"
+    - step: "从 response.data.response 获取 DeepSeek 回复"
+  
+  templates:
+    general_query:
+      description: "通用查询"
+      required_fields: ["message"]
+    
+    element_locating:
+      description: "元素定位咨询"
+      required_fields: ["message", "selector_type", "selector_value"]
+    
+    error_handling:
+      description: "错误处理"
+      required_fields: ["message", "error_type", "error_message"]
+    
+    code_review:
+      description: "代码审查"
+      required_fields: ["message", "code"]
+    
+    architecture_design:
+      description: "架构设计"
+      required_fields: ["message"]
+  
+  error_handling:
+    TEMPLATE_MISSING: "请求缺少 template 字段"
+    TEMPLATE_INVALID: "template 值不在允许列表中"
+    CHAT_FAILED: "DeepSeek 对话失败，可能未登录"
+  
+  python_example: |
+    import requests
+    
+    response = requests.post(
+        "http://localhost:8787/api/v1/deepseek/ask",
+        json={
+            "template": "general_query",
+            "message": "你好 DeepSeek！"
+        }
+    )
+    
+    result = response.json()
+    if result["success"]:
+        reply = result["data"]["response"]
+        print(f"DeepSeek: {reply}")
+    else:
+        print(f"错误: {result['error']['message']}")
