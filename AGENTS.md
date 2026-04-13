@@ -72,6 +72,21 @@ Errors, corrections, and discoveries go here:
 - `trash` > `rm` (recoverable beats gone forever)
 - When in doubt, ask.
 
+## 决策协议
+
+### 歧义处理
+每一次指令模棱两可时，必须：
+1. 指出所有可能性
+2. 列出每个选项的利弊
+3. 让用户做选择
+4. **选择后再行动**
+
+### 复盘协议
+每一次用户说「复盘」，必须：
+1. 调用 self-improving-agent skill
+2. 将 review 记录到 `.learnings/LEARNINGS.md`
+3. 按需 promotion 到 SOUL.md / AGENTS.md / TOOLS.md
+
 ## External vs Internal
 
 **Safe to do freely:**
