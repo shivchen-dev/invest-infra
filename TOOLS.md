@@ -1,6 +1,17 @@
 # TOOLS.md - Local Notes
 
-Skills define _how_ tools work. This file is for _your_ specifics — the stuff that's unique to your setup.
+## QMD - 本地文档搜索
+
+- 安装：`npm install -g @tobilu/qmd`
+- Collection：`workspace-memory` → `/home/claw/.openclaw/workspace/memory`
+- 模型缓存：`~/.cache/qmd/models/`
+- 命令：
+  - `qmd search "关键词" -c workspace-memory`（全文搜索）
+  - `qmd query "语义查询" -c workspace-memory`（混合搜索，CPU 慢）
+  - `qmd vsearch "查询" -c workspace-memory`（向量搜索）
+  - `qmd get qmd://workspace-memory/path/to/file.md`（获取文档）
+- Context：`qmd://workspace-memory` → "Arc的双层记忆系统：热缓存MEMORY.md + 深度存储memory/目录，含人物档案、术语表、每日日志"
+- 注意：CPU 模式每次查询约 8-12 秒
 
 ## What Goes Here
 
