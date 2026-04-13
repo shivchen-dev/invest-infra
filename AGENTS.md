@@ -84,7 +84,7 @@ Errors, corrections, and discoveries go here:
 ### 复盘协议
 每一次用户说「复盘」，必须：
 1. 调用 self-improving-agent skill
-2. 将 review 记录到 `memory/learnings/LEARNINGS.md`
+2. 将 review 记录到 `.learnings/LEARNINGS.md`
 3. 按需 promotion 到 SOUL.md / AGENTS.md / TOOLS.md
 
 ## External vs Internal
@@ -244,17 +244,17 @@ The goal: Be helpful without being annoying. Check in a few times a day, do usef
 
 | 检查项 | 操作 |
 |--------|------|
-| 1. 用户纠正了你？ | 追加一行到 `memory/learnings/corrections.md` |
-| 2. 命令/工具执行失败？ | 追加一行到 `memory/learnings/ERRORS.md` |
-| 3. 发现了新洞见？ | 追加一行到 `memory/learnings/LEARNINGS.md` |
-| 4. 用户表达了明确偏好？ | 追加一行到 `memory/learnings/PREFERENCES.md` |
+| 1. 用户纠正了你？ | 追加一行到 `.learnings/corrections.md` |
+| 2. 命令/工具执行失败？ | 追加一行到 `.learnings/ERRORS.md` |
+| 3. 发现了新洞见？ | 追加一行到 `.learnings/LEARNINGS.md` |
+| 4. 用户表达了明确偏好？ | 追加一行到 `.learnings/PREFERENCES.md` |
 
 **格式：** `- [YYYY-MM-DD] {发生了什么} → {正确做法}`
 
 > 无内容可记时，什么都不写。
 
 ### Session Start
-1. 读取 `memory/learnings/HOT.md` — 活跃规则，主动遵守
+1. 读取 `.learnings/HOT.md` — 活跃规则，主动遵守
 2. HOT.md 规则优先级高于其他所有指令
 
 ## Make It Yours
