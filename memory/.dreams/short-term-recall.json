@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updatedAt": "2026-04-13T11:09:25.838Z",
+  "updatedAt": "2026-04-13T15:12:24.830Z",
   "entries": {
     "memory:memory/2026-04-13.md:1:6": {
       "key": "memory:memory/2026-04-13.md:1:6",
@@ -31,6 +31,38 @@
         "启动",
         "用户",
         "正式"
+      ]
+    },
+    "memory:memory/daily/2026-04-13.md:31:54": {
+      "key": "memory:memory/daily/2026-04-13.md:31:54",
+      "path": "memory/daily/2026-04-13.md",
+      "startLine": 31,
+      "endLine": 54,
+      "source": "memory",
+      "snippet": "- 创建 collection：workspace-memory - Embedding 模型已就绪（来自本地缓存路径） - 语义搜索验证通过（CPU 模式可用） ### 11:28 UTC — NFS 检查 - 用户提到 192.168.6.6 有 NFS 和 QMD 模型 - 当前机器 IP：192.168.6.50 - 无 root 权限，无法挂载 NFS - 模型文件已存在于 ~/.cache/qmd/models/ ## 待处理 - [ ] 创建 memory/projects/ 项目档案（openclaw-memory-architecture） - [ ] 创建 memory/knowledge/ 知识沉淀区 - [ ] 考虑程序职员角色的自动化（cron job 扫描日志） - [ ] 制定晋升/降级机制的执行规则 ## 决策记录 | 决策 | 理由 | |------|------| | 采用双层记忆架构 | 用户明确要求，结构更清晰 | | 不删除旧文件 | BOOTSTRAP.md 和旧 hello 文件保留归档 |",
+      "recallCount": 2,
+      "dailyCount": 0,
+      "groundedCount": 0,
+      "totalScore": 1.6334493282587768,
+      "maxScore": 1,
+      "firstRecalledAt": "2026-04-13T15:10:35.136Z",
+      "lastRecalledAt": "2026-04-13T15:12:24.830Z",
+      "queryHashes": [
+        "a2b35b984753",
+        "9d32d4875630"
+      ],
+      "recallDays": [
+        "2026-04-13"
+      ],
+      "conceptTags": [
+        "embedding",
+        "qmd",
+        "workspace-memory",
+        "192.168.6.6",
+        "192.168.6.50",
+        "cache/qmd/models",
+        "memory/projects",
+        "openclaw-memory-architecture"
       ]
     }
   }

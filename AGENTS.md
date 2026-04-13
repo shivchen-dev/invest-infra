@@ -81,7 +81,7 @@ Errors, corrections, and discoveries go here:
 3. 让用户做选择
 4. **选择后再行动**
 
-### 复盘协议
+## 复盘协议
 每一次用户说「复盘」，必须：
 1. 调用 self-improving-agent skill
 2. 将 review 记录到 `.learnings/LEARNINGS.md`
