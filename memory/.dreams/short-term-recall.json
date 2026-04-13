@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updatedAt": "2026-04-13T15:12:24.830Z",
+  "updatedAt": "2026-04-13T16:16:53.647Z",
   "entries": {
     "memory:memory/2026-04-13.md:1:6": {
       "key": "memory:memory/2026-04-13.md:1:6",
@@ -40,16 +40,20 @@
       "endLine": 54,
       "source": "memory",
       "snippet": "- 创建 collection：workspace-memory - Embedding 模型已就绪（来自本地缓存路径） - 语义搜索验证通过（CPU 模式可用） ### 11:28 UTC — NFS 检查 - 用户提到 192.168.6.6 有 NFS 和 QMD 模型 - 当前机器 IP：192.168.6.50 - 无 root 权限，无法挂载 NFS - 模型文件已存在于 ~/.cache/qmd/models/ ## 待处理 - [ ] 创建 memory/projects/ 项目档案（openclaw-memory-architecture） - [ ] 创建 memory/knowledge/ 知识沉淀区 - [ ] 考虑程序职员角色的自动化（cron job 扫描日志） - [ ] 制定晋升/降级机制的执行规则 ## 决策记录 | 决策 | 理由 | |------|------| | 采用双层记忆架构 | 用户明确要求，结构更清晰 | | 不删除旧文件 | BOOTSTRAP.md 和旧 hello 文件保留归档 |",
-      "recallCount": 2,
+      "recallCount": 6,
       "dailyCount": 0,
       "groundedCount": 0,
-      "totalScore": 1.6334493282587768,
+      "totalScore": 5.633449328258777,
       "maxScore": 1,
       "firstRecalledAt": "2026-04-13T15:10:35.136Z",
-      "lastRecalledAt": "2026-04-13T15:12:24.830Z",
+      "lastRecalledAt": "2026-04-13T16:16:53.647Z",
       "queryHashes": [
         "a2b35b984753",
-        "9d32d4875630"
+        "9d32d4875630",
+        "522645904ee3",
+        "e2c070a6f0da",
+        "8a2bfca8a798",
+        "c398eb864ce6"
       ],
       "recallDays": [
         "2026-04-13"
@@ -63,6 +67,40 @@
         "cache/qmd/models",
         "memory/projects",
         "openclaw-memory-architecture"
+      ]
+    },
+    "memory:memory/daily/2026-04-13.md:1:38": {
+      "key": "memory:memory/daily/2026-04-13.md:1:38",
+      "path": "memory/daily/2026-04-13.md",
+      "startLine": 1,
+      "endLine": 38,
+      "source": "memory",
+      "snippet": "# memory/daily/2026-04-13.md ## 今日事件流 ### 10:34 UTC — 首次会话 - 用户通过 QQBot c2c 发起首次对话 - 用户：我只是一个新人 ### 10:37 UTC — 取名 - 用户给 Agent 取名「小A」 - Agent 正式名 Arc，来源 Architecture - 两个名字都认 ### 10:56 UTC — 项目分享 - 用户分享了 github.com/blessonism/openclaw-memory-architecture - 这是一个双层记忆系统方案（热缓存 + 深度存储） - 核心：解决 AI Agent 跨 session 失忆问题 ### 11:09 UTC — 记忆架构配置 - 用户要求按双层记忆方案配置当前 Agent - 执行了以下操作： 1. 创建 memory/ 子目录结构（people/ projects/ glossary/ knowledge/ daily/ context/） 2. 重构 MEMORY.md 为热缓存格式（~50行结构表） 3. 创建用户档案（memory/people/user-primary.md）+ 原子事实链 4. 创建术语表（memory/glossary/arc-terms.md） 5. 更新本日志（memory/daily/2026-04-13.md） ### 11:20 UTC — QMD 安装 - 用户分享了 github.com/tobi/qmd（本地文档搜索工具） - 安装：npm install -g",
+      "recallCount": 4,
+      "dailyCount": 0,
+      "groundedCount": 0,
+      "totalScore": 4,
+      "maxScore": 1,
+      "firstRecalledAt": "2026-04-13T15:44:12.414Z",
+      "lastRecalledAt": "2026-04-13T16:16:53.647Z",
+      "queryHashes": [
+        "522645904ee3",
+        "e2c070a6f0da",
+        "8a2bfca8a798",
+        "c398eb864ce6"
+      ],
+      "recallDays": [
+        "2026-04-13"
+      ],
+      "conceptTags": [
+        "qmd",
+        "memory/daily/2026-04-13.md",
+        "memory.md",
+        "memory/people/user-primary.md",
+        "memory/glossary/arc-terms.md",
+        "github.com/tobi/qmd",
+        "今日",
+        "事件"
       ]
     }
   }
