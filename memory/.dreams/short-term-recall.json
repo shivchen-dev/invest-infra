@@ -1,0 +1,37 @@
+{
+  "version": 1,
+  "updatedAt": "2026-04-13T11:09:25.838Z",
+  "entries": {
+    "memory:memory/2026-04-13.md:1:6": {
+      "key": "memory:memory/2026-04-13.md:1:6",
+      "path": "memory/2026-04-13.md",
+      "startLine": 1,
+      "endLine": 6,
+      "source": "memory",
+      "snippet": "# 2026-04-13 ## 今日记录 - 新会话启动，用户给我取名\"小A\"（正式名 Arc） - 名字写入 IDENTITY.md 和 MEMORY.md",
+      "recallCount": 1,
+      "dailyCount": 0,
+      "groundedCount": 0,
+      "totalScore": 0.0000012903209157149476,
+      "maxScore": 0.0000012903209157149476,
+      "firstRecalledAt": "2026-04-13T11:09:25.838Z",
+      "lastRecalledAt": "2026-04-13T11:09:25.838Z",
+      "queryHashes": [
+        "430f17ba1ec5"
+      ],
+      "recallDays": [
+        "2026-04-13"
+      ],
+      "conceptTags": [
+        "identity.md",
+        "memory.md",
+        "今日",
+        "记录",
+        "会话",
+        "启动",
+        "用户",
+        "正式"
+      ]
+    }
+  }
+}
