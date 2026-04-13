@@ -1,66 +1,50 @@
 # MEMORY.md — Arc 热缓存
 
-> 每轮会话自动加载，快速解码身份和上下文。精简，保持 ~50 行。
-> 深度细节 → memory/ 目录
+> 高价值低噪音。MEMORY 解决"去哪找"，QMD 决定"找到什么"。
+> 详细 → memory/ 目录 | 搜索 → QMD
 
 ---
 
-## 👤 自我档案
+## 🔌 QMD 索引入口
 
-| 字段 | 值 |
-|------|-----|
-| 名字 | Arc（小A） |
-| 来源 | Architecture |
-| 角色 | 泛用型技术负责人 Agent |
-| 上线日 | 2026-04-13 |
+- **Collection**: `workspace-memory`
+- **Source path**: `/home/claw/.openclaw/workspace/memory`
+- **Search priority**: `title exact` → `keyword` → `semantic`
+- **命中处理**: top-k(3-5) → 每条片段(5-20行) → 摘要注入
 
 ---
 
-## 👥 用户档案（People）
-
-| ID | 名称 | 核心特征 | 偏好 |
-|----|------|----------|------|
-| user-primary | 主用户 | 洁癖+整齐控，技术控，追求完美 | 规范流程，完整方案，先确认再执行 |
-
-**完整档案**: `memory/people/user-primary.md`
-
----
-
-## 📁 项目（Projects）
-
-| 项目 | 状态 | 关键上下文 |
-|------|------|-----------|
-| openclaw-memory-architecture | 2026-04-13 引入 | 用户想采用双层记忆方案 |
-
-**完整档案**: `memory/projects/`
-
----
-
-## 📖 术语表（Glossary）
-
-| 术语 | 定义 |
-|------|------|
-| Arc | 技术负责人 Agent，小A |
-| 热缓存 | MEMORY.md，~50行，快速加载 |
-| 深度存储 | memory/ 目录，分层分类 |
-
-**完整表**: `memory/glossary/`
-
----
-
-## ⚙️ 协议与偏好（Protocols）
+## ⚙️ 协议与做事原则
 
 - 做事原则：先方案，后执行；先确认，再推进
-- 记忆写入：每日日志 + 按需更新实体档案
-- 查找路径：确定性优先，语义搜索兜底
 - 汇报风格：结论先行，简短
+- 记忆入库标准：≥2条 — 影响决策(>2周)/重复使用/损失风险/可验证
 
 ---
 
-## 📝 最近日志（Recent Daily）
+## 🎯 热缓存锚点词（Hot Anchors）
 
-- `memory/daily/2026-04-13.md` — 记忆架构初始化
+> MEMORY 只放索引入口，详细内容走 QMD
+
+**身份与上下文**
+- Arc · 小A · 主用户 · 用户画像 · 做事原则 · 汇报风格
+
+**记忆系统**
+- 双层记忆架构 · 热缓存 · 深度存储 · 原子事实链 · 程序职员
+- 晋升/降级 · 入库标准 · QMD · BM25 · 语义搜索
+
+**工具与环境**
+- OpenClaw · QMD · AMD780M · Vulkan · NFS · CPU模式
+
+**项目与知识**
+- openclaw-memory-architecture · 双层记忆方案
 
 ---
 
-> ⚠️ 事实变更走 supersede 链，不删除历史。详见 `memory/glossary/` 的原子事实规范。
+## 📝 最近日志
+
+`memory/daily/2026-04-13.md`
+
+---
+
+> ⚠️ 详细档案（people/projects/glossary）不放 MEMORY，通过 QMD 检索

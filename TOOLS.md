@@ -1,51 +1,36 @@
 # TOOLS.md - Local Notes
 
-## QMD - 本地文档搜索
+## 记忆系统架构
 
-- 安装：`npm install -g @tobilu/qmd`
-- Collection：`workspace-memory` → `/home/claw/.openclaw/workspace/memory`
-- 模型缓存：`~/.cache/qmd/models/`
-- 命令：
-  - `qmd search "关键词" -c workspace-memory`（全文搜索）
-  - `qmd query "语义查询" -c workspace-memory`（混合搜索，CPU 慢）
-  - `qmd vsearch "查询" -c workspace-memory`（向量搜索）
-  - `qmd get qmd://workspace-memory/path/to/file.md`（获取文档）
-- Context：`qmd://workspace-memory` → "Arc的双层记忆系统：热缓存MEMORY.md + 深度存储memory/目录，含人物档案、术语表、每日日志"
-- 注意：CPU 模式每次查询约 8-12 秒
+### 三层检索协议（OpenClaw → Arc）
+1. **MEMORY.md** — 热缓存，高价值低噪音（~50行）
+2. **QMD** — 触发后二次检索，语义+关键词
+3. **memory/ 目录** — 详细档案/日志/知识
 
-## What Goes Here
-
-Things like:
-
-- Camera names and locations
-- SSH hosts and aliases
-- Preferred voices for TTS
-- Speaker/room names
-- Device nicknames
-- Anything environment-specific
-
-## Examples
-
-```markdown
-### Cameras
-
-- living-room → Main area, 180° wide angle
-- front-door → Entrance, motion-triggered
-
-### SSH
-
-- home-server → 192.168.1.100, user: admin
-
-### TTS
-
-- Preferred voice: "Nova" (warm, slightly British)
-- Default speaker: Kitchen HomePod
-```
-
-## Why Separate?
-
-Skills are shared. Your setup is yours. Keeping them apart means you can update skills without losing your notes, and share skills without leaking your infrastructure.
+### QMD 检索规则
+- **优先级**: `title exact` → `keyword` → `semantic`
+- **命中处理**: top-k(3-5) → 片段(5-20行) → 摘要注入
+- **入库标准**: 满足≥2条 — 影响决策(>2周)/重复使用/损失风险/可验证
 
 ---
 
-Add whatever helps you do your job. This is your cheat sheet.
+## QMD - 本地文档搜索
+
+- **Collection**: `workspace-memory`
+- **Source path**: `/home/claw/.openclaw/workspace/memory`
+- **模型缓存**: `~/.cache/qmd/models/`
+- **命令**:
+  - `qmd search "关键词" -c workspace-memory`（全文 BM25）
+  - `qmd query "语义查询" -c workspace-memory`（混合搜索，GPU加速）
+  - `qmd vsearch "查询" -c workspace-memory`（向量搜索）
+  - `qmd get qmd://workspace-memory/path/to/file.md`（获取文档）
+- **Context**: Arc记忆系统路由：MEMORY.md → memory/ → QMD检索 → 分层注入
+- **GPU**: AMD 780M (Vulkan), VRAM 7.9GB free
+
+---
+
+## 环境信息
+
+- **GPU**: AMD Radeon 780M (Phoenix3) — Vulkan 加速
+- **NFS**: 192.168.6.6:/（不可用，无 root 权限挂载）
+- **模型路径**: ~/.cache/qmd/models/
