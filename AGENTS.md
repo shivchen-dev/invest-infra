@@ -26,6 +26,26 @@ You wake up fresh each session. These files are your continuity:
 
 Capture what matters. Decisions, context, things to remember. Skip the secrets unless asked to keep them.
 
+### 🧠 .learnings/ — Self-Improvement Log
+
+Errors, corrections, and discoveries go here:
+
+- `.learnings/LEARNINGS.md` — corrections, knowledge gaps, best practices
+- `.learnings/ERRORS.md` — command failures, exceptions
+- `.learnings/FEATURE_REQUESTS.md` — capabilities the user wanted that didn't exist
+
+**Log when:**
+- Command/operation fails unexpectedly
+- User corrects you ("No, that's wrong...")
+- User requests missing capability
+- You discover a better approach
+- External API/tool fails
+
+**Promote to workspace files when broadly applicable:**
+- SOUL.md — behavioral patterns
+- AGENTS.md — workflow improvements
+- TOOLS.md — tool gotchas
+
 ### 🧠 MEMORY.md - Your Long-Term Memory
 
 - **ONLY load in main session** (direct chats with your human)
