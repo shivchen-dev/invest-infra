@@ -106,3 +106,31 @@ vulkaninfo 检测到 `AMD Radeon 780M Graphics (RADV PHOENIX)`，但 node-llama-
 - Tags: GPU, AMD, Vulkan, QMD
 
 ---
+## 2026-04-14 经验记录
+
+### 1. bb-browser 安装与使用
+- **问题**：小红书需要登录态，CDP 连接无法维持 session
+- **解决**：使用 `bb-browser` 通过 CDP 控制 Chrome，利用已有的登录 cookie 访问需要认证的页面
+- **安装**：`npm install -g bb-browser`，社区 adapter：`bb-browser site update`
+- **关键**：需要 Chrome 带 `--remote-debugging-port=9222` 运行，bb-browser 通过 CDP 读写页面
+- **命令**：`BB_BROWSER_CDP_URL=http://localhost:9222 bb-browser site xiaohongshu/search "关键词"`
+
+### 2. gateway pairing required 问题根因
+- **症状**：`sessions_send`、`sessions_spawn`、`cron` 全部报错 `gateway closed (1008): pairing required`
+- **误解**：以为是 `bind: loopback` 配置问题，实际不是
+- **根因**：agent shell 里的 `openclaw` CLI 与 gateway 之间有 pending pairing 请求未批准
+- **解决**：在宿主机上运行 `openclaw devices list` → `openclaw devices approve <request-id>`
+- **验证**：批准后 `sessions_send` 和 `sessions_spawn` 立刻通
+- **教训**：所有 RPC 工具（cron/spawn/send）都需要 device pairing，不只是 bind 配置
+
+### 3. 浏览器 profile 持久化登录
+- **问题**：小红书 cookie 登录验证严格，关浏览器再开 cookie 就失效
+- **解决**：使用 `launch_persistent_context` + 固定 profile 目录，浏览器保持运行不关闭
+- **关键**：不能同时开多个同 profile 的浏览器实例，会触发 SingletonLock
+- **备注**：小红书有服务端 session 校验，纯 cookie 不足以维持登录
+
+### 4. TopicManagerMixin 缺失
+- **问题**：Gitee upstream commit d22ddb4 删除了 topic_manager.py 但未同步更新 bridge 文件
+- **解决**：移除 deepseek_bridge.py 和 qwen_bridge.py 中的 TopicManagerMixin 引用
+- **教训**：代码重构时容易遗漏跨文件引用，PR 应包含一致性检查
+
