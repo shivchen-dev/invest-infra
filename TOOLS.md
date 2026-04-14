@@ -29,6 +29,18 @@
 
 ---
 
+## 敏感信息存储
+
+- **目录**: `secrets/`（700 权限，仅自己可读）
+- **原则**: 令牌/密钥不写进任何明文 md 文件
+- **Gitee 令牌**: `secrets/gitee-token`
+- **使用方式**: `GITEE_TOKEN=$(cat /home/claw/.openclaw/workspace/secrets/gitee-token)`
+- **QQBot Browser 令牌**: `secrets/qqbot-browser-token`
+- **格式**: `appId:clientSecret`（冒号分隔）
+- **使用方式**: `QQBOT_TOKEN=$(cat /home/claw/.openclaw/workspace/secrets/qqbot-browser-token)`
+
+---
+
 ## 环境信息
 
 - **GPU**: AMD Radeon 780M (Phoenix3) — Vulkan 加速

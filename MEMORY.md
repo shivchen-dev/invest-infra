@@ -35,10 +35,17 @@
 - 晋升/降级 · 入库标准 · QMD · BM25 · 语义搜索 · **skill-vetter（安装前必审）**
 
 **工具与环境**
-- OpenClaw · QMD · AMD780M · Vulkan · NFS · CPU模式
+- OpenClaw · QMD · AMD780M (Phoenix3) · Vulkan · NFS · CPU模式
+- **clawhub mirror**: `https://cn.clawhub-mirror.com`（国内镜像）
+- **bb-browser**: `npx clawhub install bb-browser --registry https://cn.clawhub-mirror.com`
 
 **项目与知识**
 - openclaw-memory-architecture · 双层记忆方案
+- llama-docker · DeepSeek-R1-Distill-Qwen-1.5B-Q8_0.gguf · /dev/dri GPU穿透
+
+**⚠️ 已验证错误（防重蹈）**
+- Vulkan `No devices found` → 需 `/dev/dri:/dev/dri` docker 挂载 + 移除无效 `--gpu 1` 参数
+- `GGML_VULKAN_DEVICE: "0"` 可能冲突，容器内不设置
 
 ---
 

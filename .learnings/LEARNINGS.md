@@ -134,3 +134,13 @@ vulkaninfo 检测到 `AMD Radeon 780M Graphics (RADV PHOENIX)`，但 node-llama-
 - **解决**：移除 deepseek_bridge.py 和 qwen_bridge.py 中的 TopicManagerMixin 引用
 - **教训**：代码重构时容易遗漏跨文件引用，PR 应包含一致性检查
 
+
+### 5. Wiki 文章对比记忆体系升级
+- **任务**：对比 Gitee Wiki (openclaw-wiki/memory) 的四层记忆方案 vs 自身架构，落地升级
+- **Wiki 核心**：L1滑动窗口 → L2日记(14天归档) → L3 MEMORY.md热缓存 → L4向量混合搜索(+MMR+时间衰减)；Active Memory；整理脚本；Hindsight闭环
+- **自身现状**：Active Memory 早已在配置中（用户早已开启）；Dreaming 早已在；缺的是 MMR+时间衰减调参 + 整理脚本 + Hindsight闭环
+- **误解**：最初以为 Active Memory 和 Dreaming 未启用，实际已有配置
+- **执行**：写入 `agents.defaults.memorySearch.query.hybrid` 配置（MMR+时间衰减）；创建 `scripts/memory_consolidate.py`（归档+查重+超限检测）；创建 `scripts/hindsight_reflect.py`（每日反思闭环）；注册两个 cron job
+- **教训**：先完整读取 `openclaw.json`，不要基于"以为"直接判断缺失
+- **推广**：AGENTS.md 中可补充"Wiki文章落地"流程——读取Wiki → 对比现状 → 识别gap → 逐项落地
+

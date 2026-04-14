@@ -87,6 +87,15 @@ Errors, corrections, and discoveries go here:
 2. 将 review 记录到 `.learnings/LEARNINGS.md`
 3. 按需 promotion 到 SOUL.md / AGENTS.md / TOOLS.md
 
+## Wiki / 外部方案落地流程
+用户分享 Wiki 或外部方案时：
+1. **先完整读取** `openclaw.json` 配置，不要假设缺失项
+2. 对比 Wiki 方案 vs 当前配置，列出 gap
+3. 逐项落地（配置 → 脚本 → cron）
+4. 重启 gateway 验证
+5. 记录到 `.learnings/LEARNINGS.md`
+6. 按需 promotion 到 AGENTS.md
+
 ## External vs Internal
 
 **Safe to do freely:**
