@@ -17,7 +17,6 @@ from typing import Optional, Dict, Any, List
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from base_bridge import BaseBridge, BridgeResponse
-from topic_manager import TopicManagerMixin
 from human_behavior_v2 import HumanBehaviorSimulator
 from utils import get_screenshot_path
 from agent_response_logger import AgentResponseLogger
@@ -25,7 +24,7 @@ from response_extractor import ResponseExtractor
 from config import VNC_ADDRESS, TIMEOUTS, HUMAN_BEHAVIOR, PLATFORM_CONFIGS
 
 
-class DeepSeekBridge(BaseBridge, TopicManagerMixin):
+class DeepSeekBridge(BaseBridge):
     """
     DeepSeek 对话桥接器
     
@@ -42,16 +41,6 @@ class DeepSeekBridge(BaseBridge, TopicManagerMixin):
     login_url = "https://chat.deepseek.com/"
     user_data_dir = "data/browser_profile_deepseek"
     
-    # TopicManagerMixin 配置
-    TOPIC_SELECTORS = [
-        '//div[contains(@class, "ds")]//div[contains(text(), "")]',
-        '//aside//div[role="button"]',
-        '//div[contains(@class, "sidebar")]//div',
-    ]
-    TOPIC_FILTER_WORDS = [
-        '开启新对话', '深度思考', '智能搜索',
-        '今天', '昨天', '7天内', '30天内'
-    ]
     
     def __init__(self):
         super().__init__()

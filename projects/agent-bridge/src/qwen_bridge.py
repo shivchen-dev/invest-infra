@@ -11,12 +11,11 @@ from typing import Optional, Dict, Any, List
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from base_bridge import BaseBridge, BridgeResponse
-from topic_manager import TopicManagerMixin
 from human_behavior_v2 import HumanBehaviorSimulator
 from response_extractor import ResponseExtractor
 
 
-class QwenBridge(BaseBridge, TopicManagerMixin):
+class QwenBridge(BaseBridge):
     """
     通义千问对话桥接器
     
@@ -32,16 +31,6 @@ class QwenBridge(BaseBridge, TopicManagerMixin):
     login_url = "https://www.qianwen.com/"
     user_data_dir = "data/browser_profile_qwen"
     
-    # TopicManagerMixin 配置（可根据千问页面结构调整）
-    TOPIC_SELECTORS = [
-        '//div[contains(@class, "sidebar")]//div',
-        '//aside//div[role="button"]',
-        '//div[contains(@class, "chat-list")]//div',
-    ]
-    TOPIC_FILTER_WORDS = [
-        '开启新对话', '智能搜索', '深度思考',
-        '今天', '昨天', '7天内', '30天内'
-    ]
     
     def __init__(self):
         super().__init__()
