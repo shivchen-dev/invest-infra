@@ -16,6 +16,7 @@ ROOT_FILES = {  # 根目录系统文件（必须保留）
     "AGENTS.md", "SOUL.md", "IDENTITY.md", "USER.md",
     "MEMORY.md", "TOOLS.md", "HEARTBEAT.md", "BOOTSTRAP.md",
     "DREAMS.md", "SESSION-STATE.md",
+    ".gitignore",  # Git 配置文件
 }
 
 SYSTEM_DIRS = {  # 系统目录（不检查内容）
