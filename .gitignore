@@ -1,0 +1,14 @@
+# OpenClaw system files
+memory/.dreams/
+state/
+
+# Secrets
+secrets/
+
+# Browser profiles (large binary data)
+projects/agent-bridge/data/browser_profile*/
+projects/agent-bridge/data/browser_profile_xiaohongshu/
+
+# OS artifacts
+.DS_Store
+Thumbs.db
