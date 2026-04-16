@@ -22,6 +22,9 @@
 - 记忆入库标准：≥2条 — 影响决策(>2周)/重复使用/损失风险/可验证
 - **技能安装：P0 级要求 — 必须通过 skill-vetter 安全审查后方可安装**
 - **项目开发：P0 级要求 — 必须有用户明确授权（"授权"）或开始指令（"开始"），方可开始执行**
+- **外部咨询：默认进行（除非用户明确说"不咨询"）**
+- **搜索 ≠ 安装：clawhub search 只读，安装才需授权**
+- **skills 目录：统一到 `skills/`（plural），clawhub 默认行为**
 
 ---
 
@@ -45,10 +48,13 @@
 **项目与知识**
 - openclaw-memory-architecture · 双层记忆方案
 - llama-docker · DeepSeek-R1-Distill-Qwen-1.5B-Q8_0.gguf · /dev/dri GPU穿透
+- agent-bridge v0.1.0 · DeepSeek/Qwen 对话桥 · Gitee: chen-jian82/agent-bridge
+- NiuSync（暂停）· HarmonyOS 局域网同步应用 · Gitee: chen-jian82/foldersync-hmos（已删除重建）
 
 **⚠️ 已验证错误（防重蹈）**
 - Vulkan `No devices found` → 需 `/dev/dri:/dev/dri` docker 挂载 + 移除无效 `--gpu 1` 参数
 - `GGML_VULKAN_DEVICE: "0"` 可能冲突，容器内不设置
+- agent-bridge 多轮对话 → 必须在同一 Bridge 实例上发消息，不能每次新建 Bridge
 
 ---
 
