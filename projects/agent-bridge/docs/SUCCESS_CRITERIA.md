@@ -1,109 +1,49 @@
-# Copilot Bridge 成功标准说明
+# agent-bridge 项目成功标准
 
-## ✅ 项目成功的唯一标准
+## ✅ 项目目标
 
-> **成功获取到 Copilot 的真正回复消息（不是占位符）**
-
----
-
-## ❌ 当前状态：未成功
-
-### 之前测试结果
-```
-[CopilotBridge] 回复完成，长度: 21
-回复预览: Message Copilot
-Smart...
-```
-
-**问题**：抓取到的是 "Message Copilot"，这是：
-- ❌ 输入框的 placeholder（提示文字）
-- ❌ 或者是页面上的UI元素
-- ❌ **不是 AI 的真正回复**
+为 OpenClaw Agent 提供可靠的浏览器自动化对话能力，支持 DeepSeek、Qwen、小红书等平台。
 
 ---
 
-## 🎯 真正成功的标准
+## 成功标准
 
-成功的回复应该：
-1. **长度 > 100 字符**（不是21字符的占位符）
-2. **内容有意义**（回答问题，不是提示文字）
-3. **来自 AI 回复区域**（不是输入框或其他UI元素）
+| 功能 | 标准 |
+|------|------|
+| DeepSeek 对话 | 能发送消息并获取有效回复 |
+| Qwen 对话 | 能发送消息并获取有效回复 |
+| 小红书搜索 | 能执行搜索并获取笔记列表 |
+| 话题连续性 | 多轮对话保持上下文 |
+| 登录态保持 | 浏览器关闭后重新打开仍保持登录 |
 
-例如：
-```
-🤖 Copilot: 你好！我是 Microsoft Copilot，一个 AI 助手。
-我可以帮助你回答问题、创作内容、编写代码等。
-有什么我可以帮你的吗？
+---
+
+## 验证方法
+
+```python
+# DeepSeek Bridge
+bridge = DeepSeekBridge()
+await bridge.start()
+await bridge.ensure_login(timeout=120)
+r = await bridge.chat('1+1等于几？')
+assert len(r.text) > 0
+assert '2' in r.text
+
+# 话题连续性
+r2 = await bridge.chat('那2+2呢？')
+assert '4' in r2.text
 ```
 
 ---
 
-## 🔍 失败原因分析
+## 当前状态
 
-### 可能原因1：选择器错误
-当前选择器可能指向了：
-- 输入框的 placeholder
-- 页面标题或提示文字
-- 其他UI元素
-
-### 可能原因2：Copilot 需要登录
-- 游客模式可能无法获取完整回复
-- 可能显示"请登录"提示
-
-### 可能原因3：页面结构变化
-- Copilot 前端更新，选择器失效
-- 需要重新分析页面结构
+- ✅ DeepSeekBridge 已实现
+- ✅ QwenBridge 已实现
+- ✅ XiaohongshuBridge 已实现
+- ✅ 话题连续性已修复
+- ⏳ MCP server 集成待完成
 
 ---
 
-## 🛠️ 解决方案
-
-### 方案1：运行诊断工具（推荐）
-```bash
-cd /home/chenjian/.openclaw/workspace-browser/projects/active/copilot-bridge
-source config/proxy.env
-python3 tests/diagnose.py
-```
-
-这会生成：
-- `diagnose_initial.png` - 初始页面截图
-- `diagnose_after_reply.png` - 发送消息后的截图
-- `diagnose_page.html` - 页面源码
-
-通过查看这些文件，可以：
-1. 确认是否真的获取到AI回复
-2. 找到正确的选择器
-3. 检查是否需要登录
-
-### 方案2：使用稳定的替代方案
-如果网页版不稳定，建议使用：
-
-| 方案 | 稳定性 | 说明 |
-|------|--------|------|
-| **Azure OpenAI API** | ⭐⭐⭐⭐⭐ | 企业级，最稳定 |
-| **DeepSeek API** | ⭐⭐⭐⭐ | 性价比高，国内可用 |
-| **OpenAI API** | ⭐⭐⭐⭐ | 需要代理 |
-| **网页抓取** | ⭐⭐ | 容易失效（当前方案） |
-
----
-
-## 📝 诊断清单
-
-运行诊断工具后，检查：
-
-- [ ] 截图中是否显示 AI 回复内容？
-- [ ] 是否有"请登录"或"Sign in"提示？
-- [ ] 页面源码中能找到回复文本吗？
-- [ ] 选择器是否指向了正确的元素？
-
----
-
-## 💡 建议
-
-1. **先运行诊断工具** 确认问题根源
-2. **如果需要登录** - 考虑使用 API 方案代替
-3. **如果选择器问题** - 根据诊断结果修复
-
----
-
-**请运行诊断工具，确认为什么抓取不到真正的回复内容。**
+*2026-04-16*

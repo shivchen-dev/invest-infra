@@ -1,8 +1,10 @@
-# Agent Bridge API 架构文档
+# Agent Bridge 架构文档
 
-**版本**: v1.0 (生产版本)  
-**日期**: 2026-04-06  
-**架构**: API → Bridge → Browser
+**版本**: v0.1.0
+**日期**: 2026-04-16
+**架构**: 直接 Import → Bridge → Browser
+
+> ⚠️ API 方案已移除。当前版本不支持 HTTP API 调用，仅支持直接 import 调用。
 
 ---
 
@@ -11,16 +13,15 @@
 ### 层级结构
 ```
 ┌─────────────────────────────────────┐
-│  API Layer (deepseek_api.py)        │  ← HTTP 接口
-│  - 请求验证                          │
-│  - 单例 Bridge 管理                  │
-│  - 响应格式化                        │
+│  Caller (Python/Agent)              │  ← 直接 import 调用
+│  - 传入消息                          │
+│  - 获取 BridgeResponse               │
 └──────────────┬──────────────────────┘
                │
                ▼
 ┌─────────────────────────────────────┐
 │  Bridge Layer (DeepSeekBridge)      │  ← 浏览器控制
-│  - 启动/管理 Chrome                  │
+│  - 启动/管理 Chrome (Playwright)      │
 │  - 登录状态检测                      │
 │  - 发送消息                          │
 │  - 抓取回复                          │
@@ -29,72 +30,24 @@
                ▼
 ┌─────────────────────────────────────┐
 │  Browser Layer (Chrome)             │  ← Web 自动化
-│  - DeepSeek 网站交互                 │
+│  - DeepSeek/Qwen 网站交互            │
 └─────────────────────────────────────┘
 ```
 
-### 关键设计
+### 调用方式
 
-**单例模式**: API 直接管理 Bridge 单例，避免 Chrome 冲突
+**直接 Import**（当前唯一方式）:
 ```python
-# 全局 Bridge 实例
-_bridge = None
+import sys
+sys.path.insert(0, '/path/to/agent-bridge/src')
+from deepseek_bridge import DeepSeekBridge
 
-def get_bridge():
-    if _bridge is None:
-        _bridge = DeepSeekBridge()
-    return _bridge
-```
-
-**职责分离**:
-| 层级 | 职责 |
-|------|------|
-| API | HTTP 接口、请求验证、响应格式化 |
-| Bridge | 浏览器生命周期、对话流程、回复抓取 |
-| Browser | Web 页面交互 |
-
----
-
-## API 端点
-
-### POST /api/v1/deepseek/ask
-发送消息并获取 DeepSeek 回复
-
-**请求**:
-```json
-{
-    "template": "general_query",
-    "message": "你好 DeepSeek！"
-}
-```
-
-**响应**:
-```json
-{
-    "success": true,
-    "data": {
-        "response": "你好！很高兴见到你...",
-        "template": "general_query"
-    },
-    "meta": {
-        "timestamp": "2026-04-06T04:22:47Z",
-        "request_id": "req_xxx"
-    }
-}
-```
-
-### GET /api/v1/deepseek/health
-健康检查
-
-**响应**:
-```json
-{
-    "success": true,
-    "data": {
-        "platform": "deepseek",
-        "initialized": true
-    }
-}
+bridge = DeepSeekBridge()
+await bridge.start()
+await bridge.ensure_login(timeout=120)
+result = await bridge.chat('你好')
+print(result.text)
+await bridge.close()
 ```
 
 ---
@@ -104,68 +57,47 @@ def get_bridge():
 ```
 agent-bridge/
 ├── src/
-│   ├── api/
-│   │   ├── deepseek_api.py       # API 服务 (生产版本)
-│   │   ├── responses.py          # 统一响应格式
-│   │   ├── validators.py         # 模板验证
-│   │   └── bridge_factory.py     # 工厂模式 (保留备用)
 │   ├── deepseek_bridge.py        # DeepSeek Bridge
+│   ├── qwen_bridge.py            # Qwen Bridge
+│   ├── xiaohongshu_bridge.py     # 小红书 Bridge
 │   ├── base_bridge.py            # Bridge 基类
+│   ├── config.py                 # 配置（VNC地址、超时等）
 │   └── ...
-├── .learnings/
-│   └── LEARNINGS.md              # 复盘记录
-├── task_plan.md                  # 任务计划
-└── progress.md                   # 进度记录
+├── skills/
+│   └── agent-bridge-ask/         # OpenClaw skill
+├── data/
+│   └── browser_profile_*/       # 浏览器 Profile（登录态持久化）
+└── CHANGELOG.md
 ```
 
 ---
 
-## 使用示例
+## 支持的 Bridge
 
-### Python 调用
-```python
-import requests
-
-# 发送消息
-response = requests.post(
-    "http://localhost:8787/api/v1/deepseek/ask",
-    json={
-        "template": "general_query",
-        "message": "你好！"
-    }
-)
-
-result = response.json()
-print(result["data"]["response"])
-```
-
-### cURL 调用
-```bash
-curl -X POST http://localhost:8787/api/v1/deepseek/ask \
-  -H "Content-Type: application/json" \
-  -d '{"template": "general_query", "message": "你好！"}'
-```
-
----
-
-## 启动方式
-
-```bash
-cd ~/.openclaw/workspace-browser/projects/active/agent-bridge
-python3 src/api/deepseek_api.py
-```
-
-服务启动于 `http://0.0.0.0:8787`
+| Bridge | 平台 | 状态 |
+|--------|------|------|
+| DeepSeekBridge | DeepSeek | ✅ 生产 |
+| QwenBridge | 通义千问 | ✅ 生产 |
+| XiaohongshuBridge | 小红书 | ✅ 生产 |
 
 ---
 
 ## 技术要点
 
-1. **单例模式**: 全局唯一 Bridge 实例，避免 Chrome 冲突
-2. **Asyncio 处理**: HTTP 同步与 Bridge 异步的兼容方案
-3. **持久化会话**: 使用 `data/browser_profile_deepseek/` 保持登录状态
-4. **模板验证**: 强制请求包含 `template` 字段，规范调用方式
+1. **话题连续性**：多轮对话必须复用同一个 Bridge 实例
+2. **异步调用**：所有 Bridge 方法为 async，需 `asyncio.run()` 或在 async 函数中调用
+3. **资源释放**：使用完后必须 `await bridge.close()` 释放浏览器资源
+4. **Profile 隔离**：每个平台独立 Profile，登录态持久化
 
 ---
 
-*文档版本: v1.0 | 生产环境已部署*
+## 注意事项
+
+- ❌ 不支持 HTTP API 调用（API 方案已移除）
+- ❌ 不支持直接 curl/requests 调用
+- ✅ 只能通过 Python import 方式调用
+- ✅ 支持多轮对话（保持同一 Bridge 实例）
+
+---
+
+*文档版本: v0.1.0 | 2026-04-16*
