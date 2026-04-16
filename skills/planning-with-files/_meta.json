@@ -1,0 +1,32 @@
+{
+  "owner": "othmanadi",
+  "slug": "planning-with-files",
+  "displayName": "Planning with files",
+  "latest": {
+    "version": "2.26.1",
+    "publishedAt": 1774037351007,
+    "commit": "https://github.com/openclaw/skills/commit/ce32ef69de460238f9ea91d43989a482f819e8e5"
+  },
+  "history": [
+    {
+      "version": "2.22.0",
+      "publishedAt": 1773269478507,
+      "commit": "https://github.com/openclaw/skills/commit/6912e15a9297d25f25bfc5b7d9883bc9b95490fa"
+    },
+    {
+      "version": "1.2.0",
+      "publishedAt": 1770240250272,
+      "commit": "https://github.com/clawdbot/skills/commit/ae23d709e254df820d5eda91ec700d55bc853cfc"
+    },
+    {
+      "version": "1.0.0",
+      "publishedAt": 1769547993264,
+      "commit": "https://github.com/clawdbot/skills/commit/698c0a849272798b796930350c8433cc6cafa690"
+    },
+    {
+      "version": "2.11.0",
+      "publishedAt": 1769389713406,
+      "commit": "https://github.com/clawdbot/skills/commit/d9ded06349cc9a20dcd2055fb3585c7ed86e4885"
+    }
+  ]
+}
