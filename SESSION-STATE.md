@@ -35,3 +35,9 @@
 <!-- 临时记录，不需要持久化的内容 -->
 
 ---
+
+## Gitee 账户上下文
+- 用户 Gitee 账户: `chen-jian82` (陈坚)
+- 令牌存储: `secrets/gitee-token`
+- 查看 Gitee = 查看 `chen-jian82` 账户下的仓库列表
+- 已确认仓库: skill-xiaohongshu-scraper, agent-bridge, openclaw-wiki, openclaw-skills, ip-cleanup-v2, openclaw-backup, chemex
