@@ -78,7 +78,8 @@ agent-bridge/
 |--------|------|------|
 | DeepSeekBridge | DeepSeek | ✅ 生产 |
 | QwenBridge | 通义千问 | ✅ 生产 |
-| XiaohongshuBridge | 小红书 | ✅ 生产 |
+| XiaohongshuBridge | 小红书 | ❌ 未实现 |
+| CopilotBridge | Microsoft Copilot | ❌ 未实现 |
 
 ---
 

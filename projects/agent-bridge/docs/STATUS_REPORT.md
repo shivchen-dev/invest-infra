@@ -13,13 +13,19 @@
 |--------|------|------|------|
 | DeepSeekBridge | DeepSeek | ✅ 生产可用 | |
 | QwenBridge | 通义千问 | ✅ 生产可用 | |
-| XiaohongshuBridge | 小红书 | ✅ 生产可用 | |
 | agent-bridge-ask skill | OpenClaw | ✅ 已发布 | |
+
+### ❌ 未实现
+
+| Bridge | 平台 | 说明 |
+|--------|------|------|
+| CopilotBridge | Microsoft Copilot | 代码存在但未实现 |
+| XiaohongshuBridge | 小红书 | 代码存在但未实现 |
 
 ### ⏳ 待完成
 
+- [ ] 小红书 Bridge 完成
 - [ ] MCP server 集成
-- [ ] 更多平台 Bridge
 
 ---
 
