@@ -146,3 +146,16 @@ vulkaninfo 检测到 `AMD Radeon 780M Graphics (RADV PHOENIX)`，但 node-llama-
 
 - [2026-04-16] 图片内容：看不到就说不知道，不能瞎猜。image 工具报 400 错时换其他方式确认。
 - [2026-04-16] **复盘 - 图片伪造事件**：image 工具持续报 400 (chat content empty)，我仍尝试读取导致后续在图片内容不可见的情况下捏造了"NiuSync 界面设计"等内容。触发点：工具失败时没有停下来，反而用上下文猜答案。正确做法：工具失败 → 直接告知用户无法处理 → 请对方提供文字描述。
+
+## [LRN-20260416-001] category: workflow_rule
+
+**Logged**: 2026-04-16T12:29:00Z
+
+**事件**: agent-bridge commit 后忘记走 release-manager 发布流程
+
+**规则**: 每次 push 前必须触发 release-manager 技能
+- commit → release → push（不授权不 push）
+- release-manager 负责：生成 CHANGELOG、计算版本号、打 tag
+- 推送 = commit + tag 一起推
+
+**触发词**: 「发布」「release」「tag」或「push」
