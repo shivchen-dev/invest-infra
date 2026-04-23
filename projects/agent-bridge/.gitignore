@@ -1,0 +1,35 @@
+# Browser profile data
+data/browser_profile/
+data/browser_profile_*/
+*.png
+*.log
+
+# Python
+__pycache__/
+*.pyc
+.pytest_cache/
+.venv/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Misc
+*.tmp
+*.bak
+
+# Screenshots (runtime data)
+data/screenshots/
+
+# Agent responses (dynamic data)
+data/agent_responses/
+data/topics/
+data/sessions/
+data/smart_topics/
+data/logs/
