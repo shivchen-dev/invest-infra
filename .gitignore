@@ -12,3 +12,13 @@ projects/agent-bridge/data/browser_profile_xiaohongshu/
 # OS artifacts
 .DS_Store
 Thumbs.db
+
+# Browser profiles (all variants)
+data/browser_profile*/
+data/browser_profile_deepseek/
+
+# Agent responses (large transcript data)
+data/agent_responses/
+
+# Session/dream data
+memory/dreaming/
