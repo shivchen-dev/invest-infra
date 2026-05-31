@@ -5,9 +5,17 @@ description = "智能投研体系 Phase 1 — 数据采集管线 (Bronze → Sil
 requires-python = ">=3.12"
 dependencies = [
     "akshare>=1.18.64",
+    "backtrader>=1.9.78.123",
     "boto3>=1.43.18",
     "httpx>=0.28.1",
     "psycopg2-binary>=2.9.12",
     "pydantic>=2.13.4",
     "redis>=8.0.0",
+    "vectorbt[full,rust]>=1.0.0",
+]
+[project.optional-dependencies]
+test = [
+    "pytest>=8.0.0",
+    "pytest-mock>=3.14.0",
+    "psycopg2-binary>=2.9.12",
 ]

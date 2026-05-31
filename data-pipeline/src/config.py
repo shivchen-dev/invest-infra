@@ -63,7 +63,15 @@ class CollectorConfig:
     min_records_warning: int = env_int("MIN_RECORDS_WARNING", 10)
 
 
+@dataclass
+class RssCastConfig:
+    """RssCast MCP 服务配置"""
+    endpoint: str = env("RSSCAST_ENDPOINT", "https://app-cn.rsscast.io/api/mcp/v1/mcp")
+    token: str = env("RSSCAST_TOKEN", "")
+
+
 pg: PGConfig = PGConfig()
 redis: RedisConfig = RedisConfig()
 minio: MinIOConfig = MinIOConfig()
 collector: CollectorConfig = CollectorConfig()
+rsscast: RssCastConfig = RssCastConfig()

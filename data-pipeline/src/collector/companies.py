@@ -44,32 +44,54 @@ def fetch_all_companies() -> list[dict]:
 
 
 def sync_to_db(records: list[dict]) -> dict:
-    """同步公司列表到 PostgreSQL（upsert 模式）"""
+    """
+    同步公司列表到 PostgreSQL（upsert 模式）。
+
+    优化策略：
+    - 先查 companies 表已有的 code 集合（避免逐行 SELECT）
+    - 仅对新增/有变更的记录执行 INSERT/UPDATE
+    """
     import psycopg2
+
+    if not records:
+        return {"inserted": 0, "updated": 0, "skipped": 0, "total": 0}
 
     conn = psycopg2.connect(pg.uri)
     try:
+        # Step 1: 查已存在的 codes（使用 IN 而非 ANY）
+        codes_to_check = [r["code"] for r in records]
         with conn.cursor() as cur:
-            inserted = 0
-            updated = 0
-            for r in records:
-                cur.execute(
-                    """
-                    INSERT INTO companies (code, name, short_name, market, is_active)
-                    VALUES (%(code)s, %(name)s, %(short_name)s, %(market)s, %(is_active)s)
-                    ON CONFLICT (code) DO UPDATE SET
-                        name = EXCLUDED.name,
-                        short_name = EXCLUDED.short_name,
-                        updated_at = now()
-                    """,
-                    r,
-                )
-                if cur.rowcount == 1:
-                    inserted += 1
-                else:
-                    updated += 1
+            placeholders = ",".join(["%s"] * len(codes_to_check))
+            cur.execute(f"SELECT code FROM companies WHERE code IN ({placeholders})", codes_to_check)
+            existing = {row[0] for row in cur.fetchall()}
+
+        # Step 2: 分类
+        new_records = [r for r in records if r["code"] not in existing]
+        unchanged_count = len(records) - len(new_records)
+
+        # Step 3: 批量 upsert new records
+        inserted = updated = 0
+        if new_records:
+            with conn.cursor() as cur:
+                for r in new_records:
+                    cur.execute(
+                        """
+                        INSERT INTO companies (code, name, short_name, market, is_active)
+                        VALUES (%(code)s, %(name)s, %(short_name)s, %(market)s, %(is_active)s)
+                        ON CONFLICT (code) DO UPDATE SET
+                            name = EXCLUDED.name,
+                            short_name = EXCLUDED.short_name,
+                            updated_at = now()
+                        """,
+                        r,
+                    )
+                    if cur.rowcount == 1:
+                        inserted += 1
+                    else:
+                        updated += 1
             conn.commit()
-        logger.info(f"公司列表同步完成: 新增 {inserted}, 更新 {updated}")
-        return {"inserted": inserted, "updated": updated, "total": len(records)}
+
+        logger.info(f"公司列表同步完成: 新增 {inserted}, 更新 {updated}, 跳过(无变化) {unchanged_count}")
+        return {"inserted": inserted, "updated": updated, "skipped": unchanged_count, "total": len(records)}
     finally:
         conn.close()
