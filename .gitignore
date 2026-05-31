@@ -31,3 +31,5 @@ logs/
 # 大文件
 *.deb
 *.zip
+# uv auto-generated
+main.py
