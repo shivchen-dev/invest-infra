@@ -66,6 +66,7 @@ def fetch_quotes(
         "close": "close_price",
         "volume": "volume",
         "amount": "amount",
+        "turnover": "turnover_rate",
     }
 
     records = []
