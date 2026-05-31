@@ -1,0 +1,33 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Docker volumes (不建议跟踪，Docker 会自动管理）
+# 但 pgdata/ 等如果在本目录也忽略
+pgdata/
+redis-data/
+minio-data/
+
+# 环境/密钥
+.env
+*.env.local
+
+# 日志
+*.log
+logs/
+
+# 大文件
+*.deb
+*.zip
