@@ -1,0 +1,13 @@
+[project]
+name = "data-pipeline"
+version = "0.1.0"
+description = "智能投研体系 Phase 1 — 数据采集管线 (Bronze → Silver)"
+requires-python = ">=3.12"
+dependencies = [
+    "akshare>=1.18.64",
+    "boto3>=1.43.18",
+    "httpx>=0.28.1",
+    "psycopg2-binary>=2.9.12",
+    "pydantic>=2.13.4",
+    "redis>=8.0.0",
+]

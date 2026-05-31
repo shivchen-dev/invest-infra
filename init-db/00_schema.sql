@@ -10,7 +10,7 @@ CREATE EXTENSION IF NOT EXISTS "pgcrypto";
 -- ==================== 1. 公司主数据 ====================
 CREATE TABLE companies (
     id              SERIAL PRIMARY KEY,
-    code            VARCHAR(10)  NOT NULL UNIQUE,        -- 股票代码：000001.SZ, 600519.SH
+    code            VARCHAR(20)  NOT NULL UNIQUE,        -- 股票代码：000001.SZ, 600519.SH
     name            VARCHAR(100) NOT NULL,               -- 公司全称
     short_name      VARCHAR(20),                         -- 简称
     industry        VARCHAR(100),                        -- 所属行业
