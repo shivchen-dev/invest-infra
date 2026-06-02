@@ -32,6 +32,10 @@ def _build_calculators():
         Momentum5dCalculator, Momentum20dCalculator, Momentum60dCalculator,
         Volatility20dCalculator, AvgTurnover20dCalculator,
         MA5DeviationCalculator, VolumeRatio5dCalculator,
+        Reversal5dCalculator, Reversal20dCalculator,
+        GapOpenPctCalculator, IntradayBreakPctCalculator,
+        VolumeSurgeCalculator, VolumeCVCalculator,
+        MainNetFlow5dCalculator, MainNetFlowRatio5dCalculator,
     )
     from src.factors.alternative import (
         SentimentScoreCalculator, NewsVolume7dCalculator, NewsVolumeChangeCalculator,
@@ -51,43 +55,54 @@ def _build_calculators():
         "avg_turnover_20d": AvgTurnover20dCalculator(),
         "ma5_deviation": MA5DeviationCalculator(),
         "volume_ratio_5d": VolumeRatio5dCalculator(),
+        "reversal_5d": Reversal5dCalculator(),
+        "reversal_20d": Reversal20dCalculator(),
+        "gap_open_pct": GapOpenPctCalculator(),
+        "intraday_break_pct": IntradayBreakPctCalculator(),
+        "volume_surge": VolumeSurgeCalculator(),
+        "volume_cv": VolumeCVCalculator(),
+        "main_net_flow_5d": MainNetFlow5dCalculator(),
+        "main_net_flow_ratio_5d": MainNetFlowRatio5dCalculator(),
         "sentiment_score": SentimentScoreCalculator(),
         "news_volume_7d": NewsVolume7dCalculator(),
         "news_volume_change": NewsVolumeChangeCalculator(),
     })
 
 
-def sync_definitions_to_db():
+def sync_definitions_to_db(conn=None):
     """将注册表中的因子定义写入 PostgreSQL factor_definitions 表（幂等）"""
     register_all()
     _build_calculators()
 
-    conn = psycopg2.connect(pg_cfg.uri)
+    _conn = conn or psycopg2.connect(pg_cfg.uri)
+    _close = conn is None
     try:
-        with conn.cursor() as cur:
-            inserted = updated = 0
-            for fd in list_factors():
-                cur.execute(
-                    """
-                    INSERT INTO factor_definitions
-                        (factor_key, name, category, sub_category, formula_desc, data_source, frequency)
-                    VALUES (%s,%s,%s,%s,%s,%s,%s)
-                    ON CONFLICT (factor_key) DO UPDATE SET
-                        name=EXCLUDED.name, category=EXCLUDED.category,
-                        sub_category=EXCLUDED.sub_category, updated_at=now()
-                    """,
-                    (fd.key, fd.name, fd.category.value, fd.sub_category,
-                     fd.description, fd.data_source, fd.frequency.value),
-                )
-                if cur.rowcount == 1:
-                    inserted += 1
-                else:
-                    updated += 1
-            conn.commit()
+        with _conn:
+            with _conn.cursor() as cur:
+                inserted = updated = 0
+                for fd in list_factors():
+                    cur.execute(
+                        """
+                        INSERT INTO factor_definitions
+                            (factor_key, name, category, sub_category, formula_desc, data_source, frequency)
+                        VALUES (%s,%s,%s,%s,%s,%s,%s)
+                        ON CONFLICT (factor_key) DO UPDATE SET
+                            name=EXCLUDED.name, category=EXCLUDED.category,
+                            sub_category=EXCLUDED.sub_category, updated_at=now()
+                        """,
+                        (fd.key, fd.name, fd.category.value, fd.sub_category,
+                         fd.description, fd.data_source, fd.frequency.value),
+                    )
+                    if cur.rowcount == 1:
+                        inserted += 1
+                    else:
+                        updated += 1
+                _conn.commit()
         logger.info(f"因子定义同步: 新增 {inserted}, 更新 {updated}")
         return {"inserted": inserted, "updated": updated}
     finally:
-        conn.close()
+        if _close:
+            _conn.close()
 
 
 def get_active_company_ids() -> list[int]:

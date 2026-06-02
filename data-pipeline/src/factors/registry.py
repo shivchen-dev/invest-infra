@@ -91,6 +91,22 @@ def register_all():
                         "(收盘价-MA5)/MA5", "daily_quotes", FactorFrequency.DAILY))
     register(FactorDef("volume_ratio_5d", "5日量比", FactorCategory.TECHNICAL, "volume",
                         "当日成交量/5日均量", "daily_quotes", FactorFrequency.DAILY))
+    register(FactorDef("reversal_5d", "5日反转因子", FactorCategory.TECHNICAL, "reversal",
+                        "-(近5日涨幅)，做空短期动量", "daily_quotes", FactorFrequency.DAILY))
+    register(FactorDef("reversal_20d", "20日反转因子", FactorCategory.TECHNICAL, "reversal",
+                        "-(近20日涨幅)", "daily_quotes", FactorFrequency.DAILY))
+    register(FactorDef("gap_open_pct", "跳空幅度", FactorCategory.TECHNICAL, "pattern",
+                        "(今日开盘价-昨日收盘价)/昨日收盘价", "daily_quotes", FactorFrequency.DAILY))
+    register(FactorDef("intraday_break_pct", "日内突破幅度", FactorCategory.TECHNICAL, "pattern",
+                        "(最高价-最低价)/最低价", "daily_quotes", FactorFrequency.DAILY))
+    register(FactorDef("volume_surge", "量能爆发", FactorCategory.TECHNICAL, "volume",
+                        "今日成交量/20日均量 - 1", "daily_quotes", FactorFrequency.DAILY))
+    register(FactorDef("volume_cv", "成交量变异系数", FactorCategory.TECHNICAL, "volume",
+                        "20日成交量标准差/均值", "daily_quotes", FactorFrequency.DAILY))
+    register(FactorDef("main_net_flow_5d", "5日主力净流入", FactorCategory.TECHNICAL, "money_flow",
+                        "近5日买盘金额-卖盘金额", "fund_flow_big_deal", FactorFrequency.DAILY))
+    register(FactorDef("main_net_flow_ratio_5d", "5日主力净流入占比", FactorCategory.TECHNICAL, "money_flow",
+                        "主力净流入/总成交金额", "fund_flow_big_deal", FactorFrequency.DAILY))
 
     # ── 另类因子 ──
     register(FactorDef("sentiment_score", "新闻情感分数", FactorCategory.ALTERNATIVE, "sentiment",
@@ -103,15 +119,17 @@ def register_all():
     logger.info(f"因子注册完成: 共 {len(_FACTORS)} 个")
 
 
-def get_factor_ids() -> dict[str, int]:
-    """从 PG factor_definitions 表获取 {key: id} 映射"""
-    import psycopg2
+def get_factor_ids(conn=None) -> dict[str, int]:
+    """从 PG factor_definitions 表获取 {key: id} 映射。
+    优先复用传入的 conn，否则新建（调用方负责关闭）。"""
     from src.config import pg
-
-    conn = psycopg2.connect(pg.uri)
+    _conn = conn or psycopg2.connect(pg.uri)
+    _close = conn is None  # 只有我们自己创建连接时才关闭
     try:
-        with conn.cursor() as cur:
-            cur.execute("SELECT factor_key, id FROM factor_definitions")
-            return {row[0]: row[1] for row in cur.fetchall()}
+        with _conn:
+            with _conn.cursor() as cur:
+                cur.execute("SELECT factor_key, id FROM factor_definitions")
+                return {row[0]: row[1] for row in cur.fetchall()}
     finally:
-        conn.close()
+        if _close:
+            _conn.close()

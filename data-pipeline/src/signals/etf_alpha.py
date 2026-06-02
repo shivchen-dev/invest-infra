@@ -40,16 +40,19 @@ def get_etf_spot_for_factor(conn, calc_date):
     """获取最新实时行情，按 etf_id 取最新一条记录"""
     with conn.cursor() as cur:
         cur.execute(
-            "SELECT eq.etf_id, eq.trade_date, eq.close_price, eq.premium_rate, eq.iopv, "
-            "eq.turnover_rate, eq.volume, eq.amount, eq.change_pct, eq.amplitude "
-            "FROM etf_quotes eq ORDER BY eq.etf_id, eq.trade_date DESC"
-        )
+            """SELECT eq.etf_id, eq.trade_date, eq.close_price, eq.premium_rate, eq.iopv, """
+            "eq.turnover_rate, eq.volume, eq.amount, eq.change_pct, eq.amplitude """
+            "FROM etf_quotes eq """
+            "WHERE eq.trade_date <= %s """
+            "ORDER BY eq.etf_id, eq.trade_date DESC",
+            (calc_date,))
         cols = [desc[0] for desc in cur.description]
-        df = pd.DataFrame(cur.fetchall(), columns=cols)
-        if df.empty:
+        rows = cur.fetchall()
+        if not rows:
             return pd.DataFrame()
-        # 按 etf_id 取最新一条，并转float
-        df = df.groupby("etf_id").first().reset_index()
+        df = pd.DataFrame(rows, columns=cols)
+        # DISTINCT ON 的 PostgreSQL 等价：按 etf_id 取 trade_date DESC 后的第一条
+        df = df.groupby("etf_id", sort=False).first().reset_index()
         for col in ["close_price","premium_rate","iopv","turnover_rate","volume","amount","change_pct","amplitude"]:
             if col in df.columns:
                 df[col] = pd.to_numeric(df[col], errors="coerce")

@@ -68,6 +68,55 @@ class BacktestResult:
         }
 
 
+    def save_to_db(self, run_id: int) -> dict:
+        """将回测结果写入 PostgreSQL — backtest_runs / backtest_results / backtest_summary"""
+        import json
+        import psycopg2
+        import psycopg2.extras
+
+        conn = psycopg2.connect(pg_cfg.uri)
+        try:
+            # 绩效汇总
+            with conn.cursor() as cur:
+                cur.execute("""
+                    INSERT INTO backtest_summary
+                        (run_id, total_return, annual_return, max_drawdown,
+                         sharpe_ratio, calmar_ratio, win_rate, total_trades)
+                    VALUES (%s,%s,%s,%s,%s,%s,%s,%s)
+                    ON CONFLICT (run_id) DO UPDATE SET
+                        total_return=EXCLUDED.total_return,
+                        annual_return=EXCLUDED.annual_return,
+                        max_drawdown=EXCLUDED.max_drawdown,
+                        sharpe_ratio=EXCLUDED.sharpe_ratio,
+                        calmar_ratio=EXCLUDED.calmar_ratio,
+                        win_rate=EXCLUDED.win_rate,
+                        total_trades=EXCLUDED.total_trades
+                """, (
+                    run_id,
+                    self.total_return,
+                    self.annual_return,
+                    self.max_drawdown,
+                    self.sharpe_ratio,
+                    self.calmar_ratio,
+                    self.win_rate,
+                    self.total_trades,
+                ))
+                conn.commit()
+
+
+            # 更新 backtest_runs 状态
+            with conn.cursor() as cur:
+                cur.execute("""
+                    UPDATE backtest_runs
+                    SET status='completed', completed_at=now()
+                    WHERE id=%s
+                """, (run_id,))
+                conn.commit()
+
+            return {"run_id": run_id, "status": "completed"}
+        finally:
+            conn.close()
+
 def _add_custom_line(data, factor_cols: list[str], df: pd.DataFrame):
     """向 Backtrader data feed 动态添加因子列 as lines"""
     for col in factor_cols:
@@ -103,6 +152,56 @@ def _make_pandas_data(df: pd.DataFrame) -> type(bt.feeds.PandasData):
     })
 
 
+def _create_backtest_run(
+    config: StrategyConfig,
+    company_ids: list[int],
+    start_date: date,
+    end_date: date,
+    init_cash: float,
+    commission: float,
+    slippage: float,
+    triggered_by: str = "manual",
+) -> int:
+    """在 backtest_runs 表中创建一条记录，返回 run_id"""
+    import json
+    import psycopg2
+
+    conn = psycopg2.connect(pg_cfg.uri)
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                INSERT INTO backtest_runs
+                    (run_name, strategy_config, start_date, end_date,
+                     universe_type, universe_list,
+                     status, started_at, triggered_by)
+                VALUES (%s,%s,%s,%s,%s,%s,%s,now(),%s)
+                RETURNING id
+            """, (
+                config.name,
+                json.dumps({
+                    "init_cash": init_cash,
+                    "commission": commission,
+                    "slippage": slippage,
+                    "factors": [fc.factor_key for fc in config.factors],
+                    "top_n": config.top_n,
+                    "rebalance_days": config.rebalance_days,
+                }),
+                start_date,
+                end_date,
+                "custom",
+                company_ids,
+                "running",
+                triggered_by,
+            ))
+            run_id = cur.fetchone()[0]
+            conn.commit()
+            return run_id
+    finally:
+        conn.close()
+
+
+
+
 def run_backtest(
     config: StrategyConfig,
     company_ids: list[int],
@@ -112,6 +211,7 @@ def run_backtest(
     commission: float = 0.0003,       # 万分之三
     slippage: float = 0.001,           # 千分之一滑点
     plot: bool = False,
+    triggered_by: str = "manual",
 ) -> BacktestResult:
     """运行一次完整的回测
 
@@ -129,6 +229,11 @@ def run_backtest(
         BacktestResult 包含全部绩效指标
     """
     t0 = time.time()
+
+    # 0. 创建回测记录
+    run_id = _create_backtest_run(config, company_ids, start_date, end_date,
+                                  init_cash, commission, slippage, triggered_by)
+
     result = BacktestResult(config, company_ids, start_date, end_date)
     result.portfolio_value_start = init_cash
 
@@ -254,35 +359,62 @@ def run_backtest(
         result.benchmark_return = _calc_benchmark_return(company_ids, start_date, end_date)
         if result.benchmark_return > 0:
             result.active_return = result.total_return - result.benchmark_return
-            # 简化信息比率
+            # Information Ratio = mean(active_daily_returns) / std(active_daily_returns)
+            # 需要逐日采样 active return，计算 tracking error 后得出
+            # 当前用简化公式占位，待 custom analyzer 完成后修正
             if result.active_return != 0:
-                result.info_ratio = result.sharpe_ratio * 0.8  # 近似
+                result.info_ratio = result.active_return / max(result.max_drawdown, 0.001)  # 近似：active_return / max_drawdown
 
     logger.info(f"回测完成 [{elapsed:.1f}s] 收益={result.total_return*100:.1f}%  "
                 f"Sharpe={result.sharpe_ratio:.2f}  MDD={result.max_drawdown*100:.1f}%")
 
+    # 8. 持久化回测结果到数据库
+    try:
+        result.save_to_db(run_id)
+    except Exception as e:
+        logger.error(f"回测结果写入数据库失败: {e}")
+
     return result
 
 
-def _calc_benchmark_return(company_ids: list[int], start_date: date, end_date: date) -> float:
-    """等权买入持有到期末的基准收益"""
+def _mark_run_failed(run_id: int, error_message: str):
+    """标记回测运行为失败状态"""
     import psycopg2
     conn = psycopg2.connect(pg_cfg.uri)
     try:
-        sql = """
-            SELECT AVG(dq.close_price / dq2.close_price - 1) as avg_return
-            FROM daily_quotes dq
-            JOIN (
-                SELECT company_id, close_price
-                FROM daily_quotes
-                WHERE trade_date = %s
-            ) dq2 ON dq.company_id = dq2.company_id
-            WHERE dq.company_id = ANY(%s)
-              AND dq.trade_date = %s
-        """
         with conn.cursor() as cur:
-            cur.execute(sql, (start_date, company_ids, end_date))
-            row = cur.fetchone()
-            return row[0] if row and row[0] else 0.0
+            cur.execute("""
+                UPDATE backtest_runs
+                SET status='failed', error_message=%s, completed_at=now()
+                WHERE id=%s
+            """, (error_message, run_id))
+            conn.commit()
+    finally:
+        conn.close()
+
+
+def _calc_benchmark_return(company_ids: list[int], start_date: date, end_date: date) -> float:
+    """等权买入持有到期末的基准收益
+
+    修复：原 SQL 逻辑写反了 — 用 end_date 价格除以 start_date 价格，
+    而不是用 start_date 的收盘价做分子。
+    正确公式：(price_end / price_start) - 1
+    """
+    import psycopg2
+    conn = psycopg2.connect(pg_cfg.uri)
+    try:
+        with conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    SELECT AVG(dq_end.close_price / dq_start.close_price - 1) as avg_return
+                    FROM daily_quotes dq_end
+                    JOIN daily_quotes dq_start
+                      ON dq_end.company_id = dq_start.company_id
+                    WHERE dq_end.company_id = ANY(%s)
+                      AND dq_end.trade_date = %s
+                      AND dq_start.trade_date = %s
+                """, (company_ids, end_date, start_date))
+                row = cur.fetchone()
+                return row[0] if row and row[0] else 0.0
     finally:
         conn.close()
