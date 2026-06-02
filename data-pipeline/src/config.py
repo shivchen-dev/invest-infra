@@ -22,7 +22,11 @@ class PGConfig:
     port: int = env_int("PG_PORT", 5432)
     db: str = env("PG_DB", "investdb")
     user: str = env("PG_USER", "invest")
-    password: str = env("PG_PASSWORD", "REDACTED_PG_PASSWORD")
+    password: str = env("PG_PASSWORD", "")  # 必须环境变量覆盖，无默认值
+
+    def __post_init__(self):
+        if not self.password:
+            raise ValueError("PG_PASSWORD env var must be set")
 
     @property
     def dsn(self) -> str:
@@ -44,10 +48,14 @@ class RedisConfig:
 @dataclass
 class MinIOConfig:
     endpoint: str = env("MINIO_ENDPOINT", "localhost:9000")
-    access_key: str = env("MINIO_ACCESS_KEY", "REDACTED_MINIO_USER")
-    secret_key: str = env("MINIO_SECRET_KEY", "REDACTED_MINIO_PASSWORD")
+    access_key: str = env("MINIO_ACCESS_KEY", "")
+    secret_key: str = env("MINIO_SECRET_KEY", "")  # 必须环境变量覆盖
     secure: bool = env("MINIO_SECURE", "false").lower() == "true"
     region: str = env("MINIO_REGION", "cn-east-1")
+
+    def __post_init__(self):
+        if not self.secret_key:
+            raise ValueError("MINIO_SECRET_KEY env var must be set")
 
     bucket_bronze_financial: str = "bronze-financial"
     bucket_bronze_quotes: str = "bronze-quotes"
