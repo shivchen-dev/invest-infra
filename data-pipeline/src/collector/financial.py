@@ -12,6 +12,8 @@ from typing import Optional
 import akshare as ak
 import pandas as pd
 
+from src.collector.retry import with_retry
+
 logger = logging.getLogger(__name__)
 
 
@@ -31,6 +33,7 @@ def _report_type_from_date(date_str: str) -> str:
         return "annual"
 
 
+@with_retry()
 def fetch_financial_report(stock_code: str) -> list[dict]:
     """获取单只股票的财报摘要数据，返回 list[dict] 每期一条"""
     raw_code = stock_code.split(".")[0]
@@ -81,10 +84,13 @@ def fetch_financial_report(stock_code: str) -> list[dict]:
             "gross_profit":   _val("毛利"),
             "net_profit":     _val("净利润"),
             "parent_net_profit": _val("归母净利润"),
-            "total_assets":   _val("总资产"),
-            "total_liabilities": _val("总负债"),
-            "total_equity":   _val("股东权益合计(净资产)"),
-            "operating_cf":   _val("经营现金流量净额"),
+            "total_assets":       _val("总资产"),
+            "total_liabilities":   _val("总负债"),
+            "total_equity":        _val("股东权益合计(净资产)"),
+            "operating_cf":        _val("经营现金流量净额"),
+            # ROA（%）和资产负债率（%）—— 用 computed 指标补充原始字段缺失
+            "roa_raw":            _val("总资产报酬率(ROA)"),
+            "debt_ratio_raw":      _val("资产负债率"),
             "source": "akshare",
         })
 
@@ -93,6 +99,77 @@ def fetch_financial_report(stock_code: str) -> list[dict]:
     return records
 
 
+@with_retry()
+def fetch_financial_indicator(stock_code: str, start_year: int = 2020) -> list[dict]:
+    """
+    获取单只股票的财务指标数据（从 stock_financial_analysis_indicator）。
+    用于补充 ROA、DebtRatio、TotalAssets 等财报摘要中缺失的原始字段。
+
+    返回 list[dict]，每期一条，包含:
+      report_date, report_type, fiscal_year,
+      total_assets, total_liabilities, debt_ratio_raw, roa_raw
+    """
+    raw_code = stock_code.split(".")[0]
+    logger.info(f"正在获取 {raw_code} 财务指标 ...")
+
+    try:
+        df = ak.stock_financial_analysis_indicator(symbol=raw_code, start_year=str(start_year))
+    except Exception as e:
+        logger.warning(f"{raw_code} 财务指标获取失败: {e}")
+        return []
+
+    if df is None or df.empty:
+        return []
+
+    records = []
+    for _, row in df.iterrows():
+        report_date = row.get("日期")
+        if report_date is None:
+            continue
+        if hasattr(report_date, "date"):
+            report_date = report_date.date()
+
+        fiscal_year = report_date.year
+        report_type = _report_type_from_date(str(report_date).replace("-", ""))
+        if not report_type:
+            continue
+
+        def _f(v) -> Optional[float]:
+            try:
+                return float(v) if pd.notna(v) else None
+            except (ValueError, TypeError):
+                return None
+
+        # 总资产（元）
+        total_assets = _f(row.get("总资产(元)"))
+        # 资产负债率（%）
+        debt_ratio_pct = _f(row.get("资产负债率(%)"))
+        # 资产报酬率 ROA（%）
+        roa_pct = _f(row.get("资产报酬率(%)"))
+
+        # 用资产负债率反推总负债：liabilities = assets * debt_ratio% / 100
+        total_liabilities = None
+        if total_assets is not None and debt_ratio_pct is not None and total_assets != 0:
+            total_liabilities = total_assets * debt_ratio_pct / 100.0
+
+        records.append({
+            "stock_code": stock_code,
+            "report_date": report_date,
+            "report_type": report_type,
+            "fiscal_year": fiscal_year,
+            "total_assets": total_assets,
+            "total_liabilities": total_liabilities,
+            "debt_ratio_raw": debt_ratio_pct,   # 百分比形式，供验证用
+            "roa_raw": roa_pct,                  # 百分比形式，供验证用
+            "source": "akshare-indicator",
+        })
+
+    records.sort(key=lambda r: r["report_date"], reverse=True)
+    logger.info(f"{raw_code} 财务指标: {len(records)} 期")
+    return records
+
+
+@with_retry()
 def fetch_financial_detail(stock_code: str) -> dict[str, list[dict]]:
     """获取股票详细财务数据，按指标分类返回"""
     raw_code = stock_code.split(".")[0]

@@ -6,6 +6,7 @@ from typing import Optional
 
 import akshare as ak
 
+from src.collector.retry import with_retry
 from src.config import pg
 
 logger = logging.getLogger(__name__)
@@ -14,6 +15,7 @@ logger = logging.getLogger(__name__)
 # ─── 实时行情 ────────────────────────────────────────────────────────────────
 
 
+@with_retry()
 def fetch_etf_spot() -> list[dict]:
     """
     获取 ETF 实时行情（东方财富），包含 IOPV/溢价率等特有字段。
@@ -29,7 +31,7 @@ def fetch_etf_spot() -> list[dict]:
             continue
         records.append({
             "code": code,
-            "name": str(row.get("名称", "")).strip(),
+            "name": str(row.get("名称", "")),
             "short_name": str(row.get("名称", ""))[:6].strip(),
             "category": _categorize(row),
             "exchange_code": "SZSE" if code[0] in ('0', '1', '3') else "SSE",
@@ -61,6 +63,7 @@ def _etf_prefix(code: str) -> str:
     return f"sz{code}" if first in ('0', '1', '3') else f"sh{code}"
 
 
+@with_retry()
 def fetch_etf_list() -> list[dict]:
     """
     获取 ETF 列表（实时行情，同 fetch_etf_spot）。
@@ -83,6 +86,7 @@ def _categorize(row) -> str:
     return "stock"
 
 
+@with_retry()
 def fetch_etf_hist(code: str, start_date: date, end_date: date) -> list[dict]:
     """
     获取单只 ETF 的历史日线（优先新浪接口，fallback 到东方财富）。

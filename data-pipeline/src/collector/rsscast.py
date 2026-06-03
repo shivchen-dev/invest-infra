@@ -7,7 +7,19 @@ import urllib.error
 from datetime import date
 from typing import Optional
 
+from src.collector.retry import with_retry
+
 logger = logging.getLogger(__name__)
+
+
+class RssCastError(Exception):
+    """RssCast 请求级别的错误（网络超时、认证失败、JSON-RPC error 等）"""
+    pass
+
+
+class RssCastNoData(Exception):
+    """RssCast 返回空数据（代码错误或该日期无数据）"""
+    pass
 
 
 class RssCastClient:
@@ -24,7 +36,12 @@ class RssCastClient:
         return n
 
     def _call(self, tool_name: str, arguments: dict) -> dict:
-        """发送 JSON-RPC 2.0 请求到 RssCast MCP，返回 parsed result。"""
+        """发送 JSON-RPC 2.0 请求到 RssCast MCP，返回 parsed result。
+
+        抛出:
+            RssCastError: 网络超时、HTTP 错误、认证失败、JSON-RPC error 等请求级错误
+            RssCastNoData: result 为空（内容不存在），调用方应视为"无数据"而非"失败"
+        """
         if not self.endpoint or not self.token:
             raise RuntimeError("RssCast not configured — provide endpoint and token")
 
@@ -49,17 +66,26 @@ class RssCastClient:
             with urllib.request.urlopen(req, timeout=30) as resp:
                 data = json.loads(resp.read().decode("utf-8"))
         except urllib.error.HTTPError as e:
-            logger.error(f"RssCast HTTP error {e.code}: {e.read()}")
-            return {}
+            body = e.read().decode("utf-8", errors="replace")
+            logger.error(f"RssCast HTTP {e.code}: {body[:200]}")
+            raise RssCastError(f"HTTP {e.code}") from e
+        except TimeoutError:
+            logger.error("RssCast request timeout")
+            raise RssCastError("timeout") from e
         except Exception as e:
             logger.error(f"RssCast request failed: {e}")
-            return {}
+            raise RssCastError(str(e)) from e
 
         if "error" in data:
-            logger.error(f"RssCast JSON-RPC error: {data['error']}")
-            return {}
+            err = data["error"]
+            logger.error(f"RssCast JSON-RPC error: {err}")
+            raise RssCastError(str(err))
 
-        return data.get("result", {})
+        result = data.get("result", {})
+        if not result:
+            raise RssCastNoData(f"no result for {tool_name}")
+
+        return result
 
     # ─── 工具封装 ─────────────────────────────────────────────────────────────
 
@@ -70,12 +96,12 @@ class RssCastClient:
         result = self._call("StockPriceQuery", {"codes": codes})
         raw = result.get("content", [])
         if not raw:
-            return []
+            raise RssCastNoData(f"empty content for StockPriceQuery: {codes}")
         try:
             return json.loads(raw[0].get("text", "[]"))
         except (json.JSONDecodeError, KeyError, IndexError) as e:
             logger.warning(f"fetch_stock_quotes parse error: {e}")
-            return []
+            raise RssCastNoData(f"parse error: {e}") from e
 
     def fetch_stock_kline(
         self,
@@ -101,12 +127,17 @@ class RssCastClient:
         )
         raw = result.get("content", [])
         if not raw:
-            return []
+            raise RssCastNoData(f"empty content for StockKLineQuery: {codes}")
         try:
-            return json.loads(raw[0].get("text", "[]"))
+            text = raw[0].get("text", "[]")
+            start_idx = text.find("[{")
+            end_idx = text.rfind("]")
+            if start_idx < 0:
+                return []
+            return json.loads(text[start_idx:end_idx + 1])
         except (json.JSONDecodeError, KeyError, IndexError) as e:
             logger.warning(f"fetch_stock_kline parse error: {e}")
-            return []
+            raise RssCastNoData(f"parse error: {e}") from e
 
     def fetch_index_quotes(self, codes: list[str]) -> list[dict]:
         """查询股票指数实时价格。返回原始 RssCast 格式。"""
@@ -115,12 +146,12 @@ class RssCastClient:
         result = self._call("StockIndexPriceQuery", {"codes": codes})
         raw = result.get("content", [])
         if not raw:
-            return []
+            raise RssCastNoData(f"empty content for StockIndexPriceQuery: {codes}")
         try:
             return json.loads(raw[0].get("text", "[]"))
         except (json.JSONDecodeError, KeyError, IndexError) as e:
             logger.warning(f"fetch_index_quotes parse error: {e}")
-            return []
+            raise RssCastNoData(f"parse error: {e}") from e
 
     def fetch_index_kline(
         self,
@@ -146,12 +177,17 @@ class RssCastClient:
         )
         raw = result.get("content", [])
         if not raw:
-            return []
+            raise RssCastNoData(f"empty content for StockIndexKLineQuery: {codes}")
         try:
-            return json.loads(raw[0].get("text", "[]"))
+            text = raw[0].get("text", "[]")
+            start_idx = text.find("[{")
+            end_idx = text.rfind("]")
+            if start_idx < 0:
+                return []
+            return json.loads(text[start_idx:end_idx + 1])
         except (json.JSONDecodeError, KeyError, IndexError) as e:
             logger.warning(f"fetch_index_kline parse error: {e}")
-            return []
+            raise RssCastNoData(f"parse error: {e}") from e
 
     # ─── 字段映射：RssCast → Silver 层标准字段 ───────────────────────────────
 
@@ -236,34 +272,44 @@ def _client() -> RssCastClient:
     return _default_client
 
 
-#透传函数
+# 透传函数
+
+
+@with_retry()
 def fetch_stock_quotes(codes: list[str]) -> list[dict]:
     return _client().fetch_stock_quotes(codes)
 
 
+@with_retry()
 def fetch_stock_kline(codes: list[str], start_date=None, end_date=None) -> list[dict]:
     return _client().fetch_stock_kline(codes, start_date, end_date)
 
 
+@with_retry()
 def fetch_index_quotes(codes: list[str]) -> list[dict]:
     return _client().fetch_index_quotes(codes)
 
 
+@with_retry()
 def fetch_index_kline(codes: list[str], start_date=None, end_date=None) -> list[dict]:
     return _client().fetch_index_kline(codes, start_date, end_date)
 
 
+@with_retry()
 def fetch_stock_quotes_normalized(codes: list[str]) -> list[dict]:
     return _client().fetch_stock_quotes_normalized(codes)
 
 
+@with_retry()
 def fetch_stock_kline_normalized(codes: list[str], start_date=None, end_date=None) -> list[dict]:
     return _client().fetch_stock_kline_normalized(codes, start_date, end_date)
 
 
+@with_retry()
 def fetch_index_quotes_normalized(codes: list[str]) -> list[dict]:
     return _client().fetch_index_quotes_normalized(codes)
 
 
+@with_retry()
 def fetch_index_kline_normalized(codes: list[str], start_date=None, end_date=None) -> list[dict]:
     return _client().fetch_index_kline_normalized(codes, start_date, end_date)

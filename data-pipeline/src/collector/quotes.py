@@ -6,6 +6,7 @@ from typing import Optional
 
 import akshare as ak
 
+from src.collector.retry import with_retry
 from src.config import collector
 
 logger = logging.getLogger(__name__)
@@ -26,6 +27,7 @@ def _market_for_code(raw_code: str) -> str:
     return "SH"
 
 
+@with_retry()
 def fetch_quotes(
     stock_code: str,
     start_date: Optional[date] = None,

@@ -6,9 +6,12 @@ from typing import Optional
 
 import akshare as ak
 
+from src.collector.retry import with_retry
+
 logger = logging.getLogger(__name__)
 
 
+@with_retry()
 def fetch_stock_news(stock_code: str) -> list[dict]:
     """获取个股新闻（东方财富源）"""
     raw_code = stock_code.split(".")[0]

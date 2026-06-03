@@ -5,6 +5,7 @@ from typing import Optional
 
 import akshare as ak
 
+from src.collector.retry import with_retry
 from src.config import pg
 
 logger = logging.getLogger(__name__)
@@ -21,6 +22,7 @@ def _market_for_code(code: str) -> str:
     return "OTHER"
 
 
+@with_retry()
 def fetch_all_companies() -> list[dict]:
     """获取 A 股全量上市公司基本信息"""
     logger.info("正在从 akshare 获取 A 股公司列表 ...")
