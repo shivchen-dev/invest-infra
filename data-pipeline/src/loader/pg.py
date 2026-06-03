@@ -127,6 +127,9 @@ def batch_upsert_quotes(records: list[dict]) -> dict:
             ))
 
         if not rows:
+            duration_ms = int((time.time() - start_time) * 1000)
+            status = "success" if skipped == 0 else "partial"
+            log_audit(conn, "quotes", trade_date, len(records), 0, skipped, status, None, duration_ms)
             return {"written": 0, "skipped": skipped}
 
         try:
@@ -192,6 +195,9 @@ def batch_upsert_financial(records: list[dict]) -> dict:
             ))
 
         if not rows:
+            duration_ms = int((time.time() - start_time) * 1000)
+            status = "success" if skipped == 0 else "partial"
+            log_audit(conn, "financial", trade_date, len(records), 0, skipped, status, None, duration_ms)
             return {"written": 0, "skipped": skipped}
 
         try:
@@ -261,6 +267,9 @@ def backfill_financial_assets(records: list[dict]) -> dict:
             ))
 
         if not rows:
+            duration_ms = int((time.time() - start_time) * 1000)
+            status = "success" if skipped == 0 else "partial"
+            log_audit(conn, "financial_assets", trade_date, len(records), 0, skipped, status, None, duration_ms)
             return {"written": 0, "skipped": skipped}
 
         try:
@@ -316,6 +325,9 @@ def batch_upsert_news(records: list[dict]) -> dict:
             ))
 
         if not rows:
+            duration_ms = int((time.time() - start_time) * 1000)
+            status = "success" if skipped == 0 else "partial"
+            log_audit(conn, "news", trade_date, len(records), 0, skipped, status, None, duration_ms)
             return {"written": 0, "skipped": skipped}
 
         try:
@@ -378,6 +390,9 @@ def batch_upsert_index_quotes(records: list[dict]) -> dict:
             ))
 
         if not rows:
+            duration_ms = int((time.time() - start_time) * 1000)
+            status = "success" if skipped == 0 else "partial"
+            log_audit(conn, "index_quotes", trade_date, len(records), 0, skipped, status, None, duration_ms)
             return {"written": 0, "skipped": skipped}
 
         try:
@@ -451,6 +466,9 @@ def batch_upsert_etf_quotes(records: list[dict]) -> dict:
             ))
 
         if not rows:
+            duration_ms = int((time.time() - start_time) * 1000)
+            status = "success" if skipped == 0 else "partial"
+            log_audit(conn, "etf_quotes", trade_date, len(records), 0, skipped, status, None, duration_ms)
             return {"written": 0, "skipped": skipped}
 
         try:
