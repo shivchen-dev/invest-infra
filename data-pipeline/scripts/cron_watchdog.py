@@ -452,9 +452,8 @@ def send_alert(report: dict):
         )
         if r.returncode == 0:
             logger.info("QQ 告警推送成功")
-            # 推送成功后删除 alert 文件，避免下次重复告警
-            alert_file.unlink(missing_ok=True)
-            logger.info(f"已清除告警文件 {alert_file}")
+            # 注意：alert 文件不自动删除，待我处理完后再手动清理
+            logger.info(f"告警已推送，文件保留: {alert_file}")
         else:
             logger.warning(f"QQ 推送失败: {r.stderr.strip()}")
     except Exception as e:
