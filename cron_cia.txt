@@ -22,8 +22,9 @@
 #  │  Watchdog 看门狗（每小时自动巡检）                                │
 #  │                                                                    │
 #  │  - 每整点触发，检查所有任务距上次成功执行的时间                  │
-#  │  - 超阈值（alert_threshold_s）→ 告警写入 /tmp/cron_alert.json   │
-#  │  - 超重试阈值（retry_threshold_s）→ 通过 cron_dispatcher.py 补发  │
+#  │  - 超阈值（alert_threshold_s）→ 尝试通过 cron_dispatcher.py 补发 │
+#  │  - 补发后仍异常 → 推送 QQ 频道（c2c:43C77867478A33B101FA705AA70754E3）│
+#  │  - 告警文件 /tmp/cron_alert.json 推送后保留，由我处理完后再手动删除 │
 #  │  - 静音窗口：23:00-08:00（不告警）                              │
 #  │                                                                    │
 #  │  日志路径：/home/claw/invest-infra/data-pipeline/logs/          │
@@ -31,7 +32,7 @@
 #  └─────────────────────────────────────────────────────────────────┘
 #
 #  执行状态文件：/tmp/cron_exec_status.json（JSON，各任务独立状态）
-#  告警状态文件：/tmp/cron_alert.json（watchdog 写入，供心跳读取）
+#  告警状态文件：/tmp/cron_alert.json（推送后保留，需手动删除）
 #
 #  ┌─────────────────────────────────────────────────────────────────────┐
 #  │  架构说明                                                         │
@@ -42,11 +43,15 @@
 #  │      ↓                                                            │
 #  │  状态写入 /tmp/cron_exec_status.json                              │
 #  │      ↓                                                            │
-#  │  watchdog 读取状态文件 → 巡检 → 补发/告警                         │
+#  │  watchdog 读取状态文件 → 巡检 → 补发/推送 QQ                     │
+#  │                                           ↓                       │
+#  │                              /tmp/cron_alert.json 推送后保留       │
+#  │                              → CIA 处理 → 手动删除 alert 文件     │
 #  │                                                                    │
 #  │  执行日志：/home/claw/invest-infra/data-pipeline/logs/            │
 #  │            cron_dispatcher.log（所有任务统一日志）                 │
 #  │  执行状态：/tmp/cron_exec_status.json                             │
+#  │  告警推送：QQ c2c:43C77867478A33B101FA705AA70754E3                │
 #  └─────────────────────────────────────────────────────────────────┘
 #
 # ════════════════════════════════════════════════════════════════════════════
