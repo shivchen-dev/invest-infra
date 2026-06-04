@@ -22,7 +22,11 @@ def fetch_etf_spot() -> list[dict]:
     返回 [{code, name, latest_price, iopv, premium_rate, volume, amount, ...}, ...]
     """
     logger.info("正在获取 ETF 实时行情 (fund_etf_spot_em) ...")
-    df = ak.fund_etf_spot_em()
+    try:
+        df = ak.fund_etf_spot_em()
+    except Exception as e:
+        logger.error(f"ETF实时行情获取失败: {e}", exc_info=True)
+        return []
     logger.info(f"获取到 {len(df)} 只ETF")
     records = []
     for _, row in df.iterrows():
@@ -60,7 +64,7 @@ def _etf_prefix(code: str) -> str:
     """ETF代码转新浪格式：510300 → sh510300, 159919 → sz159919"""
     code = code.strip()
     first = code[0] if code else '5'
-    return f"sz{code}" if first in ('0', '1', '3') else f"sh{code}"
+    return f"sh{code}" if first == '6' else f"sz{code}"
 
 
 @with_retry()
@@ -174,38 +178,39 @@ def fetch_etf_hist(code: str, start_date: date, end_date: date) -> list[dict]:
 
 def sync_etfs_to_db(records: list[dict]) -> dict:
     """同步 ETF 列表到 etfs 表（upsert）。"""
-    import psycopg2
 
     if not records:
         return {"inserted": 0, "updated": 0}
 
-    conn = psycopg2.connect(pg.uri)
-    try:
-        with conn.cursor() as cur:
-            inserted = updated = 0
-            for r in records:
-                cur.execute(
-                    """
-                    INSERT INTO etfs
-                        (code, name, short_name, category, exchange_code)
-                    VALUES (%(code)s, %(name)s, %(short_name)s, %(category)s, %(exchange_code)s)
-                    ON CONFLICT (code) DO UPDATE SET
-                        name = EXCLUDED.name,
-                        short_name = EXCLUDED.short_name,
-                        category = EXCLUDED.category,
-                        updated_at = now()
-                    """,
-                    r,
-                )
-                if cur.rowcount == 1:
-                    inserted += 1
-                else:
-                    updated += 1
-            conn.commit()
-        logger.info(f"ETF列表同步: 新增 {inserted}, 更新 {updated}")
-        return {"inserted": inserted, "updated": updated}
-    finally:
-        conn.close()
+    with pg.get_conn() as conn:
+        try:
+            with conn.cursor() as cur:
+                inserted = updated = 0
+                for r in records:
+                    cur.execute(
+                        """
+                        INSERT INTO etfs
+                            (code, name, short_name, category, exchange_code)
+                        VALUES (%(code)s, %(name)s, %(short_name)s, %(category)s, %(exchange_code)s)
+                        ON CONFLICT (code) DO UPDATE SET
+                            name = EXCLUDED.name,
+                            short_name = EXCLUDED.short_name,
+                            category = EXCLUDED.category,
+                            updated_at = now()
+                        """,
+                        r,
+                    )
+                    if cur.rowcount == 1:
+                        inserted += 1
+                    else:
+                        updated += 1
+                conn.commit()
+            logger.info(f"ETF列表同步: 新增 {inserted}, 更新 {updated}")
+            return {"inserted": inserted, "updated": updated}
+        except Exception as e:
+            logger.error(f"ETF列表同步失败: {e}", exc_info=True)
+            conn.rollback()
+            return {"inserted": 0, "updated": 0}
 
 
 def batch_fetch_etf_hist(start_year: int = 2025, limit: int = 1486) -> int:
@@ -218,7 +223,6 @@ def batch_fetch_etf_hist(start_year: int = 2025, limit: int = 1486) -> int:
     返回: 写入记录数
     """
     from datetime import date
-    import psycopg2
 
     # 获取ETF列表
     spot = fetch_etf_spot()
@@ -227,64 +231,65 @@ def batch_fetch_etf_hist(start_year: int = 2025, limit: int = 1486) -> int:
     start = date(start_year, 1, 1)
     end = date.today()
 
-    conn = psycopg2.connect(pg.uri)
     total_written = 0
     errors = 0
 
-    try:
-        for i, etf in enumerate(target):
-            code = etf["code"]
-            sina_symbol = _etf_prefix(code)
-            try:
-                df = ak.fund_etf_hist_sina(symbol=sina_symbol)
-                if df is None or df.empty:
-                    continue
-
-                # 过滤2025至今
-                import pandas as pd
-                df["date"] = pd.to_datetime(df["date"]).dt.date
-                df = df[df["date"] >= start]
-                if df.empty:
-                    continue
-
-                # 获取 etf_id
-                with conn.cursor() as cur:
-                    cur.execute("SELECT id FROM etfs WHERE code = %s", (code,))
-                    row = cur.fetchone()
-                    if not row:
+    with pg.get_conn() as conn:
+        try:
+            for i, etf in enumerate(target):
+                code = etf["code"]
+                sina_symbol = _etf_prefix(code)
+                try:
+                    df = ak.fund_etf_hist_sina(symbol=sina_symbol)
+                    if df is None or df.empty:
                         continue
-                    etf_id = row[0]
 
-                with conn.cursor() as cur:
-                    for _, row in df.iterrows():
-                        cur.execute("""
-                            INSERT INTO etf_quotes
-                                (etf_id, trade_date, open_price, high_price, low_price,
-                                 close_price, volume, amount)
-                            VALUES (%s,%s,%s,%s,%s,%s,%s,%s)
-                            ON CONFLICT (etf_id, trade_date) DO UPDATE SET
-                                open_price=EXCLUDED.open_price,
-                                high_price=EXCLUDED.high_price,
-                                low_price=EXCLUDED.low_price,
-                                close_price=EXCLUDED.close_price,
-                                volume=EXCLUDED.volume,
-                                amount=EXCLUDED.amount
-                            """, (etf_id, row["date"],
-                                  row["open"], row["high"], row["low"], row["close"],
-                                  row["volume"], row["amount"]))
-                        total_written += 1
+                    # 过滤2025至今
+                    import pandas as pd
+                    df["date"] = pd.to_datetime(df["date"]).dt.date
+                    df = df[df["date"] >= start]
+                    if df.empty:
+                        continue
 
-                if (i + 1) % 100 == 0:
-                    conn.commit()
-                    logger.info(f"ETF历史K线进度: {i+1}/{len(target)}, 累计写入: {total_written}")
+                    # 获取 etf_id
+                    with conn.cursor() as cur:
+                        cur.execute("SELECT id FROM etfs WHERE code = %s", (code,))
+                        row = cur.fetchone()
+                        if not row:
+                            continue
+                        etf_id = row[0]
 
-            except Exception as e:
-                errors += 1
-                logger.debug(f"ETF {code} K线失败: {e}")
+                    with conn.cursor() as cur:
+                        for _, row in df.iterrows():
+                            cur.execute("""
+                                INSERT INTO etf_quotes
+                                    (etf_id, trade_date, open_price, high_price, low_price,
+                                     close_price, volume, amount)
+                                VALUES (%s,%s,%s,%s,%s,%s,%s,%s)
+                                ON CONFLICT (etf_id, trade_date) DO UPDATE SET
+                                    open_price=EXCLUDED.open_price,
+                                    high_price=EXCLUDED.high_price,
+                                    low_price=EXCLUDED.low_price,
+                                    close_price=EXCLUDED.close_price,
+                                    volume=EXCLUDED.volume,
+                                    amount=EXCLUDED.amount
+                                """, (etf_id, row["date"],
+                                      row["open"], row["high"], row["low"], row["close"],
+                                      row["volume"], row["amount"]))
+                            total_written += 1
 
-        conn.commit()
-        logger.info(f"ETF历史K线采集完成: 写入{total_written}条, 失败{errors}只")
-        return total_written
+                    if (i + 1) % 100 == 0:
+                        conn.commit()
+                        logger.info(f"ETF历史K线进度: {i+1}/{len(target)}, 累计写入: {total_written}")
 
-    finally:
-        conn.close()
+                except Exception as e:
+                    errors += 1
+                    logger.debug(f"ETF {code} K线失败: {e}")
+
+            conn.commit()
+            logger.info(f"ETF历史K线采集完成: 写入{total_written}条, 失败{errors}只")
+            return total_written
+
+        except Exception as e:
+            logger.error(f"ETF历史K线批量采集异常: {e}", exc_info=True)
+            return total_written

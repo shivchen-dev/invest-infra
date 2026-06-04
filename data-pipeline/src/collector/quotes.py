@@ -24,7 +24,7 @@ def _market_for_code(raw_code: str) -> str:
         return "SZ"
     elif raw_code.startswith("8") or raw_code.startswith("4") or raw_code.startswith("92"):
         return "BJ"
-    return "SH"
+    raise ValueError(f"未知市场代码: {raw_code}")
 
 
 @with_retry()
@@ -53,7 +53,7 @@ def fetch_quotes(
             end_date=end_date.strftime("%Y%m%d"),
         )
     except Exception as e:
-        logger.warning(f"{symbol} 行情获取失败: {e}")
+        logger.error(f"{symbol} 行情获取失败: {e}", exc_info=True)
         return []
 
     if df is None or df.empty:
@@ -71,8 +71,12 @@ def fetch_quotes(
         "turnover": "turnover_rate",
     }
 
+    # 计算 pre_close 用于标准涨跌幅（替代昨收）
+    df["pre_close"] = df["close"].shift(1)
+    df["change_pct"] = ((df["close"] - df["pre_close"]) / df["pre_close"] * 100).round(4)
+
     records = []
-    for _, row in df.iterrows():
+    for row in df.to_dict('records'):
         r = {"stock_code": stock_code, "source": "akshare-sina"}
         for src, dst in field_map.items():
             v = row.get(src)
@@ -83,9 +87,10 @@ def fetch_quotes(
                     pass
             else:
                 r[dst] = None
-        # 计算涨跌幅（如果没有）
-        if r.get("close_price") and r.get("open_price"):
-            r["change_pct"] = round((r["close_price"] - r["open_price"]) / r["open_price"] * 100, 4)
+        # 涨跌幅使用 pre_close 计算的标准值
+        cp = row.get("change_pct")
+        if cp is not None and not (isinstance(cp, float) and (cp != cp)):  # not NaN
+            r["change_pct"] = cp
         records.append(r)
 
     logger.info(f"{symbol} 获取到 {len(records)} 条日线")

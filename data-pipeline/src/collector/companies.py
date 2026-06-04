@@ -6,7 +6,7 @@ from typing import Optional
 import akshare as ak
 
 from src.collector.retry import with_retry
-from src.config import pg
+from src.loader import pg
 
 logger = logging.getLogger(__name__)
 
@@ -26,7 +26,11 @@ def _market_for_code(code: str) -> str:
 def fetch_all_companies() -> list[dict]:
     """获取 A 股全量上市公司基本信息"""
     logger.info("正在从 akshare 获取 A 股公司列表 ...")
-    df = ak.stock_info_a_code_name()
+    try:
+        df = ak.stock_info_a_code_name()
+    except Exception as e:
+        logger.error(f"获取公司列表失败: {e}", exc_info=True)
+        return []
     logger.info(f"获取到 {len(df)} 条公司记录")
     records = []
     for _, row in df.iterrows():
@@ -53,13 +57,10 @@ def sync_to_db(records: list[dict]) -> dict:
     - 先查 companies 表已有的 code 集合（避免逐行 SELECT）
     - 仅对新增/有变更的记录执行 INSERT/UPDATE
     """
-    import psycopg2
-
     if not records:
         return {"inserted": 0, "updated": 0, "skipped": 0, "total": 0}
 
-    conn = psycopg2.connect(pg.uri)
-    try:
+    with pg.get_conn() as conn:
         # Step 1: 查已存在的 codes（使用 IN 而非 ANY）
         codes_to_check = [r["code"] for r in records]
         with conn.cursor() as cur:
@@ -95,5 +96,3 @@ def sync_to_db(records: list[dict]) -> dict:
 
         logger.info(f"公司列表同步完成: 新增 {inserted}, 更新 {updated}, 跳过(无变化) {unchanged_count}")
         return {"inserted": inserted, "updated": updated, "skipped": unchanged_count, "total": len(records)}
-    finally:
-        conn.close()

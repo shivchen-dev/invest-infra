@@ -255,21 +255,32 @@ class RssCastClient:
 
 # ─── 便捷函数（保持向后兼容，内部创建 client）─────────────────────────────
 
-# 全局默认 client（延迟创建，每次调用 configure 时重建）
-_default_client: Optional[RssCastClient] = None
+# 全局默认 client（线程安全单例，double-checked locking）
+import threading
+
+_client_lock = threading.Lock()
+_client_instance: Optional["RssCastClient"] = None
+
+
+def _get_default_client() -> RssCastClient:
+    """线程安全的单例默认 client（double-checked locking）"""
+    global _client_instance
+    if _client_instance is None:
+        with _client_lock:
+            if _client_instance is None:
+                raise RuntimeError("RssCast not configured — call configure(endpoint, token) first")
+    return _client_instance
 
 
 def configure(endpoint: str, token: str) -> None:
-    """重建全局默认 client（向后兼容）"""
-    global _default_client
-    _default_client = RssCastClient(endpoint, token)
+    """线程安全地初始化全局单例 client（向后兼容）"""
+    global _client_instance
+    with _client_lock:
+        _client_instance = RssCastClient(endpoint, token)
 
 
 def _client() -> RssCastClient:
-    global _default_client
-    if _default_client is None:
-        raise RuntimeError("RssCast not configured — call configure(endpoint, token) first")
-    return _default_client
+    return _get_default_client()
 
 
 # 透传函数

@@ -261,42 +261,41 @@ def upsert_etfs_from_cifang(records: list[dict]) -> dict:
     将次方量化基金列表 upsert 到 etfs 表。
     仅处理 ETF 类型（category != "other"），兼容已有记录（不覆盖 name）。
     """
-    import psycopg2
-    from src.config import pg
-
     if not records:
         return {"inserted": 0, "updated": 0}
 
-    conn = psycopg2.connect(pg.uri)
-    inserted = updated = 0
-    try:
-        with conn.cursor() as cur:
-            for r in records:
-                cat = r.get("category", "other")
-                if cat == "other":
-                    continue
-                cur.execute(
-                    """
-                    INSERT INTO etfs (code, name, category, exchange_code, list_date)
-                    VALUES (%(code)s, %(name)s, %(category)s, %(exchange_code)s, %(listing_date)s)
-                    ON CONFLICT (code) DO UPDATE SET
-                        name         = COALESCE(EXCLUDED.name, etfs.name),
-                        category     = COALESCE(EXCLUDED.category, etfs.category),
-                        exchange_code = COALESCE(EXCLUDED.exchange_code, etfs.exchange_code),
-                        list_date    = COALESCE(EXCLUDED.list_date, etfs.list_date),
-                        updated_at   = now()
-                    """,
-                    r,
-                )
-                if cur.rowcount == 1:
-                    inserted += 1
-                else:
-                    updated += 1
-        conn.commit()
-        logger.info("次方量化 ETF 列表同步: 新增 %d, 更新 %d", inserted, updated)
-        return {"inserted": inserted, "updated": updated}
-    finally:
-        conn.close()
+    with pg.get_conn() as conn:
+        try:
+            inserted = updated = 0
+            with conn.cursor() as cur:
+                for r in records:
+                    cat = r.get("category", "other")
+                    if cat == "other":
+                        continue
+                    cur.execute(
+                        """
+                        INSERT INTO etfs (code, name, category, exchange_code, list_date)
+                        VALUES (%(code)s, %(name)s, %(category)s, %(exchange_code)s, %(listing_date)s)
+                        ON CONFLICT (code) DO UPDATE SET
+                            name         = COALESCE(EXCLUDED.name, etfs.name),
+                            category     = COALESCE(EXCLUDED.category, etfs.category),
+                            exchange_code = COALESCE(EXCLUDED.exchange_code, etfs.exchange_code),
+                            list_date    = COALESCE(EXCLUDED.list_date, etfs.list_date),
+                            updated_at   = now()
+                        """,
+                        r,
+                    )
+                    if cur.rowcount == 1:
+                        inserted += 1
+                    else:
+                        updated += 1
+            conn.commit()
+            logger.info("次方量化 ETF 列表同步: 新增 %d, 更新 %d", inserted, updated)
+            return {"inserted": inserted, "updated": updated}
+        except Exception as e:
+            logger.error(f"次方量化 ETF 列表同步失败: {e}", exc_info=True)
+            conn.rollback()
+            return {"inserted": 0, "updated": 0}
 
 
 def write_spot_to_etf_quotes(spot_data: dict[str, dict], trade_date: date) -> int:
@@ -308,65 +307,64 @@ def write_spot_to_etf_quotes(spot_data: dict[str, dict], trade_date: date) -> in
 
     返回: 写入记录数
     """
-    import psycopg2
-    from src.config import pg
-
     if not spot_data:
         return 0
 
-    conn = psycopg2.connect(pg.uri)
-    written = 0
-    try:
-        with conn.cursor() as cur:
-            for fund_code, record in spot_data.items():
-                # 查找 etf_id
-                cur.execute("SELECT id FROM etfs WHERE code = %s", (fund_code,))
-                row = cur.fetchone()
-                if not row:
-                    logger.debug("次方量化行情写入跳过（未收录）: %s", fund_code)
-                    continue
-                etf_id = row[0]
+    with pg.get_conn() as conn:
+        try:
+            written = 0
+            with conn.cursor() as cur:
+                for fund_code, record in spot_data.items():
+                    # 查找 etf_id
+                    cur.execute("SELECT id FROM etfs WHERE code = %s", (fund_code,))
+                    row = cur.fetchone()
+                    if not row:
+                        logger.debug("次方量化行情写入跳过（未收录）: %s", fund_code)
+                        continue
+                    etf_id = row[0]
 
-                # 写入行情
-                cur.execute(
-                    """
-                    INSERT INTO etf_quotes
-                        (etf_id, trade_date, open_price, high_price, low_price,
-                         close_price, pre_close, volume, amount, change_pct, source)
-                    VALUES (%(etf_id)s, %(trade_date)s, %(open_price)s, %(high_price)s,
-                            %(low_price)s, %(close_price)s, %(pre_close)s,
-                            %(volume)s, %(amount)s, %(change_pct)s, %(source)s)
-                    ON CONFLICT (etf_id, trade_date) DO UPDATE SET
-                        open_price  = EXCLUDED.open_price,
-                        high_price  = EXCLUDED.high_price,
-                        low_price   = EXCLUDED.low_price,
-                        close_price = EXCLUDED.close_price,
-                        pre_close   = EXCLUDED.pre_close,
-                        volume      = EXCLUDED.volume,
-                        amount      = EXCLUDED.amount,
-                        change_pct  = EXCLUDED.change_pct,
-                        source      = EXCLUDED.source
-                    """,
-                    {
-                        "etf_id":      etf_id,
-                        "trade_date":  trade_date,
-                        "open_price":  record.get("open"),
-                        "high_price":  record.get("high"),
-                        "low_price":   record.get("low"),
-                        "close_price": record.get("price"),
-                        "pre_close":  record.get("close_yesterday"),
-                        "volume":     record.get("volume"),
-                        "amount":     record.get("amount"),
-                        "change_pct": record.get("change_pct"),
-                        "source":     "cifang",
-                    },
-                )
-                written += 1
-        conn.commit()
-        logger.info("次方量化实时行情写入: %d 只 -> etf_quotes", written)
-        return written
-    finally:
-        conn.close()
+                    # 写入行情
+                    cur.execute(
+                        """
+                        INSERT INTO etf_quotes
+                            (etf_id, trade_date, open_price, high_price, low_price,
+                             close_price, pre_close, volume, amount, change_pct, source)
+                        VALUES (%(etf_id)s, %(trade_date)s, %(open_price)s, %(high_price)s,
+                                %(low_price)s, %(close_price)s, %(pre_close)s,
+                                %(volume)s, %(amount)s, %(change_pct)s, %(source)s)
+                        ON CONFLICT (etf_id, trade_date) DO UPDATE SET
+                            open_price  = EXCLUDED.open_price,
+                            high_price  = EXCLUDED.high_price,
+                            low_price   = EXCLUDED.low_price,
+                            close_price = EXCLUDED.close_price,
+                            pre_close   = EXCLUDED.pre_close,
+                            volume      = EXCLUDED.volume,
+                            amount      = EXCLUDED.amount,
+                            change_pct  = EXCLUDED.change_pct,
+                            source      = EXCLUDED.source
+                        """,
+                        {
+                            "etf_id":      etf_id,
+                            "trade_date":  trade_date,
+                            "open_price":  record.get("open"),
+                            "high_price":  record.get("high"),
+                            "low_price":   record.get("low"),
+                            "close_price": record.get("price"),
+                            "pre_close":  record.get("close_yesterday"),
+                            "volume":     record.get("volume"),
+                            "amount":     record.get("amount"),
+                            "change_pct": record.get("change_pct"),
+                            "source":     "cifang",
+                        },
+                    )
+                    written += 1
+            conn.commit()
+            logger.info("次方量化实时行情写入: %d 只 -> etf_quotes", written)
+            return written
+        except Exception as e:
+            logger.error(f"次方量化实时行情写入失败: {e}", exc_info=True)
+            conn.rollback()
+            return 0
 
 
 def backfill_hist(etf_code: str, start_date: date, end_date: date, adjust: str = "qfq") -> int:
@@ -374,60 +372,59 @@ def backfill_hist(etf_code: str, start_date: date, end_date: date, adjust: str =
     补充单只 ETF 历史K线（从次方量化），写入 etf_quotes。
     用于填补 akshare 缺失的历史段。
     """
-    import psycopg2
-    from src.config import pg
-
     records = fetch_fund_hist(etf_code, start_date, end_date, adjust)
     if not records:
         return 0
 
-    conn = psycopg2.connect(pg.uri)
-    written = 0
-    try:
-        with conn.cursor() as cur:
-            cur.execute("SELECT id FROM etfs WHERE code = %s", (etf_code,))
-            row = cur.fetchone()
-            if not row:
-                logger.debug("backfill 跳过（未收录）: %s", etf_code)
-                return 0
-            etf_id = row[0]
+    with pg.get_conn() as conn:
+        try:
+            written = 0
+            with conn.cursor() as cur:
+                cur.execute("SELECT id FROM etfs WHERE code = %s", (etf_code,))
+                row = cur.fetchone()
+                if not row:
+                    logger.debug("backfill 跳过（未收录）: %s", etf_code)
+                    return 0
+                etf_id = row[0]
 
-            for rec in records:
-                trade_date = datetime.strptime(rec["date"], "%Y-%m-%d").date()
-                cur.execute(
-                    """
-                    INSERT INTO etf_quotes
-                        (etf_id, trade_date, open_price, high_price, low_price,
-                         close_price, volume, amount, change_pct, source)
-                    VALUES (%(etf_id)s, %(trade_date)s, %(open_price)s,
-                            %(high_price)s, %(low_price)s, %(close_price)s,
-                            %(volume)s, %(amount)s, %(change_pct)s, %(source)s)
-                    ON CONFLICT (etf_id, trade_date) DO UPDATE SET
-                        open_price  = EXCLUDED.open_price,
-                        high_price  = EXCLUDED.high_price,
-                        low_price   = EXCLUDED.low_price,
-                        close_price = EXCLUDED.close_price,
-                        volume      = EXCLUDED.volume,
-                        amount      = EXCLUDED.amount,
-                        change_pct  = EXCLUDED.change_pct,
-                        source      = EXCLUDED.source
-                    """,
-                    {
-                        "etf_id":     etf_id,
-                        "trade_date": trade_date,
-                        "open_price": rec.get("open"),
-                        "high_price": rec.get("high"),
-                        "low_price":  rec.get("low"),
-                        "close_price": rec.get("close"),
-                        "volume":     rec.get("volume"),
-                        "amount":     rec.get("amount"),
-                        "change_pct": rec.get("change_pct"),
-                        "source":     "cifang",
-                    },
-                )
-                written += 1
-        conn.commit()
-        logger.info("次方量化历史K线 backfill %s: %d 条写入", etf_code, written)
-        return written
-    finally:
-        conn.close()
+                for rec in records:
+                    trade_date = datetime.strptime(rec["date"], "%Y-%m-%d").date()
+                    cur.execute(
+                        """
+                        INSERT INTO etf_quotes
+                            (etf_id, trade_date, open_price, high_price, low_price,
+                             close_price, volume, amount, change_pct, source)
+                        VALUES (%(etf_id)s, %(trade_date)s, %(open_price)s,
+                                %(high_price)s, %(low_price)s, %(close_price)s,
+                                %(volume)s, %(amount)s, %(change_pct)s, %(source)s)
+                        ON CONFLICT (etf_id, trade_date) DO UPDATE SET
+                            open_price  = EXCLUDED.open_price,
+                            high_price  = EXCLUDED.high_price,
+                            low_price   = EXCLUDED.low_price,
+                            close_price = EXCLUDED.close_price,
+                            volume      = EXCLUDED.volume,
+                            amount      = EXCLUDED.amount,
+                            change_pct  = EXCLUDED.change_pct,
+                            source      = EXCLUDED.source
+                        """,
+                        {
+                            "etf_id":     etf_id,
+                            "trade_date": trade_date,
+                            "open_price": rec.get("open"),
+                            "high_price": rec.get("high"),
+                            "low_price":  rec.get("low"),
+                            "close_price": rec.get("close"),
+                            "volume":     rec.get("volume"),
+                            "amount":     rec.get("amount"),
+                            "change_pct": rec.get("change_pct"),
+                            "source":     "cifang",
+                        },
+                    )
+                    written += 1
+            conn.commit()
+            logger.info("次方量化历史K线 backfill %s: %d 条写入", etf_code, written)
+            return written
+        except Exception as e:
+            logger.error(f"次方量化历史K线 backfill {etf_code} 失败: {e}", exc_info=True)
+            conn.rollback()
+            return 0

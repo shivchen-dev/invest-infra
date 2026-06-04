@@ -2,6 +2,7 @@
 
 import logging
 from datetime import datetime, date
+from dateutil import parser as date_parser
 from typing import Optional
 
 import akshare as ak
@@ -20,7 +21,7 @@ def fetch_stock_news(stock_code: str) -> list[dict]:
     try:
         df = ak.stock_news_em(symbol=raw_code)
     except Exception as e:
-        logger.warning(f"{raw_code} 新闻获取失败: {e}")
+        logger.error(f"{raw_code} 新闻获取失败: {e}", exc_info=True)
         return []
 
     if df is None or df.empty:
@@ -31,7 +32,7 @@ def fetch_stock_news(stock_code: str) -> list[dict]:
         records.append({
             "stock_code": stock_code,
             "title": str(row.get("新闻标题", "")),
-            "content_summary": str(row.get("新闻内容", ""))[:500],
+            "content_summary": (lambda c: str(c)[:500] if c else "")(row.get("新闻内容")),
             "source_name": str(row.get("文章来源", "东方财富")),
             "source_url": str(row.get("新闻链接", "")),
             "published_at": _parse_time(row.get("发布时间")),
@@ -47,6 +48,7 @@ def _parse_time(t) -> Optional[datetime]:
     if isinstance(t, date):
         return datetime.combine(t, datetime.min.time())
     try:
-        return datetime.fromisoformat(str(t).replace("T", " ").split(".")[0])
+        return date_parser.parse(str(t))
     except (ValueError, TypeError):
+        logger.debug(f"无法解析时间: {t!r}")
         return None

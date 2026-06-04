@@ -4,9 +4,12 @@ import logging
 import math
 import time
 from contextlib import contextmanager
+from dateutil import parser as date_parser
+from datetime import date as date_type, datetime
 from typing import Optional
 
 import psycopg2
+import pandas as pd
 from psycopg2 import pool
 from psycopg2.extras import execute_batch
 
@@ -52,10 +55,19 @@ def _nan_to_none(v):
     """过滤 NaN/Inf → None（BIGINT 字段不接受 NaN）；保留 -1 sentinel 值"""
     if v is None:
         return None
+    # pandas NA/NaT
+    try:
+        if pd.isna(v):
+            return None
+    except (TypeError, ValueError):
+        pass
+    # 字符串形式的 NaN/Inf/None/null
+    if isinstance(v, str) and v.lower() in ("nan", "inf", "-inf", "none", "null"):
+        return None
     try:
         if math.isnan(v) or math.isinf(v):
             return None
-    except TypeError:
+    except (TypeError, ValueError):
         pass
     # sentinel 值保留，调用方用 NULLIF(-1, -1) 转为 NULL
     return v
@@ -64,8 +76,18 @@ def _nan_to_none(v):
 def _normalize_date(v) -> str | None:
     if v is None:
         return None
-    if isinstance(v, str) and "T" in v:
-        return v.split("T")[0]
+    if isinstance(v, (date_type, datetime)):
+        return v.strftime("%Y-%m-%d")
+    if isinstance(v, str):
+        # 先尝试 ISO T 分割
+        if "T" in v:
+            v = v.split("T")[0]
+        try:
+            parsed = date_parser.parse(v)
+            return parsed.strftime("%Y-%m-%d")
+        except (ValueError, TypeError):
+            logger.warning(f"无法解析日期: {v!r}")
+            return None
     return v
 
 
