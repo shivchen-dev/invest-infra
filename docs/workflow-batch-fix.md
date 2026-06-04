@@ -20,7 +20,11 @@
     │
     ▼
 ┌─────────────────────────────────────┐
-│  Phase 0: 任务梳理 + planning files  │
+│  Phase 0: 任务梳理                    │
+│  step 0.1: 读取评估报告              │
+│  step 0.2: Claude Code 独立审计     │ ← 新增：第二审视角
+│  step 0.3: 对比报告，生成合并缺陷清单 │ ← 新增：差异对比
+│  step 0.4: 创建 planning files       │
 │  task_plan.md  — 完整批次计划        │
 │  findings.md   — 各问题修复方案     │
 └──────────────┬──────────────────────┘
@@ -48,17 +52,47 @@
                ▼
          所有批次完成后
          合并 commit → git
+         审计归档 → reports/audit_comparison_{date}.md
 ```
 
 ---
 
-## Phase 0: 任务梳理
+## Phase 0: 任务梳理 + 评估报告对比
 
 ### Step 0.1: 收集信息
 - 读取评估报告，确认所有问题存在
 - 如果有审计结果，直接用
 
-### Step 0.2: 创建 planning files
+### Step 0.2: Claude Code 独立审计（对比环节）
+**目的**：评估报告由人工或规则生成，可能遗漏深层 bug；Claude Code 作为第二审视角补充验证。
+
+**操作**：启动 Claude Code subagent，对同一批文件做独立审计，输出格式统一的缺陷列表：
+```
+| ID | 严重度 | 行号 | 描述 | 修复建议 |
+```
+
+**Prompt 结构**：
+```
+严格审查以下文件，输出每个文件的缺陷列表：
+- {文件路径}
+- 关键检查点：...（从评估报告提取）
+
+输出格式：
+### {文件名}
+| ID | 严重度 | 行号 | 描述 | 修复建议 |
+```
+
+### Step 0.3: 对比两份报告，生成合并缺陷清单
+| 对比维度 | 说明 |
+|---------|------|
+| 评估报告有 / Claude Code 有 | 交叉验证，确认真实存在 |
+| 评估报告有 / Claude Code 无 | 人工复核，判断是否降级或保留 |
+| Claude Code 有 / 评估报告无 | **新增发现**，追加到修复计划 |
+| 根因深度差异 | 以更深的那个为准 |
+
+**输出**：合并后的缺陷总表（含来源标注），作为 task_plan.md 的输入。
+
+### Step 0.4: 创建 planning files
 在项目目录创建：
 ```bash
 task_plan.md   # 批次计划，状态追踪
@@ -66,7 +100,7 @@ findings.md    # 各问题修复方案细节
 progress.md    # 执行日志（每批结果）
 ```
 
-### Step 0.3: 编写 task_plan.md
+### Step 0.5: 编写 task_plan.md
 每个批次格式：
 ```markdown
 ### Batch N: 模块名（优先级）
@@ -76,7 +110,7 @@ progress.md    # 执行日志（每批结果）
 - **Status:** pending
 ```
 
-### Step 0.4: 编写 findings.md
+### Step 0.6: 编写 findings.md
 每个问题写：
 ```markdown
 ## 问题编号: 描述
@@ -179,6 +213,10 @@ git commit -m "fix(data-collector): 修复N个代码缺陷
 - Batch 1: pg.py NV1/DV1
 - Batch 2: financial.py + news.py
 ..."
+```
+
+### 审计日志归档
+将评估报告 + Claude Code 审计报告 + 对比结果合并写入 `reports/audit_comparison_{date}.md`，纳入版本历史。
 ```
 
 ---
