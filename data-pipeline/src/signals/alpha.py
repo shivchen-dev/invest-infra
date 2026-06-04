@@ -8,6 +8,7 @@ from datetime import date, timedelta
 from typing import Optional
 
 import numpy as np
+import pandas as pd
 import psycopg2
 
 from src.config import pg
@@ -64,7 +65,6 @@ def load_weights(conn):
 def percentile_rank(values):
     if not values:
         return []
-    import pandas as pd
     sr = pd.Series(values, dtype=float)
     ranks = sr.rank(pct=True, ascending=True, method="average")
     return ranks.fillna(50).tolist()
@@ -77,7 +77,8 @@ def normalize_factor(raw_values, direction):
         return {c: 50.0 for c in codes}
     pct_ranks = percentile_rank(vals)
     if direction == -1:
-        pct_ranks = [100.0 - p for p in pct_ranks]
+        sr = pd.Series(vals, dtype=float)
+        pct_ranks = sr.rank(pct=True, ascending=False, method="average").fillna(50).tolist()
     return {code: pct_ranks[i] for i, code in enumerate(codes)}
 
 
@@ -143,6 +144,7 @@ def compute_alpha_scores(conn, calc_date, top_n=100):
         if total_weight > 0 and expected_weight > 0:
             coverage = total_weight / expected_weight
             raw_score = weighted_sum / total_weight
+            # 归一化到[0,100]，coverage<1 时直接线性衰减，不存在虚高空间
             composite = (raw_score - 50) * 2 * coverage
         else:
             composite = 0.0
@@ -169,12 +171,15 @@ def compute_alpha_scores(conn, calc_date, top_n=100):
             reason = "|".join(reasons) if reasons else "综合评分"
             cur.execute(
                 "INSERT INTO alpha_signals "
-                "(company_id, calc_date, raw_weights, norm_momentum, norm_value, norm_quality, "
+                "(company_id, calc_date, cat_scores_json, norm_momentum, norm_value, norm_quality, "
                 "norm_money_flow, norm_technical, norm_volume, composite_score, signal, signal_reason, score_rank) "
                 "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) "
                 "ON CONFLICT (company_id, calc_date) DO UPDATE SET "
                 "composite_score=EXCLUDED.composite_score, signal=EXCLUDED.signal, "
-                "signal_reason=EXCLUDED.signal_reason, score_rank=EXCLUDED.score_rank",
+                "signal_reason=EXCLUDED.signal_reason, score_rank=EXCLUDED.score_rank, "
+                "norm_momentum=EXCLUDED.norm_momentum, norm_value=EXCLUDED.norm_value, "
+                "norm_quality=EXCLUDED.norm_quality, norm_money_flow=EXCLUDED.norm_money_flow, "
+                "norm_technical=EXCLUDED.norm_technical, norm_volume=EXCLUDED.norm_volume",
                 (cid, calc_date, json.dumps(cat_scores),
                  cat_scores.get("momentum"), cat_scores.get("value"), cat_scores.get("quality"),
                  cat_scores.get("money_flow"), cat_scores.get("technical"), cat_scores.get("volume"),
