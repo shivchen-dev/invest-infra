@@ -1,89 +1,48 @@
-# 数据采集层缺陷修复计划
-<!--
-  WHAT: 修复评估报告中确认的22个代码缺陷（P0+P1）
-  WHEN: 2026-06-04 启动
-  WHY: 数据采集层可靠性不足，影响FQIR数据可信度
--->
+# Task Plan: factors 模块修复
 
-## Goal
-按批次修复数据采集层所有确认缺陷，每批用Claude Code完成，
-最终commit到 `/home/claw/invest-infra/` git工作区。
-
-## Current Phase
-Batch 1: pg.py 基础函数修复（2个P0）
+## 评估报告 vs Claude Code 审计对比
+- 评估报告：4个缺陷（P0×1, P1×2, P2×1）
+- Claude Code：9个缺陷（P0×1, P1×5, P2×3）
+- **新增发现**：E04 UPSERT遗漏3字段、B01复权说明缺失、R01同源问题
 
 ---
 
-## Phases
+## 合并缺陷清单（8项）
 
-### Batch 1: pg.py — 基础清洗函数（P0）
-<!-- NV1 + DV1：_nan_to_none 不处理字符串NaN + _normalize_date 仅处理ISO T格式 -->
-- [x] NV1: `_nan_to_none` 增加字符串 "NaN"/"inf"/pandas NA 处理
-- [x] DV1: `_normalize_date` 使用 dateutil.parser + 日期合法性校验
-- [x] 验证：输出正确（None/合法日期/warning）
-- **Status:** ✅ complete
-
-### Batch 2: financial.py + news.py（P0+P1）
-<!-- financial: F1(×3裸except) + F2(嵌套函数) + F3(硬编码列名) -->
-<!-- news: N1(裸except) + N2(时间解析) + N3(截断) -->
-- [x] F1: 3处裸 except → logger.error(... exc_info=True)
-- [x] F2: 嵌套函数 `_val()` 提取为模块级
-- [x] F3: 硬编码列名增加动态校验
-- [x] N1: 裸 except → logger.error(... exc_info=True)
-- [x] N2: 时间解析用 dateutil.parser.parse()
-- [x] N3: 截断前加非空检查
-- **Status:** ✅ complete
-
-### Batch 3: etf.py + cifang.py（P1）
-<!-- etf: E1(无异常) + E2(直连) + E3(循环import) + E4(前缀不一致) -->
-<!-- cifang: C1(×3直连) -->
-- [x] E1: fetch_etf_spot 增加 try/except
-- [x] E2: 直连改用 pg.get_conn() 上下文管理器
-- [x] E3: 循环内 import 移到文件顶部（原文件无此问题）
-- [x] E4: _etf_prefix 与 _market_for_code 逻辑统一
-- [x] C1: 3处直连接池化
-- **Status:** ✅ complete
-
-### Batch 4: rsscast.py + companies.py（P1）
-<!-- rsscast: R1(全局_default_client竞态) -->
-<!-- companies: CP1(无异常) + CP2(直连) -->
-- [x] R1: 全局 _default_client 改为 threading.Lock + double-checked locking
-- [x] CP1: akshare 调用加 try/except + logger.error
-- [x] CP2: 直连改用 pg.get_conn() 上下文管理器
-- **Status:** ✅ complete
-
-### Batch 5: quotes.py 剩余（P1）
-<!-- Q3(默认SH) + Q4(iterrows性能) -->
-- [x] Q3: 未知代码不默认SH，抛出 ValueError
-- [x] Q4: iterrows 改为 df.to_dict('records') 向量化
-- **Status:** ✅ complete
+| # | 文件 | 严重度 | 缺陷 | 来源 |
+|---|------|--------|------|------|
+| 1 | engine.py | 🔴P0 | 迭代器索引错位（E01） | 共同 |
+| 2 | engine.py | 🟡P1 | std=0时zscore返回错误（E02） | 共同 |
+| 3 | engine.py | 🟡P1 | rank字段永不更新（E03） | 共同 |
+| 4 | engine.py | 🟡P1 | UPSERT遗漏3字段（E04） | Claude Code新发现 |
+| 5 | base.py | 🟡P1 | load_quotes缺复权说明（B01） | Claude Code新发现 |
+| 6 | registry.py | 🟡P1 | sync UPSERT遗漏3字段（R01） | Claude Code新发现 |
+| 7 | base.py | 🟢P2 | conn生命周期注释缺失（B02） | Claude Code |
+| 8 | base.py | 🟢P2 | docstring歧义（B03） | Claude Code |
 
 ---
 
-## 已完成
+## Batch 1: engine.py（核心修复）
+- [ ] E01: 迭代器索引错位 → 改用 company_id 字典映射
+- [ ] E02: std=0时zscore应返回全0
+- [ ] E03: rank字段写入/移除
+- [ ] E04: UPSERT补全formula_desc/data_source/frequency
+- **Status:** pending
 
-### quotes.py（P0 已修复）
-- [x] Q1: except Exception → logger.error(... exc_info=True) + 升级为 error
-- [x] Q2: 涨跌幅从 (close-open)/open 改为 (close-pre_close)/pre_close，pre_close 用 shift(1) 计算
-- **commit:** 工作区未提交，当前会话修复
-
-### 评估报告确认结果
-```
-模块      | 问题数 | 已确认 | 已修
-quotes.py |   4   |   3   | Q1+Q2
-financial |   3   |   3   | 0
-news.py   |   3   |   3   | 0
-etf.py    |   4   |   4   | 0
-cifang.py |   1   |   1   | 0
-rsscast   |   1   |   1   | 0
-companies |   2   |   2   | 0
-pg.py     |   2   |   2   | 0
-```
+## Batch 2: base.py + registry.py（P1/P2）
+- [ ] B01: load_quotes复权说明
+- [ ] R01: sync UPSERT补全3字段
+- [ ] B02: conn生命周期注释
+- [ ] B03: docstring补充
+- **Status:** pending
 
 ---
 
-## Errors Encountered
-
-| Error | Attempt | Resolution |
-|-------|---------|------------|
-| 评估报告Q2已修(quotes) | 本地验证 | 确认修复正确 |
+## 工作流
+- [x] 评估报告审计
+- [x] Claude Code 审计
+- [x] 对比分析
+- [ ] Batch 1 执行中
+- [ ] Batch 2
+- [ ] git commit
+- [ ] 归档 reports/audit_comparison_2026-06-04.md

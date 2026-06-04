@@ -33,3 +33,4 @@ logs/
 *.zip
 # uv auto-generated
 main.py
+tokens.env

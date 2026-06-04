@@ -18,6 +18,7 @@ import requests
 
 from src.collector.retry import with_retry
 from src.config import cifang
+from src.loader import pg
 
 logger = logging.getLogger(__name__)
 

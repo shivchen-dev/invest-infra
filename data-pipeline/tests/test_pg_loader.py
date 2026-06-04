@@ -4,7 +4,14 @@ import sys
 sys.path.insert(0, "/home/claw/invest-infra/data-pipeline")
 
 from unittest.mock import MagicMock, patch
+import importlib
 import pytest
+
+
+def _reset_pg_module():
+    """Reset module-level pool state between tests."""
+    from src import loader
+    importlib.reload(loader.pg)
 
 
 class TestNanToNone:
@@ -55,25 +62,28 @@ class TestNormalizeDate:
 class TestBatchUpsertQuotes:
     """batch_upsert_quotes — 批量 upsert"""
 
-    @patch("src.loader.pg.psycopg2")
-    def test_empty_records(self, mock_pg):
+    def test_empty_records(self):
+        _reset_pg_module()
         from src.loader.pg import batch_upsert_quotes
         result = batch_upsert_quotes([])
         assert result["written"] == 0
 
-    @patch("src.loader.pg.psycopg2")
-    def test_all_skipped_unknown_code(self, mock_pg):
+    @patch("psycopg2.pool.ThreadedConnectionPool")
+    @patch("psycopg2.extras.execute_batch")
+    def test_all_skipped_unknown_code(self, mock_exec_batch, mock_tcp):
+        _reset_pg_module()
         from src.loader.pg import batch_upsert_quotes
 
         mock_conn = MagicMock()
-        mock_pg.connect.return_value = mock_conn
+        mock_pool = MagicMock()
+        mock_pool.getconn.return_value = mock_conn
+        mock_tcp.return_value = mock_pool
+
         mock_cur = MagicMock()
         mock_conn.cursor.return_value.__enter__.return_value = mock_cur
-        # company_id_map returns empty → all skipped
         mock_cur.__enter__ = MagicMock(return_value=mock_cur)
         mock_cur.__exit__ = MagicMock(return_value=False)
-        mock_cur.execute.return_value = None
-        mock_cur.fetchall.return_value = []
+        mock_cur.fetchall.return_value = []  # empty code map → all skipped
 
         result = batch_upsert_quotes([
             {"stock_code": "000001.SZ", "trade_date": "2026-05-31", "close_price": 10.0},
@@ -81,13 +91,17 @@ class TestBatchUpsertQuotes:
         assert result["written"] == 0
         assert result["skipped"] == 1
 
-    @patch("src.loader.pg.psycopg2")
-    @patch("src.loader.pg.execute_batch")
-    def test_valid_record(self, mock_exec_batch, mock_pg):
+    @patch("psycopg2.pool.ThreadedConnectionPool")
+    @patch("psycopg2.extras.execute_batch")
+    def test_valid_record(self, mock_exec_batch, mock_tcp):
+        _reset_pg_module()
         from src.loader.pg import batch_upsert_quotes
 
         mock_conn = MagicMock()
-        mock_pg.connect.return_value = mock_conn
+        mock_pool = MagicMock()
+        mock_pool.getconn.return_value = mock_conn
+        mock_tcp.return_value = mock_pool
+
         mock_cur = MagicMock()
         mock_conn.cursor.return_value.__enter__.return_value = mock_cur
         mock_cur.__enter__ = MagicMock(return_value=mock_cur)
@@ -107,7 +121,6 @@ class TestBatchUpsertQuotes:
         assert result["written"] == 1
         assert result["skipped"] == 0
         mock_exec_batch.assert_called_once()
-        # execute_batch(cursor, sql, rows) → rows 在 call_args[0][2]
         call_args = mock_exec_batch.call_args
         submitted_rows = call_args[0][2]
         assert len(submitted_rows) == 1  # 1 row
@@ -116,14 +129,17 @@ class TestBatchUpsertQuotes:
 class TestBatchUpsertEtfQuotes:
     """batch_upsert_etf_quotes — ETF 批量 upsert"""
 
-    @patch("src.loader.pg.psycopg2")
-    @patch("src.loader.pg.execute_batch")
-    def test_nan_cleaned(self, mock_exec_batch, mock_pg):
-        import math
+    @patch("psycopg2.pool.ThreadedConnectionPool")
+    @patch("psycopg2.extras.execute_batch")
+    def test_nan_cleaned(self, mock_exec_batch, mock_tcp):
+        _reset_pg_module()
         from src.loader.pg import batch_upsert_etf_quotes
 
         mock_conn = MagicMock()
-        mock_pg.connect.return_value = mock_conn
+        mock_pool = MagicMock()
+        mock_pool.getconn.return_value = mock_conn
+        mock_tcp.return_value = mock_pool
+
         mock_cur = MagicMock()
         mock_conn.cursor.return_value.__enter__.return_value = mock_cur
         mock_cur.__enter__ = MagicMock(return_value=mock_cur)
@@ -139,14 +155,11 @@ class TestBatchUpsertEtfQuotes:
              "iopv": 3.5, "premium_rate": 0.01, "source": "akshare-spot"},
         ])
         assert result["written"] == 1
-        # execute_batch(cursor, sql, rows) → rows 在 call_args[0][2]
         call_args = mock_exec_batch.call_args
         submitted_rows = call_args[0][2]
         assert len(submitted_rows) == 1
         submitted_row = submitted_rows[0]
-        # close_price (index 5) and volume (index 11) should be None
         assert submitted_row[5] is None   # close_price
         assert submitted_row[11] is None  # volume
-        # iopv and premium_rate should be preserved
         assert submitted_row[7] == 3.5   # iopv
         assert submitted_row[8] == 0.01  # premium_rate

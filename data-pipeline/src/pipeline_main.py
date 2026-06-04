@@ -1,6 +1,9 @@
 """Phase 1 数据采集管线主编排器"""
 
 import logging
+
+logger = logging.getLogger(__name__)
+
 import time
 from datetime import date, datetime, timedelta
 from typing import Optional

@@ -1,58 +1,74 @@
-# Findings: pg.py 基础函数修复
+# Findings: factors 模块修复方案
 
-## Batch 1 任务
-修复 pg.py 中两个 P0 缺陷：
-1. `_nan_to_none`: 不处理字符串 "NaN"/"inf"/pandas NA
-2. `_normalize_date`: 仅处理 ISO T 格式，无日期验证
+---
 
-## 修复方案
+## engine.py
 
-### NV1: _nan_to_none
+### E01（P0）：迭代器索引错位
+**位置:** 约 L139
+**问题:** `valid_values` 过滤 None 后长度缩短，percentile/zscore 迭代器与原 `values` 列表索引错位
+**修复:** 改用 company_id 做字典映射：
 ```python
-def _nan_to_none(v):
-    if v is None:
-        return None
-    # 处理 pandas NA/NaT
-    try:
-        import pandas as pd
-        if pd.isna(v):
-            return None
-    except (ImportError, TypeError):
-        pass
-    # 处理字符串形式的 NaN/Inf
-    if isinstance(v, str) and v.lower() in ("nan", "inf", "-inf", "none", "null"):
-        return None
-    # 处理数值类型的 NaN/Inf
-    try:
-        if math.isnan(v) or math.isinf(v):
-            return None
-    except (TypeError, ValueError):
-        pass
-    return v
+pct_map = {v["company_id"]: p for v, p in zip(valid_values, percentiles)}
+for v in values:
+    pct = pct_map.get(v["company_id"])
 ```
 
-### DV1: _normalize_date
-```python
-from datetime import date as date_type
-from dateutil import parser as date_parser
+---
 
-def _normalize_date(v) -> str | None:
-    if v is None:
-        return None
-    if isinstance(v, (date_type, datetime)):
-        return v.strftime("%Y-%m-%d")
-    if isinstance(v, str):
-        if "T" in v:
-            return v.split("T")[0]
-        v = v.replace("/", "-")
-        try:
-            parsed = date_parser.parse(v[:10])
-            return parsed.strftime("%Y-%m-%d")
-        except (ValueError, TypeError):
-            logger.warning(f"无法解析日期: {v!r}")
-            return None
-    return str(v)
+### E02（P1）：std=0 时 zscore 返回错误
+**位置:** 约 L104
+**当前代码:**
+```python
+return [round(float(x - mean), 6) if not np.isnan(x) else None for x in arr]
+# std=0 时缺少除以 std 的步骤
+```
+**修复:** std==0 时返回全 0：
+```python
+if std == 0:
+    return [0.0 if not np.isnan(x) else None for x in arr]
 ```
 
-## 依赖
-- `dateutil` 库（Python 内置，无需 pip install）
+---
+
+### E03（P1）：rank 字段永不更新
+**位置:** 约 L155
+**问题:** INSERT 传入 None，ON CONFLICT UPDATE 未包含 rank
+**修复:** 方案1：计算 rank 并写入；方案2：从 INSERT 中移除该字段
+
+---
+
+### E04（P1）：UPSERT 遗漏 3 字段
+**位置:** 约 L147
+**问题:** ON CONFLICT UPDATE 遗漏 formula_desc/data_source/frequency
+**修复:**
+```sql
+ON CONFLICT ... DO UPDATE SET
+  name=EXCLUDED.name, category=EXCLUDED.category,
+  formula_desc=EXCLUDED.formula_desc,
+  data_source=EXCLUDED.data_source,
+  frequency=EXCLUDED.frequency,
+  updated_at=now()
+```
+
+---
+
+## base.py
+
+### B01（P1）：load_quotes 缺少复权说明
+**位置:** 约 L61
+**修复:** 补充 docstring 说明数据是否已复权，或暴露 adjust_mode 参数
+
+### B02（P2）：conn 生命周期注释
+**修复:** 添加 docstring 说明"建议使用 with 语句或手动 close()"
+
+### B03（P2）：load_financial_reports docstring
+**修复:** 补充说明"返回全部历史记录，用于需要历史序列的场景"
+
+---
+
+## registry.py
+
+### R01（P1）：sync UPSERT 遗漏 3 字段
+**位置:** 约 L119
+**修复:** 同 E04 修复方案

@@ -125,3 +125,85 @@ COMMENT ON TABLE etf_alpha_signals IS 'ETF 多因子 Alpha 信号';
 CREATE INDEX idx_etf_alpha_etf    ON etf_alpha_signals(etf_id);
 CREATE INDEX idx_etf_alpha_date   ON etf_alpha_signals(calc_date);
 CREATE INDEX idx_etf_alpha_rank ON etf_alpha_signals(score_rank);
+-- ==================== 研报数据表 ====================
+CREATE TABLE research_reports (
+    id              SERIAL PRIMARY KEY,
+    company_id      INT          REFERENCES companies(id),
+    stock_code      VARCHAR(10)  NOT NULL,
+    stock_name      VARCHAR(50),
+    report_name     TEXT         NOT NULL,
+    rating          VARCHAR(20),                         -- 东财评级：买入/增持/中性/减持/卖出
+    institution    VARCHAR(100),                        -- 出具机构
+    report_date     DATE,                                -- 报告日期
+    pdf_url         TEXT,                                -- PDF 公共链接
+
+    -- LLM 解析结果（待补充）
+    investment_highlight TEXT,                            -- 投资亮点
+    target_price         NUMERIC(10,2),                  -- 目标价
+    rating_change        VARCHAR(20),                     -- 评级变动：上调/维持/下调
+    key_metrics          JSONB,                           -- 关键指标：{营收:, 利润:, 毛利率:}
+    risk_factors         TEXT[],                          -- 风险因素列表
+    industry_outlook     TEXT,                            -- 行业展望
+
+    -- 原始文件存储
+    raw_file_path   TEXT,                                  -- MinIO Bronze 路径
+    text_content    TEXT,                                  -- PyMuPDF 提取文本
+    checksum        VARCHAR(64),
+
+    collected_at    TIMESTAMPTZ  DEFAULT now(),
+    created_at      TIMESTAMPTZ  DEFAULT now()
+);
+COMMENT ON TABLE research_reports IS '券商研报数据（东方财富源）';
+CREATE INDEX idx_rr_company   ON research_reports(company_id);
+CREATE INDEX idx_rr_stock     ON research_reports(stock_code);
+CREATE INDEX idx_rr_date      ON research_reports(report_date);
+CREATE INDEX idx_rr_institution ON research_reports(institution);
+CREATE INDEX idx_rr_rating    ON research_reports(rating);
+
+-- =============================================================
+-- 扩展5: ETF 期现套利信号表
+-- =============================================================
+
+CREATE TABLE IF NOT EXISTS etf_arbitrage_signals (
+    id              SERIAL PRIMARY KEY,
+    etf_id          INT          NOT NULL REFERENCES etfs(id),
+    signal_date     DATE         NOT NULL,
+
+    -- 溢价状态
+    direction       VARCHAR(20)  NOT NULL,               -- premium / discount
+    premium_rate    NUMERIC(10,4),                     -- 溢价率%（带符号）
+    abs_premium     NUMERIC(10,4),                      -- 绝对溢价率（%）
+
+    -- 流动性
+    liquidity_score NUMERIC(8,4),                       -- 流动性评分 0-1
+
+    -- 收益分解（均为 % 单位）
+    theoretical_gain_pct  NUMERIC(10,4),                 -- 理论收益率（%）
+    total_cost_pct       NUMERIC(10,4),                 -- 总成本率（%）
+    net_gain_pct         NUMERIC(10,4),                 -- 净收益率（%）
+
+    signal_action        VARCHAR(40),                   -- sell_etf_buy_iopv / buy_etf_sell_iopv
+
+    -- 成本分解（均为 % 单位）
+    slippage_cost   NUMERIC(8,4),                       -- 滑点成本
+    impact_cost     NUMERIC(8,4),                       -- 冲击成本
+    commission_cost NUMERIC(8,4),                       -- 手续费
+    stamp_tax_cost  NUMERIC(8,4),                       -- 印花税（仅溢价卖出时>0）
+
+    -- 置信度
+    confidence      VARCHAR(10),                          -- high / medium / low
+
+    -- T+1 执行标记
+    executed        BOOLEAN     DEFAULT FALSE,           -- 是否已执行（T+1次日执行）
+    executed_date   DATE,                                 -- 执行日期
+
+    created_at      TIMESTAMPTZ  DEFAULT now(),
+
+    UNIQUE (etf_id, signal_date)
+);
+COMMENT ON TABLE etf_arbitrage_signals IS 'ETF 期现套利信号（基于 IOPV 溢价率 + 流动性）';
+CREATE INDEX idx_arb_etf    ON etf_arbitrage_signals(etf_id);
+CREATE INDEX idx_arb_date   ON etf_arbitrage_signals(signal_date);
+CREATE INDEX idx_arb_direct ON etf_arbitrage_signals(direction);
+CREATE INDEX idx_arb_conf   ON etf_arbitrage_signals(confidence);
+CREATE INDEX idx_arb_exec   ON etf_arbitrage_signals(executed);

@@ -7,7 +7,7 @@ from typing import Optional
 import akshare as ak
 
 from src.collector.retry import with_retry
-from src.config import pg
+from src.loader.pg import get_conn
 
 logger = logging.getLogger(__name__)
 
@@ -182,7 +182,7 @@ def sync_etfs_to_db(records: list[dict]) -> dict:
     if not records:
         return {"inserted": 0, "updated": 0}
 
-    with pg.get_conn() as conn:
+    with get_conn() as conn:
         try:
             with conn.cursor() as cur:
                 inserted = updated = 0
@@ -234,7 +234,7 @@ def batch_fetch_etf_hist(start_year: int = 2025, limit: int = 1486) -> int:
     total_written = 0
     errors = 0
 
-    with pg.get_conn() as conn:
+    with get_conn() as conn:
         try:
             for i, etf in enumerate(target):
                 code = etf["code"]

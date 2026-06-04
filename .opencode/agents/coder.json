@@ -1,0 +1,5 @@
+{
+  "name": "coder",
+  "description": "CIA coding agent for ETF monitoring scripts",
+  "model": "Qwen3.6-35B-A3B-Q8"
+}

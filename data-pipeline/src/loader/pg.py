@@ -374,6 +374,79 @@ def batch_upsert_news(records: list[dict]) -> dict:
             raise
 
 
+# ── 研报 ────────────────────────────────────────────────────────
+
+def batch_upsert_research_reports(records: list[dict]) -> dict:
+    """批量写入券商研报（东方财富源）
+
+    记录格式（来自 src.collector.research_report.fetch_research_report）：
+        stock_code, report_name, stock_name, rating, institution,
+        profit_forecast_2026, pe_forecast_2026, report_date, pdf_url
+    """
+    if not records:
+        return {"written": 0}
+    start_time = time.time()
+    trade_date = records[0].get("report_date")
+    with get_conn() as conn:
+        code_map = get_company_id_map(conn)
+        rows, skipped = [], 0
+        for r in records:
+            raw_code = r.get("stock_code", "")
+            code_key = raw_code.split(".")[0]
+            cid = code_map.get(code_key)
+            if cid is None:
+                # 查不到 company_id 仍入库（stock_code 作为外键）
+                cid = None
+            rows.append((
+                cid,
+                r.get("stock_code", ""),
+                r.get("stock_name", ""),
+                r.get("report_name", ""),
+                r.get("rating", ""),
+                r.get("institution", ""),
+                _normalize_date(r.get("report_date")),
+                r.get("pdf_url", ""),
+                _nan_to_none(r.get("profit_forecast_2026")),
+                _nan_to_none(r.get("pe_forecast_2026")),
+            ))
+
+        if not rows:
+            duration_ms = int((time.time() - start_time) * 1000)
+            status = "success" if skipped == 0 else "partial"
+            log_audit(conn, "research_report", trade_date, len(records), 0, skipped, status, None, duration_ms)
+            return {"written": 0, "skipped": skipped}
+
+        try:
+            with conn.cursor() as cur:
+                execute_batch(cur, """
+                    INSERT INTO research_reports
+                        (company_id, stock_code, stock_name, report_name, rating,
+                         institution, report_date, pdf_url,
+                         profit_forecast_2026, pe_forecast_2026)
+                    VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                    ON CONFLICT (stock_code, report_date, report_name)
+                    DO UPDATE SET
+                        stock_name    = EXCLUDED.stock_name,
+                        rating        = EXCLUDED.rating,
+                        institution   = EXCLUDED.institution,
+                        pdf_url       = EXCLUDED.pdf_url,
+                        profit_forecast_2026 = COALESCE(EXCLUDED.profit_forecast_2026, research_reports.profit_forecast_2026),
+                        pe_forecast_2026    = COALESCE(EXCLUDED.pe_forecast_2026,    research_reports.pe_forecast_2026)
+                """, rows)
+            conn.commit()
+            duration_ms = int((time.time() - start_time) * 1000)
+            status = "success" if skipped == 0 else "partial"
+            log_audit(conn, "research_report", trade_date, len(records), len(rows), skipped, status, None, duration_ms)
+            logger.info(f"研报入库: 写入 {len(rows)}, 跳过 {skipped}")
+            return {"written": len(rows), "skipped": skipped}
+        except Exception as e:
+            conn.rollback()
+            duration_ms = int((time.time() - start_time) * 1000)
+            log_audit(conn, "research_report", trade_date, len(records), 0, skipped, "failed", str(e), duration_ms)
+            logger.error(f"研报入库失败: {e}")
+            raise
+
+
 # ── 指数 ────────────────────────────────────────────────────────
 
 def get_index_id_map(conn) -> dict[str, int]:

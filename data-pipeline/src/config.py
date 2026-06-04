@@ -16,6 +16,13 @@ def env_int(key: str, default: int = 0) -> int:
         return default
 
 
+def env_float(key: str, default: float) -> float:
+    try:
+        return float(os.environ.get(key, str(default)))
+    except (ValueError, TypeError):
+        return default
+
+
 @dataclass
 class PGConfig:
     host: str = env("PG_HOST", "localhost")
@@ -72,14 +79,46 @@ class CollectorConfig:
 
 
 @dataclass
+class CifangConfig:
+    """次方量化 API 配置"""
+    base_url: str = "https://www.cifangquant.com/api"
+    token: str = env("CIFANG_TOKEN", "")
+
+    def __post_init__(self):
+        if not self.token:
+            raise ValueError("CIFANG_TOKEN env var must be set")
+
+    @property
+    def headers(self) -> dict:
+        return {"x-api-key": self.token, "Accept": "application/json"}
+
+
+@dataclass
 class RssCastConfig:
     """RssCast MCP 服务配置"""
     endpoint: str = env("RSSCAST_ENDPOINT", "https://app-cn.rsscast.io/api/mcp/v1/mcp")
     token: str = env("RSSCAST_TOKEN", "")
 
 
+@dataclass
+class ArbitrageConfig:
+    """ETF 期现套利信号参数"""
+    trigger_threshold: float = env_float("ARB_TRIGGER", 0.003)    # 0.3%
+    min_liquidity: float = env_float("ARB_MIN_LIQ", 0.6)          # 流动性评分 > 0.6
+    slippage_rate: float = env_float("ARB_SLIPPAGE", 0.0005)     # 单边滑点 0.05%
+    impact_rate: float = env_float("ARB_IMPACT", 0.0003)          # 冲击成本系数
+    commission_rate: float = env_float("ARB_COMMISSION", 0.0003)  # 买卖双向手续费率
+    stamp_tax_rate: float = env_float("ARB_STAMP", 0.001)         # 印花税 0.1%（仅卖出收）
+    min_profit_threshold: float = env_float("ARB_MIN_PROFIT", 0.001)  # 0.1%
+    min_shares: int = env_int("ARB_MIN_SHARES", 500000)           # 最小份额（约50万元）
+    signal_valid_days: int = 1                                    # T+1
+
+
+cifang: CifangConfig = CifangConfig()
+rsscast: RssCastConfig = RssCastConfig()
+arbitrage: ArbitrageConfig = ArbitrageConfig()
+
 pg: PGConfig = PGConfig()
 redis: RedisConfig = RedisConfig()
 minio: MinIOConfig = MinIOConfig()
 collector: CollectorConfig = CollectorConfig()
-rsscast: RssCastConfig = RssCastConfig()
