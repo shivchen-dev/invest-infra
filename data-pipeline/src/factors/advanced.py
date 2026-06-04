@@ -62,16 +62,62 @@ def _clean_num(val):
 # ─── 数据采集 ────────────────────────────────────────────────────────────────
 
 
-def collect_fund_flow_big_deal(conn, days: int = 30) -> int:
-    """采集大单交易数据"""
-    import akshare as ak
+def collect_stock_daily_fund_flow(conn, calc_date=None) -> int:
+    """
+    采集全市场个股资金流日频快照（东方财富-同花顺），
+    替换原来的 stock_fund_flow_big_deal（大单追踪，仅覆盖科创板+沪市主板）。
 
-    logger.info("正在采集大单交易数据 ...")
-    today = date.today()
+    新接口 stock_fund_flow_individual(symbol='即时') 返回约 5188 只股票，
+    覆盖：创业板(924)、科创板(615)、沪市主板(748+217)、深市主板、北交所(75)。
+    """
+    import akshare as ak
+    from datetime import date
+
+    if calc_date is None:
+        calc_date = date.today()
+
+    logger.info("正在采集全市场个股资金流 ...")
     written = 0
+    skipped = 0
+
+    def _clean_num(val):
+        """'5426.29万' / '3.69亿' → float(元)"""
+        if val is None:
+            return None
+        try:
+            if isinstance(val, float) and (val != val or abs(val) == float('inf')):
+                return None
+        except (TypeError, ValueError):
+            pass
+        s = str(val).strip().replace('%', '').replace(' ', '')
+        if s in ('', '-', 'nan', 'None'):
+            return None
+        for unit, mult in [('亿', 1e8), ('万', 1e4), ('千', 1e3)]:
+            if unit in s:
+                try:
+                    return float(s.replace(unit, '')) * mult
+                except ValueError:
+                    return None
+        try:
+            return float(s)
+        except ValueError:
+            return None
+
+    def _parse_pct(val):
+        if val is None:
+            return None
+        s = str(val).strip().replace('%', '')
+        if s in ('', '-', 'nan'):
+            return None
+        try:
+            return float(s)
+        except (ValueError, TypeError):
+            return None
+
     try:
-        df = ak.stock_fund_flow_big_deal()
+        df = ak.stock_fund_flow_individual(symbol="即时")
         if df is None or df.empty:
+            logger.warning("资金流数据为空")
             return 0
 
         code_map = {}
@@ -82,30 +128,57 @@ def collect_fund_flow_big_deal(conn, days: int = 30) -> int:
         with conn.cursor() as cur:
             for _, row in df.iterrows():
                 code_raw = str(row.get("股票代码", "")).strip()
+                if code_raw.endswith('.0'):
+                    code_raw = code_raw[:-2]
                 cid = code_map.get(code_raw)
                 if cid is None:
+                    skipped += 1
                     continue
 
-                trade_time = row.get("成交时间")
+                inflow  = _clean_num(row.get("流入资金"))
+                outflow = _clean_num(row.get("流出资金"))
+                net     = _clean_num(row.get("净额"))
+                amount  = _clean_num(row.get("成交额"))
                 change_pct = _parse_pct(row.get("涨跌幅"))
+                turnover    = _parse_pct(row.get("换手率"))
+                close_price = row.get("最新价")
 
                 cur.execute(
                     """
-                    INSERT INTO fund_flow_big_deal
-                        (company_id, trade_time, price, volume, amount, deal_nature, change_pct, source)
-                    VALUES (%s,%s,%s,%s,%s,%s,%s,%s)
+                    INSERT INTO stock_daily_fund_flow
+                        (company_id, calc_date,
+                         inflow_main, outflow_main, net_inflow_main,
+                         amount, close_price, change_pct, turnover_rate, source)
+                    VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                    ON CONFLICT (company_id, calc_date) DO UPDATE SET
+                        inflow_main   = EXCLUDED.inflow_main,
+                        outflow_main  = EXCLUDED.outflow_main,
+                        net_inflow_main = EXCLUDED.net_inflow_main,
+                        amount        = EXCLUDED.amount,
+                        close_price   = EXCLUDED.close_price,
+                        change_pct    = EXCLUDED.change_pct,
+                        turnover_rate = EXCLUDED.turnover_rate
                     """,
-                    (cid, trade_time, row.get("成交价格"), row.get("成交量"),
-                     row.get("成交额"), row.get("大单性质"),
-                     change_pct, "akshare"),
+                    (cid, calc_date,
+                     inflow, outflow, net,
+                     amount, close_price, change_pct, turnover,
+                     "eastmoney-realtime"),
                 )
                 written += 1
+
         conn.commit()
-        logger.info(f"大单交易入库: {written} 条")
+        logger.info(f"资金流入库: {written} 条, 跳过(未匹配) {skipped} 条")
     except Exception as e:
-        logger.warning(f"大单交易采集失败: {e}")
+        logger.warning(f"资金流采集失败: {e}")
         conn.rollback()
+
     return written
+
+
+# ── 兼容旧名（保留避免调用方报错）──────────────────────────────────────────
+def collect_fund_flow_big_deal(conn, days: int = 30) -> int:
+    """兼容别名：透传到新函数（days 参数保留但不再用于大单历史）"""
+    return collect_stock_daily_fund_flow(conn)
 
 
 def collect_lhb_records(conn, days: int = 30) -> int:
@@ -249,27 +322,28 @@ def calc_reversal_factor(conn, calc_date: date) -> list[dict]:
 
 
 def calc_main_fund_flow_factor(conn, calc_date: date) -> list[dict]:
-    """主力资金因子：近5日主力净买入"""
+    """
+    主力资金因子：近5日主力净流入（从 stock_daily_fund_flow 计算）。
+    已切换到全市场数据源，覆盖所有板块。
+    """
     start = calc_date - timedelta(days=5)
     with conn.cursor() as cur:
         cur.execute(
             """
-            SELECT fbd.company_id,
-                   SUM(fbd.amount) FILTER(WHERE fbd.deal_nature LIKE '%%买入%%'
-                                          OR fbd.deal_nature LIKE '%%买盘%%') AS main_buy,
-                   SUM(fbd.amount) FILTER(WHERE fbd.deal_nature LIKE '%%卖出%%'
-                                          OR fbd.deal_nature LIKE '%%卖盘%%') AS main_sell,
-                   SUM(fbd.amount) AS total_amount
-            FROM fund_flow_big_deal fbd
-            WHERE fbd.trade_time::date BETWEEN %s AND %s
-            GROUP BY fbd.company_id
+            SELECT company_id,
+                   SUM(net_inflow_main) AS net_inflow_5d,
+                   SUM(amount) AS total_amount_5d
+            FROM stock_daily_fund_flow
+            WHERE calc_date BETWEEN %s AND %s
+            GROUP BY company_id
+            HAVING SUM(net_inflow_main) IS NOT NULL
             """,
             (start, calc_date),
         )
         results = []
         for r in cur.fetchall():
-            net = (r[1] or 0) - (r[2] or 0)
-            total = r[3] or 1
+            net = r[1] or 0
+            total = r[2] or 1
             results.append({
                 "company_id": r[0],
                 "main_net_flow_5d": net,

@@ -33,7 +33,14 @@ class FactorCalculator(ABC):
 
 
 class DataLoader:
-    """因子计算数据加载工具 — 从 PostgreSQL 读取源数据"""
+    """因子计算数据加载工具 — 从 PostgreSQL 读取源数据
+    
+    建议使用 with 语句管理生命周期：
+    
+        with DataLoader() as dl:
+            df = dl.load_quotes(...)
+        # 或手动关闭：dl.close()
+    """
 
     def __init__(self):
         self._conn = None
@@ -57,9 +64,13 @@ class DataLoader:
     # ── 行情数据 ──
 
     def load_quotes(self, company_ids: list[int], start_date: date, end_date: date) -> pd.DataFrame:
-        """加载日行情数据"""
+        """加载日行情数据
+        
+        注意：返回数据为不复权价格（raw price），如需复权数据请使用 adjust_mode 参数。
+        """
         sql = """
-            SELECT dq.company_id, dq.trade_date, dq.close_price, dq.volume,
+            SELECT dq.company_id, dq.trade_date, dq.open_price, dq.high_price,
+                   dq.low_price, dq.close_price, dq.volume,
                    dq.amount, dq.turnover_rate, dq.change_pct
             FROM daily_quotes dq
             WHERE dq.company_id = ANY(%s)
@@ -73,7 +84,11 @@ class DataLoader:
     # ── 财报数据 ──
 
     def load_financial_reports(self, company_ids: list[int]) -> pd.DataFrame:
-        """加载最新财报数据（按报告期降序）"""
+        """加载财务报表历史数据
+        
+        注意：返回全部历史记录（与 load_latest_financial 的最新一期不同），
+        用于需要历史序列的因子计算场景。
+        """
         sql = """
             SELECT fr.company_id, fr.report_date, fr.report_type, fr.fiscal_year,
                    fr.revenue, fr.cost_of_sales, fr.net_profit,
@@ -95,7 +110,8 @@ class DataLoader:
                    fr.company_id, fr.report_date, fr.report_type, fr.fiscal_year,
                    fr.revenue, fr.cost_of_sales, fr.net_profit,
                    fr.parent_net_profit, fr.total_assets,
-                   fr.total_liabilities, fr.total_equity
+                   fr.total_liabilities, fr.total_equity,
+                   fr.roa_raw, fr.debt_ratio_raw
             FROM financial_reports fr
             WHERE fr.company_id = ANY(%s)
               AND fr.revenue IS NOT NULL
@@ -111,7 +127,8 @@ class DataLoader:
         sql = """
             SELECT fr.company_id, fr.report_date, fr.report_type, fr.fiscal_year,
                    fr.revenue, fr.net_profit, fr.parent_net_profit,
-                   fr.total_assets, fr.total_liabilities, fr.total_equity
+                   fr.total_assets, fr.total_liabilities, fr.total_equity,
+                   fr.roa_raw, fr.debt_ratio_raw
             FROM financial_reports fr
             WHERE fr.company_id = ANY(%s)
               AND fr.fiscal_year = %s

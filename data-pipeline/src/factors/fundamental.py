@@ -1,6 +1,7 @@
 """基本面因子计算器 — 从 financial_reports 计算各类财务因子"""
 
 import logging
+import math
 import numpy as np
 import pandas as pd
 from datetime import date, timedelta
@@ -9,6 +10,16 @@ from typing import Optional
 from src.factors.base import FactorCalculator, DataLoader
 
 logger = logging.getLogger(__name__)
+
+
+def _valid(v) -> bool:
+    """判断因子值是否有效（非NULL、非NaN）"""
+    if v is None:
+        return False
+    try:
+        return not math.isnan(float(v))
+    except (TypeError, ValueError):
+        return False
 
 
 class ROECalculator(FactorCalculator):
@@ -23,15 +34,15 @@ class ROECalculator(FactorCalculator):
         results = []
         for _, row in df.iterrows():
             equity = row.get("total_equity", 0) or 0
-            if equity == 0:
+            if not _valid(equity) or float(equity) == 0:
                 continue
-            val = (row.get("net_profit", 0) or 0) / equity
+            val = (row.get("net_profit", 0) or 0) / float(equity)
             results.append({"company_id": int(row["company_id"]), "value": round(float(val), 6)})
         return results
 
 
 class ROACalculator(FactorCalculator):
-    """ROA = 净利润 / 总资产"""
+    """ROA = 净利润 / 总资产；优先用财报原始指标总资产报酬率(ROA)%"""
     factor_key = "roa"
 
     def compute(self, company_ids: list[int], calc_date: date, **kwargs) -> list[dict]:
@@ -41,10 +52,17 @@ class ROACalculator(FactorCalculator):
             return []
         results = []
         for _, row in df.iterrows():
-            assets = row.get("total_assets", 0) or 0
-            if assets == 0:
+            # 优先用 akshare 直接提供的总资产报酬率（%），除以100转小数
+            roa_raw = row.get("roa_raw")
+            if _valid(roa_raw):
+                val = float(roa_raw) / 100.0
+                results.append({"company_id": int(row["company_id"]), "value": round(val, 6)})
                 continue
-            val = (row.get("net_profit", 0) or 0) / assets
+            # 兜底：自己算
+            assets = row.get("total_assets", 0) or 0
+            if not _valid(assets) or float(assets) == 0:
+                continue
+            val = (row.get("net_profit", 0) or 0) / float(assets)
             results.append({"company_id": int(row["company_id"]), "value": round(float(val), 6)})
         return results
 
@@ -61,11 +79,11 @@ class GrossMarginCalculator(FactorCalculator):
         results = []
         for _, row in df.iterrows():
             rev = row.get("revenue", 0) or 0
-            if rev == 0:
+            if not _valid(rev) or float(rev) == 0:
                 continue
             cost = row.get("cost_of_sales", 0) or 0
-            val = (rev - cost) / rev
-            results.append({"company_id": int(row["company_id"]), "value": round(float(val), 6)})
+            val = (float(rev) - float(cost)) / float(rev)
+            results.append({"company_id": int(row["company_id"]), "value": round(val, 6)})
         return results
 
 
@@ -81,15 +99,15 @@ class NetProfitMarginCalculator(FactorCalculator):
         results = []
         for _, row in df.iterrows():
             rev = row.get("revenue", 0) or 0
-            if rev == 0:
+            if not _valid(rev) or float(rev) == 0:
                 continue
-            val = (row.get("net_profit", 0) or 0) / rev
+            val = (row.get("net_profit", 0) or 0) / float(rev)
             results.append({"company_id": int(row["company_id"]), "value": round(float(val), 6)})
         return results
 
 
 class DebtRatioCalculator(FactorCalculator):
-    """资产负债率 = 总负债 / 总资产"""
+    """资产负债率 = 总负债 / 总资产；优先用财报原始指标资产负债率%"""
     factor_key = "debt_ratio"
 
     def compute(self, company_ids: list[int], calc_date: date, **kwargs) -> list[dict]:
@@ -99,10 +117,17 @@ class DebtRatioCalculator(FactorCalculator):
             return []
         results = []
         for _, row in df.iterrows():
-            assets = row.get("total_assets", 0) or 0
-            if assets == 0:
+            # 优先用 akshare 直接提供的资产负债率（%），除以100转小数
+            debt_raw = row.get("debt_ratio_raw")
+            if _valid(debt_raw):
+                val = float(debt_raw) / 100.0
+                results.append({"company_id": int(row["company_id"]), "value": round(val, 6)})
                 continue
-            val = (row.get("total_liabilities", 0) or 0) / assets
+            # 兜底：自己算
+            assets = row.get("total_assets", 0) or 0
+            if not _valid(assets) or float(assets) == 0:
+                continue
+            val = (row.get("total_liabilities", 0) or 0) / float(assets)
             results.append({"company_id": int(row["company_id"]), "value": round(float(val), 6)})
         return results
 

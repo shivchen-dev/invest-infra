@@ -88,7 +88,11 @@ def sync_definitions_to_db(conn=None):
                         VALUES (%s,%s,%s,%s,%s,%s,%s)
                         ON CONFLICT (factor_key) DO UPDATE SET
                             name=EXCLUDED.name, category=EXCLUDED.category,
-                            sub_category=EXCLUDED.sub_category, updated_at=now()
+                            sub_category=EXCLUDED.sub_category,
+                            formula_desc=EXCLUDED.formula_desc,
+                            data_source=EXCLUDED.data_source,
+                            frequency=EXCLUDED.frequency,
+                            updated_at=now()
                         """,
                         (fd.key, fd.name, fd.category.value, fd.sub_category,
                          fd.description, fd.data_source, fd.frequency.value),
@@ -144,7 +148,7 @@ def _compute_zscore(values: list[float]) -> list[float]:
     mean = arr[mask].mean()
     std = arr[mask].std()
     if std == 0:
-        return [round(float(x - mean), 6) if not np.isnan(x) else None for x in arr]
+        return [0.0 if not np.isnan(x) else None for x in arr]
     scores = np.full_like(arr, np.nan, dtype=float)
     scores[mask] = (arr[mask] - mean) / std
     return [round(float(x), 6) if not np.isnan(x) else None for x in scores]
@@ -210,13 +214,13 @@ def compute_factors(
                 logger.warning(f"因子 {fk}: 无计算结果")
                 continue
 
-            # 提取有效数值做截面标准化
-            valid_values = [v["value"] for v in values if v["value"] is not None]
-            percentiles = _compute_percentile(valid_values) if valid_values else []
-            zscores = _compute_zscore(valid_values) if valid_values else []
+            # 提取有效数值做截面标准化（保留 company_id 用于映射）
+            valid_values = [v for v in values if v["value"] is not None]
+            percentiles = _compute_percentile([v["value"] for v in valid_values]) if valid_values else []
+            zscores = _compute_zscore([v["value"] for v in valid_values]) if valid_values else []
 
-            p_iter = iter(percentiles) if percentiles else iter([])
-            z_iter = iter(zscores) if zscores else iter([])
+            pct_map = {v["company_id"]: p for v, p in zip(valid_values, percentiles)}
+            zscore_map = {v["company_id"]: z for v, z in zip(valid_values, zscores)}
 
             # 写 factor_values
             written = 0
@@ -224,19 +228,19 @@ def compute_factors(
                 for v in values:
                     if v["value"] is None:
                         continue
-                    pct = next(p_iter, None)
-                    zsc = next(z_iter, None)
+                    pct = pct_map.get(v["company_id"])
+                    zsc = zscore_map.get(v["company_id"])
                     cur.execute(
                         """
                         INSERT INTO factor_values
-                            (company_id, factor_id, calc_date, value, rank, percentile, zscore, calc_batch_id)
-                        VALUES (%s,%s,%s,%s,%s,%s,%s,%s)
+                            (company_id, factor_id, calc_date, value, percentile, zscore, calc_batch_id)
+                        VALUES (%s,%s,%s,%s,%s,%s,%s)
                         ON CONFLICT (company_id, factor_id, calc_date) DO UPDATE SET
                             value=EXCLUDED.value, percentile=EXCLUDED.percentile,
                             zscore=EXCLUDED.zscore, calc_batch_id=EXCLUDED.calc_batch_id
                         """,
                         (v["company_id"], fd_id, calc_date, v["value"],
-                         None, pct, zsc, batch_label),
+                         pct, zsc, batch_label),
                     )
                     written += 1
 
