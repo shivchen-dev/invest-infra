@@ -233,27 +233,28 @@ def compute_factors(
             pct_map = {v["company_id"]: p for v, p in zip(valid_values, percentiles)}
             zscore_map = {v["company_id"]: z for v, z in zip(valid_values, zscores)}
 
-            # 写 factor_values
-            written = 0
+            # 写 factor_values（F-ENG-01: 批量写入）
+            rows = [
+                (v["company_id"], fd_id, calc_date, v["value"],
+                 pct_map.get(v["company_id"]), zscore_map.get(v["company_id"]), batch_label)
+                for v in values
+                if v["value"] is not None
+            ]
+            written = len(rows)
             with conn.cursor() as cur:
-                for v in values:
-                    if v["value"] is None:
-                        continue
-                    pct = pct_map.get(v["company_id"])
-                    zsc = zscore_map.get(v["company_id"])
-                    cur.execute(
+                if rows:
+                    psycopg2.extras.execute_values(
+                        cur,
                         """
                         INSERT INTO factor_values
                             (company_id, factor_id, calc_date, value, percentile, zscore, calc_batch_id)
-                        VALUES (%s,%s,%s,%s,%s,%s,%s)
+                        VALUES %s
                         ON CONFLICT (company_id, factor_id, calc_date) DO UPDATE SET
                             value=EXCLUDED.value, percentile=EXCLUDED.percentile,
                             zscore=EXCLUDED.zscore, calc_batch_id=EXCLUDED.calc_batch_id
                         """,
-                        (v["company_id"], fd_id, calc_date, v["value"],
-                         pct, zsc, batch_label),
+                        rows,
                     )
-                    written += 1
 
             conn.commit()
             elapsed = round(time.time() - t0, 2)
