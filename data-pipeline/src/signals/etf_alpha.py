@@ -24,34 +24,34 @@ logger = logging.getLogger(__name__)
 
 ETF_DEFAULT_WEIGHTS = [
     # === Fundamental (30分) ===
-    {"factor_key": "index_logic_score",      "category": "fundamental", "weight": 0.08, "norm_direction":  1},
-    {"factor_key": "industry_sentiment",     "category": "fundamental", "weight": 0.08, "norm_direction":  1},
-    {"factor_key": "component_roe",           "category": "fundamental", "weight": 0.06, "norm_direction":  1},
-    {"factor_key": "component_concentration", "category": "fundamental", "weight": 0.04, "norm_direction": -1},
-    {"factor_key": "rebalance_freq",           "category": "fundamental", "weight": 0.04, "norm_direction": -1},
+    {"factor_key": "index_logic_score",      "category": "fundamental", "weight": 0.078, "norm_direction":  1},
+    {"factor_key": "industry_sentiment",     "category": "fundamental", "weight": 0.078, "norm_direction":  1},
+    {"factor_key": "component_roe",           "category": "fundamental", "weight": 0.059, "norm_direction":  1},
+    {"factor_key": "component_concentration", "category": "fundamental", "weight": 0.039, "norm_direction": -1},
+    {"factor_key": "rebalance_freq",         "category": "fundamental", "weight": 0.039, "norm_direction": -1},
     # === Quant (25分) ===
-    {"factor_key": "momentum_5d",            "category": "momentum",    "weight": 0.05, "norm_direction":  1},
-    {"factor_key": "momentum_20d",           "category": "momentum",    "weight": 0.05, "norm_direction":  1},
-    {"factor_key": "momentum_60d",           "category": "momentum",    "weight": 0.03, "norm_direction":  1},
-    {"factor_key": "pe_percentile",           "category": "valuation",   "weight": 0.06, "norm_direction": -1},
-    {"factor_key": "hv_20d",                 "category": "volatility",  "weight": 0.03, "norm_direction": -1},
-    {"factor_key": "max_drawdown",            "category": "risk",        "weight": 0.02, "norm_direction": -1},
-    {"factor_key": "backtest_stability",      "category": "momentum",    "weight": 0.01, "norm_direction":  1},
+    {"factor_key": "momentum_5d",            "category": "momentum",    "weight": 0.049, "norm_direction":  1},
+    {"factor_key": "momentum_20d",           "category": "momentum",    "weight": 0.049, "norm_direction":  1},
+    {"factor_key": "momentum_60d",           "category": "momentum",    "weight": 0.029, "norm_direction":  1},
+    {"factor_key": "pe_percentile",           "category": "valuation",   "weight": 0.059, "norm_direction": -1},
+    {"factor_key": "hv_20d",                 "category": "volatility",  "weight": 0.029, "norm_direction": -1},
+    {"factor_key": "max_drawdown",            "category": "risk",        "weight": 0.020, "norm_direction": -1},
+    {"factor_key": "backtest_stability",    "category": "momentum",   "weight": 0.010, "norm_direction":  1},
     # === Liquidity (20分) ===
-    {"factor_key": "amount_ma5",              "category": "liquidity",   "weight": 0.08, "norm_direction":  1},
-    {"factor_key": "main_net_flow",           "category": "money_flow",   "weight": 0.06, "norm_direction":  1},
-    {"factor_key": "turnover_rate",           "category": "liquidity",   "weight": 0.04, "norm_direction":  1},
-    {"factor_key": "bid_ask_spread",          "category": "liquidity",   "weight": 0.02, "norm_direction": -1},
+    {"factor_key": "amount_ma5",             "category": "liquidity",   "weight": 0.078, "norm_direction":  1},
+    {"factor_key": "main_net_flow",          "category": "money_flow",  "weight": 0.059, "norm_direction":  1},
+    {"factor_key": "turnover_rate",          "category": "liquidity",   "weight": 0.039, "norm_direction":  1},
+    {"factor_key": "bid_ask_spread",         "category": "liquidity",   "weight": 0.020, "norm_direction": -1},
     # === Information (15分) ===
-    {"factor_key": "news_sentiment",          "category": "information", "weight": 0.05, "norm_direction":  1},
-    {"factor_key": "policy_support",         "category": "information", "weight": 0.04, "norm_direction":  1},
-    {"factor_key": "social_sentiment",        "category": "information", "weight": 0.03, "norm_direction":  1},
-    {"factor_key": "industry_info_score",  "category": "information", "weight": 0.05, "norm_direction":  1},
-    # === Risk (10分) — 已在 Quant 和 Information 复用，此处以免为主 ===
-    {"factor_key": "policy_risk",             "category": "risk",       "weight": 0.04, "norm_direction": -1},
-    {"factor_key": "financial_deterioration","category": "risk",        "weight": 0.03, "norm_direction": -1},
-    {"factor_key": "volatility_spike",        "category": "risk",        "weight": 0.02, "norm_direction": -1},
-    {"factor_key": "liquidity_risk",          "category": "risk",        "weight": 0.01, "norm_direction": -1},
+    {"factor_key": "news_sentiment",         "category": "information", "weight": 0.049, "norm_direction":  1},
+    {"factor_key": "policy_support",        "category": "information", "weight": 0.039, "norm_direction":  1},
+    {"factor_key": "social_sentiment",       "category": "information", "weight": 0.029, "norm_direction":  1},
+    {"factor_key": "industry_info_score",   "category": "information", "weight": 0.049, "norm_direction":  1},
+    # === Risk (10分) ===
+    {"factor_key": "policy_risk",            "category": "risk",       "weight": 0.039, "norm_direction": -1},
+    {"factor_key": "financial_deterioration","category": "risk",        "weight": 0.029, "norm_direction": -1},
+    {"factor_key": "volatility_spike",        "category": "risk",        "weight": 0.020, "norm_direction": -1},
+    {"factor_key": "liquidity_risk",          "category": "risk",        "weight": 0.010, "norm_direction": -1},
 ]
 
 # ==============================================================
