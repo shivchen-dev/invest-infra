@@ -61,20 +61,20 @@
 
 | # | 问题 ID | 文件 | 描述 | 当前状态 | 风险 |
 |---|--------|------|------|:--------:|------|
-| 1 | **S-CR03** | `scoring.py` L303-311 | **动量计算逻辑错误**：使用 `MAX(change_pct)` 而非区间收益率 `LAST/FIRST - 1` | ❌ 未修复 | 动量评分完全错误 |
-| 2 | **S-CR04** | `etf_arbitrage.py` L175 | **置信度单位不一致**：`abs_premium/100 - total_cost_pct`，0.5% 和 0.15 直接相减，单位不统一导致净收益计算错误 | ❌ 未修复 | 套利置信度误判 |
-| 3 | **S-CR05** | `scoring.py` L485-490 | **fundamental 归一化错误**：`v*4` 假设因子范围 [0,25]，但 roe=0.2 → 得分仅 0.05，基本面因子几乎失效 | ❌ 未修复 | 质量因子评分失效 |
-| 4 | **S-HI01** | `alpha.py` L19-39 | **权重总和不等于 1.0**：DEFAULT_WEIGHTS 总和 = 0.99 | ❌ 未修复 | 综合评分系统性偏低 1% |
-| 5 | **S-HI02** | `etf_alpha.py` L25-55 | **权重总和不等于 1.0**：ETF_DEFAULT_WEIGHTS 总和 = 1.04 | ❌ 未修复 | ETF 评分系统性偏高 4% |
-| 6 | **S-HI03** | `etf_alpha.py` L295-300 | **normalize() catch 所有 Exception** 捕获 KeyboardInterrupt/SystemExit | ❌ 未修复 | 程序无法正常中断 |
+| 1 | **S-CR03** | `scoring.py` L303-311 | **动量计算逻辑错误**：使用 `MAX(change_pct)` 而非区间收益率 `LAST/FIRST - 1` | ✅ 已修复 `57a701a` | 动量评分完全错误 |
+| 2 | **S-CR04** | `etf_arbitrage.py` L175 | **置信度单位不一致**：`abs_premium/100 - total_cost_pct`，0.5% 和 0.15 直接相减，单位不统一导致净收益计算错误 | ✅ 已修复 `fccdd0d` | 套利置信度误判 |
+| 3 | **S-CR05** | `scoring.py` L485-490 | **fundamental 归一化错误**：`v*4` 假设因子范围 [0,25]，但 roe=0.2 → 得分仅 0.05，基本面因子几乎失效 | ✅ 已修复 `8e06efa` | 质量因子评分失效 |
+| 4 | **S-HI01** | `alpha.py` L19-39 | **权重总和不等于 1.0**：DEFAULT_WEIGHTS 总和 = 0.99 | ✅ 已修复 `1263454` | 综合评分系统性偏低 1% |
+| 5 | **S-HI02** | `etf_alpha.py` L25-55 | **权重总和不等于 1.0**：ETF_DEFAULT_WEIGHTS 总和 = 1.04 | ✅ 已修复 `1263454` | ETF 评分系统性偏高 4% |
+| 6 | **S-HI03** | `etf_alpha.py` L295-300 | **normalize() catch 所有 Exception** 捕获 KeyboardInterrupt/SystemExit | ✅ 已修复 `29f8fc3` | 程序无法正常中断 |
 
 #### Factors 模块
 
 | # | 问题 ID | 文件 | 描述 | 当前状态 | 风险 |
 |---|--------|------|------|:--------:|------|
-| 7 | **F-ENG-01** | `engine.py` L227-245 | **逐行 INSERT**：5000股×26因子=13万次独立 INSERT，性能极差 | ❌ 未修复 | 因子计算性能瓶颈 |
-| 8 | **F-TECH-01** | `technical.py` | **每个因子独立重复查询相同数据**：26个因子各自调用 `_load_for_calcs()`，重复 SQL 查询 N 次 | ❌ 未修复 | 多因子计算效率极低 |
-| 9 | **F-FUND-01** | `fundamental.py` L155-158 | **同比增长率按日历年而非会计年度匹配**：可能匹配到错误季度 | ❌ 未修复 | 财务因子计算偏差 |
+| 7 | **F-ENG-01** | `engine.py` L227-245 | **逐行 INSERT**：5000股×26因子=13万次独立 INSERT，性能极差 | ✅ 已修复 `091369a` | 因子计算性能瓶颈 |
+| 8 | **F-TECH-01** | `technical.py` | **每个因子独立重复查询相同数据**：26个因子各自调用 `_load_for_calcs()`，重复 SQL 查询 N 次 | ✅ 已修复 `dd54658`+`e4cfc05` | 多因子计算效率极低 |
+| 9 | **F-FUND-01** | `fundamental.py` L155-158 | **同比增长率按日历年而非会计年度匹配**：可能匹配到错误季度 | ✅ 已修复 `dc6a73f` | 财务因子计算偏差 |
 
 ### 🟡 Medium — 短期优化
 
