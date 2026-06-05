@@ -9,6 +9,9 @@
 | 12:25 | Phase 1 | S-CR03 Momentum | ✅ committed & pushed (57a701a) |
 | 12:30 | Phase 2 | S-CR04 套利置信度 | ✅ committed & pushed (fccdd0d) |
 | 13:02 | Phase 3 | S-CR05 Fundamental归一化 | ✅ 代码已修复（commit 8e06efa）|
+| 13:10 | Phase 4 | S-HI01/S-HI02 权重归一化 | ✅ committed & pushed (1263454) |
+| 13:11 | Phase 4 | S-HI03 normalize异常 | ✅ committed & pushed (29f8fc3) |
+| 13:12 | Phase 4 | F-FUND-01 同比增幅匹配 | ✅ committed & pushed (dc6a73f) |
 
 ---
 
@@ -19,9 +22,9 @@
 | Phase 1 | S-CR03 Momentum | ✅ committed & pushed (57a701a) |
 | Phase 2 | S-CR04 套利置信度 | ✅ committed & pushed (fccdd0d) |
 | Phase 3 | S-CR05 Fundamental归一化 | ✅ 代码已修复（commit 8e06efa）|
-| Phase 4 | S-HI01/S-HI02 权重归一化 | pending |
-| Phase 5 | F-ENG-01 批量写入 | pending |
-| Phase 6 | F-TECH-01 数据预加载 | pending |
+| Phase 4 | S-HI01/S-HI02/S-HI03/F-FUND-01 | ✅ all done (1263454/29f8fc3/dc6a73f) |
+| Phase 5 | F-ENG-01 批量写入 | ⏳ pending |
+| Phase 6 | F-TECH-01 数据预加载 | ⏳ pending |
 | Phase 7 | F-FUND-01 同比增幅匹配 | pending |
 | Phase 8 | S-HI03 normalize异常 | pending |
 
