@@ -24,10 +24,50 @@ from typing import Optional
 
 import numpy as np
 import psycopg2
+from scipy.stats import rankdata
 
 from src.config import pg
 
 logger = logging.getLogger(__name__)
+
+# Fundamental metrics whose raw values span wildly different scales.
+# Each is percentile-ranked within the batch before scoring.
+_FUNDAMENTAL_METRICS = ("roe", "roa", "gross_margin", "net_profit_margin")
+
+
+def _normalize_fundamentals(records: list[dict]) -> None:
+    """在批次内对 fundamental 指标做百分位排名，写入 record[fundamental_pct]。
+
+    用 scipy.stats.rankdata 计算每个值在其同指标子集内的百分位排名 [0,100]，
+    避免固定乘数 (v*4) 对不同量纲数据的扭曲——例如 ROE 20%→0.8、毛利率 50%→200。
+
+    Modifies records in-place.
+    """
+    for key in _FUNDAMENTAL_METRICS:
+        pairs: list[tuple[int, float]] = []  # (index, value)
+        for idx, rec in enumerate(records):
+            v = rec.get(key)
+            if v is not None:
+                try:
+                    f = float(v)
+                    if f == f:  # filter NaN
+                        pairs.append((idx, f))
+                except (TypeError, ValueError):
+                    pass
+        if len(pairs) < 2:
+            # 不足 2 个有效值时统一给中性分 50
+            for idx, _ in pairs:
+                records[idx]["fundamental_pct"] = {
+                    **records[idx].get("fundamental_pct", {}), key: 50.0,
+                }
+            continue
+        indices, vals = zip(*pairs)
+        ranks = rankdata(vals, method="average")
+        percentiles = {i: (r / len(vals)) * 100.0 for i, r in zip(indices, ranks)}
+        for idx, pct in percentiles.items():
+            records[idx]["fundamental_pct"] = {
+                **records[idx].get("fundamental_pct", {}), key: pct,
+            }
 
 
 # ─── 维度权重配置 ─────────────────────────────────────────────────────────
@@ -505,12 +545,12 @@ def score_stock(record: dict) -> dict:
         except (TypeError, ValueError):
             return None
 
-    # 质量维度（越大越好）
-    for _, key in [("roe", "roe"), ("roa", "roa"),
-                   ("gross_margin", "gross_margin"), ("net_profit_margin", "net_profit_margin")]:
-        v = _f(record.get(key))
-        if v is not None:
-            scores["fundamental"] = scores.get("fundamental", 0) + max(0, min(100, v * 4)) / 4
+    # 质量维度 — 百分位排名（已在批次级归一化），均值聚合
+    pctls = record.get("fundamental_pct", {})
+    for key in _FUNDAMENTAL_METRICS:
+        pct = pctls.get(key)  # [0, 100] from batch-level percentile rank
+        if pct is not None:
+            scores["fundamental"] = scores.get("fundamental", 0) + pct / 4.0
     scores["fundamental"] = scores.get("fundamental", 0)
 
     # 成长维度
@@ -624,6 +664,9 @@ def run_scoring(min_score: float = 60.0,
         stock_records = fetch_stock_factor_matrix(conn, calc_date)
         etf_records   = fetch_etf_factor_matrix(conn, calc_date)
         logger.info(f"评分: {len(stock_records)} 只股票, {len(etf_records)} 只ETF")
+
+        # 百分位排名归一化 fundamental 指标（批次内，避免固定乘数扭曲量纲）
+        _normalize_fundamentals(stock_records)
 
         scored_stocks = []
         for rec in stock_records:

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-setup_systemd_timers.py — 将 cron_dispatcher.py 所有任务注册为 systemd user timers
+setup_systemd_timers.py — 将 cia_dispatcher.py 所有任务注册为 systemd user timers
 ==================================================================================
 
 【当前方案】static unit files（重启后持久，重启前一直生效）
@@ -8,14 +8,14 @@ setup_systemd_timers.py — 将 cron_dispatcher.py 所有任务注册为 systemd
 
 注册后验证：
   systemctl --user list-timers --all
-  systemctl --user status cron_<task>.timer
+  systemctl --user status cia_<task>.timer
 
 重新生成（覆盖）：
   python3 /home/claw/invest-infra/setup_systemd_timers.py
 
 注意：
   ETF 日内（10:00-15:00 每15分钟）全部调用同一个 TASK_MAP key，
-  文件名区分 cron_etf_intra_XXXX，service 名不同但都触发 etf_spot_intraday。
+  文件名区分 cia_etf_intra_XXXX，service 名不同但都触发 etf_spot_intraday。
   所有时间都是 weekday-aware（systemd 自动在非工作日跳过）。
 """
 
@@ -102,8 +102,8 @@ def register_timers():
 
     # Single-task static units
     for name, cal in SINGLE_TASKS:
-        write_unit(f"{USER_DIR}/cron_{name}.timer", TIMER_TPL.format(name=name, cal=cal))
-        write_unit(f"{USER_DIR}/cron_{name}.service", SVC_TPL.format(name=name, task=name, dispatcher=DISPATCHER, log=LOG))
+        write_unit(f"{USER_DIR}/cia_{name}.timer", TIMER_TPL.format(name=name, cal=cal))
+        write_unit(f"{USER_DIR}/cia_{name}.service", SVC_TPL.format(name=name, task=name, dispatcher=DISPATCHER, log=LOG))
         total += 1
 
     # ETF intraday: 10:00-15:00 every 15 min → all call etf_spot_intraday task
@@ -111,20 +111,20 @@ def register_timers():
         for m in ["00", "15", "30", "45"]:
             fname = f"etf_intra_{h}{m}"
             cal = f"*-*-* {h:02d}:{m}:00"
-            write_unit(f"{USER_DIR}/cron_{fname}.timer", TIMER_TPL.format(name=fname, cal=cal))
-            write_unit(f"{USER_DIR}/cron_{fname}.service", SVC_TPL.format(name=fname, task="etf_spot_intraday", dispatcher=DISPATCHER, log=LOG))
+            write_unit(f"{USER_DIR}/cia_{fname}.timer", TIMER_TPL.format(name=fname, cal=cal))
+            write_unit(f"{USER_DIR}/cia_{fname}.service", SVC_TPL.format(name=fname, task="etf_spot_intraday", dispatcher=DISPATCHER, log=LOG))
             total += 1
 
     # Watchdog
-    write_unit(f"{USER_DIR}/cron_watchdog.timer", WATCHDOG_TIMER)
-    write_unit(f"{USER_DIR}/cron_watchdog.service", WATCHDOG_SVC.format(dispatcher=DISPATCHER, log=LOG))
+    write_unit(f"{USER_DIR}/cia_watchdog.timer", WATCHDOG_TIMER)
+    write_unit(f"{USER_DIR}/cia_watchdog.service", WATCHDOG_SVC.format(dispatcher=DISPATCHER, log=LOG))
     total += 1
 
     # Reload + start
     subprocess.run(["systemctl", "--user", "daemon-reload"], capture_output=True)
     for name, _ in SINGLE_TASKS + [(f"etf_intra_{h}{m}", "") for h in range(10, 16) for m in ["00", "15", "30", "45"]] + [("watchdog", "")]:
-        subprocess.run(["systemctl", "--user", "start", f"cron_{name}.timer"], capture_output=True)
-    subprocess.run(["systemctl", "--user", "start", "cron_watchdog.timer"], capture_output=True)
+        subprocess.run(["systemctl", "--user", "start", f"cia_{name}.timer"], capture_output=True)
+    subprocess.run(["systemctl", "--user", "start", "cia_watchdog.timer"], capture_output=True)
 
     print(f"Registered {total} static systemd user units")
     print("Run: systemctl --user list-timers --all")

@@ -24,8 +24,7 @@ cron_dispatcher.py — CIA 定时任务统一调度入口
   financial_p4        → run_financial.sh 4（20:30 财务采集第4批）
   morning_briefing    → cron_morning_briefing.py（06:30 派发Morning Briefing）
   woa_audit           → cron_woa_audit.py（07:30 WOA输出审计）
-  briefing_dispatch   → cron_briefing_dispatch.py（07:40 最终洞察派发）
-"""
+""""
 
 import json
 import os
@@ -162,11 +161,6 @@ TASK_MAP = {
     "woa_audit": {
         "desc": "WOA 输出审计（07:30）",
         "shell": "cd /home/claw/invest-infra/data-pipeline && .venv/bin/python scripts/cron_woa_audit.py",
-        "timeout": 60,
-    },
-    "briefing_dispatch": {
-        "desc": "最终洞察派发（07:40）",
-        "shell": "cd /home/claw/invest-infra/data-pipeline && .venv/bin/python scripts/cron_briefing_dispatch.py",
         "timeout": 60,
     },
 }

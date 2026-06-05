@@ -75,14 +75,7 @@ TASK_THRESHOLDS = {
         "retry_max": 2,
         "retry_interval_s": 300,
     },
-    "briefing_dispatch": {
-        "expected_interval_s": 86400,
-        "alert_threshold_s": 7200,        # 超2h告警（正常应在07:40前）
-        "retry_threshold_s": 7500,        # 超2h5min补发
-        "critical": True,
-        "retry_max": 2,
-        "retry_interval_s": 300,
-    },
+
     "etf_spot_morning": {
         "expected_interval_s": 86400,
         "alert_threshold_s": 2700,        # 超45min（09:25正常应在09:30前）
@@ -423,7 +416,7 @@ def send_alert(report: dict):
         return
     send_alert._last_msg = msg
 
-    # 通过 sessions_send 发给主 session
+    # 通过 openclaw message send CLI 推送 QQ
     try:
         import subprocess
         alert_file = Path("/tmp/cron_alert.json")
@@ -434,28 +427,20 @@ def send_alert(report: dict):
         }, ensure_ascii=False))
         logger.info(f"告警已写入 {alert_file}\n{msg}")
 
-        # 通过 OpenClaw announce webhook 推送 QQ（推送到心跳订阅的频道）
-        # 格式: announce -> qqbot:c2c:<sender_id>
-        gateway = os.environ.get("OPENCLAW_GATEWAY_URL", "http://127.0.0.1:19100")
-        announce_url = f"{gateway}/api/v1/announce"
-        payload = {
-            "accountId": os.environ.get("OPENCLAW_ACCOUNT_ID", "1903628521"),
-            "channel": "qqbot",
-            "to": "c2c:43C77867478A33B101FA705AA70754E3",
-            "text": msg,
-        }
-        r = subprocess.run(
-            ["curl", "-s", "-X", "POST", announce_url,
-             "-H", "Content-Type: application/json",
-             "-d", json.dumps(payload), "--max-time", "10"],
-            capture_output=True, text=True
-        )
+        # 通过 openclaw message send 推送 QQ 到心跳订阅的频道
+        r = subprocess.run([
+            "openclaw", "message", "send",
+            "--channel", "qqbot",
+            "--account", os.environ.get("OPENCLAW_ACCOUNT_ID", "1903628521"),
+            "--target", "c2c:43C77867478A33B101FA705AA70754E3",
+            "--message", msg,
+        ], capture_output=True, text=True, timeout=30)
+
         if r.returncode == 0:
             logger.info("QQ 告警推送成功")
-            # 注意：alert 文件不自动删除，待我处理完后再手动清理
             logger.info(f"告警已推送，文件保留: {alert_file}")
         else:
-            logger.warning(f"QQ 推送失败: {r.stderr.strip()}")
+            logger.warning(f"QQ 推送失败: {r.stderr.strip()[:200]}")
     except Exception as e:
         logger.error(f"告警发送失败: {e}")
 
