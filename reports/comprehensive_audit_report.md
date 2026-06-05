@@ -192,3 +192,27 @@ signals 和 factors 模块均存在影响生产环境运行的关键缺陷，其
 - **CRIT-001/002（归一化方向）** 导致反转因子失去作用
 
 **建议优先修复 P0 级 4 个问题后再上线，其余问题可在上线后迭代修复。**
+
+
+---
+
+## 九、修复状态（2026-06-05）
+
+| Issue | 审计严重度 | 状态 | 修复 Commit |
+|-------|:---------:|------|-------------|
+| CRIT-003 (S-CR03) Momentum | 🔴 Critical | ✅ 已修复 | `57a701a` |
+| CRIT-001 (S-HI01) alpha归一化方向 | 🔴 Critical | ✅ 已修复 | `1263454` |
+| CRIT-002 (S-HI02) etf_alpha归一化方向 | 🟠 High | ✅ 已修复 | `1263454` |
+| CRIT-004 (S-CR04) 套利置信度单位 | 🟠 High | ✅ 已修复 | `fccdd0d` |
+| CRIT-005 (S-CR05) Fundamental归一化 | 🟠 High | ✅ 已修复 | `8e06efa` |
+| CRIT-006 (F-ENG-01) 逐行INSERT | 🟠 High | ✅ 已修复 | `091369a` |
+| HIGH-003 (F-TECH-01) 重复查询 | 🟠 High | ✅ 已修复 | `dd54658` + `e4cfc05` |
+| CRIT-007 (F-FUND-01) 同比增幅匹配 | 🔴 Critical | ✅ 已修复 | `dc6a73f` |
+| MED-001 (S-HI03) normalize异常 | 🟡 Medium | ✅ 已修复 | `29f8fc3` |
+
+**全部 9 个 issue 已修复并 push 完成（2026-06-05）。**
+
+**运行验证：**
+- `run_factor.sh`: 0.22s，1798 条因子值写入 ✅
+- `run_alpha.sh`: 2.43s，无报错 ✅
+- momentum_5d 样例：区间收益率（0.0234/-0.1267），非 MAX(change_pct) ✅
