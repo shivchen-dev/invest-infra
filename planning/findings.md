@@ -166,3 +166,20 @@ except (TypeError, ValueError) as e:
 | S-HI03 | 🔴 Critical | 🟡 Medium | Claude 低估 |
 | F-ENG-01 | 🟠 High | 🟠 High | 一致 |
 | F-TECH-01 | 🟠 High | 🟠 High | 一致 |
+---
+
+## 修复状态（2026-06-05）
+
+| Issue | 严重度 | 状态 | Commit |
+|-------|:------:|------|---------|
+| S-CR03 | 🔴 Critical | ✅ 已修复 | `57a701a` |
+| S-CR04 | 🟠 High | ✅ 已修复 | `fccdd0d` |
+| S-CR05 | 🟠 High | ✅ 已修复 | `8e06efa` |
+| S-HI01 | 🟠 High | ✅ 已修复 | `1263454` |
+| S-HI02 | 🟡 Medium | ✅ 已修复 | `1263454` |
+| S-HI03 | 🟡 Medium | ✅ 已修复 | `29f8fc3` |
+| F-FUND-01 | 🔴 Critical | ✅ 已修复 | `dc6a73f` |
+| F-ENG-01 | 🟠 High | ✅ 已修复 | `091369a` |
+| F-TECH-01 | 🟠 High | ✅ 已修复 | `dd54658` + `e4cfc05` |
+
+**全部 9 个 issue 已修复并 push 完成。**

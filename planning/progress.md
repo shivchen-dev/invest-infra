@@ -24,7 +24,7 @@
 | Phase 3 | S-CR05 Fundamental归一化 | ✅ 代码已修复（commit 8e06efa）|
 | Phase 4 | S-HI01/S-HI02/S-HI03/F-FUND-01 | ✅ all done (1263454/29f8fc3/dc6a73f) |
 | Phase 5 | F-ENG-01 批量写入 | ✅ committed & pushed (091369a) |
-| Phase 6 | F-TECH-01 数据预加载 | ✅ Step 1+2 done (dd54658/e4cfc05), Step 3 ⏸️ |
+| Phase 6 | F-TECH-01 数据预加载 | ✅ Step 1+2 done (dd54658/e4cfc05), Step 3 ✅ (base.py 内置 cached_df) |
 | Phase 7 | F-FUND-01 同比增幅匹配 | pending |
 | Phase 8 | S-HI03 normalize异常 | pending |
 
