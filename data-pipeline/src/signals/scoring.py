@@ -301,13 +301,26 @@ def fetch_stock_factor_matrix(conn, calc_date: date) -> list[dict]:
         cur.execute(
             """
             WITH mom AS (
-                SELECT d.company_id,
-                       MAX(d.change_pct) FILTER(WHERE d.trade_date BETWEEN %s AND %s) AS mom_5d,
-                       MAX(d.change_pct) FILTER(WHERE d.trade_date BETWEEN %s AND %s) AS mom_20d,
-                       MAX(d.change_pct) FILTER(WHERE d.trade_date BETWEEN %s AND %s) AS mom_60d
-                FROM daily_quotes d
-                WHERE d.trade_date BETWEEN %s AND %s
-                GROUP BY d.company_id
+                SELECT
+                    ce.company_id,
+                    (ld.close_price / NULLIF(e5.close_price, 0)) - 1 AS mom_5d,
+                    (ld.close_price / NULLIF(e20.close_price, 0)) - 1 AS mom_20d,
+                    (ld.close_price / NULLIF(e60.close_price, 0)) - 1 AS mom_60d
+                FROM (
+                    SELECT
+                        company_id,
+                        MIN(trade_date) FILTER(WHERE trade_date >= %s) AS earliest_5d_date,
+                        MIN(trade_date) FILTER(WHERE trade_date >= %s) AS earliest_20d_date,
+                        MIN(trade_date) FILTER(WHERE trade_date >= %s) AS earliest_60d_date,
+                        MAX(trade_date) AS latest_date
+                    FROM daily_quotes
+                    WHERE trade_date BETWEEN %s AND %s
+                    GROUP BY company_id
+                ) ce
+                LEFT JOIN daily_quotes ld ON ld.company_id = ce.company_id AND ld.trade_date = ce.latest_date
+                LEFT JOIN daily_quotes e5 ON e5.company_id = ce.company_id AND e5.trade_date = ce.earliest_5d_date
+                LEFT JOIN daily_quotes e20 ON e20.company_id = ce.company_id AND e20.trade_date = ce.earliest_20d_date
+                LEFT JOIN daily_quotes e60 ON e60.company_id = ce.company_id AND e60.trade_date = ce.earliest_60d_date
             ),
             trend AS (
                 SELECT d.company_id,
@@ -376,11 +389,11 @@ def fetch_stock_factor_matrix(conn, calc_date: date) -> list[dict]:
             LIMIT 200
             """,
             (
-            # === mom (8) ===
-            calc_date - timedelta(days=5), calc_date,          # mom_5d BETWEEN
-            calc_date - timedelta(days=20), calc_date,          # mom_20d BETWEEN
-            start_60, calc_date,                                  # mom_60d BETWEEN
-            start_60, calc_date,                                  # mom WHERE BETWEEN
+            # === mom (5) ===
+            calc_date - timedelta(days=5),          # earliest_5d_date >=
+            calc_date - timedelta(days=20),          # earliest_20d_date >=
+            start_60,                                  # earliest_60d_date >=
+            start_60, calc_date,                      # WHERE BETWEEN
             # === trend (9) = close(1) + ma5/20/60(6) + WHERE(2)
             calc_date,                                            # close_now = calc_date
             calc_date - timedelta(days=5), calc_date,            # ma5 BETWEEN
@@ -420,13 +433,24 @@ def fetch_etf_factor_matrix(conn, calc_date: date) -> list[dict]:
         cur.execute(
             """
             WITH etf_mom AS (
-                SELECT eq.etf_id,
-                       MAX(eq.change_pct) FILTER(WHERE eq.trade_date BETWEEN %s AND %s) AS mom_5d,
-                       MAX(eq.change_pct) FILTER(WHERE eq.trade_date BETWEEN %s AND %s) AS mom_20d
-                FROM etf_quotes eq
-                WHERE eq.trade_date BETWEEN %s AND %s
-                  AND eq.source = 'akshare-hist'
-                GROUP BY eq.etf_id
+                SELECT
+                    ce.etf_id,
+                    (ld.close_price / NULLIF(e5.close_price, 0)) - 1 AS mom_5d,
+                    (ld.close_price / NULLIF(e20.close_price, 0)) - 1 AS mom_20d
+                FROM (
+                    SELECT
+                        etf_id,
+                        MIN(trade_date) FILTER(WHERE trade_date >= %s) AS earliest_5d_date,
+                        MIN(trade_date) FILTER(WHERE trade_date >= %s) AS earliest_20d_date,
+                        MAX(trade_date) AS latest_date
+                    FROM etf_quotes
+                    WHERE trade_date BETWEEN %s AND %s
+                      AND source = 'akshare-hist'
+                    GROUP BY etf_id
+                ) ce
+                LEFT JOIN etf_quotes ld ON ld.etf_id = ce.etf_id AND ld.trade_date = ce.latest_date
+                LEFT JOIN etf_quotes e5 ON e5.etf_id = ce.etf_id AND e5.trade_date = ce.earliest_5d_date
+                LEFT JOIN etf_quotes e20 ON e20.etf_id = ce.etf_id AND e20.trade_date = ce.earliest_20d_date
             ),
             etf_spot AS (
                 SELECT eq.etf_id,
@@ -446,9 +470,9 @@ def fetch_etf_factor_matrix(conn, calc_date: date) -> list[dict]:
             LEFT JOIN etf_spot s ON e.id = s.etf_id
             WHERE efv.calc_date = %s
             """,
-            (calc_date - timedelta(days=5), calc_date,
-             calc_date - timedelta(days=20), calc_date,
-             calc_date - timedelta(days=25), calc_date,
+            (calc_date - timedelta(days=5),          # earliest_5d_date >=
+             calc_date - timedelta(days=20),          # earliest_20d_date >=
+             calc_date - timedelta(days=25), calc_date,  # WHERE BETWEEN
              calc_date, calc_date, calc_date,
              calc_date)
         )
