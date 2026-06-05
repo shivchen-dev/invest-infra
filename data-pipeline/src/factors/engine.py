@@ -2,7 +2,7 @@
 
 import logging
 import time
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from typing import Optional
 
 import numpy as np
@@ -192,6 +192,17 @@ def compute_factors(
     try:
         stats = {"factors_computed": 0, "values_written": 0, "errors": []}
 
+        # F-TECH-01 Step 1: Pre-load quotes once (130d lookback), pass to all calculators
+        from src.factors.base import DataLoader
+        quotes_df = None
+        try:
+            with DataLoader() as dl:
+                lookback_start = calc_date - timedelta(days=130)
+                quotes_df = dl.load_quotes(company_ids, start_date=lookback_start, end_date=calc_date)
+            logger.info(f"F-TECH-01: Pre-loaded {len(quotes_df)} quote rows for {len(company_ids)} companies")
+        except Exception as e:
+            logger.warning(f"F-TECH-01: Pre-load failed ({e}), calculators will load individually")
+
         for fk in factor_keys:
             calc = _CALCULATOR_MAP.get(fk)
             if calc is None:
@@ -204,7 +215,7 @@ def compute_factors(
 
             t0 = time.time()
             try:
-                values = calc.compute(company_ids, calc_date)
+                values = calc.compute(company_ids, calc_date, quotes_df=quotes_df)
             except Exception as e:
                 logger.error(f"因子 {fk} 计算失败: {e}")
                 stats["errors"].append(f"{fk}: {e}")
