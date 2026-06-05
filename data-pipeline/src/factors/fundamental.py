@@ -150,10 +150,11 @@ class EPSGrowthYoYCalculator(FactorCalculator):
             if len(sub) < 2:
                 continue
             latest = sub.iloc[0]
-            # 找上年同期
+            # 找上年同期（按年+季度匹配，避免跨季度错误对比）
             latest_date = latest["report_date"]
             target_year = latest_date.year - 1
-            prev = sub[sub["report_date"].dt.year == target_year]
+            prev = sub[(sub["report_date"].dt.year == target_year) &
+                       (sub["report_date"].dt.quarter == latest_date.quarter)]
             if prev.empty:
                 continue
             prev = prev.iloc[0]
