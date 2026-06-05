@@ -296,7 +296,9 @@ def normalize(raw_values, direction):
     # 优先用 z-score（有自我中心化优点），回退 min-max
     try:
         return _zscore_norm(raw_values, direction)
-    except Exception:
+    except (TypeError, ValueError) as e:
+        import logging
+        logging.getLogger(__name__).warning("zscore_norm failed (%s), falling back to min-max", e)
         return _min_max_norm(raw_values, direction)
 
 # ==============================================================
