@@ -179,7 +179,9 @@ def _assess_confidence(abs_premium: float, liquidity_score: float, total_cost_pc
     medium: 溢价率 > 0.3% 且 流动性 > 0.6
     low:    其他
     """
-    net_gain = (float(abs_premium) / 100.0) - total_cost_pct
+    # abs_premium 已是 % 单位（如 0.5 表示 0.5%），total_cost_pct 也是 % 单位
+    # net_gain 需转为小数才能与 min_profit_threshold（decimal，如 0.001）比较
+    net_gain = (abs_premium - total_cost_pct) / 100.0
     if abs_premium > 0.5 and liquidity_score > 0.8 and net_gain > cfg.min_profit_threshold:
         return "high"
     elif abs_premium > 0.3 and liquidity_score > 0.6:
