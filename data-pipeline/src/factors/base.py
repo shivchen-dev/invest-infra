@@ -34,21 +34,29 @@ class FactorCalculator(ABC):
 
 class DataLoader:
     """因子计算数据加载工具 — 从 PostgreSQL 读取源数据
-    
+
+    支持两种模式：
+
+    1. **数据库查询**（默认）：每次调用 load_quotes() 时连接 DB 获取数据。
+    2. **缓存回退**：传入 cached_df 后，load_quotes() 直接从内存 DataFrame 过滤，
+       不再访问数据库。适用于 engine.py 预加载 quotes 后的计算器回退场景，
+       或非技术面因子使用同一个 DataLoader 实例时避免重复查询。
+
     建议使用 with 语句管理生命周期：
-    
+
         with DataLoader() as dl:
             df = dl.load_quotes(...)
         # 或手动关闭：dl.close()
     """
 
-    def __init__(self):
+    def __init__(self, cached_df: Optional[pd.DataFrame] = None):
         self._conn = None
+        self._cached_df = cached_df
 
     @property
     def conn(self):
         if self._conn is None or self._conn.closed:
-            self._conn = psycopg2.connect(pg_cfg.uri)
+            self._conn = psycopg2.connect(pg_cfg.uri, connect_timeout=10)
         return self._conn
 
     def close(self):
@@ -65,9 +73,19 @@ class DataLoader:
 
     def load_quotes(self, company_ids: list[int], start_date: date, end_date: date) -> pd.DataFrame:
         """加载日行情数据
-        
+
+        如果构造函数传入了 cached_df，则直接从中按 company_ids / 日期范围过滤，
+        不再访问数据库。适用于 engine.py 预加载 quotes 后的计算器回退场景。
+
         注意：返回数据为不复权价格（raw price），如需复权数据请使用 adjust_mode 参数。
         """
+        if self._cached_df is not None:
+            return self._cached_df[
+                (self._cached_df["company_id"].isin(company_ids)) &
+                (self._cached_df["trade_date"] >= start_date) &
+                (self._cached_df["trade_date"] <= end_date)
+            ].sort_index()
+
         sql = """
             SELECT dq.company_id, dq.trade_date, dq.open_price, dq.high_price,
                    dq.low_price, dq.close_price, dq.volume,

@@ -1,6 +1,7 @@
 """因子计算引擎 — 编排计算、截面标准化、批量写入 Gold 层"""
 
 import logging
+import os
 import time
 from datetime import date, datetime, timedelta
 from typing import Optional
@@ -69,8 +70,17 @@ def _build_calculators():
     })
 
 
-def sync_definitions_to_db(conn=None):
-    """将注册表中的因子定义写入 PostgreSQL factor_definitions 表（幂等）"""
+def sync_definitions_to_db(conn=None, enabled=True):
+    """将注册表中的因子定义写入 PostgreSQL factor_definitions 表（幂等）
+
+    Args:
+        conn: 可选的已连接对象，None 则自行创建
+        enabled: 是否实际执行同步，默认 True；设为 False 时跳过（仅返回计数零值）
+    """
+    if not enabled:
+        logger.info("sync_definitions_to_db: enabled=False, 跳过")
+        return {"inserted": 0, "updated": 0}
+
     register_all()
     _build_calculators()
 
@@ -109,15 +119,21 @@ def sync_definitions_to_db(conn=None):
             _conn.close()
 
 
-def get_active_company_ids() -> list[int]:
-    """获取所有活跃公司 ID"""
-    conn = psycopg2.connect(pg_cfg.uri)
+def get_active_company_ids(conn=None) -> list[int]:
+    """获取所有活跃公司 ID
+
+    Args:
+        conn: 可选的已连接对象，None 则自行创建
+    """
+    _conn = conn or psycopg2.connect(pg_cfg.uri)
+    _close = conn is None
     try:
-        with conn.cursor() as cur:
+        with _conn.cursor() as cur:
             cur.execute("SELECT id FROM companies WHERE is_active = TRUE ORDER BY id")
             return [row[0] for row in cur.fetchall()]
     finally:
-        conn.close()
+        if _close:
+            _conn.close()
 
 
 def _compute_percentile(values: list[float]) -> list[float]:
@@ -159,6 +175,7 @@ def compute_factors(
     company_ids: Optional[list[int]] = None,
     calc_date: Optional[date] = None,
     batch_label: Optional[str] = None,
+    conn=None,
 ) -> dict:
     """计算指定因子并写入 Gold 层
 
@@ -167,6 +184,7 @@ def compute_factors(
         company_ids: 公司列表，None=全市场
         calc_date: 计算日期，默认今天
         batch_label: 批次标签
+        conn: 可选的已连接对象，复用可避免新建连接
     Returns:
         统计结果
     """
@@ -176,7 +194,7 @@ def compute_factors(
     if calc_date is None:
         calc_date = date.today()
     if company_ids is None:
-        company_ids = get_active_company_ids()
+        company_ids = get_active_company_ids(conn=conn)
     if factor_keys is None:
         factor_keys = [f.key for f in list_factors()]
     if batch_label is None:
@@ -184,11 +202,12 @@ def compute_factors(
 
     logger.info(f"因子计算开始: {len(factor_keys)} 个因子 × {len(company_ids)} 只股票")
 
-    # 确保 factor_definitions 表有记录
-    sync_definitions_to_db()
-    key2id = get_factor_ids()
+    # 确保 factor_definitions 表有记录（可通过 SYNC_DEFS=false 环境变量关闭）
+    sync_definitions_to_db(conn=conn, enabled=os.getenv("SYNC_DEFS", "true").lower() == "true")
+    key2id = get_factor_ids(conn=conn)
 
-    conn = psycopg2.connect(pg_cfg.uri)
+    _conn = conn or psycopg2.connect(pg_cfg.uri)
+    _close = conn is None
     try:
         stats = {"factors_computed": 0, "values_written": 0, "errors": []}
 
@@ -241,7 +260,7 @@ def compute_factors(
                 if v["value"] is not None
             ]
             written = len(rows)
-            with conn.cursor() as cur:
+            with _conn.cursor() as cur:
                 if rows:
                     psycopg2.extras.execute_values(
                         cur,
@@ -256,7 +275,7 @@ def compute_factors(
                         rows,
                     )
 
-            conn.commit()
+            _conn.commit()
             elapsed = round(time.time() - t0, 2)
             stats["factors_computed"] += 1
             stats["values_written"] += written
@@ -265,4 +284,5 @@ def compute_factors(
         logger.info(f"因子计算完成: {stats['factors_computed']} 个因子, {stats['values_written']} 条值")
         return stats
     finally:
-        conn.close()
+        if _close:
+            _conn.close()

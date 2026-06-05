@@ -421,8 +421,12 @@ class VolumeSurgeCalculator(FactorCalculator):
     factor_key = "volume_surge"
 
     def compute(self, company_ids: list[int], calc_date: date, **kwargs) -> list[dict]:
-        with DataLoader() as dl:
-            df = _load_for_calcs(company_ids, calc_date, 40, dl)
+        quotes_df = kwargs.get("quotes_df")
+        if quotes_df is not None:
+            df = _filter_for_calculator(quotes_df, company_ids, calc_date, 40)
+        else:
+            with DataLoader() as dl:
+                df = _load_for_calcs(company_ids, calc_date, 40, dl)
         if df.empty:
             return []
 
@@ -444,8 +448,12 @@ class VolumeCVCalculator(FactorCalculator):
     factor_key = "volume_cv"
 
     def compute(self, company_ids: list[int], calc_date: date, **kwargs) -> list[dict]:
-        with DataLoader() as dl:
-            df = _load_for_calcs(company_ids, calc_date, 40, dl)
+        quotes_df = kwargs.get("quotes_df")
+        if quotes_df is not None:
+            df = _filter_for_calculator(quotes_df, company_ids, calc_date, 40)
+        else:
+            with DataLoader() as dl:
+                df = _load_for_calcs(company_ids, calc_date, 40, dl)
         if df.empty:
             return []
 

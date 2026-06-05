@@ -267,9 +267,10 @@ def compute_fqir_etf_score(conn, calc_date: date) -> dict:
 
 
 DEFAULT_FILTERS = {
-    "min_composite":   0.0,    # 综合评分 ≥ 0（当前数据 score 范围仅 1~4；数据完备后应调回 60+）
+    # FIXME: 数据完备后恢复 min_composite=60.0, max_risk=40.0（当前为临时宽松值）
+    "min_composite":   0.0,    # 综合评分 ≥ 0（临时宽松值，待数据完备后调整为 60）
     "min_amount":    5_000_000, # 日均成交额 ≥ 500万
-    "max_risk":       60.0,   # 风险评分 ≤ 60（越低越好；数据完备后应调回 40）
+    "max_risk":       60.0,   # 风险评分 ≤ 60（临时宽松值，待数据完备后调整为 40）
 }
 
 
