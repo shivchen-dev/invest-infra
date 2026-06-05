@@ -37,6 +37,24 @@ def _load_for_calcs(
     return df
 
 
+def _filter_for_calculator(quotes_df: pd.DataFrame, company_ids: list[int],
+                          calc_date: date, lookback: int) -> pd.DataFrame:
+    """对预加载的 quotes_df 按计算器需求做筛选。
+
+    逻辑与 _load_for_calcs 一致，但在已加载的 DataFrame 上操作而非新建 DataLoader。
+    """
+    start = calc_date - timedelta(days=lookback)
+    df = quotes_df[
+        (quotes_df["company_id"].isin(company_ids)) &
+        (quotes_df["trade_date"] >= start) &
+        (quotes_df["trade_date"] <= calc_date)
+    ]
+    if df.empty:
+        return df
+    df = df.sort_index()
+    return df
+
+
 def _momentum(close: pd.Series, window: int) -> Optional[float]:
     if len(close) < window:
         return None
@@ -139,8 +157,12 @@ class MomentumCalculator(FactorCalculator):
 
     def compute(self, company_ids: list[int], calc_date: date, **kwargs) -> list[dict]:
         lookback = self.window * 2 + 10
-        with DataLoader() as dl:
-            df = _load_for_calcs(company_ids, calc_date, lookback, dl)
+        quotes_df = kwargs.get("quotes_df")
+        if quotes_df is not None:
+            df = _filter_for_calculator(quotes_df, company_ids, calc_date, lookback)
+        else:
+            with DataLoader() as dl:
+                df = _load_for_calcs(company_ids, calc_date, lookback, dl)
         if df.empty:
             return []
 
@@ -183,8 +205,12 @@ class Volatility20dCalculator(FactorCalculator):
     factor_key = "volatility_20d"
 
     def compute(self, company_ids: list[int], calc_date: date, **kwargs) -> list[dict]:
-        with DataLoader() as dl:
-            df = _load_for_calcs(company_ids, calc_date, 60, dl)
+        quotes_df = kwargs.get("quotes_df")
+        if quotes_df is not None:
+            df = _filter_for_calculator(quotes_df, company_ids, calc_date, 60)
+        else:
+            with DataLoader() as dl:
+                df = _load_for_calcs(company_ids, calc_date, 60, dl)
         if df.empty:
             return []
 
@@ -206,8 +232,12 @@ class AvgTurnover20dCalculator(FactorCalculator):
     factor_key = "avg_turnover_20d"
 
     def compute(self, company_ids: list[int], calc_date: date, **kwargs) -> list[dict]:
-        with DataLoader() as dl:
-            df = _load_for_calcs(company_ids, calc_date, 40, dl)
+        quotes_df = kwargs.get("quotes_df")
+        if quotes_df is not None:
+            df = _filter_for_calculator(quotes_df, company_ids, calc_date, 40)
+        else:
+            with DataLoader() as dl:
+                df = _load_for_calcs(company_ids, calc_date, 40, dl)
         if df.empty:
             return []
 
@@ -229,8 +259,12 @@ class MA5DeviationCalculator(FactorCalculator):
     factor_key = "ma5_deviation"
 
     def compute(self, company_ids: list[int], calc_date: date, **kwargs) -> list[dict]:
-        with DataLoader() as dl:
-            df = _load_for_calcs(company_ids, calc_date, 20, dl)
+        quotes_df = kwargs.get("quotes_df")
+        if quotes_df is not None:
+            df = _filter_for_calculator(quotes_df, company_ids, calc_date, 20)
+        else:
+            with DataLoader() as dl:
+                df = _load_for_calcs(company_ids, calc_date, 20, dl)
         if df.empty:
             return []
 
@@ -252,8 +286,12 @@ class VolumeRatio5dCalculator(FactorCalculator):
     factor_key = "volume_ratio_5d"
 
     def compute(self, company_ids: list[int], calc_date: date, **kwargs) -> list[dict]:
-        with DataLoader() as dl:
-            df = _load_for_calcs(company_ids, calc_date, 20, dl)
+        quotes_df = kwargs.get("quotes_df")
+        if quotes_df is not None:
+            df = _filter_for_calculator(quotes_df, company_ids, calc_date, 20)
+        else:
+            with DataLoader() as dl:
+                df = _load_for_calcs(company_ids, calc_date, 20, dl)
         if df.empty:
             return []
 
@@ -275,8 +313,12 @@ class Reversal5dCalculator(FactorCalculator):
     factor_key = "reversal_5d"
 
     def compute(self, company_ids: list[int], calc_date: date, **kwargs) -> list[dict]:
-        with DataLoader() as dl:
-            df = _load_for_calcs(company_ids, calc_date, 20, dl)
+        quotes_df = kwargs.get("quotes_df")
+        if quotes_df is not None:
+            df = _filter_for_calculator(quotes_df, company_ids, calc_date, 20)
+        else:
+            with DataLoader() as dl:
+                df = _load_for_calcs(company_ids, calc_date, 20, dl)
         if df.empty:
             return []
 
@@ -298,8 +340,12 @@ class Reversal20dCalculator(FactorCalculator):
     factor_key = "reversal_20d"
 
     def compute(self, company_ids: list[int], calc_date: date, **kwargs) -> list[dict]:
-        with DataLoader() as dl:
-            df = _load_for_calcs(company_ids, calc_date, 50, dl)
+        quotes_df = kwargs.get("quotes_df")
+        if quotes_df is not None:
+            df = _filter_for_calculator(quotes_df, company_ids, calc_date, 50)
+        else:
+            with DataLoader() as dl:
+                df = _load_for_calcs(company_ids, calc_date, 50, dl)
         if df.empty:
             return []
 
@@ -321,8 +367,12 @@ class GapOpenPctCalculator(FactorCalculator):
     factor_key = "gap_open_pct"
 
     def compute(self, company_ids: list[int], calc_date: date, **kwargs) -> list[dict]:
-        with DataLoader() as dl:
-            df = _load_for_calcs(company_ids, calc_date, 10, dl)
+        quotes_df = kwargs.get("quotes_df")
+        if quotes_df is not None:
+            df = _filter_for_calculator(quotes_df, company_ids, calc_date, 10)
+        else:
+            with DataLoader() as dl:
+                df = _load_for_calcs(company_ids, calc_date, 10, dl)
         if df.empty:
             return []
 
@@ -344,8 +394,12 @@ class IntradayBreakPctCalculator(FactorCalculator):
     factor_key = "intraday_break_pct"
 
     def compute(self, company_ids: list[int], calc_date: date, **kwargs) -> list[dict]:
-        with DataLoader() as dl:
-            df = _load_for_calcs(company_ids, calc_date, 10, dl)
+        quotes_df = kwargs.get("quotes_df")
+        if quotes_df is not None:
+            df = _filter_for_calculator(quotes_df, company_ids, calc_date, 10)
+        else:
+            with DataLoader() as dl:
+                df = _load_for_calcs(company_ids, calc_date, 10, dl)
         if df.empty:
             return []
 
