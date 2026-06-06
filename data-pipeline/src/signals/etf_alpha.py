@@ -293,6 +293,19 @@ def _min_max_norm(raw_values, direction):
     return results
 
 def normalize(raw_values, direction):
+    # Per-factor direction dict: compute each factor with its own direction
+    if isinstance(direction, dict):
+        results = {}
+        for code, d in direction.items():
+            if code in raw_values and raw_values[code] is not None:
+                single = {code: raw_values[code]}
+                try:
+                    results[code] = list(_zscore_norm(single, d).values())[0]
+                except (TypeError, ValueError):
+                    results[code] = list(_min_max_norm(single, d).values())[0]
+            else:
+                results[code] = 50.0
+        return results
     # 优先用 z-score（有自我中心化优点），回退 min-max
     try:
         return _zscore_norm(raw_values, direction)
@@ -377,7 +390,7 @@ def compute_etf_alpha(conn, calc_date, lookback_days=60):
                        for w in cat_ws if w["factor_key"] in factors}
             cat_weight = sum(w["weight"] for w in cat_ws)
             if cat_raw:
-                direction = cat_ws[0]["norm_direction"]
+                direction = {w["factor_key"]: w["norm_direction"] for w in cat_ws}
                 normed = normalize(cat_raw, direction)
                 # normed[k] 是 0-100，cat_score 是加权平均（scale 与 weight 同量纲）
                 cat_score = sum(normed[k] * w["weight"] for k in cat_raw for w in cat_ws if w["factor_key"] == k and k in normed)

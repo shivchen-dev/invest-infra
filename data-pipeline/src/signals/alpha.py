@@ -75,10 +75,24 @@ def normalize_factor(raw_values, direction):
     vals = list(raw_values.values())
     if not vals or all(v is None for v in vals):
         return {c: 50.0 for c in codes}
-    pct_ranks = percentile_rank(vals)
-    if direction == -1:
-        sr = pd.Series(vals, dtype=float)
-        pct_ranks = sr.rank(pct=True, ascending=False, method="average").fillna(50).tolist()
+    if isinstance(direction, dict):
+        # Per-factor direction: compute rank for each factor individually
+        pct_ranks = []
+        for code in codes:
+            v = raw_values[code]
+            d = direction.get(code, 1)
+            if d == -1:
+                # descending rank
+                sr = pd.Series(vals, dtype=float)
+                rank = sr.rank(pct=True, ascending=False, method="average").fillna(50).tolist()
+                pct_ranks.append(rank[codes.index(code)])
+            else:
+                pct_ranks.append(percentile_rank(vals)[codes.index(code)])
+    else:
+        pct_ranks = percentile_rank(vals)
+        if direction == -1:
+            sr = pd.Series(vals, dtype=float)
+            pct_ranks = sr.rank(pct=True, ascending=False, method="average").fillna(50).tolist()
     return {code: pct_ranks[i] for i, code in enumerate(codes)}
 
 
@@ -135,7 +149,7 @@ def compute_alpha_scores(conn, calc_date, top_n=100):
             cat_raw = {w["factor_key"]: factors[w["factor_key"]] for w in cat_weights
                        if w["factor_key"] in factors and factors[w["factor_key"]] is not None}
             if cat_raw:
-                normed = normalize_factor(cat_raw, cat_weights[0]["norm_direction"])
+                normed = normalize_factor(cat_raw, {w["factor_key"]: w["norm_direction"] for w in cat_weights})
                 cat_score = sum(normed[k] * w["weight"] for k, w in zip(cat_raw.keys(), cat_weights) if k in normed)
                 total_weight += sum(w["weight"] for w in cat_weights)
                 weighted_sum += cat_score

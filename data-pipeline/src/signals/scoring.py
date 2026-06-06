@@ -611,7 +611,6 @@ def score_etf(record: dict) -> dict:
 
     # ETF特有（流动性+溢价率）
     if record.get("liquidity_score") is not None:
-        scores["etf"] = max(0, min(100, record["liquidity_score"] * 100))
         scores["liquidity"] = max(0, min(100, record["liquidity_score"] * 100))
 
     # 动量
