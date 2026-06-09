@@ -163,6 +163,25 @@ TASK_MAP = {
         "shell": "cd /home/claw/invest-infra/data-pipeline && .venv/bin/python scripts/cron_woa_audit.py",
         "timeout": 60,
     },
+    # 汇报类（统一经 report_engine.py）
+    "pre_market": {
+        "desc": "盘前报（07:50）",
+        "shell": "cd /home/claw/invest-infra/data-pipeline && .venv/bin/python -c \"\nimport asyncio, sys, os\nsys.path.insert(0, 'src')\nos.environ['CIFANG_TOKEN'] = 'dummy'
+os.environ['MINIO_SECRET_KEY'] = 'REDACTED_MINIO_PASSWORD'\nos.environ['PG_PASSWORD'] = 'REDACTED_PG_PASSWORD'\n\nasync def main():\n    from reports.report_engine import ReportEngine\n    engine = ReportEngine('pre_market')\n    success = await engine.run()\n    sys.exit(0 if success else 1)\nasyncio.run(main())\n\"",
+        "timeout": 300,
+    },
+    "midday": {
+        "desc": "午盘报（12:00）",
+        "shell": "cd /home/claw/invest-infra/data-pipeline && .venv/bin/python -c \"\nimport asyncio, sys, os\nsys.path.insert(0, 'src')\nos.environ['CIFANG_TOKEN'] = 'dummy'
+os.environ['MINIO_SECRET_KEY'] = 'REDACTED_MINIO_PASSWORD'\nos.environ['PG_PASSWORD'] = 'REDACTED_PG_PASSWORD'\n\nasync def main():\n    from reports.report_engine import ReportEngine\n    engine = ReportEngine('midday')\n    success = await engine.run()\n    sys.exit(0 if success else 1)\n\nasyncio.run(main())\n\"",
+        "timeout": 300,
+    },
+    "post_market": {
+        "desc": "盘后报（15:30）",
+        "shell": "cd /home/claw/invest-infra/data-pipeline && .venv/bin/python -c \"\nimport asyncio, sys, os\nsys.path.insert(0, 'src')\nos.environ['CIFANG_TOKEN'] = 'dummy'
+os.environ['MINIO_SECRET_KEY'] = 'REDACTED_MINIO_PASSWORD'\nos.environ['PG_PASSWORD'] = 'REDACTED_PG_PASSWORD'\n\nasync def main():\n    from reports.report_engine import ReportEngine\n    engine = ReportEngine('post_market')\n    success = await engine.run()\n    sys.exit(0 if success else 1)\n\nasyncio.run(main())\n\"",
+        "timeout": 300,
+    },
 }
 
 # ── 监控状态 ──────────────────────────────────────────────
