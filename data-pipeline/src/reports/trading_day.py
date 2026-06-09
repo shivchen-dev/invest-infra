@@ -103,8 +103,8 @@ def get_last_trading_day(ref_date: Optional[date] = None) -> date:
     
     check_date = ref_date
     
-    # 最多回溯 7 天
-    for _ in range(7):
+    # 最多回溯 15 天（覆盖春节/国庆 8 天长假）
+    for _ in range(15):
         check_date = date.fromordinal(check_date.toordinal() - 1)
         if is_trading_day(check_date):
             return check_date
