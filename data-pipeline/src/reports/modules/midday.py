@@ -1,6 +1,6 @@
 """
 午盘报模块
-DB 优先策略：优先从 daily_market_snapshot 读取，cache miss 时走 MCP 并写入 DB
+DB-only 策略：从 daily_market_snapshot 读取,cache miss 时用 FALLBACK_DATA 降级(不触发 MCP)
 """
 import logging
 import json
@@ -37,9 +37,9 @@ class MiddayReporter:
         """
         获取午盘报数据
 
-        DB 优先策略：
-        - cache 存在时：优先从 DB 读取，MCP 结果写入 DB（自举）
-        - cache 不存在时：直接走 MCP（MCP 结果写入 DB）
+        DB-only 策略：
+        - cache 命中: 从 DB 读取
+        - cache miss: 用 FALLBACK_DATA 降级(不触发 MCP)
 
         Args:
             trade_date: 交易日期，默认为今日
