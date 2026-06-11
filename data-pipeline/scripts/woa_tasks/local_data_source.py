@@ -7,7 +7,6 @@ Morning Briefing 数据来源：invest-infra PostgreSQL
   - daily_quotes:   最新 2026-06-01 ✅
   - news_articles:  昨日 79条 ✅
   - etf_quotes:     昨日 1486只 ✅
-  - north_flow_hist: 有数据，需确认日期
   - fund_flow_big_deal: 有数据，需确认日期
 """
 
@@ -151,26 +150,51 @@ def query_etf_quotes(trade_date: str, limit: int = 50):
     return [dict(zip(cols, r)) for r in rows]
 
 
-# ─── 北向资金 ────────────────────────────────────────────────────
+# ─── 南向资金（Eastmoney，替代北向）──────────────────────────────────
 
-def query_north_flow(trade_date: str):
+def query_south_flow(trade_date: str):
     """
-    北向资金（calc_date = 交易日）
-    返回 list（通常只有1条）
+    南向资金（港股通沪+深+合计），写入 south_flow_hist。
+    北向资金停更后，以此作为北向资金的替代信号。
     """
     conn = get_db()
     cur = conn.cursor()
     cur.execute("""
-        SELECT calc_date, daily_net_buy, buy_amount, sell_amount,
-               cum_net_buy, hold_market_val, hs300
-        FROM north_flow_hist
+        SELECT calc_date, hsgt_type, daily_net_buy, buy_amount, sell_amount, cum_net_buy
+        FROM south_flow_hist
+        WHERE calc_date = %s
+        ORDER BY hsgt_type
+    """, (trade_date,))
+    rows = cur.fetchall()
+    conn.close()
+    if not rows:
+        return []
+    cols = ['date','type','net_buy','buy','sell','cum_net']
+    return [dict(zip(cols, r)) for r in rows]
+
+
+# ─── 北向资金成交额（Eastmoney RPT_MUTUAL_DEALAMT）───────────────────────
+
+def query_north_turnover(trade_date: str):
+    """
+    北向资金成交额（万元），来自 RPT_MUTUAL_DEALAMT。
+    nf_deal_amt = 北向总成交额
+    ssc_deal_amt = 港股通沪成交额
+    st_deal_amt = 港股通深成交额
+    """
+    conn = get_db()
+    cur = conn.cursor()
+    cur.execute("""
+        SELECT calc_date, nf_deal_amt, ssc_deal_amt, st_deal_amt,
+               csi300_index_price, csi300_index_rate
+        FROM north_turnover_hist
         WHERE calc_date = %s
     """, (trade_date,))
     rows = cur.fetchall()
     conn.close()
     if not rows:
         return []
-    cols = ['date','net_buy','buy','sell','cum_net','hold_val','hs300']
+    cols = ['date','nf_deal_amt','ssc_deal_amt','st_deal_amt','csi300_price','csi300_rate']
     return [dict(zip(cols, r)) for r in rows]
 
 

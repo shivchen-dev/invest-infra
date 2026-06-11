@@ -4,6 +4,7 @@ DB 优先策略：优先从 daily_market_snapshot 读取，cache miss 时走 MCP
 补充：旧版 WOA 数据直接接入（index_quotes / etf_alpha_signals / etf_quotes）
 """
 import logging
+import re
 from typing import Any, Dict, List, Optional
 from datetime import date, timedelta
 
@@ -35,7 +36,7 @@ class PreMarketReporter:
         {"name": "auction_market_scan", "data_type": "auction_scan",      "params": {"tradeDate": "__DATE__",        "sortBy": "bidStrength", "limit": 15, "detailLevel": "standard", "format": "json"}},
     ]
 
-    def __init__(self, mcp_client, cache: Optional[MarketDataCache] = None):
+    def __init__(self, mcp_client=None, cache: Optional[MarketDataCache] = None):
         self.mcp = mcp_client
         self.cache = cache
 
@@ -63,7 +64,12 @@ class PreMarketReporter:
         trade_date_str = trade_date if isinstance(trade_date, str) else trade_date.strftime("%Y-%m-%d")
         logger.info(f"盘前报：开始获取数据 (date={trade_date_str})")
 
-        cache = self.cache or MarketDataCache(trade_date_str)
+        _cache = self.cache or MarketDataCache(trade_date_str)        # ── Step 0: WOA memo 数据（主数据源）─────────────────────────────
+        memo_data = self.fetch_memo(trade_date_str)
+        if memo_data:
+            logger.info(f"盘前报：fetch_memo 成功，获取到 {len(memo_data)} 个 memo 板块")
+
+
 
         # ── Step 1: 直接从 DB 读取旧版 WOA 数据 ─────────────────────────
         db_data = self._get_db_data(trade_date_str)
@@ -74,7 +80,7 @@ class PreMarketReporter:
 
         for tool in self.TOOL_MAP:
             dt = tool["data_type"]
-            data = cache.get(dt)
+            data = _cache.get(dt)
             if data is not None:
                 results[dt] = data
             else:
@@ -98,7 +104,7 @@ class PreMarketReporter:
                 data = mcp_results.get(dt, {})
                 if data:
                     results[dt] = data
-                    cache.save(dt, tool["name"], data)
+                    _cache.save(dt, tool["name"], data)
 
         # ── Step 3: 提取各板块数据 ─────────────────────────────────────────
         sector_data      = results.get("sector_analysis", {})
@@ -133,6 +139,8 @@ class PreMarketReporter:
             "operation_ref": {},
             # 8. 明日关注点（stub）
             "tomorrow_focus": [],
+            # 9. 风险信号（DB 初始值，可能被 memo_data 覆盖 — WOA memo 为主数据源）
+            "risks": self._extract_risks(limit_stats_data),
             # 辅助字段（供 formatter 或后续模块使用）
             "macro": {
                 "limit_up_count": limit_stats_data.get("sealedLimitUp", limit_stats_data.get("limitUp", 0)),
@@ -141,12 +149,78 @@ class PreMarketReporter:
             "sectors": sectors,
             "sentiment": sentiment,
             "candidates": candidates,
-            "risks": self._extract_risks(limit_stats_data),
             "raw_data": {**db_data, **results},
         }
 
+        # 解包 WOA memo 数据到顶层（覆盖 DB 初始值）。
+        # ⚠ risks 是特例：DB _extract_risks() 返回 list，memo _parse_risk_from_md 返回 dict {risk_level, volatility, ...}。
+        # formatter line 219-224 期望 dict 格式，因此 memo risks 为最终生效值（主数据源策略）。
+        if memo_data:
+            data.update(memo_data)
+
         logger.info(f"盘前报：数据获取完成，候选股 {len(candidates)} 只")
         return data
+
+    def fetch_memo(self, trade_date: str) -> dict:
+        """从 PG investment_memos 读取 WOA 生成的结构化数据（Markdown 解析）"""
+        try:
+            from loader.pg import get_conn
+        except Exception as e:
+            logger.warning(f"fetch_memo: 无法导入 loader.pg: {e}")
+            return {}
+
+        MEMO_TYPES = ["morning_collect", "factor_calculation", "etf_alpha_signal",
+                      "risk_monitoring", "daily_report"]
+
+        memo_map = {}
+        try:
+            with get_conn() as conn:
+                cur = conn.cursor()
+                cur.execute("""
+                    SELECT memo_type, summary, body_md, confidence_level, memo_date
+                    FROM investment_memos
+                    WHERE company_id = 5233
+                      AND memo_date = %s
+                      AND memo_type = ANY(%s)
+                    ORDER BY memo_type
+                """, (trade_date, MEMO_TYPES))
+                for r in cur.fetchall():
+                    memo_map[r[0]] = {
+                        "summary": r[1] if r[1] else "",
+                        "body_md": r[2] if r[2] else "",
+                        "confidence": r[3] if r[3] else "",
+                        "memo_date": r[4] if r[4] else "",
+                    }
+        except Exception as e:
+            logger.warning(f"fetch_memo: 查询失败: {e}")
+            return {}
+
+        mc = memo_map.get("morning_collect", {})
+        hs300 = self._parse_hs300_from_md(mc.get("body_md", ""))
+        sentiment = self._parse_sentiment_from_md(mc.get("body_md", ""))
+        market_overview = {"hs300": hs300, "sentiment": sentiment, "date": str(mc.get("memo_date", ""))}
+
+        fc = memo_map.get("factor_calculation", {})
+        factors = self._parse_factor_table_from_md(fc.get("body_md", ""), fc.get("confidence", ""))
+
+        rm = memo_map.get("risk_monitoring", {})
+        risks = self._parse_risk_from_md(rm.get("body_md", ""))
+
+        dr = memo_map.get("daily_report", {})
+        woa_summary = self._parse_woa_summary_from_body(dr.get("body_md", ""), dr.get("summary", ""), dr.get("confidence", ""))
+        scenarios = self._parse_scenarios_from_md(dr.get("body_md", ""))
+        etf_signals = self._parse_etf_signals_from_md(dr.get("body_md", ""), dr.get("confidence", ""))
+        today_attention = self._parse_today_attention_from_md(dr.get("body_md", ""))
+
+        return {
+            "woa_summary": woa_summary,
+            "market_overview": market_overview,
+            "factors": factors,
+            "woa_etf_signals": etf_signals,
+            "risks": risks,
+            "scenarios": scenarios,
+            "today_attention": today_attention,
+        }
 
     # ── 旧版 WOA 数据直接查询 ────────────────────────────────────────────────
 
@@ -411,17 +485,30 @@ class PreMarketReporter:
         return candidates[:3]
 
     def _extract_risks(self, limit_stats: Dict) -> Dict[str, Any]:
-        announcements = []
+        """
+        从 limit_stats 提取风险数据。
+        NOTE: 返回格式与 memo _parse_risk_from_md 保持一致（dict），
+        以保证 formatter._format_risks 双路径兼容。
+        """
         try:
             limit_down = limit_stats.get("sealedLimitDown", limit_stats.get("limitDown", 0))
-            if limit_down > 20:
-                announcements.append({"title": f"跌停数量偏多 ({limit_down} 只)"})
             broken_rate = limit_stats.get("brokenRate", 0)
-            if broken_rate and float(broken_rate) > 30:
-                announcements.append({"title": f"炸板率偏高 ({broken_rate}%)"})
-        except Exception as e:
-            logger.warning(f"风险提取失败: {e}")
-        return {"announcements": announcements} if announcements else {"announcements": []}
+            # risk_level: 综合 limit_down 和 broken_rate 评估
+            if limit_down > 20 or (broken_rate and float(broken_rate) > 30):
+                risk_level = "高"
+            elif limit_down > 10 or (broken_rate and float(broken_rate) > 20):
+                risk_level = "中"
+            else:
+                risk_level = "低"
+        except Exception:
+            risk_level = "无法评估"
+
+        return {
+            "risk_level": risk_level,
+            "volatility": str(broken_rate) + "%" if broken_rate else "-",
+            "vix": "-",          # limit_stats 不含 VIX，数据待补
+            "geo_risk_star": "-",
+        }
 
     def _extract_strategy_signals(self, db_data: Dict[str, Any]) -> Dict[str, Any]:
         """
@@ -452,7 +539,7 @@ class PreMarketReporter:
         liq_values    = [e["norm_liquidity"]   for e in etf_list if e.get("norm_liquidity") is not None]
         vol_values    = [e["norm_volatility"]   for e in etf_list if e.get("norm_volatility") is not None]
         mf_values     = [e["norm_money_flow"]   for e in etf_list if e.get("norm_money_flow") is not None]
-        score_values  = [e["composite_score"]  for e in etf_list if e.get("composite_score")]
+        score_values  = [e["composite_score"]  for e in etf_list if e.get("composite_score") is not None]
 
         mom_med  = median(mom_values)   if mom_values   else 50.0
         val_med  = median(val_values)   if val_values   else None
@@ -654,6 +741,177 @@ class PreMarketReporter:
             })
 
         return events[:5]
+
+    # ── fetch_memo 辅助函数（Markdown 解析）──────────────────────────────
+
+    @staticmethod
+    def _parse_table_rows(md_text: str) -> list:
+        if not md_text:
+            return []
+        return re.findall(r'^\|\s*(.+?)\s*\|\s*([^|]+?)\s*\|\s*([^|]+?)\s*\|$', md_text, re.MULTILINE)
+
+    @staticmethod
+    def _parse_hs300_from_md(md_text: str) -> dict:
+        result = {"point": "-", "change_pct": "-"}
+        if not md_text:
+            return result
+        for row in PreMarketReporter._parse_table_rows(md_text):
+            cols = [c.strip() for c in row]
+            if len(cols) < 2:
+                continue
+            key, val = cols[0], cols[1]
+            # Skip separator rows (all dashes or box-drawing)
+            if not key or all(c in ('-', '|', ' ', '─', '━', '│', '┃') for c in key):
+                continue
+            if "收盘点位" in key or "点位" in key:
+                m = re.search(r'([\d.]+)', val)
+                if m:
+                    result["point"] = m.group(1)
+            elif "涨跌幅" in key or "涨跌" in key:
+                # Skip non-numeric or placeholder values
+                if not val or val in ("无数据", "-", "") or val.startswith('.'):
+                    result["change_pct"] = "-"
+                elif re.match(r'^[+-]?[\d.]+$', val):
+                    # Value is purely numeric (digits/dots only) - extract number
+                    m = re.search(r'([-+]?[\d.]+)', val)
+                    if m:
+                        result["change_pct"] = m.group(1)
+                else:
+                    # Value contains non-numeric chars (e.g. "无数据（...）") - skip
+                    result["change_pct"] = "-"
+        return result
+
+    @staticmethod
+    def _parse_sentiment_from_md(md_text: str) -> str:
+        if not md_text:
+            return "-"
+        m = re.search(r'情绪[：:]?\s*([^\n，,。]+)', md_text)
+        return m.group(1).strip() if m else "-"
+
+    @staticmethod
+    def _parse_factor_table_from_md(md_text: str, default_conf: str = "") -> list:
+        factors = []
+        if not md_text:
+            return factors
+        factor_names = {"动量", "价值", "质量", "资金流", "技术面"}
+        for row in PreMarketReporter._parse_table_rows(md_text):
+            cols = [c.strip() for c in row]
+            if len(cols) < 2:
+                continue
+            name, status = cols[0], cols[1]
+            if not name or name in ("因子类型", "") or not any(fn in name for fn in factor_names):
+                continue
+            has_data = status not in ("无数据", "-", "")
+            factors.append({
+                "name": name,
+                "signal": "有效信号" if has_data else "数据缺失",
+                "confidence": default_conf or ("MEDIUM" if has_data else "LOW"),
+                "data_status": status,
+            })
+        return factors
+
+    @staticmethod
+    def _parse_risk_from_md(md_text: str) -> dict:
+        risks = {"risk_level": "无法评估", "volatility": "-", "vix": "-", "geo_risk_star": "-"}
+        if not md_text:
+            return risks
+        for row in PreMarketReporter._parse_table_rows(md_text):
+            cols = [c.strip() for c in row]
+            if len(cols) < 2:
+                continue
+            key, val = cols[0], cols[1]
+            if "北向资金" in key or "风险信号" in key:
+                if val and val not in ("无数据", "-"):
+                    risks["risk_level"] = "中等"
+        return risks
+
+    @staticmethod
+    def _parse_woa_summary_from_body(body_md: str, summary: str, default_conf: str = "") -> dict:
+        tasks = []
+        conf_map = {"HIGH": "高", "MEDIUM": "中", "LOW": "低"}
+        if body_md:
+            for row in PreMarketReporter._parse_table_rows(body_md):
+                cols = [c.strip() for c in row]
+                if len(cols) < 3:
+                    continue
+                task_name, status, conf = cols[0], cols[1], cols[2]
+                # Skip separator rows and empty rows
+                if not task_name or task_name in ("任务", "") or all(c in ('-', '|', ' ', '─') for c in task_name):
+                    continue
+                emoji = "✅" if "✅" in status or "部分完成" in status else "❌"
+                status_text = "部分完成" if "部分" in status else ("数据缺失" if "❌" in status else status)
+                tasks.append({"task": task_name, "status": f"{emoji} {status_text}", "confidence": conf_map.get(conf.upper(), conf or "低")})
+        overall_conf = default_conf or "LOW"
+        m = re.search(r'整体置信度[：:]?\s*([A-Za-z]+)', summary)
+        if m:
+            overall_conf = m.group(1).strip()
+        risk_level, attention = "无法评估", "待数据更新后重新评估"
+        m = re.search(r'风险等级[：:]?\s*([^\n,。]+)', summary)
+        if m:
+            risk_level = m.group(1).strip()
+        m = re.search(r'建议关注[：:]?\s*([^\n,。]+)', summary)
+        if m:
+            attention = m.group(1).strip()
+        return {
+            "tasks": tasks,
+            "overall_confidence": conf_map.get(overall_conf.upper(), overall_conf),
+            "risk_level": risk_level,
+            "attention": attention,
+        }
+
+    @staticmethod
+    def _parse_scenarios_from_md(md_text: str) -> list:
+        if not md_text:
+            return []
+        m = re.search(r'整体置信度[：:]?\s*([A-Za-z]+)', md_text)
+        conf = m.group(1).strip().upper() if m else "LOW"
+        prob_map = {
+            "HIGH": {"乐观": "35%", "中性": "40%", "悲观": "25%"},
+            "MEDIUM": {"乐观": "30%", "中性": "45%", "悲观": "25%"},
+            "LOW": {"乐观": "25%", "中性": "40%", "悲观": "35%"},
+        }
+        base = prob_map.get(conf, prob_map["LOW"])
+        if "无法判断" in md_text or "数据缺失" in md_text:
+            return [
+                {"scenario": "中性", "probability": base["中性"], "condition": "数据不完整，维持观察", "expectation": "等待市场数据更新"},
+                {"scenario": "乐观", "probability": base["乐观"], "condition": "若数据全面转好，情绪修复", "expectation": "风险资产反弹"},
+                {"scenario": "悲观", "probability": base["悲观"], "condition": "若数据持续缺失，谨慎情绪蔓延", "expectation": "防御性配置"},
+            ]
+        return []
+
+    @staticmethod
+    def _parse_etf_signals_from_md(md_text: str, default_conf: str = "") -> list:
+        signals = []
+        if not md_text:
+            return signals
+        for row in PreMarketReporter._parse_table_rows(md_text):
+            cols = [c.strip() for c in row]
+            if len(cols) < 3:
+                continue
+            name, status = cols[0], cols[1]
+            if not name or name in ("信号类型", ""):
+                continue
+            has_data = status not in ("无数据", "-", "")
+            signals.append({
+                "name": name,
+                "signal": "有效信号" if has_data else "数据缺失",
+                "composite_score": "-",
+                "confidence": default_conf or ("MEDIUM" if has_data else "LOW"),
+            })
+        return signals
+
+    @staticmethod
+    def _parse_today_attention_from_md(md_text: str) -> list:
+        attention = []
+        if not md_text:
+            return attention
+        m = re.search(r'### 今日关注\s*\n(.*?)(?=^### |\Z)', md_text, re.DOTALL | re.MULTILINE)
+        section = m.group(1) if m else md_text
+        for i, n in enumerate(re.finditer(r'\d+\.\s*([^\n]+)', section), 1):
+            title = n.group(1).strip()
+            if title and len(title) > 3:
+                attention.append({"priority": i, "title": title, "source": "daily_report"})
+        return attention
 
     def _parse_news_time(self, raw: str) -> str:
         """将新闻时间字符串标准化为 'HH:MM' 格式"""

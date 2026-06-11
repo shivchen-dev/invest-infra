@@ -64,6 +64,9 @@ reg_timer "financial_p2"     "*-*-* 18:30:00"
 reg_timer "financial_p3"     "*-*-* 19:30:00"
 reg_timer "financial_p4"     "*-*-* 20:30:00"
 
+# ── 收盘批量采集（周一至周五 16:00）──────────────────
+reg_timer "market_data_collector" "Mon,Tue,Wed,Thu,Fri *-*-* 16:00:00"
+
 # ── ETF日内刷新（10:00-15:00 每15分钟）───────────────────
 for h in 10 11 12 13 14 15; do
     for m in 00 15 30 45; do

@@ -20,7 +20,7 @@ import sys, os
 sys.path.insert(0, "/home/claw/invest-infra/data-pipeline")
 
 # 加载 .env 环境变量
-_dotenv = os.path.join(os.path.dirname(__file__), ".env")
+_dotenv = os.path.join(os.path.dirname(os.path.dirname(__file__)), ".env")
 if os.path.exists(_dotenv):
     with open(_dotenv) as f:
         for line in f:

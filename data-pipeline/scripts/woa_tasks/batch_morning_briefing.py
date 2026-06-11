@@ -4,13 +4,15 @@ Morning Briefing 批量执行器
 WOA v1 — 2026-06-01
 直接处理 XREAD 已读取的 5 条任务，跳过脚本层重复 claim
 """
-import redis, json, time, psycopg2
+import os, redis, json, time, psycopg2
 from datetime import datetime
 
 STREAM  = "task_queue"
 GROUP   = "woa_workers"
 CONSUMER = "woa_1"
-PG_PWD  = "REDACTED_PG_PASSWORD"
+PG_PWD  = os.environ.get("PG_PASSWORD", "")
+if not PG_PWD:
+    raise RuntimeError("PG_PASSWORD not set; expected in .env or .secrets/pg.env")
 PG_USER = "invest"
 TODAY   = "2026-06-01"
 NOW     = time.strftime("%Y-%m-%d %H:%M:%S")

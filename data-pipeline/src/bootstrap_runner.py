@@ -2,6 +2,12 @@
 """
 数据采集直连运行器 - 零AI开销
 所有 cron 命令统一入口，按 cmd 参数路由到对应脚本
+
+用法:
+  python bootstrap_runner.py <cmd> [batch]
+  python bootstrap_runner.py etf_spot
+  python bootstrap_runner.py etf_alpha
+  python bootstrap_runner.py financial 1   # batch 1-4
 """
 import sys, os, json
 from pathlib import Path
@@ -20,10 +26,10 @@ if ENV_FILE.exists():
             k, v = line.split("=", 1)
             os.environ[k.strip()] = v.strip()
 
-def run(cmd: str) -> dict:
+def run(cmd: str, batch: int = 1) -> dict:
     from datetime import datetime
     import psycopg2
-    from src.pipeline_main import run_etf_spot_only, run_etf_pipeline
+    from src.pipeline_main import run_etf_spot_only, run_etf_pipeline, run_financial
     from src.factors.etf import run_etf_factor_calc
     from src.collector.etf import batch_fetch_etf_hist
     from src.signals.etf_alpha import compute_etf_alpha as _compute_alpha
@@ -46,6 +52,8 @@ def run(cmd: str) -> dict:
         elif cmd == "etf_factor":
             r = run_etf_factor_calc(days=20)
             r = r.get("records", 0)
+        elif cmd == "financial":
+            r = run_financial(batch=batch)
         else:
             return {"ok": False, "error": f"Unknown cmd: {cmd}"}
 
@@ -54,6 +62,7 @@ def run(cmd: str) -> dict:
             "result": r,
             "duration_s": (datetime.now() - start).total_seconds(),
             "cmd": cmd,
+            "batch": batch,
         }
     except Exception as e:
         return {
@@ -61,10 +70,12 @@ def run(cmd: str) -> dict:
             "error": str(e),
             "duration_s": (datetime.now() - start).total_seconds(),
             "cmd": cmd,
+            "batch": batch,
         }
 
 if __name__ == "__main__":
     cmd = sys.argv[1] if len(sys.argv) > 1 else ""
-    result = run(cmd)
+    batch = int(sys.argv[2]) if len(sys.argv) > 2 else 1
+    result = run(cmd, batch=batch)
     print(json.dumps(result, ensure_ascii=False, default=str))
     sys.exit(0 if result.get("ok") else 1)

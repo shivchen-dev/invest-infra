@@ -1,0 +1,61 @@
+    def fetch_memo(self, trade_date: str) -> dict:
+        """从 PG investment_memos 读取 WOA 生成的结构化数据（Markdown 解析）"""
+        try:
+            from loader.pg import get_conn
+        except Exception as e:
+            logger.warning(f"fetch_memo: 无法导入 loader.pg: {e}")
+            return {}
+
+        MEMO_TYPES = ["morning_collect", "factor_calculation", "etf_alpha_signal",
+                      "risk_monitoring", "daily_report"]
+
+        memo_map = {}
+        try:
+            with get_conn() as conn:
+                cur = conn.cursor()
+                cur.execute("""
+                    SELECT memo_type, summary, body_md, confidence_level, memo_date
+                    FROM investment_memos
+                    WHERE company_id = 5233
+                      AND memo_date = %s
+                      AND memo_type = ANY(%s)
+                    ORDER BY memo_type
+                """, (trade_date, MEMO_TYPES))
+                for r in cur.fetchall():
+                    memo_map[r[0]] = {
+                        "summary": r[1] if r[1] else "",
+                        "body_md": r[2] if r[2] else "",
+                        "confidence": r[3] if r[3] else "",
+                        "memo_date": r[4] if r[4] else "",
+                    }
+        except Exception as e:
+            logger.warning(f"fetch_memo: 查询失败: {e}")
+            return {}
+
+        mc = memo_map.get("morning_collect", {})
+        hs300 = self._parse_hs300_from_md(mc.get("body_md", ""))
+        sentiment = self._parse_sentiment_from_md(mc.get("body_md", ""))
+        market_overview = {"hs300": hs300, "sentiment": sentiment, "date": str(mc.get("memo_date", ""))}
+
+        fc = memo_map.get("factor_calculation", {})
+        factors = self._parse_factor_table_from_md(fc.get("body_md", ""), fc.get("confidence", ""))
+
+        rm = memo_map.get("risk_monitoring", {})
+        risks = self._parse_risk_from_md(rm.get("body_md", ""))
+
+        dr = memo_map.get("daily_report", {})
+        woa_summary = self._parse_woa_summary_from_body(dr.get("body_md", ""), dr.get("summary", ""), dr.get("confidence", ""))
+        scenarios = self._parse_scenarios_from_md(dr.get("body_md", ""))
+        etf_signals = self._parse_etf_signals_from_md(dr.get("body_md", ""), dr.get("confidence", ""))
+        today_attention = self._parse_today_attention_from_md(dr.get("body_md", ""))
+
+        return {
+            "woa_summary": woa_summary,
+            "market_overview": market_overview,
+            "factors": factors,
+            "etf_signals": etf_signals,
+            "risks": risks,
+            "scenarios": scenarios,
+            "today_attention": today_attention,
+        }
+

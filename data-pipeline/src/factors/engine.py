@@ -81,9 +81,6 @@ def sync_definitions_to_db(conn=None, enabled=True):
         logger.info("sync_definitions_to_db: enabled=False, 跳过")
         return {"inserted": 0, "updated": 0}
 
-    register_all()
-    _build_calculators()
-
     _conn = conn or psycopg2.connect(pg_cfg.uri)
     _close = conn is None
     try:
@@ -111,7 +108,6 @@ def sync_definitions_to_db(conn=None, enabled=True):
                         inserted += 1
                     else:
                         updated += 1
-                _conn.commit()
         logger.info(f"因子定义同步: 新增 {inserted}, 更新 {updated}")
         return {"inserted": inserted, "updated": updated}
     finally:
@@ -275,7 +271,6 @@ def compute_factors(
                         rows,
                     )
 
-            _conn.commit()
             elapsed = round(time.time() - t0, 2)
             stats["factors_computed"] += 1
             stats["values_written"] += written

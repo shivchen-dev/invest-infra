@@ -1,0 +1,280 @@
+<!doctype html>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>汇报模块架构图</title>
+<style>
+  :root {
+    color-scheme: light dark;
+    --bg: #f8fafc;
+    --fg: #172033;
+    --muted: #5b6475;
+    --line: #64748b;
+    --neutral: #e2e8f0;
+    --input: #bfdbfe;
+    --process: #c7d2fe;
+    --storage: #99f6e4;
+    --external: #fde68a;
+    --risk: #fecaca;
+    --agent: #e9d5ff;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0f172a;
+      --fg: #e5e7eb;
+      --muted: #a3adbd;
+      --line: #94a3b8;
+      --neutral: #334155;
+      --input: #1d4ed8;
+      --process: #4338ca;
+      --storage: #0f766e;
+      --external: #92400e;
+      --risk: #991b1b;
+      --agent: #6b21a8;
+    }
+  }
+  body { margin: 0; background: var(--bg); color: var(--fg); font: 13px/1.4 ui-sans-serif, system-ui, sans-serif; }
+  main { max-width: 1100px; margin: 24px auto; padding: 0 20px; }
+  svg { width: 100%; height: auto; display: block; }
+  .title { font-size: 19px; font-weight: 650; fill: var(--fg); }
+  .label { font-size: 13px; font-weight: 600; fill: var(--fg); }
+  .small { font-size: 11px; fill: var(--muted); }
+  .node { stroke: var(--line); stroke-width: 1.5; }
+  .neutral { fill: var(--neutral); }
+  .input { fill: var(--input); }
+  .process { fill: var(--process); }
+  .storage { fill: var(--storage); }
+  .external { fill: var(--external); }
+  .risk { fill: var(--risk); }
+  .agent { fill: var(--agent); }
+  .edge { stroke: var(--line); stroke-width: 1.5; fill: none; }
+  .zone { fill: none; stroke: var(--line); stroke-width: 1.2; stroke-dasharray: 6 5; opacity: 0.7; }
+  .zone-label { font-size: 12px; font-weight: 700; fill: var(--muted); }
+</style>
+<main>
+<svg viewBox="0 0 1050 680" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <marker id="arr" markerWidth="8" markerHeight="8" refX="7" refY="3" orient="auto">
+      <path d="M0,0 L0,6 L7,3 z" fill="#64748b"/>
+    </marker>
+    <marker id="arrd" markerWidth="8" markerHeight="8" refX="7" refY="3" orient="auto">
+      <path d="M0,0 L0,6 L7,3 z" fill="#94a3b8"/>
+    </marker>
+  </defs>
+
+  <text x="525" y="26" text-anchor="middle" class="title">汇报模块 (reports/) — 架构详图</text>
+
+  <!-- ====== LEFT COLUMN: MCP DATA SOURCES ====== -->
+  <rect x="10" y="44" width="150" height="590" rx="8" class="zone" />
+  <text x="85" y="62" text-anchor="middle" class="zone-label">MCP 数据源</text>
+
+  <rect x="22" y="74" width="116" height="52" rx="6" class="node external" />
+ <text x="80" y="96" text-anchor="middle" class="label">MCP Client</text>
+  <text x="80" y="112" text-anchor="middle" class="small">wudao_aStock_*</text>
+  <text x="80" y="126" text-anchor="middle" class="small">批量获取行情</text>
+
+  <rect x="22" y="138" width="116" height="52" rx="6" class="node storage" />
+  <text x="80" y="160" text-anchor="middle" class="label">MarketDataCache</text>
+  <text x="80" y="176" text-anchor="middle" class="small">内存缓存</text>
+  <text x="80" y="190" text-anchor="middle" class="small">TTL 控制</text>
+
+  <rect x="22" y="202" width="116" height="52" rx="6" class="node storage" />
+  <text x="80" y="224" text-anchor="middle" class="label">daily_market_snapshot</text>
+  <text x="80" y="240" text-anchor="middle" class="small">PG 表</text>
+  <text x="80" y="254" text-anchor="middle" class="small">T-1 快照</text>
+
+  <!-- ====== MIDDLE: REPORT ENGINE ====== -->
+  <rect x="175" y="44" width="200" height="590" rx="8" class="zone" />
+  <text x="275" y="62" text-anchor="middle" class="zone-label">report_engine.py</text>
+
+  <rect x="188" y="76" width="174" height="46" rx="6" class="node process" />
+  <text x="275" y="100" text-anchor="middle" class="label">ReportEngine</text>
+  <text x="275" y="116" text-anchor="middle" class="small">report_type · trade_date</text>
+
+  <rect x="188" y="134" width="174" height="36" rx="5" class="node neutral" />
+  <text x="275" y="158" text-anchor="middle" class="label">trading_day.py</text>
+  <text x="275" y="147" text-anchor="middle" class="small">is_trading_day · get_trading_phase</text>
+
+  <rect x="188" y="182" width="174" height="36" rx="5" class="node neutral" />
+  <text x="275" y="206" text-anchor="middle" class="label">db.py</text>
+  <text x="275" y="195" text-anchor="middle" class="small">get_db · PG 连接</text>
+
+  <rect x="188" y="230" width="174" height="36" rx="5" class="node neutral" />
+  <text x="275" y="254" text-anchor="middle" class="label">formatters.py</text>
+  <text x="275" y="243" text-anchor="middle" class="small">format_report · 格式化输出</text>
+
+  <rect x="188" y="278" width="174" height="36" rx="5" class="node neutral" />
+  <text x="275" y="302" text-anchor="middle" class="label">mcp_client.py</text>
+  <text x="275" y="291" text-anchor="middle" class="small">get_batch_mcp_client · MCP批量</text>
+
+  <rect x="188" y="326" width="174" height="36" rx="5" class="node neutral" />
+  <text x="275" y="350" text-anchor="middle" class="label">qq_push.py</text>
+  <text x="275" y="339" text-anchor="middle" class="small">send_to_qq · QQ 推送</text>
+
+  <rect x="188" y="374" width="174" height="36" rx="5" class="node neutral" />
+  <text x="275" y="398" text-anchor="middle" class="label">market_data_collector.py</text>
+  <text x="275" y="387" text-anchor="middle" class="small">market_data_collector · 数据采集</text>
+
+  <!-- ====== RIGHT: REPORT MODULES ====== -->
+  <rect x="390" y="44" width="660" height="590" rx="8" class="zone" />
+  <text x="720" y="62" text-anchor="middle" class="zone-label">modules/ — 四大汇报类型</text>
+
+  <!-- pre_market -->
+  <rect x="402" y="76" width="308" height="180" rx="8" class="zone" />
+  <text x="556" y="94" text-anchor="middle" class="zone-label">pre_market.py</text>
+  <text x="556" y="112" text-anchor="middle" class="small">盘前报 · DB优先 + MCP补充</text>
+
+  <rect x="414" y="122" width="136" height="36" rx="5" class="node input" />
+  <text x="482" y="144" text-anchor="middle" class="label">sector_analysis</text>
+
+  <rect x="414" y="166" width="136" height="36" rx="5" class="node input" />
+  <text x="482" y="188" text-anchor="middle" class="label">smart_hotlist</text>
+
+  <rect x="414" y="210" width="136" height="36" rx="5" class="node input" />
+  <text x="482" y="232" text-anchor="middle" class="label">limit_stats</text>
+
+  <rect x="562" y="122" width="136" height="36" rx="5" class="node input" />
+  <text x="630" y="144" text-anchor="middle" class="label">auction_scan</text>
+
+  <rect x="562" y="166" width="136" height="36" rx="5" class="node input" />
+  <text x="630" y="188" text-anchor="middle" class="label">auction_wts</text>
+
+  <rect x="562" y="210" width="136" height="36" rx="5" class="node input" />
+  <text x="630" y="232" text-anchor="middle" class="label">hsgt 北向资金</text>
+
+  <rect x="414" y="254" width="284" height="30" rx="4" class="node risk" />
+  <text x="556" y="275" text-anchor="middle" class="small">WOA investment_memos (company_id=5233) 盘前洞察</text>
+
+  <!-- post_market -->
+  <rect x="402" y="274" width="308" height="180" rx="8" class="zone" />
+  <text x="556" y="292" text-anchor="middle" class="zone-label">post_market.py</text>
+  <text x="556" y="310" text-anchor="middle" class="small">盘后报 · DB Only</text>
+
+  <rect x="414" y="320" width="136" height="36" rx="5" class="node input" />
+  <text x="482" y="342" text-anchor="middle" class="label">limit_stats</text>
+
+  <rect x="414" y="364" width="136" height="36" rx="5" class="node input" />
+  <text x="482" y="386" text-anchor="middle" class="label">hot_sectors</text>
+
+  <rect x="414" y="408" width="136" height="36" rx="5" class="node input" />
+  <text x="482" y="430" text-anchor="middle" class="label">market_leaders</text>
+
+  <rect x="562" y="320" width="136" height="36" rx="5" class="node input" />
+  <text x="630" y="342" text-anchor="middle" class="label">limit_up_ladder</text>
+
+  <rect x="562" y="364" width="136" height="36" rx="5" class="node input" />
+  <text x="630" y="386" text-anchor="middle" class="label">board_break</text>
+
+  <rect x="562" y="408" width="136" height="36" rx="5" class="node input" />
+  <text x="630" y="430" text-anchor="middle" class="label">capital_flow_mkt</text>
+
+  <!-- midday -->
+  <rect x="726" y="76" width="308" height="180" rx="8" class="zone" />
+  <text x="880" y="94" text-anchor="middle" class="zone-label">midday.py</text>
+  <text x="880" y="112" text-anchor="middle" class="small">午盘报 · 实时数据</text>
+
+  <rect x="738" y="122" width="136" height="36" rx="5" class="node input" />
+  <text x="806" y="144" text-anchor="middle" class="label">上午涨停/跌停</text>
+
+  <rect x="738" y="166" width="136" height="36" rx="5" class="node input" />
+  <text x="806" y="188" text-anchor="middle" class="label">热点题材</text>
+
+  <rect x="738" y="210" width="136" height="36" rx="5" class="node input" />
+  <text x="806" y="232" text-anchor="middle" class="label">北向资金</text>
+
+  <rect x="886" y="122" width="136" height="36" rx="5" class="node input" />
+  <text x="954" y="144" text-anchor="middle" class="label">涨跌停统计</text>
+
+  <rect x="886" y="166" width="136" height="36" rx="5" class="node input" />
+  <text x="954" y="188" text-anchor="middle" class="label">龙虎榜</text>
+
+  <rect x="886" y="210" width="136" height="36" rx="5" class="node input" />
+  <text x="954" y="232" text-anchor="middle" class="label">资金流向</text>
+
+  <!-- intraday_alert -->
+  <rect x="726" y="274" width="308" height="180" rx="8" class="zone" />
+  <text x="880" y="292" text-anchor="middle" class="zone-label">intraday_alert.py</text>
+  <text x="880" y="310" text-anchor="middle" class="small">盘中实时告警</text>
+
+  <rect x="738" y="320" width="136" height="36" rx="5" class="node risk" />
+  <text x="806" y="342" text-anchor="middle" class="label">涨停炸板监控</text>
+
+  <rect x="738" y="364" width="136" height="36" rx="5" class="node risk" />
+  <text x="806" y="386" text-anchor="middle" class="label">跌停/核按钮</text>
+
+  <rect x="738" y="408" width="136" height="36" rx="5" class="node risk" />
+  <text x="806" y="430" text-anchor="middle" class="label">异动检测</text>
+
+  <rect x="886" y="320" width="136" height="36" rx="5" class="node risk" />
+  <text x="954" y="342" text-anchor="middle" class="label">板块轮动</text>
+
+  <rect x="886" y="364" width="136" height="36" rx="5" class="node risk" />
+  <text x="954" y="386" text-anchor="middle" class="label">ETF 价格异动</text>
+
+  <rect x="886" y="408" width="136" height="36" rx="5" class="node risk" />
+  <text x="954" y="430" text-anchor="middle" class="label">风险事件推送</text>
+
+  <!-- ====== BOTTOM: CRON TRIGGERS ====== -->
+  <rect x="390" y="472" width="660" height="162" rx="8" class="zone" />
+  <text x="720" y="490" text-anchor="middle" class="zone-label">触发链路</text>
+
+  <rect x="402" y="508" width="160" height="40" rx="6" class="node neutral" />
+  <text x="482" y="530" text-anchor="middle" class="label">cron_morning_briefing.py</text>
+  <text x="482" y="544" text-anchor="middle" class="small">触发:07:50交易日</text>
+
+  <rect x="402" y="562" width="160" height="40" rx="6" class="node neutral" />
+  <text x="482" y="584" text-anchor="middle" class="label">build_memo.py</text>
+  <text x="482" y="598" text-anchor="middle" class="small">WOA Morning Briefing 数据</text>
+
+  <rect x="576" y="508" width="160" height="40" rx="6" class="node neutral" />
+  <text x="656" y="530" text-anchor="middle" class="label">WOA → Redis Stream</text>
+  <text x="656" y="544" text-anchor="middle" class="small">cia_task_queue</text>
+
+  <rect x="576" y="562" width="160" height="40" rx="6" class="node agent" />
+  <text x="656" y="584" text-anchor="middle" class="label">CIA</text>
+  <text x="656" y="598" text-anchor="middle" class="small">Morning Briefing 整合</text>
+
+  <rect x="750" y="508" width="160" height="40" rx="6" class="node neutral" />
+  <text x="830" y="530" text-anchor="middle" class="label">qq_push.py</text>
+  <text x="830" y="544" text-anchor="middle" class="small">QQ 频道推送</text>
+
+  <rect x="750" y="562" width="160" height="40" rx="6" class="node neutral" />
+  <text x="830" y="584" text-anchor="middle" class="label">QQBot Channel API</text>
+  <text x="830" y="598" text-anchor="middle" class="small">qqbot-channel skill</text>
+
+  <!-- Output arrow -->
+  <rect x="922" y="508" width="110" height="94" rx="6" class="node process" />
+  <text x="977" y="535" text-anchor="middle" class="label">最终用户</text>
+  <text x="977" y="552" text-anchor="middle" class="small">QQ/飞书</text>
+  <text x="977" y="569" text-anchor="middle" class="small">日报/周报</text>
+  <text x="977" y="586" text-anchor="middle" class="small">实时告警</text>
+  <text x="977" y="603" text-anchor="middle" class="small">盘前洞察</text>
+
+  <!-- ====== FLOW CONNECTIONS ====== -->
+  <!-- MCP → ReportEngine -->
+  <path d="M136,106 L175,99" class="edge" marker-end="url(#arr)" />
+
+  <!-- Cache → Snapshot → ReportEngine -->
+  <path d="M136,164 L175,165" class="edge" marker-end="url(#arr)" />
+  <path d="M136,228 L175,231" class="edge" marker-end="url(#arr)" />
+
+  <!-- ReportEngine → modules -->
+  <path d="M362,99 L390,110" class="edge" marker-end="url(#arr)" />
+  <path d="M362,145 L390,160" class="edge" marker-end="url(#arr)" />
+  <path d="M362,231 L390,300" class="edge" marker-end="url(#arr)" />
+  <path d="M362,275 L390,330" class="edge" marker-end="url(#arr)" />
+
+  <!-- Modules bottom section -->
+  <path d="M556,256 L556,275" class="edge" stroke-dasharray="4 3" marker-end="url(#arrd)" />
+  <path d="M880,256 L880,275" class="edge" stroke-dasharray="4 3" marker-end="url(#arrd)" />
+
+  <!-- Cron trigger flow -->
+  <path d="M562,528 L576,528" class="edge" marker-end="url(#arr)" />
+  <path d="M736,528 L750,528" class="edge" marker-end="url(#arr)" />
+  <path d="M910,528 L922,555" class="edge" marker-end="url(#arr)" />
+
+  <!-- WOA → CIA -->
+  <path d="M656,572 L656,585 L402,585 L402,572" class="edge" stroke-dasharray="4 3" marker-end="url(#arrd)" />
+  <path d="M402,572 L390,572" class="edge" marker-end="url(#arr)" />
+
+</svg>
+</main>

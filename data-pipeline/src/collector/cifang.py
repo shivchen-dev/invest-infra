@@ -299,12 +299,13 @@ def upsert_etfs_from_cifang(records: list[dict]) -> dict:
             return {"inserted": 0, "updated": 0}
 
 
-def write_spot_to_etf_quotes(spot_data: dict[str, dict], trade_date: date) -> int:
+def write_spot_to_etf_quotes(spot_data: dict[str, dict], trade_date: date, minute_bucket: str = "") -> int:
     """
     将次方量化实时行情批量写入 etf_quotes 表（upsert）。
 
     spot_data: fetch_fund_spot() 返回的字典
     trade_date: 行情日期
+    minute_bucket: 分钟桶（如 1000, 1015, ...），空串表示日线
 
     返回: 写入记录数
     """
@@ -328,12 +329,13 @@ def write_spot_to_etf_quotes(spot_data: dict[str, dict], trade_date: date) -> in
                     cur.execute(
                         """
                         INSERT INTO etf_quotes
-                            (etf_id, trade_date, open_price, high_price, low_price,
+                            (etf_id, trade_date, minute_bucket, open_price, high_price, low_price,
                              close_price, pre_close, volume, amount, change_pct, source)
-                        VALUES (%(etf_id)s, %(trade_date)s, %(open_price)s, %(high_price)s,
+                        VALUES (%(etf_id)s, %(trade_date)s, %(minute_bucket)s,
+                                %(open_price)s, %(high_price)s,
                                 %(low_price)s, %(close_price)s, %(pre_close)s,
                                 %(volume)s, %(amount)s, %(change_pct)s, %(source)s)
-                        ON CONFLICT (etf_id, trade_date) DO UPDATE SET
+                        ON CONFLICT (etf_id, trade_date, minute_bucket) DO UPDATE SET
                             open_price  = EXCLUDED.open_price,
                             high_price  = EXCLUDED.high_price,
                             low_price   = EXCLUDED.low_price,
@@ -347,6 +349,7 @@ def write_spot_to_etf_quotes(spot_data: dict[str, dict], trade_date: date) -> in
                         {
                             "etf_id":      etf_id,
                             "trade_date":  trade_date,
+                            "minute_bucket": minute_bucket,
                             "open_price":  record.get("open"),
                             "high_price":  record.get("high"),
                             "low_price":   record.get("low"),
@@ -360,7 +363,7 @@ def write_spot_to_etf_quotes(spot_data: dict[str, dict], trade_date: date) -> in
                     )
                     written += 1
             conn.commit()
-            logger.info("次方量化实时行情写入: %d 只 -> etf_quotes", written)
+            logger.info("次方量化实时行情写入: %d 只 -> etf_quotes (minute_bucket=%s)", written, minute_bucket)
             return written
         except Exception as e:
             logger.error(f"次方量化实时行情写入失败: {e}", exc_info=True)
@@ -372,6 +375,7 @@ def backfill_hist(etf_code: str, start_date: date, end_date: date, adjust: str =
     """
     补充单只 ETF 历史K线（从次方量化），写入 etf_quotes。
     用于填补 akshare 缺失的历史段。
+    minute_bucket='' 表示日线数据。
     """
     records = fetch_fund_hist(etf_code, start_date, end_date, adjust)
     if not records:
@@ -393,12 +397,13 @@ def backfill_hist(etf_code: str, start_date: date, end_date: date, adjust: str =
                     cur.execute(
                         """
                         INSERT INTO etf_quotes
-                            (etf_id, trade_date, open_price, high_price, low_price,
+                            (etf_id, trade_date, minute_bucket, open_price, high_price, low_price,
                              close_price, volume, amount, change_pct, source)
-                        VALUES (%(etf_id)s, %(trade_date)s, %(open_price)s,
-                                %(high_price)s, %(low_price)s, %(close_price)s,
-                                %(volume)s, %(amount)s, %(change_pct)s, %(source)s)
-                        ON CONFLICT (etf_id, trade_date) DO UPDATE SET
+                        VALUES (%(etf_id)s, %(trade_date)s, %(minute_bucket)s,
+                                %(open_price)s, %(high_price)s, %(low_price)s,
+                                %(close_price)s, %(volume)s, %(amount)s,
+                                %(change_pct)s, %(source)s)
+                        ON CONFLICT (etf_id, trade_date, minute_bucket) DO UPDATE SET
                             open_price  = EXCLUDED.open_price,
                             high_price  = EXCLUDED.high_price,
                             low_price   = EXCLUDED.low_price,
@@ -409,8 +414,9 @@ def backfill_hist(etf_code: str, start_date: date, end_date: date, adjust: str =
                             source      = EXCLUDED.source
                         """,
                         {
-                            "etf_id":     etf_id,
-                            "trade_date": trade_date,
+                            "etf_id":       etf_id,
+                            "trade_date":   trade_date,
+                            "minute_bucket": "",
                             "open_price": rec.get("open"),
                             "high_price": rec.get("high"),
                             "low_price":  rec.get("low"),

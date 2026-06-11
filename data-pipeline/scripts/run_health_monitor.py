@@ -16,7 +16,7 @@ run_health_monitor.py — ETF 数据健康检查（含套利信号统计）
 import sys, os
 sys.path.insert(0, "/home/claw/invest-infra/data-pipeline")
 
-_dotenv = os.path.join(os.path.dirname(__file__), ".env")
+_dotenv = os.path.join(os.path.dirname(os.path.dirname(__file__)), ".env")
 if os.path.exists(_dotenv):
     with open(_dotenv) as f:
         for line in f:

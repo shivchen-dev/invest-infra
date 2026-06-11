@@ -41,6 +41,7 @@ class PGConfig:
 
     @property
     def uri(self) -> str:
+        # NOTE: 不含 ?options=... 参数，psycopg2 对 URI 格式的 query param 解析有 bug
         return f"postgresql://{self.user}:{self.password}@{self.host}:{self.port}/{self.db}"
 
 
@@ -114,6 +115,12 @@ class ArbitrageConfig:
     signal_valid_days: int = 1                                    # T+1
 
 
+@dataclass
+class AlertConfig:
+    """告警推送配置"""
+    webhook_url: str = env("ALERT_WEBHOOK_URL", "")
+
+
 cifang: CifangConfig = CifangConfig()
 rsscast: RssCastConfig = RssCastConfig()
 arbitrage: ArbitrageConfig = ArbitrageConfig()
@@ -122,3 +129,4 @@ pg: PGConfig = PGConfig()
 redis: RedisConfig = RedisConfig()
 minio: MinIOConfig = MinIOConfig()
 collector: CollectorConfig = CollectorConfig()
+alert: AlertConfig = AlertConfig()

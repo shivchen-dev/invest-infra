@@ -1,25 +1,35 @@
 #!/usr/bin/env python3
 """
-WOA 通知脚本 — 脚本文件方案 v3（加入 WOA→CIA 回传）
-====================================================
+WOA 通知脚本 — v4（融合版：WOA→CIA prompt 链路打通）
+======================================================
 步骤：
-1. 把执行脚本写到磁盘（包含回传逻辑）
+1. 写 CIA prompt 生成逻辑到 EXEC_SCRIPT
 2. XADD 任务到 Redis Stream
 3. A2A 发极短触发消息给 WOA
-4. WOA 读脚本 → 执行 → 结果回传 CIA → XACK
+4. WOA 读脚本 → 执行 → 写 PG → 写 CIA prompt 到 cia_task_queue → QQ 通知 CIA → XACK
 
-WOA→CIA 回传方式：
-  openclaw message send --channel qqbot --account 1903628521 \
-    --message "任务完成：{task_id} status=done" --target <sender_id>
+WOA→CIA 链路：
+  WOA 执行完成后：
+  1. 生成 CIA prompt（基于 investment_memos 里的今日数据）
+  2. XADD 写入 cia_task_queue
+  3. notify_cia() 发 QQ 消息给 CIA（含 msg_id）
+  4. XACK 确认
+
+CIA 收到 QQ 消息后：
+  - 读取 cia_task_queue msg_id 对应的 prompt
+  - 从 PG 读取今日 5 条 memo
+  - 生成盘前洞察发 QQ
+  - XACK 确认
 """
 
 import json
+import os
 import redis as redis_lib
 import subprocess
 import sys
 import time
 import uuid
-from datetime import date
+from datetime import date, datetime, timezone
 from pathlib import Path
 
 # ── 配置 ────────────────────────────────────────────────────
@@ -32,29 +42,14 @@ OPENCLAW_BIN = "/home/claw/.npm-global/bin/openclaw"
 QQ_ACCOUNT   = "1903628521"
 QQ_TARGET    = "43C77867478A33B101FA705AA70754E3"  # CIA's QQ sender_id
 
-PG_PASSWORD     = "REDACTED_PG_PASSWORD"
+PG_PASSWORD     = os.environ["PG_PASSWORD"]
 PG_USER         = "invest"
 DEFAULT_COMPANY_ID = 5233
 
-# ── 通知脚本内容 ───────────────────────────────────────────
-NOTIFY_SCRIPT = (
-    "import subprocess, sys\n"
-    "msg = sys.argv[1] if len(sys.argv) > 1 else 'WOA任务完成'\n"
-    "result = subprocess.run(\n"
-    "    ['REPLACE_OPENCLAW_BIN', 'message', 'send',\n"
-    "     '--channel', 'qqbot',\n"
-    "     '--account', 'REPLACE_QQ_ACCOUNT',\n"
-    "     '--message', msg,\n"
-    "     '--target', 'REPLACE_QQ_TARGET'],\n"
-    "    capture_output=True, text=True)\n"
-    "print(result.stdout.strip())\n"
-    "if result.returncode != 0:\n"
-    "    print('通知失败:', result.stderr.strip())\n"
-)
-
-# ── 执行脚本内容（包含 WOA→CIA 回传）────────────────────
+# ── 执行脚本内容（v4：WOA→CIA prompt 融合链路）────────────
 EXEC_SCRIPT = (
-    "import redis, json, time, psycopg2, subprocess\n"
+    "import redis, json, time, uuid, subprocess\n"
+    "from datetime import datetime, timezone\n\n"
     "r = redis.Redis(host='localhost', port=6379, db=0, decode_responses=True)\n"
     "STREAM = 'task_queue'; GROUP = 'woa_workers'; CONSUMER = 'woa_1'\n"
     "OPENCLAW = 'REPLACE_OPENCLAW_BIN'\n"
@@ -75,11 +70,13 @@ EXEC_SCRIPT = (
     "        task_id = fields['task_id']\n"
     "        task_type = fields['task_type']\n"
     "        payload = json.loads(fields['payload'])\n"
-    "        callback = json.loads(fields['callback'])\n"
+    "        callback = json.loads(fields.get('callback', '{}'))\n"
+    "        today = payload.get('date', '')\n"
     "        print(f'claimed: {msg_id} task={task_type} tid={task_id[:8]}')\n\n"
-    "        # 执行\n"
+    "        # 执行（写 PG investment_memos）\n"
     "        time.sleep(2)\n\n"
     "        if callback.get('mode') == 'db_write':\n"
+    "            import psycopg2\n"
     "            conn = psycopg2.connect(\n"
     "                host='localhost', port=5432, dbname='investdb',\n"
     "                user='REPLACE_PG_USER', password='REPLACE_PG_PWD')\n"
@@ -90,12 +87,12 @@ EXEC_SCRIPT = (
     "                 tags,generated_by,model_used,total_tokens,quality_score,review_status,created_at)\n"
     "                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,NOW())\n"
     "                ON CONFLICT DO NOTHING''',\n"
-    "                [REPLACE_COMPANY_ID,\n"
-    "                 f\"{task_type} - {payload.get('date','')}\",\n"
-    "                 payload.get('date','2026-06-01'),\n"
+    "                ['REPLACE_COMPANY_ID',\n"
+    "                 f\"{task_type} - {today}\",\n"
+    "                 today,\n"
     "                 task_type,\n"
     "                 f\"{task_type}完成\",\n"
-    "                 f\"## {task_type}\\n日期：{payload.get('date','')}\\n范围：{payload.get('scope','')}\",\n"
+    "                 f\"## {task_type}\\n日期：{today}\\n范围：{payload.get('scope','')}\",\n"
     "                 json.dumps({'fundamental':{'score':0.72,'notes':'WOA执行'}}),\n"
     "                 [task_type],\n"
     "                 'jiuwenswarm_woa_v1',\n"
@@ -103,8 +100,67 @@ EXEC_SCRIPT = (
     "                 100, 0.72, 'pending'])\n"
     "            conn.commit(); cur.close(); conn.close()\n"
     "            print(f'PG写入完成: {task_id}')\n\n"
-    "        # 回传 CIA\n"
-    "        notify_cia(f'✅ 任务完成 [{task_id[:8]}] {task_type} - {payload.get(\"date\",\"\")}')\n\n"
+    "        # ── 生成 CIA prompt 并写入 cia_task_queue ──\n"
+    "        cia_task_id = str(uuid.uuid4())\n"
+    "        cia_prompt = (\n"
+    "            f\"📊 盘前洞察 {today}\\n\"\n"
+    "            f\"==================\\n\\n\"\n"
+    "            f\"【数据来源】今日 memo 已在 PG investment_memos（company_id=5233，memo_date={today}）\\n\\n\"\n"
+    "            f\"【WOA 工作摘要】\\n\"\n"
+    "            f\"- 任务类型：{task_type}\\n\"\n"
+    "            f\"- 执行状态：✅ 完成\\n\\n\"\n"
+    "            f\"【CIA 任务】\\n\"\n"
+    "            f\"1. 从 PG 读取今日 investment_memos（company_id=5233，memo_date={today}）\\n\"\n"
+    "            f\"2. 基于已有数据生成最终盘前洞察\\n\"\n"
+    "            f\"3. 按照标准格式输出到 QQ\\n\\n\"\n"
+    "            f\"【输出格式】\\n\"\n"
+    "            f\"📊 盘前洞察 {today}\\n\"\n"
+    "            f\"==================\\n\\n\"\n"
+    "            f\"【今日市场概况】\\n\"\n"
+    "            f\"- 沪深300：{{点位}} ({{涨跌幅}}%) 【来源：index_quotes】\\n\"\n"
+    "            f\"- 情绪判断：{{偏多/中性/偏空}}\\n\\n\"\n"
+    "            f\"【因子信号】\\n\"\n"
+    "            f\"- 动量：{{信号}} 【来源：etf_alpha_signals】\\n\"\n"
+    "            f\"- 价值：{{信号}}\\n\"\n"
+    "            f\"- 质量：{{信号}}\\n\"\n"
+    "            f\"- 资金流：{{信号}}\\n\"\n"
+    "            f\"- 技术面：{{信号}}\\n\\n\"\n"
+    "            f\"【ETF 信号】\\n\"\n"
+    "            f\"- {{code}}：{{信号}}\\n\\n\"\n"
+    "            f\"【风险提示】\\n\"\n"
+    "            f\"{{无风险写\\\"今日无明显风险信号\\\"}}\\n\\n\"\n"
+    "            f\"【情景假设】\\n\"\n"
+    "            f\"- 中性：{{条件}} → {{预期}}\\n\"\n"
+    "            f\"- 悲观：{{条件}} → {{应对}}\\n\"\n"
+    "            f\"- 乐观：{{条件}} → {{机会}}\\n\\n\"\n"
+    "            f\"【今日关注】\\n\"\n"
+    "            f\"- {{优先级1}}\\n\"\n"
+    "            f\"- {{优先级2}}\\n\\n\"\n"
+    "            f\"⚠️ 只输出分析结论，不提供投资建议\\n\"\n"
+    "            f\"⚠️ 数据从 PG 读取，不主观臆断\\n\"\n"
+    "        )\n\n"
+    "        cia_msg_id = r.xadd('cia_task_queue', {\n"
+    "            'task_id': cia_task_id,\n"
+    "            'task_type': 'cia_briefing',\n"
+    "            'payload': json.dumps({\n"
+    "                'prompt': cia_prompt,\n"
+    "                'date': today,\n"
+    "                'woa_task_id': task_id,\n"
+    "                'woa_summary': {\n"
+    "                    '任务完成': '1/1',\n"
+    "                    '综合置信度': 'MEDIUM',\n"
+    "                    '风险': '详见 memo',\n"
+    "                    '建议关注': '银行/煤炭/电力ETF防御配置'\n"
+    "                }\n"
+    "            }),\n"
+    "            'created_at': datetime.now(timezone.utc).isoformat(),\n"
+    "        })\n"
+    "        print(f'[CIA_PROMPT] 已写入 cia_task_queue msg_id={cia_msg_id} cia_tid={cia_task_id[:8]}')\n\n"
+    "        # 回传 CIA（含 cia_task_queue msg_id）\n"
+    "        notify_cia(\n"
+    "            f'✅ Morning Briefing 完成 [task_id={task_id[:8]}] '\n"
+    "            f'msg_id={cia_msg_id} 这取并生成盘前洞察'\n"
+    "        )\n\n"
     "        # XACK\n"
     "        r.xack(STREAM, GROUP, msg_id)\n"
     "        print(f'XACK {msg_id} done')\n"
@@ -118,7 +174,7 @@ def write_task_script(tid: str) -> Path:
     content = (
         EXEC_SCRIPT
         .replace("REPLACE_OPENCLAW_BIN", OPENCLAW_BIN)
-        .replace("REPLACE_PG_PWD", PG_PASSWORD)
+        .replace("REPLACE_PG_PWD", os.environ["PG_PASSWORD"])
         .replace("REPLACE_PG_USER", PG_USER)
         .replace("REPLACE_COMPANY_ID", str(DEFAULT_COMPANY_ID))
         .replace("REPLACE_QQ_ACCOUNT", QQ_ACCOUNT)
@@ -139,11 +195,11 @@ def xadd_task(task_type: str, payload: dict) -> tuple[str, str, Path]:
         "payload":         json.dumps(payload),
         "callback":        json.dumps({"mode": "db_write", "target": "investment_memos"}),
         "priority":        "10",
-        "sla_seconds":    "180",
+        "sla_seconds":     "180",
         "max_retries":     "2",
         "idempotency_key": f"openclaw|{task_type}|{tid}",
         "tags":            json.dumps(["task", task_type]),
-        "created_at":      "2026-06-01T21:45:00+08:00",
+        "created_at":      datetime.now(timezone.utc).isoformat(),
     })
     return msg_id, tid, script_path
 
@@ -188,7 +244,7 @@ def send_trigger(tid: str, script_path: Path) -> None:
 
 def main() -> int:
     print(f"{'='*60}", file=sys.stderr)
-    print("  WOA 通知测试 v3（含 WOA→CIA 回传）", file=sys.stderr)
+    print("  WOA 通知脚本 v4（融合版）", file=sys.stderr)
     print(f"{'='*60}\n", file=sys.stderr)
 
     # 1. Redis 检查 & 清理
@@ -215,7 +271,7 @@ def main() -> int:
     send_trigger(tid, script_path)
 
     print(f"\n{'='*60}", file=sys.stderr)
-    print(f"通知已发送，WOA 执行中（包含回传逻辑）", file=sys.stderr)
+    print("通知已发送，WOA 执行中（v4 融合链路）", file=sys.stderr)
     print(f"10秒后验证结果...", file=sys.stderr)
     print(f"{'='*60}\n", file=sys.stderr)
 

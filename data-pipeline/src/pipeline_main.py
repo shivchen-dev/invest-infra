@@ -8,17 +8,27 @@ import time
 from datetime import date, datetime, timedelta
 from typing import Optional
 
-from src.config import collector as cc, minio as mc, rsscast as rc, pg as pg_cfg
+from src.config import collector as cc, minio as mc, rsscast as rc, pg as pg_cfg, alert as alert_cfg
 from src.collector import companies, quotes, financial, news
 from src.collector import rsscast as rsscast_collector
 from src.collector import etf as etf_collector
 from src.collector import cifang as cifang_collector
 from src.loader import minio as minio_loader, pg as pg_loader
-from src.loader.pg import backfill_financial_assets
+from src.loader.pg import backfill_financial_assets, get_conn
 
+from src.alert import alerts
 from src.pipeline.error_isolation import safe_step
+from src.pipeline.scheduler_jobs import initialize, track_job
+
+# Initialize scheduler_jobs audit table on module load
+try:
+    initialize()
+except Exception:
+    pass  # Non-fatal — pipeline should still run if table init fails
 
 
+@track_job
+@safe_step("run_cifang_etf_spot")
 def run_cifang_etf_spot(limit: int = 1486) -> dict:
     """
     用次方量化 API 采集 ETF 实时行情，写入 PG etf_quotes 表。
@@ -70,6 +80,8 @@ def _build_etf_spot_records(etf_spot: list[dict], today: date, limit: int) -> li
     return records
 
 
+@track_job
+@safe_step("run_all")
 def run_all(
     stock_codes: Optional[list[str]] = None,
     days: int = 0,
@@ -94,8 +106,10 @@ def run_all(
         sync_result = companies.sync_to_db(all_companies)
         step_result = {"count": len(all_companies), **sync_result}
     except Exception as e:
+        err_msg = str(e)[:200]
+        alerts.error("[companies] 步骤异常", details=err_msg)
         logger.error(f"[run_all] companies 步骤异常: {e}")
-        step_result["error"] = str(e)[:200]
+        step_result["error"] = err_msg
         all_companies = []
     result["steps"]["companies"] = {**step_result, "elapsed_s": round(time.time() - t0, 2)}
 
@@ -116,6 +130,7 @@ def run_all(
                 pg_loader.batch_upsert_quotes(batch)
         except Exception as e:
             q_errors += 1
+            alerts.warn(f"fetch_quotes failed (code={code})", details=str(e)[:200])
             logger.warning(f"[run_all] quotes.fetch_quotes({code}) 失败: {e}")
         time.sleep(cc.request_interval)
     result["steps"]["quotes"] = {"stocks": len(batch_codes), "records": q_total, "errors": q_errors, "elapsed_s": round(time.time() - t0, 2)}
@@ -133,6 +148,7 @@ def run_all(
                 pg_loader.batch_upsert_financial(batch)
         except Exception as e:
             fr_errors += 1
+            alerts.warn(f"fetch_financial_report failed (code={code})", details=str(e)[:200])
             logger.warning(f"[run_all] financial.fetch_financial_report({code}) 失败: {e}")
         time.sleep(cc.request_interval)
     result["steps"]["financial"] = {"stocks": len(batch_codes), "records": fr_total, "errors": fr_errors, "elapsed_s": round(time.time() - t0, 2)}
@@ -150,6 +166,7 @@ def run_all(
                 backfill_financial_assets(indicator_batch)
         except Exception as e:
             fi_errors += 1
+            alerts.warn(f"fetch_financial_indicator failed (code={code})", details=str(e)[:200])
             logger.warning(f"[run_all] financial.fetch_financial_indicator({code}) 失败: {e}")
         time.sleep(cc.request_interval)
     result["steps"]["financial_indicator"] = {"stocks": len(batch_codes), "records": fi_total, "errors": fi_errors, "elapsed_s": round(time.time() - t0, 2)}
@@ -167,6 +184,7 @@ def run_all(
                 pg_loader.batch_upsert_news(batch)
         except Exception as e:
             n_errors += 1
+            alerts.warn(f"fetch_stock_news failed (code={code})", details=str(e)[:200])
             logger.warning(f"[run_all] news.fetch_stock_news({code}) 失败: {e}")
         time.sleep(cc.request_interval)
     result["steps"]["news"] = {"stocks": len(batch_codes), "records": n_total, "errors": n_errors, "elapsed_s": round(time.time() - t0, 2)}
@@ -175,6 +193,75 @@ def run_all(
     return result
 
 
+@track_job
+@safe_step("run_financial")
+def run_financial(batch: int = 1) -> dict:
+    """
+    纯财务采集 - 按批次处理全量股票
+    batch=1 → offset=0, limit=总股票数/4
+    batch=2 → offset=总股票数/4, limit=总股票数/4
+    ...
+    每次运行只处理 1/4 股票，避免单次超时
+    """
+    result = {"started_at": datetime.now().isoformat(), "steps": {}, "batch": batch}
+    today = date.today()
+
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT code FROM companies WHERE is_active = TRUE ORDER BY id")
+            all_codes = [r[0] for r in cur.fetchall()]
+
+    total = len(all_codes)
+    batch_size = total // 4
+    offset = (batch - 1) * batch_size
+    # 最后一batch取剩余全部
+    if batch == 4:
+        batch_codes = all_codes[offset:]
+    else:
+        batch_codes = all_codes[offset:offset + batch_size]
+
+    result["batch_info"] = {"total": total, "batch_size": batch_size, "offset": offset, "codes": len(batch_codes)}
+
+    # Step 1: fetch_financial_report
+    t0 = time.time()
+    fr_total = 0
+    fr_errors = 0
+    for code in batch_codes:
+        try:
+            batch_records = financial.fetch_financial_report(code)
+            if batch_records:
+                fr_total += len(batch_records)
+                minio_loader.store_json(batch_records, mc.bucket_bronze_financial, "financial/reports", today)
+                pg_loader.batch_upsert_financial(batch_records)
+        except Exception as e:
+            fr_errors += 1
+            logger.warning(f"[run_financial] fetch_financial_report({code}) 失败: {e}")
+        time.sleep(cc.request_interval)
+    result["steps"]["financial_report"] = {"stocks": len(batch_codes), "records": fr_total, "errors": fr_errors, "elapsed_s": round(time.time() - t0, 2)}
+
+    # Step 2: fetch_financial_indicator
+    t0 = time.time()
+    fi_total = 0
+    fi_errors = 0
+    for code in batch_codes:
+        try:
+            indicator_batch = financial.fetch_financial_indicator(code, start_year=2020)
+            if indicator_batch:
+                fi_total += len(indicator_batch)
+                minio_loader.store_json(indicator_batch, mc.bucket_bronze_financial, "financial/indicator", today)
+                backfill_financial_assets(indicator_batch)
+        except Exception as e:
+            fi_errors += 1
+            logger.warning(f"[run_financial] fetch_financial_indicator({code}) 失败: {e}")
+        time.sleep(cc.request_interval)
+    result["steps"]["financial_indicator"] = {"stocks": len(batch_codes), "records": fi_total, "errors": fi_errors, "elapsed_s": round(time.time() - t0, 2)}
+
+    result["finished_at"] = datetime.now().isoformat()
+    return result
+
+
+@track_job
+@safe_step("run_all_via_rsscast")
 def run_all_via_rsscast(
     stock_codes: Optional[list[str]] = None,
     days: int = 0,
@@ -197,8 +284,10 @@ def run_all_via_rsscast(
         sync_result = companies.sync_to_db(all_companies)
         step_result = {"count": len(all_companies), **sync_result}
     except Exception as e:
+        err_msg = str(e)[:200]
+        alerts.error("[run_all_via_rsscast][companies] 步骤异常", details=err_msg)
         logger.error(f"[run_all_via_rsscast] companies 步骤异常: {e}")
-        step_result["error"] = str(e)[:200]
+        step_result["error"] = err_msg
         all_companies = []
     result["steps"]["companies"] = {**step_result, "elapsed_s": round(time.time() - t0, 2)}
 
@@ -217,6 +306,7 @@ def run_all_via_rsscast(
             pg_loader.batch_upsert_quotes(realtime)
     except Exception as e:
         q_errors += 1
+        alerts.warn("fetch_stock_quotes_normalized failed", details=str(e)[:200])
         logger.warning(f"[run_all_via_rsscast] fetch_stock_quotes_normalized 失败: {e}")
     try:
         klines = rsscast_collector.fetch_stock_kline_normalized(batch_codes, start_date=start_date, end_date=today)
@@ -226,6 +316,7 @@ def run_all_via_rsscast(
             pg_loader.batch_upsert_quotes(klines)
     except Exception as e:
         q_errors += 1
+        alerts.warn("fetch_stock_kline_normalized failed", details=str(e)[:200])
         logger.warning(f"[run_all_via_rsscast] fetch_stock_kline_normalized 失败: {e}")
     result["steps"]["quotes"] = {"stocks": len(batch_codes), "records": q_total, "errors": q_errors, "elapsed_s": round(time.time() - t0, 2)}
 
@@ -241,6 +332,7 @@ def run_all_via_rsscast(
             pg_loader.batch_upsert_index_quotes(idx_realtime)
     except Exception as e:
         i_errors += 1
+        alerts.warn("fetch_index_quotes_normalized failed", details=str(e)[:200])
         logger.warning(f"[run_all_via_rsscast] fetch_index_quotes_normalized 失败: {e}")
     try:
         idx_klines = rsscast_collector.fetch_index_kline_normalized(WIDE_INDEX_CODES, start_date=start_date, end_date=today)
@@ -250,6 +342,7 @@ def run_all_via_rsscast(
             pg_loader.batch_upsert_index_quotes(idx_klines)
     except Exception as e:
         i_errors += 1
+        alerts.warn("fetch_index_kline_normalized failed", details=str(e)[:200])
         logger.warning(f"[run_all_via_rsscast] fetch_index_kline_normalized 失败: {e}")
     result["steps"]["indices"] = {"indices": len(WIDE_INDEX_CODES), "records": i_total, "errors": i_errors, "elapsed_s": round(time.time() - t0, 2)}
 
@@ -257,6 +350,8 @@ def run_all_via_rsscast(
     return result
 
 
+@track_job
+@safe_step("run_etf_pipeline")
 def run_etf_pipeline(days: int = 30, limit: int = 1486) -> dict:
     """
     ETF 采集管线：
@@ -284,8 +379,10 @@ def run_etf_pipeline(days: int = 30, limit: int = 1486) -> dict:
         sync_result = etf_collector.sync_etfs_to_db(etf_spot)
         step_result = {"total": len(etf_spot), **sync_result}
     except Exception as e:
+        err_msg = str(e)[:200]
+        alerts.error("[etf_pipeline] etf_list 步骤异常", details=err_msg)
         logger.error(f"[run_etf_pipeline] etf_list 步骤异常: {e}")
-        step_result["error"] = str(e)[:200]
+        step_result["error"] = err_msg
         etf_spot = []
     result["steps"]["etf_list"] = {**step_result, "elapsed_s": round(time.time() - t0, 2)}
 
@@ -299,6 +396,7 @@ def run_etf_pipeline(days: int = 30, limit: int = 1486) -> dict:
             pg_loader.batch_upsert_etf_quotes(spot_records)
     except Exception as e:
         spot_errors += 1
+        alerts.warn("etf_spot write failed", details=str(e)[:200])
         logger.warning(f"[run_etf_pipeline] etf_spot 写入失败: {e}")
     result["steps"]["etf_spot"] = {"etfs": len(spot_records) if etf_spot else 0, "errors": spot_errors, "elapsed_s": round(time.time() - t0, 2)}
 
@@ -344,6 +442,8 @@ def run_etf_pipeline(days: int = 30, limit: int = 1486) -> dict:
     return result
 
 
+@track_job
+@safe_step("run_etf_spot_only")
 def run_etf_spot_only(limit: int = 1486) -> dict:
     """
     仅采集 ETF 实时行情（快速，不含历史K线）。

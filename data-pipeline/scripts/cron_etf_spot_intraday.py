@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """日内 ETF 实时行情采集 — 次方量化 API"""
 import sys, os, time
+import argparse
 from pathlib import Path
 from datetime import date, datetime
 
@@ -33,17 +34,22 @@ os.chdir(str(_pipeline_dir))
 
 from src.collector.cifang import fetch_fund_spot, write_spot_to_etf_quotes
 
+parser = argparse.ArgumentParser(description="日内 ETF 实时行情采集")
+parser.add_argument("--minute-bucket", default="", help="分钟桶标识，如 1000、1015 等，空串表示日线")
+args = parser.parse_args()
+minute_bucket = args.minute_bucket
+
 today = date.today()
 t0 = time.time()
 
-print(f"[{datetime.now()}] ETF日内刷新开始（次方量化）")
+print(f"[{datetime.now()}] ETF日内刷新开始（次方量化） minute_bucket={minute_bucket or '日线'}")
 
 spot = fetch_fund_spot()
 if not spot:
     print(f"[{datetime.now()}] 次方量化返回空，中止")
     sys.exit(1)
 
-written = write_spot_to_etf_quotes(spot, today)
+written = write_spot_to_etf_quotes(spot, today, minute_bucket)
 elapsed = time.time() - t0
 
 print(f"[{datetime.now()}] 完成: {written} 只 ETF 写入 etf_quotes ({elapsed:.1f}s)")

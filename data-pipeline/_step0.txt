@@ -1,0 +1,5 @@
+        # ── Step 0: WOA memo 数据（主数据源）─────────────────────────────
+        memo_data = self.fetch_memo(trade_date_str)
+        if memo_data:
+            logger.info(f"盘前报：fetch_memo 成功，获取到 {len(memo_data)} 个 memo 板块")
+

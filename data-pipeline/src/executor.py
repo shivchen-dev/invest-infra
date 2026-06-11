@@ -35,14 +35,21 @@ log = logging.getLogger("executor")
 
 def load_env():
     for k, v in [
-        ("PG_PASSWORD", "REDACTED_PG_PASSWORD"),
         ("MINIO_ACCESS_KEY", "REDACTED_MINIO_USER"),
-        ("MINIO_SECRET_KEY", "REDACTED_MINIO_PASSWORD"),
         ("MINIO_ENDPOINT", "localhost:9000"),
         ("PG_HOST", "localhost"), ("PG_DB", "investdb"), ("PG_USER", "invest"),
         ("REDIS_HOST", "localhost"), ("REDIS_PORT", "6379"),
     ]:
         os.environ.setdefault(k, v)
+    if "PG_PASSWORD" not in os.environ:
+        raise RuntimeError(
+            "PG_PASSWORD not set; expected in .env or .secrets/pg.env "
+            "(see data-pipeline/scripts/cron_dispatcher.py env loader chain)"
+        )
+    if "MINIO_SECRET_KEY" not in os.environ:
+        raise RuntimeError(
+            "MINIO_SECRET_KEY not set; expected in .env or .secrets/minio.env"
+        )
 
 load_env()
 

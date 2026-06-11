@@ -359,7 +359,7 @@ def _write_info_scores(conn, df: pd.DataFrame, calc_date: date):
 if __name__ == "__main__":
     import sys, os
     sys.path.insert(0, "/home/claw/invest-infra/data-pipeline")
-    os.environ.update({"PGPASSWORD": "REDACTED_PG_PASSWORD"})
+    # PG_PASSWORD 由 cron_dispatcher.py 从 .secrets/pg.env 注入
 
     from src.config import pg
     conn = psycopg2.connect(pg.uri)

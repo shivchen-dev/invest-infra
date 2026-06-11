@@ -34,3 +34,5 @@ logs/
 # uv auto-generated
 main.py
 tokens.env
+.secrets/
+*** /secrets/

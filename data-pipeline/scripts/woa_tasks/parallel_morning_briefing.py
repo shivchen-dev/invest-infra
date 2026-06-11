@@ -3,7 +3,7 @@
 Morning Briefing 执行器 — WOA 集群模式（修正版）
 修复：XCLAIM 批量调用 + tags array 格式
 """
-import redis, json, time, subprocess, psycopg2, urllib.request
+import os, redis, json, time, subprocess, psycopg2, urllib.request
 from datetime import date, timedelta
 
 STREAM     = "task_queue"
@@ -12,7 +12,9 @@ CONSUMER   = "woa_main"
 OPENCLAW   = "/home/claw/.npm-global/bin/openclaw"
 QQ_ACCOUNT = "1903628521"
 QQ_TARGET  = "43C77867478A33B101FA705AA70754E3"
-PG_PWD     = "REDACTED_PG_PASSWORD"
+PG_PWD     = os.environ.get("PG_PASSWORD", "")
+if not PG_PWD:
+    raise RuntimeError("PG_PASSWORD not set; expected in .env or .secrets/pg.env")
 PG_USER    = "invest"
 TODAY      = "2026-06-02"
 RSCAST_EP  = "https://app-cn.rsscast.io/api/mcp/v1/mcp"

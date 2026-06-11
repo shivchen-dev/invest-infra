@@ -20,7 +20,7 @@ import os
 sys.path.insert(0, "/home/claw/invest-infra/data-pipeline")
 
 # 加载 .env（确保 PG 连接信息就绪）
-_dotenv = os.path.join(os.path.dirname(__file__), ".env")
+_dotenv = os.path.join(os.path.dirname(os.path.dirname(__file__)), ".env")
 if os.path.exists(_dotenv):
     with open(_dotenv) as f:
         for line in f:
@@ -320,7 +320,7 @@ def sync_etf_index(dry_run: bool = False) -> dict:
     name_map = build_name_to_index_map(cni_indices)
     logger.info(f"关键词映射表: {len(name_map)} 条")
 
-    conn = psycopg2.connect(pg.uri)
+    conn = psycopg2.connect(pg.dsn)
     try:
         etf_rows = fetch_etf_rows_from_db(conn)
 

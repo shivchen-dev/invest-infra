@@ -1,0 +1,323 @@
+<!doctype html>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>投研系统架构图</title>
+<style>
+  :root {
+    color-scheme: light dark;
+    --bg: #f8fafc;
+    --fg: #172033;
+    --muted: #5b6475;
+    --line: #64748b;
+    --neutral: #e2e8f0;
+    --input: #bfdbfe;
+    --process: #c7d2fe;
+    --storage: #99f6e4;
+    --external: #fde68a;
+    --risk: #fecaca;
+    --agent: #e9d5ff;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0f172a;
+      --fg: #e5e7eb;
+      --muted: #a3adbd;
+      --line: #94a3b8;
+      --neutral: #334155;
+      --input: #1d4ed8;
+      --process: #4338ca;
+      --storage: #0f766e;
+      --external: #92400e;
+      --risk: #991b1b;
+      --agent: #6b21a8;
+    }
+  }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--fg);
+    font: 14px/1.4 ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  }
+  main { max-width: 1200px; margin: 24px auto; padding: 0 20px; }
+  svg { width: 100%; height: auto; display: block; }
+  .title { font-size: 20px; font-weight: 650; fill: var(--fg); }
+  .label { font-size: 13px; font-weight: 600; fill: var(--fg); }
+  .small { font-size: 11px; fill: var(--muted); }
+  .node { stroke: var(--line); stroke-width: 1.5; }
+  .neutral { fill: var(--neutral); }
+  .input { fill: var(--input); }
+  .process { fill: var(--process); }
+  .storage { fill: var(--storage); }
+  .external { fill: var(--external); }
+  .risk { fill: var(--risk); }
+  .agent { fill: var(--agent); }
+  .edge { stroke: var(--line); stroke-width: 1.5; fill: none; }
+  .zone { fill: none; stroke: var(--line); stroke-width: 1.2; stroke-dasharray: 6 5; opacity: 0.7; }
+  .zone-label { font-size: 12px; font-weight: 700; fill: var(--muted); }
+</style>
+<main>
+<!-- SVG -->
+<svg viewBox="0 0 1100 720" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <marker id="arr" markerWidth="8" markerHeight="8" refX="7" refY="3" orient="auto">
+      <path d="M0,0 L0,6 L7,3 z" fill="#64748b"/>
+    </marker>
+    <marker id="arr2" markerWidth="8" markerHeight="8" refX="7" refY="3" orient="auto">
+      <path d="M0,0 L0,6 L7,3 z" fill="#94a3b8"/>
+    </marker>
+  </defs>
+
+  <!-- Title -->
+  <text x="550" y="28" text-anchor="middle" class="title">A股智能投研系统 (invest-infra) — 架构总览</text>
+
+  <!-- ====== EXTERNAL DATA SOURCES ====== -->
+  <rect x="20" y="50" width="130" height="640" rx="8" class="zone" />
+  <text x="85" y="70" text-anchor="middle" class="zone-label">外部数据源</text>
+
+  <!-- Sina/Akshare -->
+  <rect x="35" y="82" width="100" height="48" rx="6" class="node external" />
+  <text x="85" y="103" text-anchor="middle" class="label">新浪财经</text>
+  <text x="85" y="119" text-anchor="middle" class="small">akshare</text>
+
+  <!-- Eastmoney -->
+  <rect x="35" y="142" width="100" height="48" rx="6" class="node external" />
+  <text x="85" y="163" text-anchor="middle" class="label">东方财富</text>
+  <text x="85" y="179" text-anchor="middle" class="small">akshare</text>
+
+  <!-- CLS News -->
+  <rect x="35" y="202" width="100" height="48" rx="6" class="node external" />
+  <text x="85" y="223" text-anchor="middle" class="label">财联社</text>
+  <text x="85" y="239" text-anchor="middle" class="small">快讯/公告</text>
+
+  <!-- CIFang -->
+  <rect x="35" y="262" width="100" height="48" rx="6" class="node external" />
+  <text x="85" y="283" text-anchor="middle" class="label">私有数据源</text>
+  <text x="85" y="299" text-anchor="middle" class="small">cifang</text>
+
+  <!-- RSS/Research -->
+  <rect x="35" y="322" width="100" height="48" rx="6" class="node external" />
+  <text x="85" y="343" text-anchor="middle" class="label">研报/RSS</text>
+  <text x="85" y="359" text-anchor="middle" class="small">rsscast</text>
+
+  <!-- ====== DATA COLLECTION LAYER ====== -->
+  <rect x="165" y="50" width="170" height="640" rx="8" class="zone" />
+  <text x="250" y="70" text-anchor="middle" class="zone-label">数据采集层 · collector/</text>
+
+  <rect x="178" y="82" width="144" height="38" rx="5" class="node input" />
+  <text x="250" y="106" text-anchor="middle" class="label">quotes.py</text>
+  <text x="250" y="95" text-anchor="middle" class="small">行情数据</text>
+
+  <rect x="178" y="132" width="144" height="38" rx="5" class="node input" />
+  <text x="250" y="156" text-anchor="middle" class="label">financial.py</text>
+  <text x="250" y="145" text-anchor="middle" class="small">财务数据</text>
+
+  <rect x="178" y="182" width="144" height="38" rx="5" class="node input" />
+  <text x="250" y="206" text-anchor="middle" class="label">etf.py</text>
+  <text x="250" y="195" text-anchor="middle" class="small">ETF 数据</text>
+
+  <rect x="178" y="232" width="144" height="38" rx="5" class="node input" />
+  <text x="250" y="256" text-anchor="middle" class="label">news.py</text>
+  <text x="250" y="245" text-anchor="middle" class="small">新闻快讯</text>
+
+  <rect x="178" y="282" width="144" height="38" rx="5" class="node input" />
+  <text x="250" y="306" text-anchor="middle" class="label">companies.py</text>
+  <text x="250" y="295" text-anchor="middle" class="small">公司信息</text>
+
+  <rect x="178" y="332" width="144" height="38" rx="5" class="node input" />
+  <text x="250" y="356" text-anchor="middle" class="label">research_report.py</text>
+  <text x="250" y="345" text-anchor="middle" class="small">券商研报</text>
+
+  <rect x="178" y="382" width="144" height="38" rx="5" class="node input" />
+  <text x="250" y="406" text-anchor="middle" class="label">cifang.py</text>
+  <text x="250" y="395" text-anchor="middle" class="small">私有数据</text>
+
+  <rect x="178" y="432" width="144" height="38" rx="5" class="node input" />
+  <text x="250" y="456" text-anchor="middle" class="label">rsscast.py</text>
+  <text x="250" y="445" text-anchor="middle" class="small">RSS 采集</text>
+
+ <rect x="178" y="482" width="144" height="38" rx="5" class="node input" />
+  <text x="250" y="506" text-anchor="middle" class="label">retry.py</text>
+  <text x="250" y="495" text-anchor="middle" class="small">重试机制</text>
+
+  <rect x="178" y="532" width="144" height="38" rx="5" class="node input" />
+  <text x="250" y="556" text-anchor="middle" class="label">etf_health_monitor.py</text>
+  <text x="250" y="545" text-anchor="middle" class="small">ETF 健康监控</text>
+
+  <!-- ====== DATA STORAGE ====== -->
+  <rect x="350" y="50" width="150" height="640" rx="8" class="zone" />
+  <text x="425" y="70" text-anchor="middle" class="zone-label">数据存储</text>
+
+  <rect x="362" y="90" width="126" height="52" rx="6" class="node storage" />
+  <text x="425" y="112" text-anchor="middle" class="label">PostgreSQL</text>
+  <text x="425" y="128" text-anchor="middle" class="small">investdb</text>
+  <text x="425" y="142" text-anchor="middle" class="small">行情/财务/因子</text>
+
+  <rect x="362" y="160" width="126" height="52" rx="6" class="node storage" />
+  <text x="425" y="182" text-anchor="middle" class="label">Redis</text>
+  <text x="425" y="198" text-anchor="middle" class="small">Stream/缓存</text>
+  <text x="425" y="212" text-anchor="middle" class="small">WOA 任务队列</text>
+
+  <rect x="362" y="230" width="126" height="52" rx="6" class="node storage" />
+  <text x="425" y="252" text-anchor="middle" class="label">MinIO</text>
+  <text x="425" y="268" text-anchor="middle" class="small">对象存储</text>
+  <text x="425" y="282" text-anchor="middle" class="small">文件/模型</text>
+
+  <!-- ====== FACTOR LAYER ====== -->
+  <rect x="515" y="50" width="185" height="640" rx="8" class="zone" />
+  <text x="607" y="70" text-anchor="middle" class="zone-label">因子层 · factors/</text>
+
+  <rect x="527" y="82" width="162" height="38" rx="5" class="node process" />
+  <text x="608" y="106" text-anchor="middle" class="label">technical.py</text>
+  <text x="608" y="95" text-anchor="middle" class="small">技术因子</text>
+
+  <rect x="527" y="132" width="162" height="38" rx="5" class="node process" />
+  <text x="608" y="156" text-anchor="middle" class="label">fundamental.py</text>
+  <text x="608" y="145" text-anchor="middle" class="small">基本面因子</text>
+
+  <rect x="527" y="182" width="162" height="38" rx="5" class="node process" />
+  <text x="608" y="206" text-anchor="middle" class="label">alternative.py</text>
+  <text x="608" y="195" text-anchor="middle" class="small">另类因子</text>
+
+  <rect x="527" y="232" width="162" height="38" rx="5" class="node process" />
+  <text x="608" y="256" text-anchor="middle" class="label">advanced.py</text>
+  <text x="608" y="245" text-anchor="middle" class="small">高级因子</text>
+
+  <rect x="527" y="282" width="162" height="38" rx="5" class="node process" />
+  <text x="608" y="306" text-anchor="middle" class="label">etf_fundamental.py</text>
+  <text x="608" y="295" text-anchor="middle" class="small">ETF 基本面</text>
+
+  <rect x="527" y="332" width="162" height="38" rx="5" class="node process" />
+  <text x="608" y="356" text-anchor="middle" class="label">etf_risk.py</text>
+  <text x="608" y="345" text-anchor="middle" class="small">ETF 风险</text>
+
+  <rect x="527" y="382" width="162" height="38" rx="5" class="node process" />
+  <text x="608" y="406" text-anchor="middle" class="label">etf_info_flow.py</text>
+  <text x="608" y="395" text-anchor="middle" class="small">ETF 信息流</text>
+
+  <rect x="527" y="432" width="162" height="38" rx="5" class="node process" />
+  <text x="608" y="456" text-anchor="middle" class="label">registry.py</text>
+  <text x="608" y="445" text-anchor="middle" class="small">因子注册表</text>
+
+  <rect x="527" y="482" width="162" height="38" rx="5" class="node process" />
+  <text x="608" y="506" text-anchor="middle" class="label">base.py + engine.py</text>
+  <text x="608" y="495" text-anchor="middle" class="small">因子引擎</text>
+
+  <!-- ====== SIGNAL LAYER ====== -->
+  <rect x="715" y="50" width="155" height="640" rx="8" class="zone" />
+  <text x="792" y="70" text-anchor="middle" class="zone-label">信号层 · signals/</text>
+
+  <rect x="727" y="90" width="130" height="52" rx="6" class="node process" />
+  <text x="792" y="112" text-anchor="middle" class="label">alpha.py</text>
+  <text x="792" y="128" text-anchor="middle" class="small">Alpha 信号</text>
+  <text x="792" y="142" text-anchor="middle" class="small">技术 + 基本面</text>
+
+  <rect x="727" y="158" width="130" height="52" rx="6" class="node process" />
+  <text x="792" y="180" text-anchor="middle" class="label">etf_alpha.py</text>
+  <text x="792" y="196" text-anchor="middle" class="small">ETF Alpha</text>
+  <text x="792" y="210" text-anchor="middle" class="small">ETF 套利信号</text>
+
+  <rect x="727" y="226" width="130" height="52" rx="6" class="node process" />
+  <text x="792" y="248" text-anchor="middle" class="label">etf_arbitrage.py</text>
+  <text x="792" y="264" text-anchor="middle" class="small">ETF 跨市场价差</text>
+  <text x="792" y="278" text-anchor="middle" class="small">事件驱动</text>
+
+  <rect x="727" y="294" width="130" height="52" rx="6" class="node process" />
+  <text x="792" y="316" text-anchor="middle" class="label">scoring.py</text>
+  <text x="792" y="332" text-anchor="middle" class="small">综合评分</text>
+  <text x="792" y="346" text-anchor="middle" class="small">多维度</text>
+
+  <!-- ====== AGENT / ORCHESTRATION LAYER ====== -->
+  <rect x="885" y="50" width="195" height="640" rx="8" class="zone" />
+  <text x="982" y="70" text-anchor="middle" class="zone-label">智能体层 · Agent</text>
+
+  <!-- CIA -->
+  <rect x="897" y="90" width="170" height="72" rx="8" class="node agent" />
+  <text x="982" y="115" text-anchor="middle" class="label">CIA</text>
+  <text x="982" y="132" text-anchor="middle" class="small">Chief Investment Agent</text>
+  <text x="982" y="148" text-anchor="middle" class="small">整合 + 洞察 + 风控</text>
+  <text x="982" y="162" text-anchor="middle" class="small">F/Q/I/R 框架</text>
+
+  <!-- WOA -->
+  <rect x="897" y="180" width="170" height="72" rx="8" class="node agent" />
+  <text x="982" y="205" text-anchor="middle" class="label">WOA</text>
+  <text x="982" y="222" text-anchor="middle" class="small">Workflow Orchestration</text>
+  <text x="982" y="238" text-anchor="middle" class="small">Morning Briefing</text>
+  <text x="982" y="252" text-anchor="middle" class="small">任务调度 +回调</text>
+
+  <!-- CCR -->
+  <rect x="897" y="270" width="170" height="72" rx="8" class="node agent" />
+  <text x="982" y="295" text-anchor="middle" class="label">CCR</text>
+  <text x="982" y="312" text-anchor="middle" class="small">Code Critic Reviewer</text>
+  <text x="982" y="328" text-anchor="middle" class="small">代码审查 + 重构</text>
+  <text x="982" y="342" text-anchor="middle" class="small">tmux: ccr-work</text>
+
+  <!-- Reports -->
+  <rect x="897" y="360" width="170" height="52" rx="6" class="node process" />
+  <text x="982" y="382" text-anchor="middle" class="label">reports/</text>
+  <text x="982" y="398" text-anchor="middle" class="small">日报/周报/审计报告</text>
+  <text x="982" y="412" text-anchor="middle" class="small">memo_rules</text>
+
+  <!-- Alert -->
+  <rect x="897" y="428" width="170" height="52" rx="6" class="node risk" />
+  <text x="982" y="450" text-anchor="middle" class="label">alert.py</text>
+  <text x="982" y="466" text-anchor="middle" class="small">风险监控 + 告警</text>
+  <text x="982" y="480" text-anchor="middle" class="small">risk_monitor</text>
+
+  <!-- A2A Client -->
+  <rect x="897" y="496" width="170" height="52" rx="6" class="node process" />
+  <text x="982" y="518" text-anchor="middle" class="label">jiuwen_a2a_client.py</text>
+  <text x="982" y="534" text-anchor="middle" class="small">JiuwenSwarm A2A</text>
+  <text x="982" y="548" text-anchor="middle" class="small">:19100</text>
+
+  <!-- ====== CRON SCHEDULER ====== -->
+  <rect x="885" y="566" width="195" height="116" rx="8" class="zone" />
+  <text x="982" y="586" text-anchor="middle" class="zone-label">定时调度</text>
+
+  <rect x="897" y="596" width="170" height="36" rx="5" class="node neutral" />
+  <text x="982" y="619" text-anchor="middle" class="label">cron_dispatcher.py</text>
+
+  <rect x="897" y="642" width="170" height="36" rx="5" class="node neutral" />
+  <text x="982" y="665" text-anchor="middle" class="label">cron_watchdog.py</text>
+
+  <!-- ====== FLOW ARROWS ====== -->
+  <!-- Sources → Collector -->
+  <path d="M135,106 L165,106" class="edge" marker-end="url(#arr)" />
+  <path d="M135,166 L165,153" class="edge" marker-end="url(#arr)" />
+  <path d="M135,226 L165,200" class="edge" marker-end="url(#arr)" />
+  <path d="M135,286 L165,250" class="edge" marker-end="url(#arr)" />
+  <path d="M135,346 L165,300" class="edge" marker-end="url(#arr)" />
+  <path d="M135,406 L165,350" class="edge" marker-end="url(#arr)" />
+
+  <!-- Collector → Storage -->
+  <path d="M322,106 L350,116" class="edge" marker-end="url(#arr)" />
+  <path d="M322,156 L350,186" class="edge" marker-end="url(#arr)" />
+  <path d="M322,200 L350,256" class="edge" marker-end="url(#arr)" />
+
+  <!-- Storage → Factors -->
+  <path d="M500,116 L515,101" class="edge" marker-end="url(#arr)" />
+  <path d="M500,186 L515,148" class="edge" marker-end="url(#arr)" />
+  <path d="M500,256 L515,200" class="edge" marker-end="url(#arr)" />
+
+  <!-- Factors → Signals -->
+  <path d="M692,101 L715,116" class="edge" marker-end="url(#arr)" />
+  <path d="M692,151 L715,159" class="edge" marker-end="url(#arr)" />
+  <path d="M692,201 L715,227" class="edge" marker-end="url(#arr)" />
+  <path d="M692,251 L715,295" class="edge" marker-end="url(#arr)" />
+
+  <!-- Signals → Agents -->
+  <path d="M870,116 L885,126" class="edge" marker-end="url(#arr)" />
+  <path d="M870,186 L885,216" class="edge" marker-end="url(#arr)" />
+  <path d="M870,295 L885,306" class="edge" marker-end="url(#arr)" />
+
+  <!-- Cron → All -->
+  <path d="M897,614 L885,614" class="edge" stroke-dasharray="4 3" marker-end="url(#arr2)" />
+  <path d="M897,660 L885,660" class="edge" stroke-dasharray="4 3" marker-end="url(#arr2)" />
+
+  <!-- WOA ↔ Redis Stream -->
+  <path d="M982,252 L982,272 L480,272 L480,228" class="edge" stroke-dasharray="4 3" marker-end="url(#arr2)" />
+  <text x="730" y="268" class="small" text-anchor="middle">Redis Stream</text>
+
+  <!-- ====== LEGEND ====== -->
+  <rect x="20" y="706" width="1060" height="10" rx="4" fill="none" />
+</svg>
+</main>

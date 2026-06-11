@@ -1,26 +1,33 @@
-"""采集器重试装饰器 — 指数退避"""
+"""采集器重试装饰器 — 基于 tenacity 的指数退避重试。
+
+用于所有采集器 fetch_* 函数，行为：
+- 非空结果 → 立即返回（成功 / 停牌 / 数据不存在）
+- HTTP 4xx → 不重试，返回 []（客户端错误不应重试）
+- HTTP 5xx / URLError / ConnectionError / TimeoutError / OSError → 指数退避重试
+- 首次调用返回空（None / []）→ 直接返回（停牌、数据不存在）
+- 后续重试返回空 → 继续重试（瞬态空结果）
+
+异常处理流程：
+  func() 抛 HTTPError(4xx) → wrapper 捕获并返回 []，tenacity 看不到
+  func() 抛 RETRYABLE_EXCEPTIONS → tenacity 拦截并重试
+    → 成功 → retry_if_result 非空 → 正常返回
+    → 结果空 → retry_if_result 触发重试直到耗尽 → RetryError → _catch_all → []
+"""
+
 import logging
 from functools import wraps
 
 from urllib.error import HTTPError, URLError
 from tenacity import (
+    before_sleep_log,
     retry,
+    retry_if_exception_type,
+    retry_if_result,
     stop_after_attempt,
     wait_exponential,
-    retry_if_exception_type,
-    before_sleep_log,
 )
 
 logger = logging.getLogger(__name__)
-
-# 可重试：网络超时、HTTP 5xx、连接错误
-RETRYABLE_EXCEPTIONS = (
-    HTTPError,
-    URLError,
-    ConnectionError,
-    TimeoutError,
-    OSError,
-)
 
 
 def with_retry(
@@ -28,40 +35,48 @@ def with_retry(
     min_wait: float = 1.0,
     max_wait: float = 25.0,
 ):
-    """
-    统一重试装饰器，适用于所有采集器 fetch_* 函数。
+    """统一重试装饰器，适用于所有采集器 fetch_* 函数。
 
     Args:
-        max_attempts: 最大尝试次数（含首次），默认3次
-        min_wait: 首次重试等待秒数，默认1s
-        max_wait: 最大等待秒数，默认25s（指数退避上限）
+        max_attempts: 最大尝试次数（含首次），默认 3 次
+        min_wait:     首次重试等待秒数，默认 1 s
+        max_wait:     最大等待秒数（指数退避上限），默认 25 s
     """
+
     def decorator(func):
+        # ── _fetch_wrapper：捕获 HTTP 4xx 并返回 []，其余正常透过 ────────
         @wraps(func)
-        def wrapper(*args, **kwargs):
-            attempt = 0
-            while attempt < max_attempts:
-                try:
-                    result = func(*args, **kwargs)
-                    if result is not None and result != []:
-                        if attempt > 0:
-                            logger.info(f"{func.__name__} 重试成功 (attempt {attempt + 1})")
-                        return result
-                    # 首次返回空直接返回（停牌/数据不存在，不重试）
-                    if attempt == 0:
-                        return result
-                    # 重试后仍为空，继续重试
-                    if attempt < max_attempts - 1:
-                        logger.warning(f"{func.__name__} 返回空，第{attempt + 1}次重试...")
-                    return result
-                except RETRYABLE_EXCEPTIONS as e:
-                    attempt += 1
-                    if attempt >= max_attempts:
-                        logger.error(f"{func.__name__} 重试{max_attempts}次均失败: {e}")
-                        return []
-                    wait_s = min_wait * (2 ** (attempt - 1))
-                    logger.warning(f"{func.__name__} 第{attempt}次失败 ({e})，{wait_s:.0f}s后重试...")
-                    import time; time.sleep(wait_s)
-            return []
-        return wrapper
+        def _fetch_wrapper(*args, **kwargs):
+            try:
+                return func(*args, **kwargs)
+            except HTTPError as e:
+                # 4xx 客户端错误：不重试，返回空列表（tenacity 看不到异常）
+                if 400 <= e.code < 500:
+                    logger.warning("%s HTTP %d 不重试", func.__name__, e.code)
+                    return []
+                # 5xx 服务端错误：重新抛出，OSError 子类由 tenacity 捕获并重试
+                raise
+
+        # ── tenacity：异常驱动 + 结果驱动重试 ───────────────────────────
+        _tenacity_wrapped = retry(
+            stop=stop_after_attempt(max_attempts),
+            wait=wait_exponential(min=min_wait, max=max_wait),
+            retry=(
+                retry_if_exception_type((OSError, ConnectionError, TimeoutError))
+                | retry_if_result(lambda r: not r)
+            ),
+            before_sleep=before_sleep_log(logger, logging.WARNING),
+        )(_fetch_wrapper)
+
+        # ── _catch_all：捕获所有异常（RetryError + 非 RETRYABLE），返回 []
+        @wraps(func)
+        def _catch_all(*args, **kwargs):
+            try:
+                return _tenacity_wrapped(*args, **kwargs)
+            except Exception as e:
+                logger.error("%s 执行异常: %s", func.__name__, e)
+                return []
+
+        return _catch_all
+
     return decorator

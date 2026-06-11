@@ -152,7 +152,7 @@ class ReportEngine:
         logger.info(f"[report_engine] QQ push: {len(messages)} message(s)")
 
         try:
-            results = await send_to_qq(messages)
+            results = await send_to_qq(messages, target="c2c:43C77867478A33B101FA705AA70754E3")
             success_count = sum(1 for r in results if "error" not in r)
             logger.info(f"[report_engine] QQ push done: {success_count}/{len(messages)} succeeded")
         except Exception as e:

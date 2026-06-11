@@ -4,6 +4,15 @@
 # ============================================
 set -e
 
+# 从 .secrets/ 加载密钥到本进程环境（供 docker compose 读取 POSTGRES_PASSWORD 等）
+_SECRETS_DIR="$(cd "$(dirname "$0")" && pwd)/.secrets"
+for _f in "$_SECRETS_DIR"/*.env; do
+    [ -f "$_f" ] || continue
+    set -a
+    . "$_f"
+    set +a
+done
+
 echo "🚀 启动智能投研基础设施..."
 cd "$(dirname "$0")"
 
@@ -51,7 +60,7 @@ echo ""
 echo "===================================================="
 echo "🎉 Phase 0 基础设施启动完成！"
 echo "===================================================="
-echo "PostgreSQL : localhost:5432 / invest / REDACTED_PG_PASSWORD"
+echo "PostgreSQL : localhost:5432 / invest / <PG_PASSWORD>  (从 .secrets/pg.env 读取)"
 echo "Redis      : localhost:6379"
 echo "MinIO API  : http://localhost:9000"
 echo "MinIO Web  : http://localhost:9001"

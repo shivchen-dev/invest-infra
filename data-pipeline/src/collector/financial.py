@@ -10,6 +10,7 @@ from datetime import datetime
 from typing import Optional
 
 import akshare as ak
+import socket
 import pandas as pd
 
 from src.collector.retry import with_retry
@@ -47,12 +48,12 @@ def _report_type_from_date(date_str: str) -> str:
 
 @with_retry()
 def fetch_financial_report(stock_code: str) -> list[dict]:
-    """获取单只股票的财报摘要数据，返回 list[dict] 每期一条"""
+    """获取单只股票的财报摘要数据，返回 list[dict] 每期一条（THS源）"""
     raw_code = stock_code.split(".")[0]
-    logger.info(f"正在获取 {raw_code} 财报 ...")
+    logger.info(f"正在获取 {raw_code} 财报 (THS)...")
 
     try:
-        df = ak.stock_financial_abstract(symbol=raw_code)
+        df = ak.stock_financial_abstract_ths(symbol=raw_code)
     except Exception as e:
         logger.error(f"{raw_code} 财报获取失败: {e}", exc_info=True)
         return []
@@ -60,49 +61,74 @@ def fetch_financial_report(stock_code: str) -> list[dict]:
     if df is None or df.empty:
         return []
 
-    # 转置: 将指标列转为行，日期列转为记录
-    col_list = df.columns.tolist()
-    hardcoded_exclude = {"选项", "指标"}
-    cols_present = [c for c in col_list if c not in hardcoded_exclude]
-    if not cols_present:
-        logger.warning(f"{raw_code} 财报列名无法识别，跳过。列: {col_list}")
+    # THS格式：行=报告期，列=指标；列名固定，值为字符串/数值
+    if "报告期" not in df.columns:
+        logger.warning(f"{raw_code} 财报缺少「报告期」列，跳过。列: {df.columns.tolist()}")
         return []
-    if "指标" not in col_list:
-        logger.warning(f"{raw_code} 财报缺少「指标」列，跳过。列: {col_list}")
-        return []
-    dates = cols_present
-    metrics = dict(zip(df["指标"], range(len(df))))
 
     records = []
-    for d in dates:
+    for _, row in df.iterrows():
+        report_date_raw = row.get("报告期")
+        if report_date_raw is None:
+            continue
+        # 解析报告期：支持 YYYY-MM-DD / YYYY/MM/DD / YYYYMM
         try:
-            report_date = datetime.strptime(str(d)[:8], "%Y%m%d").date()
+            sd = str(report_date_raw)
+            if "-" in sd:
+                report_date = datetime.strptime(sd[:10], "%Y-%m-%d").date()
+            elif "/" in sd:
+                report_date = datetime.strptime(sd[:10], "%Y/%m/%d").date()
+            else:
+                report_date = datetime.strptime(sd[:8], "%Y%m%d").date()
         except (ValueError, IndexError):
             continue
 
         fiscal_year = report_date.year
-        report_type = _report_type_from_date(str(d))
+        report_type = _report_type_from_date(str(report_date_raw))
         if not report_type:
             continue
+
+        # 解析带中文单位的数值字段（亿/万/百万）
+        def _parse_val(v):
+            if v is None or v is False:
+                return None
+            s = str(v).strip()
+            if not s or s in ("False", "True"):
+                return None
+            try:
+                return float(s.replace("%", ""))
+            except ValueError:
+                return _parse_chinese_number(s)
+
+        # 解析百分比字段
+        def _parse_pct(v):
+            if v is None or v is False:
+                return None
+            s = str(v).strip().replace("%", "")
+            if not s or s in ("False", "True"):
+                return None
+            try:
+                return float(s)
+            except ValueError:
+                return None
 
         records.append({
             "stock_code": stock_code,
             "report_date": report_date,
             "report_type": report_type,
             "fiscal_year": fiscal_year,
-            "revenue":        _val(df, metrics, d, "营业总收入"),
-            "cost_of_sales":  _val(df, metrics, d, "营业成本"),
-            "gross_profit":   _val(df, metrics, d, "毛利"),
-            "net_profit":     _val(df, metrics, d, "净利润"),
-            "parent_net_profit": _val(df, metrics, d, "归母净利润"),
-            "total_assets":       _val(df, metrics, d, "总资产"),
-            "total_liabilities":   _val(df, metrics, d, "总负债"),
-            "total_equity":        _val(df, metrics, d, "股东权益合计(净资产)"),
-            "operating_cf":        _val(df, metrics, d, "经营现金流量净额"),
-            # ROA（%）和资产负债率（%）—— 用 computed 指标补充原始字段缺失
-            "roa_raw":            _val(df, metrics, d, "总资产报酬率(ROA)"),
-            "debt_ratio_raw":      _val(df, metrics, d, "资产负债率"),
-            "source": "akshare",
+            "revenue": _parse_val(row.get("营业总收入")),
+            "cost_of_sales": None,  # THS abstract 无成本字段，由 indicator 补充
+            "gross_profit": None,
+            "net_profit": _parse_val(row.get("净利润")),
+            "parent_net_profit": _parse_val(row.get("扣非净利润")) or _parse_val(row.get("净利润")),
+            "total_assets": None,  # 由 fetch_financial_indicator 的 THS debt 接口补充
+            "total_liabilities": None,
+            "total_equity": None,
+            "operating_cf": _parse_val(row.get("每股经营现金流")),
+            "roa_raw": _parse_pct(row.get("净资产收益率")),
+            "debt_ratio_raw": _parse_pct(row.get("资产负债率")),
+            "source": "akshare_ths",
         })
 
     records.sort(key=lambda r: r["report_date"], reverse=True)
@@ -110,75 +136,124 @@ def fetch_financial_report(stock_code: str) -> list[dict]:
     return records
 
 
+
+def _parse_chinese_number(s):
+    """解析 '6.03万亿'/'352.77亿' 等中文数值格式 → float(元)"""
+    if s is None:
+        return None
+    s = str(s).strip()
+    try:
+        return float(s)
+    except ValueError:
+        pass
+    if '万亿' in s:
+        return float(s.replace('万亿','')) * 1e12
+    elif '亿' in s:
+        return float(s.replace('亿','')) * 1e8
+    elif '万' in s:
+        return float(s.replace('万','')) * 1e4
+    return None
+
+
 @with_retry()
 def fetch_financial_indicator(stock_code: str, start_year: int = 2020) -> list[dict]:
     """
-    获取单只股票的财务指标数据（从 stock_financial_analysis_indicator）。
-    用于补充 ROA、DebtRatio、TotalAssets 等财报摘要中缺失的原始字段。
-
-    返回 list[dict]，每期一条，包含:
-      report_date, report_type, fiscal_year,
-      total_assets, total_liabilities, debt_ratio_raw, roa_raw
+    获取单只股票的财务指标数据（从东方财富 EM + 同花顺 THS）。
+    Sina stock_financial_analysis_indicator 因页面结构变更已废弃，改用双源方案：
+      - 资产负债率：EM stock_financial_analysis_indicator_em 的 ZCFZL 字段
+      - 总资产/总负债：THS stock_financial_debt_ths 的 *资产合计/*负债合计
+      - ROA：EM PARENTNETPROFIT / THS 总资产
     """
-    raw_code = stock_code.split(".")[0]
-    logger.info(f"正在获取 {raw_code} 财务指标 ...")
+    raw_code = stock_code.split('.')[0]
+    suffix = '.SZ' if raw_code.startswith(('0', '3')) else '.SH'
+    em_symbol = f"{raw_code}{suffix}"
+    logger.info(f"正在获取 {raw_code} 财务指标 (EM+THS)...")
 
+    # ── 全局 socket 超时：10s，防止单次 API 挂死
+    _orig_timeout = socket.getdefaulttimeout()
+    socket.setdefaulttimeout(10)
+
+    # ── EM：东方财富财务指标（ZCFZL 资产负债率、PARENTNETPROFIT 净利润）
+    em_df = None
     try:
-        df = ak.stock_financial_analysis_indicator(symbol=raw_code, start_year=str(start_year))
+        em_df = ak.stock_financial_analysis_indicator_em(symbol=em_symbol, indicator='按报告期')
     except Exception as e:
-        logger.error(f"{raw_code} 财务指标获取失败: {e}", exc_info=True)
-        return []
+        logger.warning(f"{raw_code} EM财务指标获取失败，降级: {e}")
 
-    if df is None or df.empty:
-        return []
+    # ── THS：同花顺资产负债表（总资产、总负债）—— 超时则降级跳过
+    ths_df = None
+    try:
+        ths_df = ak.stock_financial_debt_ths(symbol=raw_code)
+    except Exception as e:
+        logger.warning(f"{raw_code} THS资产负债表获取失败，降级（仅用EM数据）: {e}")
 
+    socket.setdefaulttimeout(_orig_timeout)
+
+    # ── 解析 THS：report_date → (assets_yuan, liabilities_yuan)
+    ths_map = {}
+    if ths_df is not None and not ths_df.empty:
+        for _, row in ths_df.iterrows():
+            rdate = str(row.get('报告期', ''))[:10]
+            assets = _parse_chinese_number(row.get('*资产合计'))
+            liabilities = _parse_chinese_number(row.get('*负债合计'))
+            if rdate and assets is not None and liabilities is not None:
+                ths_map[rdate] = (assets, liabilities)
+
+    # ── 解析 EM 记录
     records = []
-    for _, row in df.iterrows():
-        report_date = row.get("日期")
-        if report_date is None:
-            continue
-        if hasattr(report_date, "date"):
-            report_date = report_date.date()
+    if em_df is not None and not em_df.empty:
+        for _, row in em_df.iterrows():
+            report_date_raw = row.get('REPORT_DATE')
+            if report_date_raw is None:
+                continue
+            if hasattr(report_date_raw, 'date'):
+                report_date_raw = report_date_raw.date()
+            else:
+                try:
+                    from datetime import date
+                    report_date_raw = date.fromisoformat(str(report_date_raw)[:10])
+                except ValueError:
+                    continue
 
-        fiscal_year = report_date.year
-        report_type = _report_type_from_date(str(report_date).replace("-", ""))
-        if not report_type:
-            continue
+            fiscal_year = report_date_raw.year
+            report_type = _report_type_from_date(str(report_date_raw).replace('-', ''))
+            if not report_type:
+                continue
 
-        def _f(v) -> Optional[float]:
-            try:
-                return float(v) if pd.notna(v) else None
-            except (ValueError, TypeError):
-                return None
+            def _f(v):
+                try:
+                    return float(v) if pd.notna(v) else None
+                except (ValueError, TypeError):
+                    return None
 
-        # 总资产（元）
-        total_assets = _f(row.get("总资产(元)"))
-        # 资产负债率（%）
-        debt_ratio_pct = _f(row.get("资产负债率(%)"))
-        # 资产报酬率 ROA（%）
-        roa_pct = _f(row.get("资产报酬率(%)"))
+            debt_ratio_pct = _f(row.get('ZCFZL'))
+            net_profit = _f(row.get('PARENTNETPROFIT'))
 
-        # 用资产负债率反推总负债：liabilities = assets * debt_ratio% / 100
-        total_liabilities = None
-        if total_assets is not None and debt_ratio_pct is not None and total_assets != 0:
-            total_liabilities = total_assets * debt_ratio_pct / 100.0
+            rdate_str = str(report_date_raw)
+            total_assets_yuan = None
+            total_liabilities_yuan = None
+            if rdate_str in ths_map:
+                total_assets_yuan, total_liabilities_yuan = ths_map[rdate_str]
 
-        records.append({
-            "stock_code": stock_code,
-            "report_date": report_date,
-            "report_type": report_type,
-            "fiscal_year": fiscal_year,
-            "total_assets": total_assets,
-            "total_liabilities": total_liabilities,
-            "debt_ratio_raw": debt_ratio_pct,   # 百分比形式，供验证用
-            "roa_raw": roa_pct,                  # 百分比形式，供验证用
-            "source": "akshare-indicator",
-        })
+            roa_pct = None
+            if net_profit is not None and total_assets_yuan is not None and total_assets_yuan != 0:
+                roa_pct = (net_profit / total_assets_yuan) * 100.0
 
-    records.sort(key=lambda r: r["report_date"], reverse=True)
+            records.append({
+                'stock_code': stock_code,
+                'report_date': report_date_raw,
+                'report_type': report_type,
+                'fiscal_year': fiscal_year,
+                'total_assets': total_assets_yuan,
+                'total_liabilities': total_liabilities_yuan,
+                'debt_ratio_raw': debt_ratio_pct,
+                'roa_raw': roa_pct,
+                'source': 'em_ths',
+            })
+
+    records.sort(key=lambda r: r['report_date'], reverse=True)
     logger.info(f"{raw_code} 财务指标: {len(records)} 期")
     return records
-
 
 @with_retry()
 def fetch_financial_detail(stock_code: str) -> dict[str, list[dict]]:

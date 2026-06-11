@@ -140,22 +140,35 @@ def is_trading_time() -> bool:
 def get_trading_phase(now: Optional[datetime] = None) -> str:
     """
     获取当前交易阶段
-    
+
     Args:
         now: 时间，默认为现在
-        
+
     Returns:
+        pre_market_before_open: 非交易日凌晨准备期 (00:00-08:59, 非交易日)
         pre_market: 盘前 (09:00-09:30)
         morning: 早盘 (09:30-11:30)
-        midday: 午盘 (11:30-13:00)
-        afternoon: 午盘 (13:00-15:00)
+        midday_break: 午间休市 (11:30-13:00)
+        afternoon: 下午盘 (13:00-15:00)
         after_hours: 盘后 (15:00+)
         closed: 休市
     """
     if now is None:
         now = datetime.now()
-    
+
+    hour = now.hour
+    minute = now.minute
+    time_val = hour * 60 + minute
+
+    # 凌晨准备期：非交易日 00:00-08:59，区分于真正休市
+    if not is_trading_day(now.date()) and time_val < 9 * 60:
+        return "pre_market_before_open"
+
     if not is_trading_day(now.date()):
+        return "closed"
+
+    # 交易日 00:00-08:59：交易所未开，视为休市
+    if time_val < 9 * 60:
         return "closed"
     
     hour = now.hour

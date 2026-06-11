@@ -27,7 +27,7 @@ def _get_pool() -> pool.ThreadedConnectionPool:
         _cn_pool = pool.ThreadedConnectionPool(
             minconn=1,
             maxconn=4,
-            dsn=pg.uri,
+            dsn=pg.dsn,
             connection_factory=None,
         )
     return _cn_pool
@@ -93,16 +93,20 @@ def _normalize_date(v) -> str | None:
 
 def log_audit(conn, source: str, trade_date, total: int, written: int, skipped: int, status: str, error_msg: str = None, duration_ms: int = 0):
     """写入审计日志到 data_source_log 表"""
+    from datetime import datetime, timezone, timedelta
     try:
+        tz = timezone(timedelta(hours=8))
+        now = datetime.now(tz)
+        started = now - timedelta(milliseconds=duration_ms)
         with conn.cursor() as cur:
             cur.execute("""
                 INSERT INTO data_source_log
-                    (source, trade_date, records_total, records_written, records_skipped,
-                     status, error_message, duration_ms)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
-            """, (source, _normalize_date(trade_date) if trade_date else None,
-                  total, written, skipped, status,
-                  error_msg[:500] if error_msg else None, duration_ms))
+                    (source_name, data_type, trade_date, records_fetched, records_written,
+                     status, error_detail, duration_ms, started_at, finished_at)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            """, (source, source, _normalize_date(trade_date) if trade_date else None,
+                  total, written, status,
+                  error_msg[:500] if error_msg else None, duration_ms, started, now))
             conn.commit()
     except Exception as e:
         logger.error(f"审计日志写入失败: {e}")

@@ -8,23 +8,26 @@ cron_dispatcher.py — CIA 定时任务统一调度入口
   python3 /home/claw/invest-infra/data-pipeline/scripts/cron_dispatcher.py <task>
 
 任务清单：
-  etf_spot_morning    → run_pipeline.sh（09:25 ETF盘前同步）
+  etf_spot_morning    → bootstrap_runner.py etf_pipeline（09:25 ETF盘前同步）
   etf_spot_intraday   → cron_etf_spot_intraday.py（交易日ETF实时）
-  etf_factor          → run_factor.sh（16:40 ETF因子计算）
-  etf_alpha           → run_alpha.sh（16:45 ETF动量/风控）
-  etf_health          → run_health_monitor.sh（16:50 ETF健康检查）
+  etf_factor          → bootstrap_runner.py etf_factor（16:40 ETF因子计算）
+  etf_alpha           → bootstrap_runner.py etf_alpha（16:45 ETF动量/风控）
+  etf_health          → etf_health_monitor.py（16:50 ETF健康检查）
   etf_arbitrage       → cron_etf_arbitrage_signal.py（16:50 套利信号）
   sw_industry         → sync_sw_industry.py（15:35 申万行业涨跌）
   industry_info       → cron_industry_info.py（15:50 行业快讯密度）
   etf_kline           → cron_etf_kline_evening.py（15:40 ETF历史K线）
   index_eod           → cron_index_end_of_day.py（16:00 指数收盘数据）
-  financial_p1        → run_financial.sh 1（14:00 财务采集第1批）
-  financial_p2        → run_financial.sh 2（16:30 财务采集第2批）
-  financial_p3        → run_financial.sh 3（18:30 财务采集第3批）
-  financial_p4        → run_financial.sh 4（20:30 财务采集第4批）
+  financial_p1        → bootstrap_runner.py financial 1（14:00 财务采集第1批）
+  financial_p2        → bootstrap_runner.py financial 2（16:30 财务采集第2批）
+  financial_p3        → bootstrap_runner.py financial 3（18:30 财务采集第3批）
+  financial_p4        → bootstrap_runner.py financial 4（20:30 财务采集第4批）
   morning_briefing    → cron_morning_briefing.py（06:30 派发Morning Briefing）
   woa_audit           → cron_woa_audit.py（07:30 WOA输出审计）
-""""
+  pre_market          → cron_pre_market.py（07:50 盘前报）
+  midday              → cron_midday.py（12:00 午盘报）
+  post_market         → cron_post_market.py（15:30 盘后报）
+"""
 
 import json
 import os
@@ -34,12 +37,19 @@ from datetime import datetime, timedelta
 from pathlib import Path
 
 # ── 环境变量加载 ──────────────────────────────────────────────
+# 优先级链（后加载的覆盖前加载的）：
+#   1. .secrets/tokens.env   — RSSCAST / GITEE
+#   2. .secrets/pg.env      — PG_PASSWORD
+#   3. .secrets/minio.env   — MINIO_SECRET_KEY
+#   4. .secrets/cifang.env  — CIFANG_TOKEN
+#   5. .secrets/mcp.env     — MCP_TOKEN
+#   6. .env                 — 非密钥 + 运行时覆盖（可空）
 ROOT = Path(__file__).resolve().parent.parent
 _SECRETS = ROOT / ".secrets"
 _ENV = ROOT / ".env"
 
 
-def _load_env(path: Path) -> dict:
+def _load_env(path: Path, *, override: bool = False) -> dict:
     vals = {}
     if not path.exists():
         return vals
@@ -50,13 +60,18 @@ def _load_env(path: Path) -> dict:
         k, _, v = line.partition("=")
         k = k.strip()
         if k:
-            os.environ.setdefault(k, v.strip())
+            if override:
+                os.environ[k] = v.strip()
+            else:
+                os.environ.setdefault(k, v.strip())
             vals[k] = v.strip()
     return vals
 
 
-_load_env(_SECRETS / "tokens.env")
-_load_env(_ENV)
+# .secrets/ 是真相源 — 覆盖（不是 setdefault），便于本地 .env 不慎写入空值时仍能恢复
+for _secret_name in ("tokens.env", "pg.env", "minio.env", "cifang.env", "mcp.env"):
+    _load_env(_SECRETS / _secret_name, override=True)
+_load_env(_ENV)  # .env 是 setdefault（不覆盖 .secrets/）
 
 # ── 日志配置 ──────────────────────────────────────────────
 LOG_DIR = ROOT / "logs"
@@ -91,17 +106,17 @@ TASK_MAP = {
     # ETF 因子类
     "etf_factor": {
         "desc": "ETF因子计算（溢价率/IOPV/流动性）",
-        "shell": "/bin/bash /home/claw/invest-infra/data-pipeline/run_factor.sh",
+        "shell": "cd /home/claw/invest-infra/data-pipeline && .venv/bin/python src/bootstrap_runner.py etf_factor",
         "timeout": 120,
     },
     "etf_alpha": {
         "desc": "ETF Alpha信号（动量/风控/综合得分）",
-        "shell": "/bin/bash /home/claw/invest-infra/data-pipeline/run_alpha.sh",
+        "shell": "cd /home/claw/invest-infra/data-pipeline && .venv/bin/python src/bootstrap_runner.py etf_alpha",
         "timeout": 120,
     },
     "etf_health": {
         "desc": "ETF健康检查（折溢价/波动率/资金流）",
-        "shell": "/bin/bash /home/claw/invest-infra/data-pipeline/run_health_monitor.sh",
+        "shell": "cd /home/claw/invest-infra/data-pipeline && .venv/bin/python -m src.collector.etf_health_monitor",
         "timeout": 120,
     },
     "etf_arbitrage": {
@@ -134,24 +149,31 @@ TASK_MAP = {
     # 财务采集类
     "financial_p1": {
         "desc": "财务采集第1批（14:00）",
-        "shell": "/bin/bash /home/claw/invest-infra/data-pipeline/run_financial.sh 1",
-        "timeout": 1800,
+        "shell": "cd /home/claw/invest-infra/data-pipeline && .venv/bin/python src/bootstrap_runner.py financial 1",
+        "timeout": 3600,
     },
     "financial_p2": {
         "desc": "财务采集第2批（16:30）",
-        "shell": "/bin/bash /home/claw/invest-infra/data-pipeline/run_financial.sh 2",
-        "timeout": 1800,
+        "shell": "cd /home/claw/invest-infra/data-pipeline && .venv/bin/python src/bootstrap_runner.py financial 2",
+        "timeout": 3600,
     },
     "financial_p3": {
         "desc": "财务采集第3批（18:30）",
-        "shell": "/bin/bash /home/claw/invest-infra/data-pipeline/run_financial.sh 3",
-        "timeout": 1800,
+        "shell": "cd /home/claw/invest-infra/data-pipeline && .venv/bin/python src/bootstrap_runner.py financial 3",
+        "timeout": 3600,
     },
     "financial_p4": {
         "desc": "财务采集第4批（20:30）",
-        "shell": "/bin/bash /home/claw/invest-infra/data-pipeline/run_financial.sh 4",
-        "timeout": 1800,
+        "shell": "cd /home/claw/invest-infra/data-pipeline && .venv/bin/python src/bootstrap_runner.py financial 4",
+        "timeout": 3600,
     },
+    # 市场数据采集类
+    "market_data_collect": {
+        "desc": "市场快照采集（15:05）",
+        "shell": "cd /home/claw/invest-infra/data-pipeline && .venv/bin/python scripts/cron_market_data_collect.py",
+        "timeout": 300,
+    },
+
     # Morning Briefing 类
     "morning_briefing": {
         "desc": "Morning Briefing 任务派发（06:30）",
@@ -166,22 +188,20 @@ TASK_MAP = {
     # 汇报类（统一经 report_engine.py）
     "pre_market": {
         "desc": "盘前报（07:50）",
-        "shell": "cd /home/claw/invest-infra/data-pipeline && .venv/bin/python -c \"\nimport asyncio, sys, os\nsys.path.insert(0, 'src')\nos.environ['CIFANG_TOKEN'] = 'dummy'
-os.environ['MINIO_SECRET_KEY'] = 'REDACTED_MINIO_PASSWORD'\nos.environ['PG_PASSWORD'] = 'REDACTED_PG_PASSWORD'\n\nasync def main():\n    from reports.report_engine import ReportEngine\n    engine = ReportEngine('pre_market')\n    success = await engine.run()\n    sys.exit(0 if success else 1)\nasyncio.run(main())\n\"",
+        "shell": "cd /home/claw/invest-infra/data-pipeline && .venv/bin/python scripts/cron_pre_market.py",
         "timeout": 300,
     },
     "midday": {
         "desc": "午盘报（12:00）",
-        "shell": "cd /home/claw/invest-infra/data-pipeline && .venv/bin/python -c \"\nimport asyncio, sys, os\nsys.path.insert(0, 'src')\nos.environ['CIFANG_TOKEN'] = 'dummy'
-os.environ['MINIO_SECRET_KEY'] = 'REDACTED_MINIO_PASSWORD'\nos.environ['PG_PASSWORD'] = 'REDACTED_PG_PASSWORD'\n\nasync def main():\n    from reports.report_engine import ReportEngine\n    engine = ReportEngine('midday')\n    success = await engine.run()\n    sys.exit(0 if success else 1)\n\nasyncio.run(main())\n\"",
+        "shell": "cd /home/claw/invest-infra/data-pipeline && .venv/bin/python scripts/cron_midday.py",
         "timeout": 300,
     },
     "post_market": {
         "desc": "盘后报（15:30）",
-        "shell": "cd /home/claw/invest-infra/data-pipeline && .venv/bin/python -c \"\nimport asyncio, sys, os\nsys.path.insert(0, 'src')\nos.environ['CIFANG_TOKEN'] = 'dummy'
-os.environ['MINIO_SECRET_KEY'] = 'REDACTED_MINIO_PASSWORD'\nos.environ['PG_PASSWORD'] = 'REDACTED_PG_PASSWORD'\n\nasync def main():\n    from reports.report_engine import ReportEngine\n    engine = ReportEngine('post_market')\n    success = await engine.run()\n    sys.exit(0 if success else 1)\n\nasyncio.run(main())\n\"",
+        "shell": "cd /home/claw/invest-infra/data-pipeline && .venv/bin/python scripts/cron_post_market.py",
         "timeout": 300,
     },
+
 }
 
 # ── 监控状态 ──────────────────────────────────────────────

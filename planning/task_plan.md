@@ -1,87 +1,70 @@
-# Task Plan: invest-infra Critical Issues Fix
+# v3.0 PreMarketFormatter 重构计划
 
-**Project:** invest-infra signals + factors 模块修复  
-**Date:** 2026-06-05  
-**Goal:** 修复 9 个 Critical/High 问题，进入准生产可用状态
+## 项目信息
+- **项目**：A股智能投研体系 - PreMarketFormatter v3.0 重构
+- **文件**：`src/reports/formatters.py`
+- **目标**：将 7-section 旧模板升级为 v3.0 11-section 统一模板
 
----
+## v3.0 模板结构（11 sections）
 
-## Phases
+| # | Section | 类型 | 数据来源 |
+|---|---------|------|---------|
+| 1 | 【WOA工作摘要】任务表格+置信度+风险+建议 | 新增 | `woa_summary` |
+| 2 | ■ 今日市场概况（沪深300+情绪+来源标注） | 增强 | `market_overview` |
+| 3 | ■ 今日主线预判 | 保留 | 现有 |
+| 4 | ■ 因子信号（5类因子表格） | 重构 | `factors` |
+| 5 | ■ ETF信号（Top5表格） | 保留 | `woa_etf_signals` |
+| 6 | ■ 盘前异动（集合竞价） | 新增 | `auction_scan/wts` |
+| 7 | ■ 宏观/事件面 | 新增 | `cls_news` (Medium) |
+| 8 | ■ 风险提示（等级+VIX+地缘） | 增强 | `risks` |
+| 9 | ■ 情景假设 | 保留 | `scenarios` |
+| 10 | ■ 今日关注 | 保留 | `today_attention` |
+| 11 | ■ 今日操作参考 | 保留 | `operation_ref` |
 
-### Phase 1: S-CR03 — Momentum 计算逻辑修复
-- [x] scoring.py L305-307: `MAX(change_pct)` → 区间收益率
-- [ ] Claude Code review 通过
-- [ ] 端到端验证
-- [ ] git commit
+## 数据可用性矩阵
 
-### Phase 2: S-CR04 — 套利置信度单位修复
-- [ ] etf_arbitrage.py L175-188: 阈值配置化 + net_gain 复用
-- [ ] Claude Code review 通过
-- [ ] 端到端验证
-- [ ] git commit
+| 数据键 | 来源 | 格式 | 可用 |
+|--------|------|------|------|
+| `woa_summary` | fetch_memo | dict | ✅ |
+| `market_overview.hs300` | fetch_memo | dict | ✅ |
+| `factors` | fetch_memo | dict | ✅ |
+| `woa_etf_signals` | fetch_memo | list | ✅ |
+| `auction_scan` | market_data_cache | list | ✅ |
+| `auction_wts` | market_data_cache | list | ✅ |
+| `macro_events` | cls_news MCP | list | ❌ |
+| `risks` | fetch_memo | dict | ✅ |
+| `scenarios` | fetch_memo | list | ✅ |
+| `today_attention` | fetch_memo | list | ✅ |
 
-### Phase 3: S-CR05 — Fundamental 归一化修复
-- [ ] scoring.py L485-490: 百分位排名替代固定倍数
-- [ ] Claude Code review 通过
-- [ ] 端到端验证
-- [ ] git commit
+## 执行阶段
 
-### Phase 4: S-HI01/S-HI02 — 权重归一化
-- [ ] alpha.py: 权重和 1.04 → 1.0
-- [ ] etf_alpha.py: 权重和 1.02 → 1.0
-- [ ] Claude Code review 通过
-- [ ] 端到端验证
-- [ ] git commit
+- [ ] 阶段1：WOA工作摘要（新增#1）
+- [ ] 阶段2：今日市场概况增强（#2）
+- [ ] 阶段3：盘前异动（新增#6）
+- [x] 阶段4：因子信号表格（重构#4）
+- [x] 阶段5：宏观/事件面（新增#7，Medium优先级）
+- [x] 阶段6：整体美化+验收
 
-### Phase 5: F-ENG-01 — 批量写入
-- [ ] engine.py: execute_values() 批量 INSERT
-- [ ] Claude Code review 通过
-- [ ] 端到端验证
-- [ ] git commit
+## 验收标准
 
-### Phase 6: F-TECH-01 — 数据预加载
-- [ ] technical.py: 共享 DataFrame cache
-- [ ] Claude Code review 通过
-- [ ] 端到端验证
-- [ ] git commit
+1. 11个section全部渲染（含空占位符）
+2. 每个section有 `_source_tag()` 来源标注
+3. 无投资建议语言（禁止词：买/卖/持有/做多/做空）
+4. 报告可正常推送QQ
 
-### Phase 7: F-FUND-01 — 同比增幅匹配修复
-- [ ] fundamental.py: 按季度匹配而非按年
-- [ ] Claude Code review 通过
-- [ ] 端到端验证
-- [ ] git commit
+## 决策记录
 
-### Phase 8: S-HI03 — normalize() 异常处理
-- [ ] etf_alpha.py: `except Exception` → 具体异常类型 + log
-- [ ] Claude Code review 通过
-- [ ] 端到端验证
-- [ ] git commit
+| 日期 | 决策 | 原因 |
+|------|------|------|
+| 2026-06-10 | 宏观/事件面为Medium优先级，MCP未接入不影响基础验收 | cls_news MCP 待后续接入 |
 
----
+## 进度记录
 
-## Issue Summary
-
-| ID | Severity | 文件 | 问题 |
-|----|:--------:|------|------|
-| S-CR03 | 🔴 Critical | scoring.py | 动量 MAX(change_pct) 而非区间收益率 |
-| F-FUND-01 | 🔴 Critical | fundamental.py | 同比增幅按年匹配，忽略季度 |
-| S-CR05 | 🟠 High | scoring.py | fundamental v*4 归一化失效 |
-| S-CR04 | 🟠 High | etf_arbitrage.py | 置信度单位不一致 |
-| S-HI01 | 🟠 High | alpha.py | 权重和 1.04 |
-| F-ENG-01 | 🟠 High | engine.py | 逐行 INSERT |
-| F-TECH-01 | 🟠 High | technical.py | 重复查询 |
-| S-HI02 | 🟡 Medium | etf_alpha.py | 权重和 1.02 |
-| S-HI03 | 🟡 Medium | etf_alpha.py | normalize() except Exception |
-
----
-
-## Workflow
-
-```
-Step 2 审计 ✅ → Step 4 Planning files ✅ → Step 5 分批修复 → Step 6 验收
-```
-
-**Superpowers 声明规范：**
-```text
-Use Claude Code's Superpowers mode to refactor the code.
-```
+| 日期 | 阶段 | 状态 | 备注 |
+|------|------|------|------|
+| 2026-06-10 | 阶段1：WOA工作摘要 | ✅ 完成 | CCR 实施，语法+逻辑验证通过 |
+| 2026-06-10 | 阶段2：今日市场概况增强 | ✅ 完成 | CCR 审计，3问题均已修复 |
+| 2026-06-10 | 阶段3：盘前异动（新增#6） | ✅ 完成 | CCR 审计，5问题均已修复，含格式化bug修复 |
+| 2026-06-10 | 阶段4：因子信号表格（重构#4） | ✅ 完成 | CCR 审计，4问题均已修复，memo主数据源+DB fallback |
+| 2026-06-10 | 阶段5：宏观/事件面（新增#7） | ✅ 完成 | MCP未接入返回stub，占位结构已就绪 |
+| 2026-06-10 | 阶段6：整体美化+验收 | ✅ 完成 | docstring更新+验收通过 |

@@ -30,7 +30,7 @@ _WINDOW_TOTAL_MIN = 60         # 任务最大运行时长（分钟）
 
 sys.path.insert(0, "/home/claw/invest-infra/data-pipeline")
 
-_dotenv = os.path.join(os.path.dirname(__file__), ".env")
+_dotenv = os.path.join(os.path.dirname(os.path.dirname(__file__)), ".env")
 if os.path.exists(_dotenv):
     with open(_dotenv) as f:
         for line in f:

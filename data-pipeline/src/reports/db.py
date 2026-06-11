@@ -26,10 +26,12 @@ class Database:
                         INSERT INTO market_reports (report_type, trade_date, content)
                         VALUES (%s, %s, %s)
                         ON CONFLICT (report_type, trade_date)
-                        DO UPDATE SET content=EXCLUDED.content, generated_at=now()
+                        DO UPDATE SET content=EXCLUDED.content, created_at=now()
                         RETURNING id
                     """, (report_type, trade_date, json.dumps(content)))
-                    return cur.fetchone()[0]
+                    rid = cur.fetchone()[0]
+                    conn.commit()
+                    return rid
                 except Exception:
                     logger.error(f"save_report failed: {report_type} {trade_date}")
                     raise
