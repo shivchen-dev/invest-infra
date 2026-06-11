@@ -147,10 +147,13 @@ DATE_PARAM_MAP = {
     "auction_weak_to_strong": "tradeDate",
     "auction_limitup_feedback": "tradeDate",
     "capital_flow": "date",
-    "stock_rank": "date",
+    # stock_rank: 无 date 参数，MCP schema 不接受
+    "stock_rank": None,
     "cls_news": "date",
-    "concept_ranking": "date",
-    "sector_analysis": "date",
+    # concept_ranking: 无 date 参数
+    "concept_ranking": None,
+    # sector_analysis: 无 date 参数
+    "sector_analysis": None,
 }
 
 
