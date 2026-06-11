@@ -238,11 +238,13 @@ async def run(trade_date: str = None) -> Dict[str, Any]:
             for tool in group:
                 data_type = tool["data_type"]
                 tool_name = tool["name"]
-                raw_data = results.get(data_type, {})
+                # BUG FIX (2026-06-11 Arc): call_batch 返回的 key 是 tool_name
+                # 不是 data_type。9 个工具 data_type 与 tool_name 不一致时永远 SKIP。
+                raw_data = results.get(tool_name, {})
 
-                # 空数据跳过
+                # 空数据跳过（含诊断信息便于定位）
                 if not raw_data:
-                    logger.warning(f"  [SKIP] {data_type} 无数据")
+                    logger.warning(f"  [SKIP] {data_type} (tool={tool_name}) 无数据, results keys={list(results.keys())[:5]}")
                     stats["skipped"] += 1
                     tool_status[data_type] = "SKIP"
                     continue
