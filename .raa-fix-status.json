@@ -87,6 +87,35 @@
       "branch": "main",
       "completed_at": "2026-06-11T10:59:00+08:00",
       "summary": "chmod 600 data-pipeline/.env (was group-writable 664)."
+    },
+    {
+      "finding_id": "RAA-5",
+      "title": "report_engine.py import chain strong-validates 3 env vars (PG_PASSWORD / MINIO_SECRET_KEY / CIFANG_TOKEN), 2 cron scripts bypass with 'dummy'",
+      "status": "fixed-pending-verify",
+      "agent": "Arc",
+      "branch": "main",
+      "commit": "794598a",
+      "started_at": "2026-06-11T14:03:00+08:00",
+      "completed_at": "2026-06-11T14:06:00+08:00",
+      "summary": "Rewrote cron_midday.py and cron_post_market.py to remove hardcoded CIFANG_TOKEN='dummy' bypass. Replaced with explicit setdefault load from /home/claw/invest-infra/.secrets/{pg,minio,cifang,mcp}.env (same semantics as cron_dispatcher.py: don't override existing env, only fill gaps). Added 3-key validation (PG_PASSWORD/MINIO_SECRET_KEY/CIFANG_TOKEN) before from reports.report_engine import to align with config.py __post_init__.",
+      "verification_performed": [
+        "python3 -m py_compile cron_midday.py → exit 0",
+        "python3 -m py_compile cron_post_market.py → exit 0",
+        "from reports.report_engine import ReportEngine → OK (no ValueError)",
+        "Live run cron_midday.py with secrets loaded → report generated, QQ push 1/1 sent (2026-06-11 14:05)"
+      ],
+      "files_changed": [
+        "data-pipeline/scripts/cron_midday.py",
+        "data-pipeline/scripts/cron_post_market.py"
+      ],
+      "scope_note": "RAA-5 scope = 2 files. RAA-6 (data-pipeline/.env plaintext + perms 664) deliberately NOT in this fix batch — to be filed as separate finding per user direction (2026-06-11 14:01).",
+      "raa_recheck_checkpoints": [
+        "C1: from reports.report_engine import ReportEngine → no ValueError",
+        "C2: cron_midday.py and cron_post_market.py no longer contain 'dummy' literal",
+        "C3: Both scripts load from .secrets/*.env (setdefault semantics)",
+        "C4: ReportEngine.run() returns True for all 4 types (pre_market/midday/post_market/intraday_alert)",
+        "C5: 7-day no ValueError in cron logs"
+      ]
     }
   ]
 }
