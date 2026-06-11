@@ -130,6 +130,17 @@ TRADE_DATE_TOOLS = [
         "params": {"source": "dongcai_concept", "period": 20, "detailLevel": "standard", "format": "json"},
         "data_type": "sector_analysis",
     },
+    # Group-H: 补 §3.4 决策 - smart_hotlist + capital_flow_hsgt 统一从 15:05 采集
+    {
+        "name": "smart_hotlist",
+        "params": {"source": "combined", "limit": 10, "detailLevel": "standard", "format": "json"},
+        "data_type": "smart_hotlist",
+    },
+    {
+        "name": "capital_flow",
+        "params": {"flowType": "hsgt", "limit": 5, "detailLevel": "standard", "format": "json"},
+        "data_type": "capital_flow_hsgt",
+    },
 ]
 
 
