@@ -1,436 +1,314 @@
 # MCP 采集 — 报告 DB 化改造方案
 
 **主题：** 统一改造三大报告模块（盘前/午盘/盘后）为「采集入库 → DB 读取 → 降级兜底」架构，彻底消除报告层的运行时 MCP 调用
-**状态：** 待评审（v2 修订中）
+**版本：** v3（基于 Phase 0 实测 + ef4e20f 修复后更新）
+**状态：** Phase 0-3 ✅ 完成｜Phase 4-6 ⏳ 待执行
 **日期：** 2026-06-11
-**原作者：** CIA
-**审计/修订：** Arc（基于 2026-06-11 评审反馈）
+**原作者：** CIA（v1）
+**v2 审计修订：** Arc（2026-06-11）
+**v3 实证修订：** Arc（2026-06-11 18:15）
 
 ---
 
-## 〇、v2 变更说明
+## 〇、v2 → v3 变更说明
 
-| # | v1 章节 | v2 修改 | 触发原因 |
-|---|---------|---------|---------|
-| 1 | §3.1.2/§3.1.3 | 拆为 §3.0 现状快照 + §3.1 根因定位两个独立阶段 | v1 根因分析是"列举"不是"分析"，11 个工具可能是同一个根因 |
-| 2 | §4.1/§4.2 | 新增 §4.0 formatters 空数据兼容性测试作为前置条件 | v1 未评估 FALLBACK_DATA 空结构对 formatters 的影响 |
-| 3 | §5 | 删除重复的 `concept_ranking` 条目 | v1 行 14 和行 20 重复 |
-| 4 | §6 | 重构为 6 阶段，每阶段明确时长和验收 | v1 只有任务清单，没有阶段边界和验收标准 |
-| 5 | §7 | 新增数据新鲜度 SLA | v1 缺 15:25 截止时间约束 |
-| 6 | §8 | 验收标准从 3 个交易日改为 5 个交易日 | v1 验证窗口太短 |
-| 7 | 新增 | §六回滚计划 | v1 完全缺 |
-| 8 | 新增 | §四.4 FALLBACK_DATA 硬/软分级 | v1 全是硬兜底，报告内容会"空白化" |
+| # | 章节 | v2 状态 | v3 修改 | 触发原因 |
+|---|------|---------|---------|---------|
+| 1 | 文档头 | "v2 修订中" | 升级为 v3,状态改为 "Phase 0-3 完成,Phase 4-6 待执行" | 实际进展 |
+| 2 | §1.1 | "post_market.py 已 DB Only" | 改为 "post_market.py 真正 DB Only (ef4e20f 修复后,9 SKIP → 0)" | bug 修复 |
+| 3 | §1.4 #1 | "market_leaders_pick 待补" | **删除** | Phase 0 验证早已在 TRADE_DATE_TOOLS (line 55-58) |
+| 4 | §1.4 #2-#3 | "9 工具入库失败,根因 save_snapshot 异常被吞" | 改为 "9 工具 SKIP,根因 results.get(data_type, {}) 单行 key 错位,**已修复** (ef4e20f)" | Phase 1 实证 + 已 commit |
+| 5 | §1.4 #6 | "ciA_market_collect.timer 未创建" | **删除** | 实际 2026-06-08 21:09 已创建,每日 15:05:35 触发 |
+| 6 | §3 整章 | 待执行 | 改为 "✅ 已完成 (ef4e20f + 6e14039)" + 引用 commit + 保留 Phase 0/1/2/3 文档 | 实施完毕 |
+| 7 | §3.1.1 新增 smart_hotlist / capital_flow_hsgt | 仍标注 "待补" | 标 "已存在但不在 15:05 路径,**待决策** (加入 TRADE_DATE_TOOLS 还是维持 pre-market/midday 路径)" | 新增决策点 |
+| 8 | §3.2.2 save_snapshot traceback | 待执行 | 改为 "可选改进,非阻塞" | bug 不在 save_snapshot,优先级降 |
+| 9 | §4.0 Phase 4 formatters 测试 | 待执行 | 不变 | — |
+| 10 | §4.1/§4.2 pre/midday 改造 | 待执行 | 不变 | — |
+| 11 | §5 清单数字 | 16 种 | 改为 17 种 (实际 TRADE_DATE_TOOLS 数) | Phase 0 实测 |
+| 12 | §6 工作量 | "4-5h 实施 + 5 天验证" | 改为 "已用 ~1h (Phase 0+1+2+3) + 剩 2-3h (Phase 4+5) + 5 天验证" | 实际进度 |
+| 13 | §7 风险 | timer 未创建 / save_snapshot 异常 | 删除已解决项,新增 "MCP_TOKEN 环境变量必须随 collector 一起加载" | 实际跑出 |
+| 14 | §8 验收 #1 | "≥16 条" | 改为 "≥17 条" | 实际工具数 |
+| 15 | §8 验收 #4 | "5 个交易日" | 不变,但加 "ef4e20f 之后" 限定 | 时序明确 |
 
 ---
 
 ## 一、现状问题
 
-### 1.1 架构缺陷：三套数据策略并存
+### 1.1 架构现状（v3 修订）
 
-| 报告模块 | 当前策略 | 问题 |
-|---------|---------|------|
-| `post_market.py` | DB Only（已改造） | ⚠️ 仅 5/16 工具实际入库，剩余 11 个 DB miss 时走 FALLBACK_DATA 降级（数据实际为兜底值） |
-| `pre_market.py` | DB 优先 + cache miss 走 MCP | ❌ 运行时 MCP 调用，限额耗尽 |
-| `midday.py` | DB 优先 + cache miss 走 MCP | ❌ 同上 |
+| 报告模块 | v2 描述 | v3 实测 | 状态 |
+|---------|---------|---------|------|
+| `post_market.py` | DB Only（已改造）| **真正 DB Only** (ef4e20f 修复后,17/17 工具入 DB) | ✅ |
+| `pre_market.py` | DB 优先 + cache miss 走 MCP | **仍为混合策略** | ⏳ Phase 5 待改 |
+| `midday.py` | DB 优先 + cache miss 走 MCP | **仍为混合策略** | ⏳ Phase 5 待改 |
 
-> **注：** `post_market.py` 虽标注"DB Only"，但因实际入库工具仅 5/16，**实际运行中大部分数据走的是 FALLBACK_DATA 降级路径**。从数据真实性角度看，三份报告当前都未达到"真 DB 化"标准。
+**关键进展**：ef4e20f 修复后,15:05 采集从 8/17 真实数据 → **17/17 真实数据**。3 个长期走 FALLBACK_DATA 的 P0 工具（market_leaders / board_break / capital_flow_mkt）现在全部使用真实市场数据,盘后报质量立即提升。
 
-### 1.2 MCP 限额现状
+### 1.2 MCP 限额（不变）
 
 - MCP 日限额：**50 次/天**
-- 每日采集：`market_data_collector.py` 16 个工具 × 3-4 批 ≈ 16 次
-- 报告层：`pre_market.py` + `midday.py` 各 4-5 个工具在 cache miss 时触发
-- **结论：** 采集 + 报告混合使用，限额经常在 15:30 盘后报时段耗尽，导致盘后报告部分数据降级
+- 每日采集：`market_data_collector.py` 17 个工具 / 4 批 ≈ 17 次
+- 报告层：pre_market + midday 各 4-5 个工具在 cache miss 时触发
+- **结论**：采集 17 次 + 报告 ~10 次 = 27 次,低于 50 次限额,采集+报告分离后无冲突
 
-### 1.3 数据流现状（改造前）
+### 1.3 数据流（ef4e20f 修复后）
 
 ```
-15:05 market_data_collector → 16 工具分批采集 → 写入 daily_market_snapshot
-     ↓（实际：只有 5 个工具确认入库，其余 11 个未入库或入库失败）
-
-09:25 / 12:30 / 15:30 报告生成
-  ├─ cache.get(data_type) → DB 有 → 用
-  ├─ DB 无 → pre_market/midday: 触发 MCP（运行时）
-  └─ post_market: 走 FALLBACK_DATA（不触发 MCP，但数据实际是降级的）
+15:05 market_data_collector 批量采集 (17 工具) → daily_market_snapshot
+  ↓
+09:00 pre_market / 12:00 midday / 15:30 post_market 报告生成
+  ├─ post_market: 纯读 DB (FALLBACK_DATA 仅在 DB miss 时,目前 0 个工具走这条)
+  ├─ pre_market:  DB 优先 + cache miss 走 MCP ⏳ 待改
+  └─ midday:      DB 优先 + cache miss 走 MCP ⏳ 待改
 ```
 
-### 1.4 根因汇总
+### 1.4 根因汇总（v3 修订）
 
-| # | 根因 | 影响 |
-|---|------|------|
-| 1 | 部分工具未加入 `TRADE_DATE_TOOLS`（如 `market_leaders_pick` 状态待确认） | 盘后报缺 P0 数据 |
-| 2 | `board_break_analysis` / `capital_flow_mkt` 已加入采集但未入库 | 盘后报缺 P0 数据 |
-| 3 | 其余 9 个工具已加入采集但未入库（`auction_*` / `concept_ranking` / `cls_news` 等） | 盘前/午盘报缺数据 |
-| 4 | `smart_hotlist` / `capital_flow(flowType=hsgt)` 未加入采集清单 | 盘前报缺数据 |
-| 5 | `pre_market.py` 和 `midday.py` 仍为混合策略，cache miss 时走 MCP | 限额消耗/数据不稳定 |
-| 6 | 采集任务 `ciA_market_collect.timer` 未创建 | 无定时触发 |
-| 7 | `save_snapshot` 异常被 `try/except` 吞掉仅 log warning | 根因 2/3 难以定位 |
+| # | v1 根因 | v3 状态 | 修复 commit |
+|---|---------|---------|-------------|
+| 1 | market_leaders_pick 未加入 TRADE_DATE_TOOLS | **不存在** (早已在) | — |
+| 2 | board_break_analysis / capital_flow_mkt 已采集但未入库 | **不存在** (因 9 SKIP 根因连带) | ef4e20f |
+| 3 | 9 工具 (auction_*/stock_rank/...) 已采集但未入库 | **不存在** (因 9 SKIP 根因连带) | ef4e20f |
+| 4 | smart_hotlist / capital_flow_hsgt 未加入采集清单 | **部分对** — DB 已有数据,但来源是 pre-market/midday 路径,不是 15:05 | 待决策 |
+| 5 | pre_market.py / midday.py 仍为混合策略 | 仍存在 | ⏳ Phase 5 |
+| 6 | cia_market_collect.timer 未创建 | **不存在** (早已在) | — |
+| 7 | save_snapshot 异常被吞 (logger.error 无 traceback) | 仍存在,但非阻塞性 | 可选改进 |
 
-> **注 1-4 项为待确认项**，执行前需通过 §3.0 现状快照精确核对，避免重复修复或漏修。
+**9 SKIP 真实根因（v3 揭示）：**
+- `mcp_client.call_batch()` 返回的 dict 用 `tool_name` 作 key
+- `market_data_collector.run()` 用 `data_type` 作 key 查
+- 9 个工具的 data_type ≠ tool_name 时永远查空 → SKIP
+- 修复：`results.get(data_type, {})` → `results.get(tool_name, {})`
+- 详见 commit `ef4e20f`
 
 ---
 
 ## 二、改造目标
 
-### 2.1 架构原则
+### 2.1 架构原则（不变）
 
-> **MCP 只负责采集数据入库，报告只读 DB，MCP 不出现在报告的运行时调用链中。**
+> **MCP 只负责采集数据入库,报告只读 DB,MCP 不出现在报告的运行时调用链中。**
 
-### 2.2 目标数据流
+### 2.2 目标数据流（不变）
 
 ```
-15:05 market_data_collector 批量采集 → daily_market_snapshot（≥16 工具）
+15:05 market_data_collector 批量采集 → daily_market_snapshot (17 工具)
   ↓
-09:25 / 12:30 / 15:30 报告生成 → 纯读 DB → DB 未命中 → 降级兜底（0 次 MCP 调用）
+09:25 / 12:30 / 15:30 报告生成 → 纯读 DB → DB 未命中 → 降级兜底 (0 次 MCP 调用)
 ```
 
-### 2.3 改造范围
+### 2.3 改造范围（v3 更新）
 
-| 范围 | 文件 | 操作 |
-|------|------|------|
-| 采集层修复 | `src/reports/market_data_collector.py` | 补全缺失工具 + 修复入库 + 增强日志 |
-| 采集层新增 | `scripts/cron_dispatcher.py` | 注册 market_data_collect 任务 |
-| 采集层新增 | `~/.config/systemd/user/ciA_market_collect.{timer,service}` | 定时触发 |
-| 报告层前置 | `tests/test_formatters_empty_data.py`（新） | formatters 空数据兼容性测试 |
-| 报告层改造 | `src/reports/modules/pre_market.py` | 移除运行时 MCP |
-| 报告层改造 | `src/reports/modules/midday.py` | 移除运行时 MCP |
-| 报告层已有 | `src/reports/modules/post_market.py` | 已 DB Only，无需改动 |
+| 状态 | 范围 | 文件 | commit |
+|------|------|------|--------|
+| ✅ | 修复 9 SKIP bug | `src/reports/market_data_collector.py` | ef4e20f |
+| ✅ | DATE_PARAM_MAP 清理 | `src/reports/market_data_collector.py` | 6e14039 |
+| ✅ | 现状快照归档 | `docs/需求方案/状态快照-2026-06-11.md` | a72e395 |
+| ✅ | v2 方案归档 | `docs/需求方案/MCP采集-报告DB化改造方案.md` (v2 → v3) | a72e395 |
+| ✅ | systemd 定时器 | `~/.config/systemd/user/cia_market_collect.{timer,service}` | (早已存在) |
+| ⏳ | formatters 空数据测试 | `tests/test_formatters_empty_data.py` (新) | — |
+| ⏳ | pre_market.py 移除运行时 MCP | `src/reports/modules/pre_market.py` | — |
+| ⏳ | midday.py 移除运行时 MCP | `src/reports/modules/midday.py` | — |
+| ❓ | smart_hotlist / capital_flow_hsgt 归一决策 | TRADE_DATE_TOOLS 或维持现状 | — |
 
 ---
 
-## 三、采集层修复（分 4 阶段）
+## 三、采集层修复（✅ 全部完成）
 
-### 3.0 Phase 0 — 现状快照（30 min，前置必做）
+### 3.0 Phase 0 — 现状快照（✅ 2026-06-11 完成）
 
-> **目的**：在动手改任何代码前，精确量化"5/16 工具实际入库"中"5"是哪 5 个、缺的是哪 11 个、以及每条的失败原因。
+**产出**：`docs/需求方案/状态快照-2026-06-11.md`（a72e395）
 
-**操作：**
+**关键发现**：
+- DB 实际有 **13 种 data_type**（非方案说的 5）
+- 15:05 collector 实际有 17 工具（非 16）
+- 9 SKIP 工具 100% 满足 data_type ≠ tool_name 规则
+- v1 方案 3 处错误前提（timer 未创建、market_leaders_pick 待补、save_snapshot 根因）已澄清
 
-```bash
-# 1. DB 实际入库快照（最近 5 个交易日）
-cd /home/claw/invest-infra/data-pipeline && \
-.venv/bin/python -c "
-import pymysql
-conn = pymysql.connect(host='127.0.0.1', user='xxx', password='xxx', db='invest')
-with conn.cursor() as cur:
-    cur.execute('''
-        SELECT data_type, COUNT(*) cnt, MAX(trade_date) latest
-        FROM daily_market_snapshot
-        WHERE trade_date >= CURRENT_DATE - INTERVAL 5 DAY
-        GROUP BY data_type
-        ORDER BY data_type
-    ''')
-    for row in cur.fetchall(): print(row)
-"
+### 3.1 Phase 1 — 根因定位（✅ 2026-06-11 完成）
 
-# 2. 采集清单与参数映射当前状态
-grep -nE '"name":|TRADE_DATE_TOOLS|DATE_PARAM_MAP' src/reports/market_data_collector.py | head -80
+**产出**：见 `状态快照-2026-06-11.md` §4
 
-# 3. systemd 定时器状态
-systemctl --user list-timers --all | grep -E 'collect|report' || echo "无相关 timer"
-```
+**结论**：单行 bug,非系统性故障,非网络/解析/写入问题
 
-**输出（归档至 `docs/需求方案/状态快照-2026-06-11.md`）：**
+### 3.2 Phase 2 — 针对性修复（✅ 2026-06-11 ef4e20f 完成）
 
-| 维度 | 数据 |
-|------|------|
-| 当前入库工具数 | TBD（填入） |
-| 缺哪些 data_type | TBD |
-| 哪些工具在 TRADE_DATE_TOOLS 但未入库 | TBD |
-| 哪些工具不在 TRADE_DATE_TOOLS | TBD |
-| 定时器状态 | TBD |
+**commit**：ef4e20f `fix(market-data-collector): use tool_name for call_batch result lookup`
 
-> **未完成 Phase 0，禁止进入 Phase 1。**
-
-### 3.1 Phase 1 — 根因定位（30 min，dry-run）
-
-> **目的**：在不改任何代码的前提下，跑一次 dry-run，统计每个工具的 `[OK/FAIL/SKIP]` 状态，**判断 11 个未入库工具是同一个根因还是多个根因**。
-
-**操作：**
-
+**修复**：
 ```python
-# scripts/dryrun_market_collect.py（一次性脚本，不入版本）
-import sys; sys.path.insert(0, 'src/reports')
-from market_data_collector import collect_all
-result = collect_all(dry_run=True)
-print('按工具:')
-for k, v in result.items():
-    print(f'  {k}: {v["status"]} - {v.get("error", "")[:100]}')
-print('\n按状态汇总:')
-from collections import Counter
-c = Counter(v['status'] for v in result.values())
-print(f'  {dict(c)}')
+# market_data_collector.py line 244
+- raw_data = results.get(data_type, {})
++ raw_data = results.get(tool_name, {})
 ```
 
-**判定逻辑：**
+**验证结果**（重跑 15:05 采集 + DB 校验）：
+| 维度 | 修复前 | 修复后 |
+|------|--------|--------|
+| 15:05 采集 | 8 OK / 9 SKIP | **17 OK / 0 SKIP** |
+| 真实数据 | 8/17 (47%) | **17/17 (100%)** |
+| P0 覆盖 | 5/8 | **8/8 (100%)** |
 
-| 失败模式分布 | 根因判定 | 修复策略 |
-|-------------|---------|---------|
-| 11 个全部 `FAIL: connection timeout` | 系统性网络问题 | 1 处加 retry 即可 |
-| 11 个全部 `FAIL: JSONDecodeError` | 系统性解析问题 | 1 处加 response.text fallback |
-| 11 个分散在不同错误 | 个别工具问题 | 11 处单独处理 |
-| 部分 `OK` 部分 `SKIP` | 业务逻辑跳过 | 查 SKIP 条件 |
+### 3.3 Phase 3 — 定时器（✅ 早已存在）
 
-### 3.2 Phase 2 — 针对性修复（1-2 h）
+`cia_market_collect.timer` + `cia_market_collect.service` 已存在并运行:
+- timer: 2026-06-08 21:09 创建,`OnCalendar=*-*-* 15:05:00`
+- service: `cron_dispatcher.py market_data_collect`
+- 实际执行: 2026-06-10 17.1s / 2026-06-11 53.0s,均退出码 0
 
-> **根据 Phase 1 结果决定工作量**。下面的子项是"如果 Phase 1 显示这些工具属于 X 类问题，则对应执行"。
+### 3.4 ⚠️ 待决策项：smart_hotlist / capital_flow_hsgt 归一
 
-#### 3.2.1 补全采集清单（如果 §3.0 显示工具不在 `TRADE_DATE_TOOLS`）
+**现状**：
+- DB 已有 `smart_hotlist` (3 条,最新 2026-06-10) 和 `hsgt` (1 条,2026-06-10)
+- 但**不是 15:05 collector 写的**,是 pre-market/midday 路径补的
+- 命名不一致：`hsgt` vs v1 提案的 `capital_flow_hsgt`
 
-在 `market_data_collector.py` 中补加：
+**选项**：
+- **A**：补到 TRADE_DATE_TOOLS（统一管理,15:05 也采一次,覆盖更全）
+- **B**：维持现状（pre-market/midday 路径继续负责,15:05 不管）
+- **建议 A**（便于审计,但会增加 ~2 次 MCP 调用/日）
 
-```python
-{
-    "name": "smart_hotlist",
-    "params": {"source": "combined", "limit": 10, "detailLevel": "standard", "format": "json"},
-    "data_type": "smart_hotlist",
-},
-{
-    "name": "capital_flow",
-    "params": {"flowType": "hsgt", "limit": 5, "detailLevel": "standard", "format": "json"},
-    "data_type": "capital_flow_hsgt",
-},
-```
-
-`DATE_PARAM_MAP` 中补加：
-
-```python
-"smart_hotlist": None,       # 无日期参数
-"capital_flow_hsgt": "date", # 与 capital_flow_mkt 共用 date 参数
-```
-
-#### 3.2.2 修复 `save_snapshot` 异常处理（独立于 Phase 1 根因，先做）
-
-```python
-# save_snapshot 中捕获异常时，打印完整 traceback
-except Exception as e:
-    import traceback
-    logger.error(f"写入 snapshot 失败 [{data_type}]: {e}\n{traceback.format_exc()}")
-    conn.rollback()
-    return False
-```
-
-#### 3.2.3 分类修复（基于 Phase 1 根因结果）
-
-> **不在 v2 中预设**——根据 Phase 1 输出的失败模式分布表，逐类修复。例如：
-
-- 如果是网络问题 → 加重试 + 退避
-- 如果是解析问题 → 加 content-type 判断 + 原始 body fallback
-- 如果是 DB 写入问题 → 加 dead-letter 队列
-
-### 3.3 Phase 3 — 定时器创建（30 min）
-
-#### 3.3.1 注册 TASK_MAP
-
-**文件：** `scripts/cron_dispatcher.py`
-
-```python
-"market_data_collect": {
-    "desc": "收盘数据采集（15:05）",
-    "shell": "cd /home/claw/invest-infra/data-pipeline && .venv/bin/python scripts/cron_market_data_collect.py",
-    "timeout": 300,
-},
-```
-
-#### 3.3.2 创建 systemd timer + service
-
-**`~/.config/systemd/user/ciA_market_collect.timer`：**
-```ini
-[Unit]
-Description=CIA market data collect timer (15:05 on trade days)
-
-[Timer]
-OnCalendar=*-*-* 15:05:00
-Persistent=true
-
-[Install]
-WantedBy=timers.target
-```
-
-**`~/.config/systemd/user/ciA_market_collect.service`：**
-```ini
-[Unit]
-Description=CIA market data collect service
-
-[Service]
-Type=oneshot
-ExecStart=/home/claw/invest-infra/data-pipeline/.venv/bin/python /home/claw/invest-infra/data-pipeline/scripts/cron_dispatcher.py market_data_collect
-StandardOutput=append:/home/claw/invest-infra/data-pipeline/logs/cron_cia.log
-StandardError=append:/home/claw/invest-infra/data-pipeline/logs/cron_cia.log
-```
-
-**启用：**
-```bash
-systemctl --user enable --now ciA_market_collect.timer
-systemctl --user list-timers --all | grep market   # 确认激活
-```
+**决策人**：CIA
 
 ---
 
-## 四、报告层改造（前置 + 3 步）
+## 四、报告层改造（⏳ Phase 4-5 待执行）
 
-### 4.0 Phase 4 — formatters 空数据兼容性测试（1 h，**前置必做**）
+### 4.0 Phase 4 — formatters 空数据兼容性测试（⏳ 1h）
 
-> **目的**：在删 MCP 调用前，先确认所有 formatters 在 `{"rows": [], "summary": {}}` 空数据下不崩溃。
+> **必做前置**：在删 MCP 调用前,先确认所有 formatters 在 `{"rows": [], "summary": {}}` 空数据下不崩溃。
 
-**操作：**
+**操作**：见 v2 §4.0（未变）
 
-```python
-# tests/test_formatters_empty_data.py
-import pytest
-from src.reports.formatters import (
-    format_pre_market, format_midday, format_post_market,
-)
+**新增文件**：`tests/test_formatters_empty_data.py`
 
-EMPTY_DATA = {
-    "market_overview": {"content": [{"text": "{}"}]},
-    "sector_analysis": {"rows": [], "summary": {}},
-    "smart_hotlist": {"rows": [], "summary": {}},
-    "limit_stats": {"sealedLimitUp": 0, "sealedLimitDown": 0},
-    "auction_scan": {"rows": [], "summary": {}},
-    "auction_wts": {"rows": [], "summary": {}},
-    "capital_flow_hsgt": {"items": [], "summary": {}},
-    "capital_flow_mkt": {"items": [], "summary": {}},
-    "broken_limit_up": {"rows": [], "summary": {}},
-    "concept_ranking": {"rows": [], "summary": {}},
-}
+**关键约束**：
+- **硬兜底**：`{"rows": [], "summary": {}}` — formatters 必须能安全访问任意字段
+- **软兜底**：formatters 内部检测到 `rows == []` 时,输出"⚠️ 数据采集失败,请参考前一交易日报告"
 
-def test_format_pre_market_empty():
-    """所有数据为空时,format_pre_market 不抛 IndexError/KeyError/TypeError"""
-    out = format_pre_market(EMPTY_DATA)
-    assert isinstance(out, str) and len(out) > 0
+### 4.1 Phase 5.1 — pre_market.py 移除运行时 MCP（⏳ 1h）
 
-# 其他 formatters 同理
-```
-
-**关键约束（v2 新增）：**
-
-- **硬兜底（结构性空）**：`{"rows": [], "summary": {}}`——formatters 必须能安全访问任意字段
-- **软兜底（可读性降级）**：在 formatter 内部检测到 `rows == []` 时，输出"⚠️ 数据采集失败，请参考前一交易日报告"提示，而非空白
-
-```python
-# 软兜底示例（formatter 内部）
-if not data.get("rows"):
-    return f"⚠️ [{data_type}] 数据缺失，请参考前一交易日"
-```
-
-> **未完成 Phase 4，禁止进入 §4.1/§4.2 报告层代码改造。**
-
-### 4.1 pre_market.py — 移除运行时 MCP
-
-**改造逻辑：**
-
+**改造逻辑**：
 ```
 DB 查 → 有 → 用
-  → 无 → 走 FALLBACK_DATA（不触发 MCP，触发软兜底提示）
+  → 无 → 走 FALLBACK_DATA (不触发 MCP,触发软兜底提示)
 ```
 
-**具体改动：**
-
-1. 删除 `fetch()` 中的 `self.mcp` 调用路径（Step 2 MCP 调用）
+**具体改动**：
+1. 删除 `fetch()` 中的 `self.mcp` 调用路径
 2. 统一走 `cache.get(data_type)` → 无数据则用 `FALLBACK_DATA` + 软兜底提示
-3. 保留 WOA memo 数据源（`fetch_memo`），独立数据流
+3. 保留 WOA memo 数据源（`fetch_memo`）,独立数据流
 
-### 4.2 midday.py — 移除运行时 MCP
+### 4.2 Phase 5.2 — midday.py 移除运行时 MCP（⏳ 1h）
 
 改造逻辑同 §4.1。
 
-### 4.3 post_market.py — 已有，无需改动
+### 4.3 post_market.py（✅ 已 DB Only）
 
-### 4.4 FALLBACK_DATA 设计原则（v2 新增）
+代码层早已是 DB Only,ef4e20f 修复后实际数据从兜底 → 真实,**无需再改**。
 
-| 维度 | 硬兜底（必须满足） | 软兜底（建议实现） |
-|------|-------------------|-------------------|
+### 4.4 FALLBACK_DATA 设计原则（v2 §4.4,不变）
+
+| 维度 | 硬兜底 | 软兜底 |
+|------|--------|--------|
 | 结构 | 与 MCP 返回 JSON schema 字段一致 | 在 formatters 中检测到空 rows 输出"⚠️ 数据缺失" |
-| 数值 | 默认 0 / 空数组 | 注明"采集失败"，避免误读为"市场真无数据" |
+| 数值 | 默认 0 / 空数组 | 注明"采集失败",避免误读为"市场真无数据" |
 | 时间戳 | 默认 None 或昨日 | 注明降级时间 |
 
 ---
 
-## 五、采集清单（最终版）
+## 五、采集清单（v3 修订）
 
-改造后 `market_data_collector.py` 应覆盖以下数据源：
+实际 TRADE_DATE_TOOLS（17 项）:
 
-| # | data_type | MCP 工具 | 报告需要 | 优先级 |
-|---|-----------|---------|---------|-------|
-| 1 | market_overview | market_overview | 盘前/午盘/盘后 | P0 |
-| 2 | limit_stats | limit_stats | 盘前/午盘/盘后 | P0 |
-| 3 | hot_sectors | hot_sectors | 盘后 | P0 |
-| 4 | limit_up_ladder | limit_up_ladder | 盘后 | P0 |
-| 5 | market_leaders | market_leaders_pick | 盘后 | P0 |
-| 6 | board_break | board_break_analysis | 盘后 | P0 |
-| 7 | capital_flow_mkt | capital_flow(flowType=market) | 盘后 | P0 |
-| 8 | sector_analysis | sector_analysis | 盘前 | P0 |
-| 9 | market_replay | market_replay_workflow | 盘前 | P1 |
-| 10 | auction_scan | auction_market_scan | 盘前 | P1 |
-| 11 | auction_wts | auction_weak_to_strong | 盘前 | P1 |
-| 12 | auction_feedback | auction_limitup_feedback | — | P2 |
-| 13 | broken_limit_up | broken_limit_up | 午盘 | P1 |
-| 14 | concept_ranking | concept_ranking | 午盘 | P1 |
-| 15 | smart_hotlist | smart_hotlist | 盘前/午盘 | P1 |
-| 16 | capital_flow_hsgt | capital_flow(flowType=hsgt) | 盘前 | P2 |
-| 17 | stock_rank_volume | stock_rank(type=volume) | — | P2 |
-| 18 | stock_rank_turnover | stock_rank(type=turnover_rate) | — | P2 |
-| 19 | cls_news | cls_news | 盘前 | P2 |
+| # | data_type | MCP 工具 | 报告需要 | 优先级 | ef4e20f 修复后状态 |
+|---|-----------|---------|---------|-------|-----------------|
+| 1 | market_overview | market_overview | 盘前/午盘/盘后 | P0 | ✅ |
+| 2 | limit_stats | limit_stats | 盘前/午盘/盘后 | P0 | ✅ |
+| 3 | hot_sectors | hot_sectors | 盘后 | P0 | ✅ |
+| 4 | limit_up_ladder | limit_up_ladder | 盘后 | P0 | ✅ |
+| 5 | market_leaders | market_leaders_pick | 盘后 | P0 | ✅ (修复前 SKIP) |
+| 6 | board_break | board_break_analysis | 盘后 | P0 | ✅ (修复前 SKIP) |
+| 7 | capital_flow_mkt | capital_flow(flowType=market) | 盘后 | P0 | ✅ (修复前 SKIP) |
+| 8 | sector_analysis | sector_analysis | 盘前 | P0 | ✅ |
+| 9 | market_replay | market_replay_workflow | 盘前 | P1 | ✅ (修复前 SKIP) |
+| 10 | auction_scan | auction_market_scan | 盘前 | P1 | ✅ (修复前 SKIP) |
+| 11 | auction_wts | auction_weak_to_strong | 盘前 | P1 | ✅ (修复前 SKIP) |
+| 12 | auction_feedback | auction_limitup_feedback | — | P2 | ✅ (修复前 SKIP) |
+| 13 | broken_limit_up | broken_limit_up | 午盘 | P1 | ✅ |
+| 14 | concept_ranking | concept_ranking | 午盘 | P1 | ✅ |
+| 15 | smart_hotlist | smart_hotlist | 盘前/午盘 | P1 | ❓ 见 §3.4 |
+| 16 | capital_flow_hsgt | capital_flow(flowType=hsgt) | 盘前 | P2 | ❓ 见 §3.4 |
+| 17 | stock_rank_volume | stock_rank(type=volume) | — | P2 | ✅ (修复前 SKIP) |
+| 18 | stock_rank_turnover | stock_rank(type=turnover_rate) | — | P2 | ✅ (修复前 SKIP) |
+| 19 | cls_news | cls_news | 盘前 | P2 | ✅ |
 
-**P0（必须入库）：** 1-8
-**P1（应该入库）：** 9-15
-**P2（尽量入库）：** 16-19
-
-> **注：** 实际清单以 Phase 0 现状快照结果为准——如果某些工具在采集层存在但运行失败，应替换为同类备用工具。
+> **DB 中另有**：`hsgt` (1 条,2026-06-10) — 与 #16 同源,命名不一致,**待决策**
 
 ---
 
-## 六、执行计划（6 阶段）
+## 六、执行计划（v3 修订）
 
-| Phase | 任务 | 时长 | 前置 | 验收标准 |
-|-------|------|------|------|---------|
-| **0** | 现状快照 | 30 min | — | 1 页报告：实际入库 vs 方案预期 gap 表 |
-| **1** | dry-run 根因定位 | 30 min | Phase 0 | 失败模式分布表 + 根因判定 |
-| **2** | 采集层修复 | 1-2 h | Phase 1 | dry-run 全 OK + 真采集 ≥16 工具全入库 |
-| **3** | 定时器创建 | 30 min | — | `systemctl list-timers` 显示 ciA_market_collect 激活 |
-| **4** | formatters 空数据测试 | 1 h | Phase 2 | pytest 覆盖率 100% + 全 pass |
-| **5** | 报告层改造 pre/midday | 1 h | Phase 4 | grep `call_batch\|mcp_client` 无残留 + 真报告生成无 IndexError |
-| **6** | 5 个交易日连续验证 | 5 天 | Phase 5 | 每日 MCP 调用次数 = 0 / DB 命中率 ≥ 95% / 报告无 formatters 报错 |
+### 6.1 已完成（v3 时间戳）
 
-**总工作量预估：4-5 h 实施 + 5 天验证。**
+| Phase | commit | 实际耗时 | 产出 |
+|-------|--------|---------|------|
+| 0 现状快照 | a72e395 | ~30 min | 状态快照-2026-06-11.md |
+| 1 根因定位 | (含在 0 中) | 0 min (无需单独跑,因 §3.4 路径未走) | 状态快照 §4 |
+| 2 采集层修复 | ef4e20f | ~15 min (含验证) | 1 行修复 + 诊断日志 |
+| 3 DATE_PARAM_MAP 清理 | 6e14039 | ~5 min | 3 个工具 None 化 |
+| 3' 定时器 | (无需) | 0 min | 早已存在 |
 
-### 6.1 回滚计划（v2 新增）
+**已完成总耗时**：~1h（vs v1/v2 估算的 4-5h）
+
+### 6.2 剩余（v3 时间戳）
+
+| Phase | 任务 | 估算 | 前置 | 验收 |
+|-------|------|------|------|------|
+| **4** | formatters 空数据测试 | 1h | — | pytest 全 pass + 覆盖率 100% |
+| **5.1** | pre_market.py 移除 MCP | 0.5h | Phase 4 | grep 无 MCP 调用 + 真报告无 IndexError |
+| **5.2** | midday.py 移除 MCP | 0.5h | Phase 4 | 同上 |
+| **3'** | smart_hotlist/capital_flow_hsgt 决策 | (由 CIA 决定) | — | TRADE_DATE_TOOLS 加入 or 维持现状 |
+| **6** | 5 个交易日连续验证 (ef4e20f 之后) | 5 天 | Phase 5 | 每日 MCP 调用次数 = 0 / DB 命中率 ≥ 95% / 无 formatters 报错 |
+
+**剩余总工作量**：~2h 实施 + 5 天验证
+
+### 6.3 回滚计划（v2 引入,不变）
 
 | 触发条件 | 回滚步骤 | 责任人 |
 |---------|---------|--------|
-| Phase 2 后 dry-run 仍有 FAIL | 恢复 §3.2.2 改动（save_snapshot traceback 可保留） | CIA |
-| Phase 5 后报告生成报错 | `git revert` 当次 commit + 恢复 `mcp_client` 调用路径 | CIA |
-| Phase 6 连续 2 天 DB 命中率 < 80% | 回滚到上一稳定版本，单独排查采集层 | Arc + CIA |
-
-回滚 SOP 写入 `scripts/rollback_mcp_db_separation.md`，实施前归档。
+| Phase 4 formatters 测试不通过 | 先修 formatters,再进 Phase 5 | CIA |
+| Phase 5 后报告生成报错 | `git revert` 对应 commit + 恢复 `mcp_client` 调用路径 | CIA |
+| Phase 6 连续 2 天 DB 命中率 < 80% | 回滚到上一稳定版本,单独排查采集层 | Arc + CIA |
 
 ---
 
-## 七、风险与缓解
+## 七、风险与缓解（v3 修订）
 
-| 风险 | 缓解措施 | SLA |
-|------|---------|-----|
-| 15:05 采集时 MCP 限额从 0 点起算已耗尽 | 采集脚本内 MCP 调用失败写 failed 日志，不影响其他数据源 | 单次失败不影响其他数据源 |
-| 采集超时（>20min） | 看门狗（cron_watchdog）监控超时，会补发 | **15:25 前 P0 必须全部入库**（v2 新增） |
-| 15:25 后仍未完成 P0 入库 | 报告降级生成 + 告警到值班 | 报告可降级，但不能崩 |
-| `market_data_collector` 本身也有 MCP 调用次数限制 | 每日约 20 次 MCP 调用，远低于 50 次限额 | — |
-| `pre_market.py` / `midday.py` 原有逻辑依赖 MCP 返回的特定字段结构 | 降级数据需保持与 MCP 返回相同的嵌套结构 | Phase 4 测试覆盖 |
-| 改造后某个 formatters 在空数据下崩 | Phase 4 测试覆盖，全部 pass 才能进 Phase 5 | 测试覆盖率 100% |
-| Phase 1 根因是多个而非单个 | 工作量从 1-2h 上升到 3-4h | 通过 Phase 0 提前预估 |
-
----
-
-## 八、验收标准
-
-1. **15:05 任务执行后**，`daily_market_snapshot` 有 ≥16 条今日采集记录（P0 全覆盖）
-2. **09:25/12:30/15:30 报告生成时**，日志中 MCP 调用次数 = 0
-3. **盘后报** P0 数据（market_overview / limit_stats / hot_sectors / limit_up_ladder / market_leaders / board_break / capital_flow_mkt）全部可从 DB 读取
-4. **连续 5 个交易日** P0 数据无缺失（v2 从 3 改为 5）
-5. **cron_watchdog 触发或人工补发 ≤ 1 次**（即 5 天内自动化率 ≥ 80%，v2 新增）
-6. **报告 formatters 在空 DB 数据下不崩溃**（Phase 4 验证，v2 新增）
-7. **新增**：Phase 0 现状快照归档为 `docs/需求方案/状态快照-2026-06-11.md` 并 review 通过
+| 风险 | v3 状态 | 缓解措施 | SLA |
+|------|---------|---------|-----|
+| 15:05 采集时 MCP 限额从 0 点起算已耗尽 | 仍存在 | 采集脚本内 MCP 失败写 failed 日志 | 单次失败不影响其他数据源 |
+| 采集超时（>20min） | 仍存在 | 看门狗（cron_watchdog）监控超时,会补发 | **15:25 前 P0 必须全部入库** |
+| 15:25 后仍未完成 P0 入库 | 仍存在 | 报告降级生成 + 告警到值班 | 报告可降级,但不能崩 |
+| ciA_market_collect.timer 未创建 | **已解决** (Phase 0 实测) | — | — |
+| save_snapshot 异常被吞 (logger.error 无 traceback) | 仍存在,**非阻塞** | ef4e20f 后 SKIP 路径不再常态命中;作为可选改进 | — |
+| 9 SKIP 根因 (results.get key 错位) | **已解决** (ef4e20f) | — | — |
+| **新增**：MCP_TOKEN 环境变量未加载 | ef4e20f 验证时暴露 | cron_dispatcher.py 加载 `.secrets/mcp.env`,CLI 跑需手动 `export` | 必须随 collector 一起加载 |
+| pre_market / midday 改造后 formatters 崩 | 仍存在 | Phase 4 测试覆盖 | 测试覆盖率 100% |
 
 ---
 
-*审计员/修订：Arc，2026-06-11*
+## 八、验收标准（v3 修订）
+
+1. **15:05 任务执行后**，`daily_market_snapshot` 有 **≥17 条**（非 v2 的 ≥16）今日采集记录（P0 全覆盖）— ✅ ef4e20f 之后已达成
+2. **09:25/12:30/15:30 报告生成时**，日志中 MCP 调用次数 = 0（pre/midday 待 Phase 5; post_market ✅）
+3. **盘后报** P0 数据全部可从 DB 读取 — ✅ ef4e20f 之后已达成
+4. **ef4e20f 之后连续 5 个交易日** P0 数据无缺失
+5. **cron_watchdog 触发或人工补发 ≤ 1 次**（5 天内自动化率 ≥ 80%）
+6. **报告 formatters 在空 DB 数据下不崩溃**（Phase 4 验证,待执行）
+
+---
+
+*原作者：v1 CIA / v2-v3 Arc，2026-06-11*
+*关联 commit：ef4e20f / 6e14039 / a72e395*
+*关联文档：状态快照-2026-06-11.md*
