@@ -74,37 +74,17 @@ class PreMarketReporter:
         # ── Step 1: 直接从 DB 读取旧版 WOA 数据 ─────────────────────────
         db_data = self._get_db_data(trade_date_str)
 
-        # ── Step 2: MCP 工具，cache miss 时走 MCP ─────────────────────────
+        # ── Step 2: MCP 工具，cache miss 时不再触发 MCP (Phase 5.1 改造) ──
         results = {}
-        cache_misses = []
-
         for tool in self.TOOL_MAP:
             dt = tool["data_type"]
             data = _cache.get(dt)
             if data is not None:
                 results[dt] = data
             else:
-                cache_misses.append(tool)
-
-        if cache_misses:
-            mcp_batch = []
-            for tool in cache_misses:
-                params = {}
-                for k, v in tool["params"].items():
-                    if "__DATE__" in str(v):
-                        params[k] = trade_date_str
-                    else:
-                        params[k] = v
-                mcp_batch.append({"name": tool["name"], "params": params})
-
-            mcp_results = await self.mcp.call_batch(mcp_batch)
-
-            for tool in cache_misses:
-                dt = tool["data_type"]
-                data = mcp_results.get(dt, {})
-                if data:
-                    results[dt] = data
-                    _cache.save(dt, tool["name"], data)
+                # cache miss → 不触发 MCP,用空数据占位 (formatters 已健壮化,会走 stub)
+                results[dt] = {}
+                logger.warning(f"盘前报：{dt} cache miss，使用空数据 (15:05 collector 应当已入库)")
 
         # ── Step 3: 提取各板块数据 ─────────────────────────────────────────
         sector_data      = results.get("sector_analysis", {})
@@ -673,19 +653,11 @@ class PreMarketReporter:
         }
 
     async def _extract_macro_events(self, trade_date_str: str) -> List[Dict[str, Any]]:
-        """从 cls_news 获取今日财经新闻，筛选 Top3-5 条宏观/事件面要闻"""
-        try:
-            result = await self.mcp.call_tool(
-                "cls_news",
-                date=trade_date_str,
-                level="AB",
-                limit=50,
-                detailLevel="standard",
-                format="json",
-            )
-        except Exception as e:
-            logger.warning(f"盘前报：cls_news 调用失败: {e}")
-            return []
+        """从 cache 读 cls_news（15:05 collector 已采集），不再直调 MCP (Phase 5.1)"""
+        cache = self.cache or MarketDataCache(trade_date_str)
+        result = cache.get("cls_news") or {}
+        if not result:
+            logger.warning("盘前报：cls_news cache miss，使用空数据 (15:05 collector 应当已入库)")
 
         if not result or result.get("error"):
             logger.warning("盘前报：cls_news 返回空结果或错误")
