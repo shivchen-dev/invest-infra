@@ -528,6 +528,8 @@ class IntradayFormatter(ReportFormatter):
         return "\n".join(lines)
 
     def _format_limit_events(self, limit_events: Dict[str, Any]) -> str:
+        if not isinstance(limit_events, dict):
+            return self._stub("涨停炸板事件")
         lines = []
         limit_ups = limit_events.get("limit_ups", [])
         if limit_ups:
@@ -557,6 +559,8 @@ class IntradayFormatter(ReportFormatter):
         return "\n".join(lines) if lines else self._stub("涨停炸板事件")
 
     def _format_strategy_realtime(self, strategy_realtime: Dict[str, Any]) -> str:
+        if not isinstance(strategy_realtime, dict):
+            return self._stub("策略方向实时信号")
         directions = [
             ("物理AI", strategy_realtime.get("phys_ai", {})),
             ("光模块", strategy_realtime.get("optical", {})),
@@ -581,6 +585,8 @@ class IntradayFormatter(ReportFormatter):
         return "\n".join(lines) if lines else self._stub("策略方向实时信号")
 
     def _format_etf_intraday(self, etf_intraday: Dict[str, Any]) -> str:
+        if not isinstance(etf_intraday, dict):
+            return self._stub("ETF盘中异动")
         alerts = etf_intraday.get("alerts", [])
         if not alerts:
             return "无溢价率异动"
@@ -605,6 +611,8 @@ class IntradayFormatter(ReportFormatter):
         return f"{config}：{inflow}"
 
     def _format_risk_signals(self, risk_signals: Dict[str, Any]) -> str:
+        if not isinstance(risk_signals, dict) or not risk_signals:
+            return self._stub("风险信号")
         lines = []
         limit_down_count = risk_signals.get("limit_down_count", 0)
         limit_down_change = risk_signals.get("limit_down_change", "")
@@ -623,8 +631,6 @@ class IntradayFormatter(ReportFormatter):
                 streak = item.get("streak", "-")
                 link = f"[{name}({code})]({url})" if url else f"{name}({code})"
                 lines.append(f"  ⚠️ {link} {streak}连板断板")
-        else:
-            lines.append("高标杀：【无】")
 
         break_rate = risk_signals.get("break_rate", None)
         if break_rate is not None:
@@ -824,6 +830,8 @@ class PostMarketFormatter(ReportFormatter):
         return "\n".join(lines) if lines else self._stub("涨停梯队")
 
     def _format_board_break(self, board_break: Dict[str, Any]) -> str:
+        if not isinstance(board_break, dict):
+            return self._stub("断板异动")
         lines = []
         broken = board_break.get("broken", [])
         if broken:
@@ -849,6 +857,8 @@ class PostMarketFormatter(ReportFormatter):
         return "\n".join(lines) if lines else "无断板异常"
 
     def _format_strategy_review(self, strategy_review: Dict[str, Any]) -> str:
+        if not isinstance(strategy_review, dict):
+            return self._stub("策略方向复盘")
         directions = [
             ("物理AI", strategy_review.get("phys_ai", {})),
             ("光模块", strategy_review.get("optical", {})),
@@ -917,6 +927,8 @@ class PostMarketFormatter(ReportFormatter):
         return "\n".join(lines) if lines else self._stub("策略方向复盘")
 
     def _format_etf_arbitrage(self, etf_arbitrage: Dict[str, Any]) -> str:
+        if not isinstance(etf_arbitrage, dict):
+            return self._stub("ETF套利信号")
         lines = []
         summary = etf_arbitrage.get("summary", {})
         if summary:
@@ -946,6 +958,8 @@ class PostMarketFormatter(ReportFormatter):
         return "\n".join(lines) if lines else self._stub("ETF套利信号")
 
     def _format_risk_review(self, risk_review: Dict[str, Any]) -> str:
+        if not isinstance(risk_review, dict) or not risk_review:
+            return self._stub("风险信号复盘")
         lines = []
         limit_down = risk_review.get("limit_down", {})
         if limit_down:
@@ -959,8 +973,6 @@ class PostMarketFormatter(ReportFormatter):
             code = high_board_broken.get("code", "-")
             streak = high_board_broken.get("streak", "-")
             lines.append(f"高标杀：【有】{streak}连板断板 {name}({code})")
-        else:
-            lines.append("高标杀：【无】")
         break_rate = risk_review.get("break_rate", None)
         if break_rate is not None:
             flag = " ⚠️" if break_rate > 20 else ""
@@ -968,8 +980,6 @@ class PostMarketFormatter(ReportFormatter):
         st = risk_review.get("st", {})
         if st and st.get("has", False):
             lines.append(f"ST/退市异动：【有】{st.get('desc', '')}")
-        else:
-            lines.append("ST/退市异动：【无】")
         return "\n".join(lines) if lines else self._stub("风险信号复盘")
 
     def _format_operation_ref(self, op_ref: Dict[str, Any]) -> str:
@@ -1024,6 +1034,8 @@ class IntradayAlertFormatter(ReportFormatter):
         return header + self._build_report()
 
     def _format_limit_up(self, limit_up: Dict[str, Any]) -> str:
+        if not isinstance(limit_up, dict):
+            return self._stub("涨停监控")
         events = limit_up.get("events", [])
         if not events:
             return "无涨停事件"
@@ -1036,6 +1048,8 @@ class IntradayAlertFormatter(ReportFormatter):
         return "\n".join(lines)
 
     def _format_limit_down(self, limit_down: Dict[str, Any]) -> str:
+        if not isinstance(limit_down, dict):
+            return self._stub("跌停监控")
         stocks = limit_down.get("stocks", [])
         if not stocks:
             return "无跌停股"
@@ -1045,6 +1059,8 @@ class IntradayAlertFormatter(ReportFormatter):
         return "\n".join(lines)
 
     def _format_anomaly(self, anomaly: Dict[str, Any]) -> str:
+        if not isinstance(anomaly, dict):
+            return self._stub("异常波动")
         events = anomaly.get("events", [])
         if not events:
             return "无异常波动"
