@@ -1,0 +1,15 @@
+# .pre-commit-config.yaml — pre-commit hooks (N-3)
+# 审计员: Arc · 2026-06-12
+#
+# 安装: pip install pre-commit && pre-commit install
+# 跳过: git commit --no-verify 或 SKIP=gitleaks git commit
+# CI 强制: pre-commit run --all-files
+
+repos:
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: v8.18.4
+    hooks:
+      - id: gitleaks
+        # 扫描所有历史 + 暂存
+        args: ['--protect', '--staged', '--redact']
+        # 跳过整个 commit: SKIP=gitleaks

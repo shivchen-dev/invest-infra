@@ -150,22 +150,22 @@ TASK_MAP = {
     "financial_p1": {
         "desc": "财务采集第1批（14:00）",
         "shell": "cd /home/claw/invest-infra/data-pipeline && .venv/bin/python src/bootstrap_runner.py financial 1",
-        "timeout": 3600,
+        "timeout": 3700,
     },
     "financial_p2": {
         "desc": "财务采集第2批（16:30）",
         "shell": "cd /home/claw/invest-infra/data-pipeline && .venv/bin/python src/bootstrap_runner.py financial 2",
-        "timeout": 3600,
+        "timeout": 3700,
     },
     "financial_p3": {
         "desc": "财务采集第3批（18:30）",
         "shell": "cd /home/claw/invest-infra/data-pipeline && .venv/bin/python src/bootstrap_runner.py financial 3",
-        "timeout": 3600,
+        "timeout": 3700,
     },
     "financial_p4": {
         "desc": "财务采集第4批（20:30）",
         "shell": "cd /home/claw/invest-infra/data-pipeline && .venv/bin/python src/bootstrap_runner.py financial 4",
-        "timeout": 3600,
+        "timeout": 3700,
     },
     # 市场数据采集类
     "market_data_collect": {
@@ -201,7 +201,11 @@ TASK_MAP = {
         "shell": "cd /home/claw/invest-infra/data-pipeline && .venv/bin/python scripts/cron_post_market.py",
         "timeout": 300,
     },
-
+    "intraday_collect": {
+        "desc": "盘中异动预采集（每30分钟）",
+        "shell": "cd /home/claw/invest-infra/data-pipeline && .venv/bin/python scripts/cron_intraday_collect.py",
+        "timeout": 60,
+    },
 }
 
 # ── 监控状态 ──────────────────────────────────────────────

@@ -68,12 +68,16 @@ MIDDAY_TOOLS = [
     },
 ]
 
+# date参数：仅支持的工具才传，且格式需匹配各自API要求
+# market_overview: YYYY-MM-DD ✅
+# capital_flow: YYYY-MM-DD ✅
+# broken_limit_up: YYYYMMDD（不支持YYYY-MM-DD）
+# concept_ranking: 不支持date参数 ❌
+# smart_hotlist: 不支持date参数 ❌
 DATE_PARAM_MAP = {
-    "market_overview": "date",
-    "concept_ranking": "date",
-    "smart_hotlist": "date",
-    "capital_flow": "date",
-    "broken_limit_up": "date",
+    "market_overview": "date",       # YYYY-MM-DD
+    "capital_flow": "date",          # YYYY-MM-DD
+    "broken_limit_up": "date",       # YYYYMMDD（不是YYYY-MM-DD）
 }
 
 
@@ -100,7 +104,11 @@ async def main():
             params = dict(t["params"])
             date_key = DATE_PARAM_MAP.get(t["name"])
             if date_key:
-                params[date_key] = trade_date
+                # broken_limit_up 使用 YYYYMMDD 格式
+                if t["name"] == "broken_limit_up":
+                    params[date_key] = trade_date_obj.strftime("%Y%m%d")
+                else:
+                    params[date_key] = trade_date
             calls.append({"name": t["name"], "params": params})
 
         results = await mcp.call_batch(calls)

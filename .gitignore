@@ -5,6 +5,11 @@ __pycache__/
 .venv/
 venv/
 
+# pytest coverage(N-3 补)
+.coverage
+.coverage.*
+htmlcov/
+
 # IDE
 .vscode/
 .idea/
@@ -35,4 +40,18 @@ logs/
 main.py
 tokens.env
 .secrets/
-*** /secrets/
+secrets/
+**/secrets/
+
+# 密钥文件(F-13 加固)
+*.key
+*.pem
+*.p12
+*.pfx
+
+# LLM 模型文件 (本地推理)
+*.gguf
+
+# gitleaks 输出
+.gitleaks.toml
+gitleaks-report.json

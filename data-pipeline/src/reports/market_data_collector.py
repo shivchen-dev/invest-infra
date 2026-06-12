@@ -293,14 +293,14 @@ async def run(trade_date: str = None) -> Dict[str, Any]:
 
     # ── 汇总写入日志文件（flock + 临时文件 atomic rename）──
     summary = {
-        "trade_date": trade_date,
+        "trade_date": trade_date_str,
         "total": stats["total"],
         "success": stats["success"],
         "failed": stats["failed"],
         "skipped": stats["skipped"],
         "tools": {t["data_type"]: {"tool": t["name"], "status": tool_status.get(t["data_type"], "?")} for t in TRADE_DATE_TOOLS}
     }
-    summary_path = f"/tmp/market_data_collect_{trade_date.replace('-','')}.json"
+    summary_path = f"/tmp/market_data_collect_{trade_date_str.replace('-','')}.json"
     try:
         # 写临时文件再 atomic rename，避免多进程竞争
         fd, tmp_path = tempfile.mkstemp(dir="/tmp", prefix="market_data_collect_", suffix=".json.tmp")

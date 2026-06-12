@@ -78,6 +78,12 @@ class MarketDataCache:
                 if row:
                     raw = row[0]
                     data = json.loads(raw) if isinstance(raw, str) else raw
+                    # unwrap MCP wrapper → 提取 structuredContent.data（报告读取器期望展平结构）
+                    if isinstance(data, dict) and "structuredContent" in data:
+                        sc = data.get("structuredContent", {})
+                        inner = sc.get("data", {}) if isinstance(sc, dict) else {}
+                        if isinstance(inner, dict):
+                            data = inner
                     self._cache[data_type] = data
                     logger.info(f"[DB CACHE HIT] {data_type} @ {self.trade_date}")
                     return data

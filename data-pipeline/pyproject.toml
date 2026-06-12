@@ -7,10 +7,13 @@ dependencies = [
     "akshare>=1.18.64",
     "backtrader>=1.9.78.123",
     "boto3>=1.43.18",
+    "freezegun>=1.5.5",
     "httpx>=0.28.1",
+    "keyring>=25.7.0",
     "psycopg2-binary>=2.9.12",
     "pydantic>=2.13.4",
     "redis>=8.0.0",
+    "structlog>=26.1.0",
     "tenacity>=8.2.2",
     "vectorbt[full,rust]>=1.0.0",
 ]
@@ -19,4 +22,9 @@ test = [
     "pytest>=8.0.0",
     "pytest-mock>=3.14.0",
     "psycopg2-binary>=2.9.12",
+]
+
+[dependency-groups]
+dev = [
+    "pytest-cov>=7.1.0",
 ]

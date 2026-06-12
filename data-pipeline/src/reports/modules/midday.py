@@ -88,6 +88,14 @@ class MiddayReporter:
 
     def _extract_market(self, market_data: Dict) -> Dict[str, Any]:
         try:
+            # 直接格式（来自 MarketDataCache.get()，已展开 structuredContent.data）
+            if "riseCount" in market_data:
+                return {
+                    "up_count": market_data.get("riseCount", 0),
+                    "down_count": market_data.get("fallCount", 0),
+                    "temperature": market_data.get("marketTemperature", "未知"),
+                }
+            # 降级格式（来自 FALLBACK_DATA，content[0].text JSON 嵌套）
             content = market_data.get("content", [])
             if content:
                 text = content[0].get("text", "{}")
@@ -101,6 +109,18 @@ class MiddayReporter:
 
     def _extract_concepts(self, concept_data: Dict) -> Dict[str, Any]:
         try:
+            # 直接格式（来自 MarketDataCache.get()）
+            if "rows" in concept_data:
+                rows = concept_data.get("rows", []) or []
+                concepts = []
+                for row in (rows[:10] or []):
+                    concepts.append({
+                        "name": row.get("name", row.get("tsCode", "")),
+                        "limit_up_count": row.get("limitUpNum", 0),
+                        "change": row.get("changePercent", row.get("change", 0)),
+                    })
+                return {"top": concepts}
+            # 降级格式（来自 FALLBACK_DATA，content[0].text JSON 嵌套）
             content = concept_data.get("content", [])
             if content:
                 text = content[0].get("text", "[]")
@@ -111,7 +131,7 @@ class MiddayReporter:
                     concepts.append({
                         "name": row.get("name", row.get("tsCode", "")),
                         "limit_up_count": row.get("limitUpNum", 0),
-                        "change": row.get("change", 0),
+                        "change": row.get("changePercent", row.get("change", 0)),
                     })
                 return {"top": concepts}
         except Exception as e:
@@ -154,18 +174,35 @@ class MiddayReporter:
     def _build_market_state(self, market_raw: Dict, hotlist_data: Dict) -> Dict[str, Any]:
         """构建 IntradayFormatter 期望的 market_state 结构"""
         counts = {}
-        hotlist_content = hotlist_data.get("content", [])
-        if hotlist_content and isinstance(hotlist_content[0], dict):
+        # 直接格式（来自 MarketDataCache.get()，smart_hotlist 有 rows 直接字段）
+        if "rows" in hotlist_data:
             try:
-                raw_text = hotlist_content[0].get("text", "[]")
-                hd = json.loads(raw_text) if isinstance(raw_text, str) else raw_text
-                rows = hd.get("rows", []) or []
+                rows = hotlist_data.get("rows", []) or []
                 up_count = sum(1 for r in rows if r.get("change", 0) > 0)
                 down_count = sum(1 for r in rows if r.get("change", 0) < 0)
                 counts["up"] = up_count
                 counts["down"] = down_count
                 counts["flat"] = len(rows) - up_count - down_count
             except Exception:
+                counts["up"] = market_raw.get("up_count", "-")
+                counts["down"] = market_raw.get("down_count", "-")
+        else:
+            # 降级格式（来自 FALLBACK_DATA，content[0].text JSON 嵌套）
+            hotlist_content = hotlist_data.get("content", [])
+            if hotlist_content and isinstance(hotlist_content[0], dict):
+                try:
+                    raw_text = hotlist_content[0].get("text", "[]")
+                    hd = json.loads(raw_text) if isinstance(raw_text, str) else raw_text
+                    rows = hd.get("rows", []) or []
+                    up_count = sum(1 for r in rows if r.get("change", 0) > 0)
+                    down_count = sum(1 for r in rows if r.get("change", 0) < 0)
+                    counts["up"] = up_count
+                    counts["down"] = down_count
+                    counts["flat"] = len(rows) - up_count - down_count
+                except Exception:
+                    counts["up"] = market_raw.get("up_count", "-")
+                    counts["down"] = market_raw.get("down_count", "-")
+            else:
                 counts["up"] = market_raw.get("up_count", "-")
                 counts["down"] = market_raw.get("down_count", "-")
         return {

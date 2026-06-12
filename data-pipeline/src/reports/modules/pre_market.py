@@ -56,10 +56,15 @@ class PreMarketReporter:
         Args:
             trade_date: 交易日期，默认为上一交易日
         """
-        # 默认为上一交易日（盘前报在当日开盘前生成）
+        # pre_market 在当日 09:00 开盘前生成，此时今日数据尚未采集（collector 在 15:05 才跑）。
+        # 因此 pre_market 必须读取『上一交易日』的数据，无论 trade_date 参数是什么。
         if trade_date is None:
             from reports.trading_day import get_last_trading_day
             trade_date = get_last_trading_day()
+        else:
+            # 即便显式传入 trade_date，pre_market 仍需读上一交易日（防日期错位）
+            from reports.trading_day import get_last_trading_day
+            trade_date = get_last_trading_day(trade_date if hasattr(trade_date, 'year') else date.fromisoformat(trade_date))
 
         trade_date_str = trade_date if isinstance(trade_date, str) else trade_date.strftime("%Y-%m-%d")
         logger.info(f"盘前报：开始获取数据 (date={trade_date_str})")
