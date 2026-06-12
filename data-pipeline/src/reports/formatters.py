@@ -37,8 +37,10 @@
   9. 今日操作参考（仅供观察，不构成建议）
   10. 今日小结
 """
+import json
 import logging
 from datetime import datetime, date
+from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
@@ -193,6 +195,22 @@ class PreMarketFormatter(ReportFormatter):
                 lines.append(f"• **{name}**：{signal}（评分{score}，{conf}）")
             add("etf", "ETF信号", "\n".join(lines))
 
+        # ── F/Q/I/R — F维度：网格信号（双层自适应间距，PG etf_quotes 252日窗口）──
+        grid_data = data.get("grid_signals")
+        if grid_data:
+            parts.append(self._format_grid_signals(grid_data))
+        else:
+            # 自动计算（无 grid_signals 字段时从 PG 实时算）
+            try:
+                from reports.modules.grid_analysis import compute_all_grid_signals
+                sig = compute_all_grid_signals(exclude_codes=["512930"])
+                if sig:
+                    from reports.modules.grid_analysis import signals_to_markdown
+                    body = signals_to_markdown(sig, trade_date)
+                    add("grid", "网格信号", body)
+            except Exception as e:
+                logger.warning(f"网格信号计算失败: {e}")
+
         # ── Section 6: 盘前异动（集合竞价强势股 + 弱转强候选）───────────────────
         parts.append(self._format_auction(data.get("auction_scan"), data.get("auction_wts"), data.get("auction")))
 
@@ -319,6 +337,22 @@ class PreMarketFormatter(ReportFormatter):
         lines.append("")
         lines.append(" | ".join(summary_parts))
         return "\n".join(lines)
+
+    def _format_grid_signals(self, grid_signals) -> str:
+        """渲染网格信号（F/Q/I/R — F维度）"""
+        if not grid_signals:
+            return self._stub("网格信号")
+        from reports.modules.grid_analysis import signals_to_markdown, GridSignal
+        # 兼容：可能是 GridSignal 对象列表，或 dict 列表
+        objs = []
+        for g in grid_signals:
+            if isinstance(g, GridSignal):
+                objs.append(g)
+            elif isinstance(g, dict):
+                objs.append(GridSignal(**g))
+        if not objs:
+            return self._stub("网格信号")
+        return signals_to_markdown(objs)
 
     def _cn_conf(self, conf: str) -> str:
         """置信度翻译：HIGH→高 / MEDIUM→中 / LOW→低"""
@@ -1111,15 +1145,60 @@ def get_formatter(report_type: str) -> ReportFormatter:
 
 def format_report(report_type: str, data: Dict[str, Any]) -> List[str]:
     """
-    格式化报告（返回拆分后的消息列表）
+    格式化报告（返回拆分后的消息列表）— T4 末尾自动注入网格信号板块
 
     Args:
-        report_type: 报告类型
-        data: 报告数据
+        report_type: 报告类型 (pre_market/midday/post_market)
+        data: 报告数据 (T4 提取 trade_date)
 
     Returns:
-        消息列表
+        消息列表 (末尾含网格信号板块)
     """
     formatter = get_formatter(report_type)
     content = formatter.render(data)
-    return formatter.split_messages(content)
+    messages = formatter.split_messages(content)
+
+    # ─── T4: 注入网格信号板块 (Phase 1 业务, 不依赖 WOA 协议) ───
+    trade_date = None
+    if isinstance(data, dict):
+        for key in ("trade_date", "date", "report_date"):
+            v = data.get(key)
+            if v:
+                trade_date = v if isinstance(v, str) else (v.isoformat() if hasattr(v, "isoformat") else str(v))
+                break
+    grid_section = format_grid_signals(trade_date=trade_date)
+    messages.append(grid_section)
+
+    return messages
+
+
+# ──────────────────────────────────────────────────────────────────
+# T3: 网格信号 formatter (Phase 1 业务, 不依赖 WOA 协议)
+# ──────────────────────────────────────────────────────────────────
+
+# 9 ETF etf_id → 简称 (规范 §2.2)
+ETF_ID_TO_NAME: Dict[int, str] = {
+    178: "银行ETF华宝", 60: "酒ETF鹏华", 419: "医疗ETF华宝",
+    1257: "机器人ETF华夏", 1012: "中证500ETF华夏", 1316: "光伏ETF华安",
+    678: "沪深300ETF万家", 1475: "半导体ETF国联安", 1183: "AI人工智能ETF平安",
+}
+
+
+def format_grid_signals(trade_date: str = None) -> str:
+    """渲染网格信号板块 — 直接从 PG etf_quotes 计算（2026-06-12）
+
+    不依赖 WOA 协议 / JSON 文件，直接调用 grid_analysis.py 双层自适应引擎。
+    """
+    if trade_date is None:
+        from datetime import date as _date
+        trade_date = _date.today().isoformat()
+
+    try:
+        from reports.modules.grid_analysis import compute_all_grid_signals, signals_to_markdown
+        sig = compute_all_grid_signals(exclude_codes=["512930"])
+        if not sig:
+            return f"■ 网格信号\n  (暂无数据，数据未就绪)\n"
+        return signals_to_markdown(sig, trade_date)
+    except Exception as e:
+        logger.warning(f"网格信号计算失败: {e}")
+        return f"■ 网格信号\n  (计算失败: {e})\n"
