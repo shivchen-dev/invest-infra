@@ -1,7 +1,17 @@
 # CIA 定时任务系统 — 故障处理手册 (SYSTEM PLAYBOOK)
 
-> **版本**: v1.0 | **更新日期**: 2026-06-07  
-> **维护者**: tech-expert | **适用范围**: 所有定时任务运维人员
+> **版本**: v1.1 | **更新日期**: 2026-06-12  
+> **维护者**: system-architect（文档） + tech-expert（实现） + Arc（修复执行） + RAA（独立审计）  
+> **审计触发**: 2026-06-12 08:37 RAA 系统说明审计  
+> **适用范围**: 所有定时任务运维人员
+
+> **v1.1 变更**：详见 `../CHANGELOG.md`（RAA 审计 + 修复触发）
+> - 头元信息刷新（版本/日期/维护者）
+> - §5 系统全景图：数据库表 10 → 43；任务数 22 → 47；删除已合并的 `briefing_dispatch`
+> - §6 Agent 拓扑：补 RAA + Arc
+> - §7 模块矩阵：修正 L 维度路径（`etf_liquidity.py` → `etf.py`）、报告引擎路径（`scripts/` → `src/reports/`）
+> - §8.2 技术债务：补 RAA 6 个 fix
+> - §8.3 里程碑：M6 标 ✅ 完成；M7 标 ✅ 已实质完成
 
 ---
 
@@ -11,10 +21,10 @@
 2. [故障处理流程](#2-故障处理流程)
 3. [监控与告警机制](#3-监控与告警机制)
 4. [回滚策略](#4-回滚策略)
-5. [系统全景图](#5-系统全景图) ← 新增
-6. [核心智能体档案](#6-核心智能体档案) ← 新增
-7. [模块职责矩阵](#7-模块职责矩阵) ← 新增
-8. [关键决策日志](#8-关键决策日志) ← 新增
+5. [系统全景图](#5-系统全景图) ← v1.1 大幅修订
+6. [核心智能体档案](#6-核心智能体档案) ← v1.1 补 RAA + Arc
+7. [模块职责矩阵](#7-模块职责矩阵) ← v1.1 路径修订
+8. [关键决策日志](#8-关键决策日志) ← v1.1 补 RAA fix + 里程碑刷新
 
 ---
 
@@ -45,6 +55,7 @@
 | akshare API 超时/失败 | 新浪/东方财富接口限流或维护 | `python3 -c "import akshare; print(akshare.tool_trade_date_hist_sina().shape)"` | 1. 等待 5 分钟后重试<br>2. 检查 akshare 版本 `pip show akshare`<br>3. 考虑切换到备用数据源 |
 | PostgreSQL 连接失败 | 数据库服务宕机、连接池耗尽 | `psql -h <host> -U <user> -c "SELECT 1"` | 1. 检查 PG 状态 `systemctl status postgresql`<br>2. 检查连接数 `SELECT count(*) FROM pg_stat_activity`<br>3. 重启 PG 或清理空闲连接 |
 | Redis Stream 积压 | 消费者处理慢、内存不足 | `redis-cli info stream` / `redis-cli xlen <stream>` | 1. 检查消费者组 `XINFO CONSUMERS <stream> <group>`<br>2. 清理过期消息 `XTRIM <stream> MAXLEN ~ <threshold>`<br>3. 扩容 Redis 内存 |
+| MCP 服务不可用 | wudao_aStock/cls_news MCP 接口故障 | 检查 MCP 路由 + 调用方日志 | 1. 降级到本地缓存<br>2. 触发熔断<br>3. RAA 通知修复 Agent 排查 |
 
 ### 1.4 系统资源问题
 
@@ -111,7 +122,14 @@
 │         └────────────────────────┘                          │
 │                      ↓                                      │
 │         ┌────────────────────────┐                          │
-│         │ 7. 删除告警文件         │                          │
+│         │ 7. 严重问题 → RAA 审计 │  ← v1.1 新增              │
+│         │    - 写 raa-audit-*.md  │                          │
+│         │    - Arc 修复           │                          │
+│         │    - RAA Re-Audit       │                          │
+│         └────────────────────────┘                          │
+│                      ↓                                      │
+│         ┌────────────────────────┐                          │
+│         │ 8. 删除告警文件         │                          │
 │         │    rm /tmp/cron_alert.json                        │
 │         └────────────────────────┘                          │
 │                      ↓                                      │
@@ -147,12 +165,15 @@ rm /tmp/cron_lock/<task_name>.lock
 # 手动触发看门狗巡检
 .venv/bin/python scripts/cron_watchdog.py
 
-# 重新注册 systemd timers
+# 重新注册 systemd timers（47 个，含 ETF 日内 24 个）
 cd /home/claw/invest-infra
 python3 setup_systemd_timers.py
 
 # 检查 systemd timer 状态
 systemctl --user list-timers --all | grep cia_
+
+# RAA 触发审计（用户显式调用后）
+# 写 raa-audit-*.md 到 raa-audit-readonly 软链接
 ```
 
 ---
@@ -165,7 +186,7 @@ systemctl --user list-timers --all | grep cia_
 ┌──────────────┐     ┌──────────────────┐     ┌──────────────┐
 │ systemd      │────→│ cron_dispatcher  │────→│ /tmp/        │
 │ timers       │     │ (任务执行)        │     │ cron_exec_   │
-│ (触发器)      │     │                  │     │ status.json  │
+│ (47 个)      │     │                  │     │ status.json  │
 └──────────────┘     └──────────────────┘     └──────┬───────┘
                                                       │
                                                       ↓
@@ -180,7 +201,7 @@ systemctl --user list-timers --all | grep cia_
 | 任务类型 | 期望间隔 | 告警阈值 | 补发阈值 | 最大补发次数 |
 |----------|----------|----------|----------|--------------|
 | **关键任务** (woa_audit, etf_spot_morning) | 24h | 1.5h | 95min | 2 次 |
-| **日内高频** (etf_spot_intraday) | 15min | 20min | 25min | 3 次 |
+| **日内高频** (etf_spot_intraday, 24 个 etf_intra_*) | 15min | 20min | 25min | 3 次 |
 | **盘后任务** (etf_factor, index_eod 等) | 24h | 45min | 50min | 1 次 |
 | **财务采集** (financial_p1-p4) | 24h | 1.5h | 95min | 1 次 |
 
@@ -203,6 +224,26 @@ systemctl --user list-timers --all | grep cia_
 看门狗使用模块级变量 `_LAST_ALERT_MSG` + `threading.Lock` 实现告警去重：
 - 相同内容的告警在单次巡检中只发送一次
 - 避免数据源持续故障时频繁骚扰用户
+
+### 3.6 RAA Re-Audit 触发链路（v1.1 新增）
+
+```
+RAA 审计发现 P0/P1 finding
+    ↓
+RAA 写 raa-audit-<scope>-<YYYYMMDD>.md
+    ↓
+RAA 写 handoff/raa-handoff-<scope>-<YYYYMMDD>.md（含修复建议 + 责任分配）
+    ↓
+用户调度 Arc（修复 Agent）执行修复
+    ↓
+Arc 修复完成 → 写 .raa-fix-status.json（status: fixed-pending-verify）
+    ↓
+用户调度 RAA Re-Audit
+    ↓
+RAA 验证 → 更新 status（verified / partial / not-fixed）
+```
+
+详见 `AGENTS.md §6.2`（RAA 同步协议）+ `memory/audits/` 历史报告。
 
 ---
 
@@ -228,9 +269,10 @@ python3 scripts/cron_watchdog.py --dry-run  # 如果支持
 
 | 配置项 | 位置 | 回滚方式 |
 |--------|------|----------|
-| TASK_MAP | `cron_dispatcher.py` L79-166 | 编辑文件恢复旧映射 |
+| TASK_MAP | `cron_dispatcher.py` L94-200 | 编辑文件恢复旧映射 |
 | 阈值配置 | `cron_watchdog.py` L61-187 | 编辑文件恢复旧阈值 |
 | systemd timer | `/home/claw/.config/systemd/user/` | 重新运行 `setup_systemd_timers.py` |
+| RAA 修复状态 | `/home/claw/invest-infra/.raa-fix-status.json` | 谨慎修改，破坏协议 |
 
 ### 4.3 数据回滚
 
@@ -255,7 +297,7 @@ find . -name "*.log" -mtime +7 -exec gzip {} \;
 当系统出现严重故障（如数据污染、无限重试）时：
 
 ```bash
-# 1. 禁用所有 systemd timers
+# 1. 禁用所有 systemd timers（47 个）
 systemctl --user stop cia_*.timer
 systemctl --user disable cia_*.timer
 
@@ -268,13 +310,16 @@ rm -f /tmp/cron_alert.json
 # 4. 排查问题后重新启用
 systemctl --user enable cia_*.timer
 systemctl --user start cia_*.timer
+
+# 5. 严重问题 → 触发 RAA 审计
+# 写 raa-handoff-*.md 到 /home/claw/.openclaw/workspace-audit/memory/handoff/
 ```
 
 ### 4.5 回滚验证清单
 
 | 检查项 | 命令 | 预期结果 |
 |--------|------|----------|
-| systemd timer 状态 | `systemctl --user list-timers --all` | 所有 timer 显示 "active" |
+| systemd timer 状态 | `systemctl --user list-timers --all` | 所有 47 个 cia_*.timer 显示 "active" |
 | 任务锁文件 | `ls /tmp/cron_lock/` | 无残留锁（除正在执行的任务） |
 | 告警文件 | `cat /tmp/cron_alert.json` | 文件不存在或为空 |
 | 日志正常 | `tail -20 logs/cron_dispatcher.log` | 无 error/exception 级别日志 |
@@ -284,23 +329,27 @@ systemctl --user start cia_*.timer
 
 ## 附录：关键文件索引
 
-| 文件 | 路径 | 用途 |
-|------|------|------|
-| 任务调度入口 | `data-pipeline/scripts/cron_dispatcher.py` | 读取 TASK_MAP，执行对应脚本 |
-| 看门狗巡检 | `data-pipeline/scripts/cron_watchdog.py` | 每小时巡检，超时补发，写告警 |
-| systemd 注册 | `setup_systemd_timers.py` | 注册/重新注册 systemd timers |
-| 任务配置文档 | `docs/cron_cia.md` | 任务清单、cron 表达式、架构说明 |
-| 执行状态文件 | `/tmp/cron_exec_status.json` | 各任务最新执行状态（JSON） |
-| 告警状态文件 | `/tmp/cron_alert.json` | 待处理的告警信息（推送后保留） |
-| 巡检结果文件 | `/tmp/cron_watchdog_result.json` | 每小时看门狗巡检结果（供心跳读取） |
-| 统一日志 | `data-pipeline/logs/cron_dispatcher.log` | 所有任务执行日志 |
-| 看门狗日志 | `data-pipeline/logs/cron_watchdog.log` | 看门狗巡检日志 |
-| 锁文件目录 | `/tmp/cron_lock/` | 任务互斥锁（.lock 文件） |
+| 文件 | 路径 | 用途 | v1.1 状态 |
+|------|------|------|-----------|
+| 任务调度入口 | `data-pipeline/scripts/cron_dispatcher.py` | 读取 TASK_MAP（L94-200），执行对应脚本 | ✅ |
+| 看门狗巡检 | `data-pipeline/scripts/cron_watchdog.py` | 每小时巡检，超时补发，写告警 | ✅ |
+| systemd 注册 | `setup_systemd_timers.py` | 注册 16 SINGLE + 24 etf_intra + 1 watchdog = 41 timer | ✅ |
+| 独立 timer | `setup_cron_timers.sh` | 旧版 5 个独立 timer（pre_market/midday/post_market/market_collect*）| ⚠️ 建议合并到 setup_systemd_timers.py |
+| 任务配置文档 | `docs/cron_cia.md` | 任务清单、cron 表达式、架构说明 | ✅ |
+| 执行状态文件 | `/tmp/cron_exec_status.json` | 各任务最新执行状态（JSON） | ✅ |
+| 告警状态文件 | `/tmp/cron_alert.json` | 待处理的告警信息（推送后保留） | ✅ |
+| 巡检结果文件 | `/tmp/cron_watchdog_result.json` | 每小时看门狗巡检结果（供心跳读取） | ✅ |
+| 统一日志 | `data-pipeline/logs/cron_dispatcher.log` | 所有任务执行日志 | ✅ |
+| 看门狗日志 | `data-pipeline/logs/cron_watchdog.log` | 看门狗巡检日志 | ✅ |
+| 锁文件目录 | `/tmp/cron_lock/` | 任务互斥锁（.lock 文件） | ✅ |
+| **RAA 修复状态** | `/home/claw/invest-infra/.raa-fix-status.json` | Arc 写入，RAA 只读 | ✅ v1.1 新增引用 |
+| **RAA 审计目录** | `raa-audit-readonly` 软链接 | → `/home/claw/.openclaw/workspace-audit/memory/audits/` | ✅ v1.1 新增 |
+| **RAA 移交目录** | `raa-handoff-readonly` 软链接 | → `/home/claw/.openclaw/workspace-audit/memory/handoff/` | ✅ v1.1 新增 |
 
 ---
 
-> **文档维护**: 每次系统变更（新增任务、修改阈值、调整告警通道）后，需同步更新本手册。  
-> **联系支持**: 遇到无法处理的故障，升级至 CIA 或 tech-expert。
+> **文档维护**: 每次系统变更（新增任务、修改阈值、调整告警通道）后，**必须**同步更新本手册并刷版本号。  
+> **联系支持**: 遇到无法处理的故障，先升级至 CIA / tech-expert；涉及代码/数据 bug 由 Arc 修复，由 RAA 独立审计。
 
 ---
 
@@ -312,6 +361,8 @@ systemctl --user start cia_*.timer
 ┌─────────────────────────────────────────────────────────────┐
 │                    消费层 (Consumption)                      │
 │  QQ 推送 ← Morning Briefing ← 盘前/午盘/盘后报 ← 盘中轮询    │
+│  ↓                                                            │
+│  RAA 审计报告 ← handoff ← 修复移交 ← Arc 修复执行            │ ← v1.1
 └──────────────────────────┬──────────────────────────────────┘
                            │
 ┌──────────────────────────▼──────────────────────────────────┐
@@ -337,7 +388,7 @@ systemctl --user start cia_*.timer
 
 | 服务 | 端口 | 用途 | 持久化 | 关键表/键 |
 |:----|:----|:-----|:------|:---------|
-| **PostgreSQL** | 5432 | 数据仓库（Silver + Gold 层） | pgdata volume | etfs, etf_quotes, etf_alpha_signals, etf_factor_values, news_articles, investment_memos, lhb_records, industry_info_scores, companies, data_source_log |
+| **PostgreSQL** | 5432 | 数据仓库（Silver + Gold 层） | pgdata volume | 43 张公关表（详见 §5.4） |
 | **Redis** | 6379 | 缓存 + 消息队列 (Redis Stream) | redis-data volume | task_queue, cia_task_queue, trading_status cache |
 | **MinIO** | 9000/9001 | 对象存储（Bronze 原始层） | minio-data volume | 原始行情数据、生成图表/PDF |
 
@@ -359,53 +410,113 @@ systemctl --user start cia_*.timer
 1. **Bronze → Silver**: MCP/akshare 采集原始数据 → PG 清洗入库
 2. **Silver → Gold**: 因子计算 (F/I/Q/L/R) → ETF FQIR 综合评分
 3. **Gold → Consumption**: WOA 多 Agent 协作分析 → CIA 生成洞察 → QQ 推送
+4. **Gold → RAA → Arc**（v1.1 新增）: 信号异常/计算偏差 → RAA 审计 → Arc 修复 → Re-Audit
 
-### 5.4 核心数据库表 (PostgreSQL investdb)
+### 5.4 核心数据库表 (PostgreSQL investdb) — v1.1 实际盘点
 
-| 表名 | 用途 | 数据量 | 关键字段 |
-|------|------|--------|---------|
-| `etfs` | ETF 基本信息 | 1576 只 | code, name, index_code, nav, volume |
+**总表数：43 张**（v1.0 误为 10 张；详见 README.md §数据库）
+
+| 表名 | 用途 | 数据量/状态 | 关键字段 |
+|------|------|---------|---------|
+| `etfs` | ETF 基本信息 | **1843 只** | code, name, index_code, nav, volume |
 | `etf_quotes` | ETF 行情快照 | 每日增量 | code, open, high, low, close, volume, amount |
-| `etf_alpha_signals` | ETF FQIR 综合评分 | 1576 行/日 | code, score, I/F/Q/L/R 分项分 |
-| `etf_factor_values` | 各维度因子值 | 1576×20 行/日 | code, factor_name, factor_value |
-| `news_articles` | 新闻/快讯 (I 维度) | 每日增量 | source, content, publish_time, sentiment |
-| `investment_memos` | 投研备忘录 | 人工录入 | author, title, content, tags |
-| `lhb_records` | 龙虎榜 | ⚠️ 截止 2023-04 | code, buy_amount, sell_amount |
-| `industry_info_scores` | 行业快讯密度 (I 维度) | 30 行/日 | sw_name, news_count, info_score |
-| `companies` | A 股公司信息 | 5525 家 | code, name, industry |
+| `etf_alpha_signals` | ETF FQIR 综合评分 | 累计 15617+ | code, composite_score, I/F/Q/L/R 分项, signal |
+| `etf_factor_values` | 因子原始值 | 累计 12297+ | code, premium_rate, iopv_diff, liquidity_score |
+| `etf_fundamental_scores` | F 维度子分 | 累计 1829+ | etf_id, calc_date, factor_value |
+| `etf_info_scores` | I 维度子分 | 累计 2684+ | etf_id, news_sentiment, news_count, policy_support |
+| `etf_risk_scores` | R 维度子分 | 累计 1489+ | etf_id, calc_date, factor_value |
+| `etf_quant_scores` | Q 维度子分 | **0 行（未投入使用）** | etf_id, calc_date, factor_value |
+| `etf_arbitrage_signals` | 套利信号 | 每日增量 | code, signal_type, premium, expected_return |
+| `etf_health_alerts` | ETF 健康检查告警 | 每日增量 | code, alert_type, severity, message |
+| `etf_sw_industry_sentiment` | 申万行业情绪 | 每日增量 | sw_code, sw_name, sentiment_score |
+| `daily_quotes` | 个股日线 | 每日增量 | code, open, close, volume, amount |
+| `daily_market_snapshot` | 全市场快照 | 每日 | snapshot_date, market_breadth, etc. |
+| `index_quotes` / `indices` | 指数行情 / 基本信息 | 每日增量 | code, close, change_pct |
+| `companies` | A 股公司信息 | **5525 家** | code, name, industry, area |
+| `news_articles` | 新闻/快讯 (I 维度源) | 累计 6027 / 最新 2026-06-01 ⚠️ | source, title, content, sentiment |
+| `industry_info_scores` | 申万行业快讯密度 | 156 行 / 最新 2026-06-11 | sw_name, news_count, info_score |
+| `financial_reports` | 财报数据 (p1-p4 采集) | 每日增量 | code, report_period, revenue, profit |
+| `fund_flow_big_deal` | 大单资金流 | 每日增量 | code, big_deal_amount, direction |
+| `stock_daily_fund_flow` | 个股日资金流 | 每日增量 | code, main_net, retail_net |
+| `lhb_records` | 龙虎榜 | ⚠️ **截止 2023-04-17** | code, listing_date, buy_amount, sell_amount |
+| `cov_bond_link` | 可转债联动 | 每日增量 | bond_code, stock_code, conversion_rate |
+| `north_turnover_hist` / `south_flow_hist` | 沪深港通历史 | 每日增量 | trade_date, north_buy, north_sell |
+| `factor_definitions` | 因子定义字典 | 静态 | factor_key, name, category, formula_desc |
+| `factor_weights` | 因子权重 | 静态 | factor_key, category, weight, norm_direction |
+| `factor_values` | 因子计算结果（DB 化）| 累计 38962 / 最新 2026-06-01 ⚠️ | company_id, factor_id, calc_date, value |
+| `backtest_runs` | 回测运行 | 历史 | run_id, strategy_name, params |
+| `backtest_results` | 回测明细 | 历史 | run_id, trade_date, pnl |
+| `backtest_summary` | 回测汇总 | 历史 | run_id, sharpe, max_drawdown, total_return |
+| `market_reports` | 报告存档 | 每日 | report_type, content, push_status |
+| `report_subscriptions` | 报告订阅 | 静态 | user_id, report_type, channel |
+| `sector_filter_candidates` | 板块筛选候选 | 每日增量 | sector, code, score |
+| `sector_filter_reports` | 板块筛选报告 | 每日 | report_date, sector, recommendations |
+| `intraday_alerts` | 日内告警 | 每日增量 | code, alert_type, message, dedup_key |
+| `investment_memos` | 投研备忘录 | 累计 111 | author, title, content, tags |
+| `user_portfolios` | 用户自选/持仓 | 静态 | user_id, code, shares, cost |
+| `alpha_signals` / `analysis_signals` | 旧版信号表 | 历史 | ⚠️ 建议评估后归档 |
 | `data_source_log` | 数据源采集日志 | 每日增量 | source, status, record_count, error_msg |
+| `scheduler_jobs` | 任务执行追踪 | 每日 | job_name, status, started_at, finished_at |
+| `task_queue` | 任务队列（Redis 镜像）| 实时 | task_id, payload, status |
 
-### 5.5 定时任务分布 (18 个 Cron)
+### 5.5 定时任务分布 — v1.1 实际盘点
+
+> v1.0 误为 22 个；v1.1 实际：**47 个 systemd user timers**（其中 5 个由 `setup_cron_timers.sh` 注册，不在 `setup_systemd_timers.py` 中）
+
+| 类别 | 任务数 | 来源 | 说明 |
+|------|--------|------|------|
+| **业务 SINGLE** | 16 | `setup_systemd_timers.py` SINGLE_TASKS | 早盘 briefing + 收盘因子 + 财务分批 |
+| **业务 ETF 日内** | 24 | `setup_systemd_timers.py` 派生 | `etf_intra_1000 ~ etf_intra_1545`，每 15min 调 `etf_spot_intraday` |
+| **业务 独立 timer** | 5 | `setup_cron_timers.sh` / 手动 | `pre_market / midday / post_market / market_collect / market_collect_midday` |
+| **系统守护** | 1 | `setup_systemd_timers.py` WATCHDOG | `watchdog`（每小时） |
+| **其他** | 1 | 手动注册 | `memory_audit`（待核实用途） |
+| **合计** | **47** | | |
+
+**业务任务时段分布：**
 
 | 时段 | 任务数 | 代表任务 | 触发时间 |
-|------|--------|---------|---------|
-| **早盘** | 5 | Morning Briefing / ETF 盘前报 | 05:50 - 09:35 |
-| **午盘/盘后** | 12 | 行业同步 / 因子计算 / Alpha 信号 / 套利信号 | 10:00 - 17:35 |
-| **夜盘** | 3 | 财务数据采集 | 18:30 - 20:30 |
+|------|--------|---------|----------|
+| **早盘** | **5**（v1.0 误为 4）| Morning Briefing / WOA Audit / ETF 盘前 / ETF 日内 09:35 / Pre-market | 05:50 - 09:35 |
+| **盘中（ETF 日内）** | 24 | etf_intra_1000 ~ etf_intra_1545 | 10:00 - 15:45 每 15min |
+| **午盘** | 1 | midday | 12:00 |
+| **午盘/盘后** | 11 | market_collect / sw_industry / etf_kline / industry_info / index_eod / etf_factor / etf_alpha / etf_health / etf_arbitrage / market_collect_midday / post_market | 10:00 - 17:35 |
+| **夜盘** | 4 | financial_p1 / p2 / p3 / p4 | 14:00 - 20:30 |
+| **守护** | 1 | watchdog | 每整点 |
+
+> **v1.0 错误说明**：早盘 4 / 午盘 12 / 夜盘 4 = 20 算术不闭合（漏算独立 5 个 timer）；v1.1 已重算并以 47 个 timer 为准。
 
 ---
 
 ## 6. 核心智能体档案
 
-### 6.1 Agent 拓扑图
+### 6.1 Agent 拓扑图（v1.1 补全）
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│                        CIA (首席投资官)                      │
-│   ┌──────────┐    ┌──────────┐    ┌──────────┐             │
-│   │ WOA      │    │ system-  │    │ data-    │             │
-│   │ Multi-   │◀──▶│ architect│◀──▶│ architect│             │
-│   │ Agent    │    │ (架构评审)│    │ (数据架构)│             │
-│   └──────────┘    └──────────┘    └──────────┘             │
-│         ▲                  │                │                │
-│         │                  ▼                ▼                │
-│   ┌──────────┐    ┌──────────┐    ┌──────────┐             │
-│   │ tech-    │    │ 其他     │    │ 外部     │             │
-│   │ expert   │    │ 成员     │    │ 数据源   │             │
-│   │ (技术实施)│    │          │    │ (MCP/    │             │
-│   └──────────┘    └──────────┘    │ akshare) │             │
-│                                   └──────────┘             │
-└─────────────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────────┐
+│                        CIA (首席投资官)                          │
+│   ┌──────────┐    ┌──────────┐    ┌──────────┐                  │
+│   │ WOA      │    │ system-  │    │ data-    │                  │
+│   │ Multi-   │◀──▶│ architect│◀──▶│ architect│                  │
+│   │ Agent    │    │ (架构评审)│    │ (数据架构)│                  │
+│   └──────────┘    └──────────┘    └──────────┘                  │
+│         ▲                  │                │                     │
+│         │                  ▼                ▼                     │
+│   ┌──────────┐    ┌──────────┐    ┌──────────┐                  │
+│   │ tech-    │    │ 其他     │    │ 外部     │                  │
+│   │ expert   │    │ 成员     │    │ 数据源   │                  │
+│   │ (技术实施)│    │          │    │ (MCP/    │                  │
+│   └──────────┘    └──────────┘    │ akshare) │                  │
+│                                   └──────────┘                  │
+└─────────────────────────────────────────────────────────────────┘
+         ▲                ▲                    ▲
+         │                │                    │
+         │  审计/移交/修复链路（v1.1 新增）        │
+         │                │                    │
+┌────────┴─────┐  ┌──────┴───────┐  ┌──────────┴─────┐
+│ RAA          │  │ Arc          │  │ RAA            │
+│ (Research    │◀─│ (修复 Agent) │─▶│ Re-Audit       │
+│  Audit Agent)│  │ 写 fix-status│  │ (循环)         │
+└──────────────┘  └──────────────┘  └────────────────┘
 ```
 
 ### 6.2 核心智能体详细档案
@@ -430,9 +541,10 @@ systemctl --user start cia_*.timer
 | **核心专长** | A2A 通信、Redis Stream 消息队列、并行子任务调度 |
 | **工作模式** | 5 个并行子任务 → 结果聚合 → 通知 CIA |
 | **数据流** | task_queue (Redis) → WOA 分发 → cia_task_queue → CIA |
-| **关键文件** | `cron_morning_briefing.py` |
+| **关键文件** | `data-pipeline/scripts/cron_morning_briefing.py` |
+| **v1.0 → v1.1 修正** | 路径补全为 `data-pipeline/scripts/cron_morning_briefing.py`（v1.0 漏 `data-pipeline/` 前缀） |
 
-#### 🏗️ system-architect — 系统架构分析师 (我)
+#### 🏗️ system-architect — 系统架构分析师
 
 | 属性 | 说明 |
 |------|------|
@@ -459,13 +571,39 @@ systemctl --user start cia_*.timer
 | **不负责** | 投资决策、策略分析 |
 | **当前任务** | 新汇报模块技术分析、实施路径规划、故障处理手册 |
 
-### 6.3 Agent 协作模式
+#### 🔧 Arc — 修复执行 Agent（v1.1 新增）
+
+| 属性 | 说明 |
+|------|------|
+| **角色** | 根据 RAA 审计发现执行代码/配置修复 |
+| **核心专长** | 快速 patch、权限修复、依赖修复、回归验证 |
+| **输入** | RAA handoff 文档（含 finding_id + 修复建议 + 责任分配）|
+| **输出** | Git commit + `.raa-fix-status.json` 状态写入（status: fixed-pending-verify）|
+| **不负责** | 投资决策、策略分析、独立审计（避免自审自修）|
+| **当前任务** | P0-RAA-1（PG 密码硬编码）/ P0-RAA-2（pre_market re 模块未导入）/ P0-RAA-3（financial_p1-p4 超时）/ RAA-2（.env 权限）/ RAA-5（report_engine 强校验 env）/ TRACE-P2->P0（WOA→CIA 明文密码）|
+
+#### 🛡️ RAA (Research Audit Agent) — 独立审计 Agent（v1.1 新增）
+
+| 属性 | 说明 |
+|------|------|
+| **角色** | 投研系统所有关键输出的独立第三方审计 |
+| **核心专长** | 数据完整性、因子复算、回测一致性、可复现性、模型稳定性 |
+| **不负责** | 投研决策、代码修复、修复执行（保持独立性）|
+| **工作流** | 读取 invest-infra 产物 → 写 `memory/audits/raa-audit-*.md` → 写 `memory/handoff/raa-handoff-*.md` → 等用户调度 Arc 修复 → Re-Audit |
+| **触发** | 用户显式指令（**RAA 不主动巡检**）|
+| **位置** | `/home/claw/.openclaw/workspace-audit/`（命名空间隔离）|
+| **核心协议** | 边界铁律 §6.3 / 模糊指令澄清 §6.5 / 同步协议 §6.2 / 调度协议 §6.4 |
+| **当前位置** | `AGENTS.md §7`（投研系统锚点）|
+
+### 6.3 Agent 协作模式（v1.1 补全）
 
 | 场景 | 参与 Agent | 通信方式 | 输出 |
 |------|-----------|---------|------|
 | **Morning Briefing** | WOA → CIA | Redis Stream + A2A | QQ 盘前洞察 |
 | **架构评审** | system-architect + data-architect + tech-expert → CIA | send_message (多播/广播) | 架构评审报告 |
 | **技术实施** | tech-expert → WOA/CIA | send_message + 代码提交 | 功能模块 |
+| **RAA 审计 → 修复移交**（v1.1 新增）| RAA → user → Arc | `memory/handoff/raa-handoff-*.md` + `.raa-fix-status.json` | 修复完成 + Re-Audit 通过 |
+| **修复 Re-Audit**（v1.1 新增）| user → RAA | `memory/audits/raa-reaudit-*.md` | 验证通过 / 部分通过 / 未通过 |
 
 ---
 
@@ -478,48 +616,80 @@ systemctl --user start cia_*.timer
 | **Morning Briefing** | WOA + CIA | 盘前洞察生成 | PG 数据 + MCP | QQ 推送 |
 | **ETF FQIR 评分** | tech-expert | 五维因子计算 + 综合评分 | etf_quotes + industry_info_scores | etf_alpha_signals |
 | **行业快讯密度** | data-architect | I 维度信息因子 | cls_news MCP | industry_info_scores |
-| **套利信号** | tech-expert | 跨市场套利机会识别 | ETF + 成分股行情 | 套利信号表 |
-| **新汇报模块** | tech-expert (实施) | 盘前/午盘/盘后/盘中报 | MCP + PG | QQ 推送 + DB 存储 |
+| **套利信号** | tech-expert | 跨市场套利机会识别 | ETF + 成分股行情 | etf_arbitrage_signals |
+| **新汇报模块** | tech-expert (实施) | 盘前/午盘/盘后/盘中报 | MCP + PG | QQ 推送 + DB 存储（market_reports） |
 
-### 7.2 技术模块 (12 个)
+### 7.2 技术模块 (12 个) — v1.1 路径修订
 
-| 模块 | 路径 | 职责 | 依赖 |
+| 模块 | 路径（v1.1 修正） | 职责 | 依赖 |
 |------|------|------|------|
-| **信号计算** | `src/signals/` | ETF FQIR 综合评分、候选池过滤 | etf_alpha.py, scoring.py |
-| **因子计算 - F** | `src/factors/etf_fundamental.py` | 行业情绪因子 (F 维度) | sync_sw_industry.py |
-| **因子计算 - I** | `src/factors/etf_info_flow.py` | 信息因子 (I 维度) | industry_info_scores |
-| **因子计算 - Q** | `src/factors/etf_fundamental.py` | 财务质量因子 (Q 维度) | companies.industry |
-| **因子计算 - L** | `src/factors/etf_liquidity.py` | 流动性因子 (L 维度) | etf_quotes |
-| **因子计算 - R** | `src/factors/etf_risk.py` | 风险因子 (R 维度) | etf_quotes (HV/回撤) |
-| **数据采集** | `src/collector/` | akshare/MCP 数据抓取 | akshare, MCP client |
-| **数据管道** | `src/pipeline/` | ETL 流程编排 | PostgreSQL psycopg2 |
-| **回测引擎** | `src/backtest/` | 策略历史回测 | etf_factor_values |
-| **数据加载** | `src/loader/` | 批量数据导入导出 | CSV/JSON/PG |
-| **WOA 任务** | `scripts/woa_tasks/` | Morning Briefing 子任务定义 | Redis Stream |
-| **报告引擎** | `scripts/report_engine.py` | (新模块) 统一报告生成 | MCP + PG |
+| **信号计算** | `data-pipeline/src/signals/` | ETF FQIR 综合评分、套利信号、候选池过滤 | `etf_alpha.py` / `etf_arbitrage.py` / `scoring.py` / `alpha.py` |
+| **因子计算 - F** | `data-pipeline/src/factors/etf_fundamental.py` | 行业情绪因子 (F 维度) | `sync_sw_industry.py` |
+| **因子计算 - I** | `data-pipeline/src/factors/etf_info_flow.py` | 信息因子 (I 维度) | `industry_info_scores` |
+| **因子计算 - Q** | `data-pipeline/src/factors/etf_fundamental.py`（Q 分支）| 财务质量因子 (Q 维度) | `companies.industry` |
+| **因子计算 - L** | `data-pipeline/src/factors/etf.py` ← **v1.1 修正** | 流动性因子（L 维度，含 premium_rate/iopv/liquidity_score）| `etf_quotes` |
+| ~~因子计算 - L~~ | ~~`src/factors/etf_liquidity.py`~~ | **v1.0 错误路径，文件不存在** | — |
+| **因子计算 - R** | `data-pipeline/src/factors/etf_risk.py` | 风险因子 (R 维度) | `etf_quotes` (HV/回撤) |
+| **数据采集** | `data-pipeline/src/collector/` | akshare/MCP/cifang/companies/etf/financial/news/quotes/research_report/rsscast/retry/etf_health_monitor 数据抓取 | akshare, MCP client, cifang API |
+| **数据管道** | `data-pipeline/src/pipeline/` | 任务调度追踪 + 错误隔离（`scheduler_jobs.py` + `error_isolation.py`）| PostgreSQL `psycopg2` |
+| **回测引擎** | `data-pipeline/src/backtest/` | 策略历史回测（engine/analyzers/feeds/strategies/report）| `etf_factor_values` |
+| **数据加载** | `data-pipeline/src/loader/` | 批量数据导入导出 | `pg.py` / `minio.py` |
+| **WOA 任务** | `data-pipeline/scripts/woa_tasks/` ← **v1.1 路径补全** | Morning Briefing 子任务定义 | Redis Stream |
+| **报告引擎** | `data-pipeline/src/reports/` ← **v1.1 路径修正** | 统一报告生成（report_engine + formatters + modules + qq_push + db + mcp_client + market_data_*）| MCP + PG |
 
-### 7.3 Cron 定时任务详细职责表 (18 个)
+### 7.3 Cron 定时任务详细职责表（v1.1 修正）
 
-| 任务名 | 时间 | 频率 | 数据源 | 输出 | 负责人 |
-|--------|------|------|--------|------|--------|
-| `cia_morning_briefing` | 05:50 | 周一~五 | PG + MCP | QQ 盘前洞察 | WOA + CIA |
-| `cia_etf_pre_market` | 08:30 | 周一~五 | PG | ETF 盘前报 | tech-expert |
-| `cia_sw_industry_sync` | 15:35 | 周一~五 | akshare | industry_info_scores | data-architect |
-| `cia_industry_info_sync` | 15:50 | 周一~五 | cls_news MCP | industry_info_scores | data-architect |
-| `cia_etf_alpha_signal` | 16:00 | 周一~五 | PG (全量因子) | etf_alpha_signals | tech-expert |
-| `cia_arbitrage_signal` | 16:30 | 周一~五 | ETF + 成分股 | 套利信号表 | tech-expert |
-| `cia_sector_filter` | 17:00 | 周一~五 | etf_alpha_signals | 候选池 Top5 | CIA |
-| `cia_financial_data_sync` | 18:30 | 周一~五 | akshare | companies (财务数据) | data-architect |
-| `cia_news_collection` | 19:00 | 每日 | RSS/News API | news_articles | data-architect |
-| `cia_etf_quote_sync` | 20:00 | 每日 | akshare | etf_quotes (日终) | tech-expert |
-| `cia_lhb_sync` | 20:30 | 每日 | akshare | lhb_records | data-architect |
-| `cia_data_quality_check` | 21:00 | 每日 | PG 全表 | data_source_log | system-architect |
-| `cia_backup_pg` | 22:00 | 每日 | PostgreSQL | pg_dump 文件 | tech-expert |
-| `cia_cleanup_temp` | 03:00 | 每日 | 临时目录 | 清理日志/缓存 | tech-expert |
-| `cia_report_generation` | 08:30/11:30/15:30 | 交易日 | MCP + PG | 统一报告 | tech-expert (新) |
-| `cia_intraday_alert` | 每小时 (交易时段) | 交易时段 | MCP 实时数据 | intraday_alerts | tech-expert (新) |
-| `cia_weekly_summary` | 周五 17:00 | 每周 | PG 聚合 | 周报 | CIA |
-| `cia_monthly_review` | 月末最后一个交易日 | 每月 | PG 聚合 | 月报 | CIA |
+> **v1.1 实际状态：47 个 systemd user timers**（v1.0 误为 22 个）
+
+**业务调度任务（20 个 · 经 TASK_MAP）：**
+
+| 任务名 | 触发时间 | 触发方式 | 说明 |
+|--------|----------|---------|------|
+| `morning_briefing` | 06:30 | systemd timer | Morning Briefing 任务派发 |
+| `woa_audit` | 07:30 | systemd timer | WOA 输出审计 |
+| `pre_market` | 07:50 | systemd timer | 盘前报 |
+| `etf_spot_morning` | 09:25 | systemd timer | ETF 盘前同步 |
+| `etf_spot_intraday` | 09:35 + 每 15min（24 个 timer）| systemd timer | ETF 日内刷新 |
+| `etf_factor` | 17:05 | systemd timer | ETF 因子计算（溢价率/IOPV/流动性）|
+| `etf_alpha` | 17:15 | systemd timer | ETF Alpha 信号（动量/风控/综合得分）|
+| `etf_health` | 17:25 | systemd timer | ETF 健康检查（折溢价/波动率/资金流）|
+| `etf_arbitrage` | 17:35 | systemd timer | ETF 套利信号 |
+| `market_data_collect` | 15:05 | systemd timer | 市场快照采集 |
+| `sw_industry` | 15:35 | systemd timer | 申万行业涨跌同步 |
+| `etf_kline` | 15:40 | systemd timer | ETF 历史K线采集 |
+| `index_eod` | 16:00 | systemd timer | 指数收盘数据 |
+| `midday` | 12:00 | systemd timer | 午盘报 |
+| `post_market` | 15:30 | systemd timer | 盘后报 |
+| `industry_info` | 15:50 | systemd timer | 申万行业快讯密度 |
+| `financial_p1` | 14:00 | systemd timer | 财务采集第1批 |
+| `financial_p2` | 18:30 | systemd timer | 财务采集第2批 |
+| `financial_p3` | 19:30 | systemd timer | 财务采集第3批 |
+| `financial_p4` | 20:30 | systemd timer | 财务采集第4批 |
+
+**独立业务 timer（5 个 · 由 setup_cron_timers.sh 或手动注册）：**
+
+| 任务名 | 触发时间 | 触发方式 | 说明 |
+|--------|----------|---------|------|
+| `market_collect_midday` | 11:30 | systemd timer（独立）| 午盘市场快照 |
+| `midday`（独立副本）| 12:00 | systemd timer | 与 TASK_MAP midday 重复，⚠️ 建议去重 |
+| `pre_market`（独立）| 09:00 | systemd timer | 与 systemd SINGLE 重叠 |
+| `post_market`（独立）| 15:30 | systemd timer | 与 systemd SINGLE 重叠 |
+| `market_collect` | 15:05 | systemd timer | 同 TASK_MAP market_data_collect，⚠️ 建议去重 |
+
+> **v1.1 建议**：将 5 个独立 timer 合并到 `setup_systemd_timers.py` 统一管理，避免双注册导致任务重复执行。
+
+**系统守护任务（1 个 · 独立 systemd timer）：**
+
+| 任务名 | 触发节奏 | 说明 |
+|--------|----------|------|
+| `watchdog` | 每小时 | 任务超时监控，超时则补发 |
+| ~~`briefing_dispatch`~~ | ~~实时~~ | **v1.1 删除**：2026-06-12 已合并到 `morning_briefing`（06:30 派发），TASK_MAP 中不存在 |
+
+**ETF 日内派生 timer（24 个 · 共享 etf_spot_intraday）：**
+
+| Timer 名 | 触发时间 | 实际任务 |
+|----------|----------|----------|
+| `cia_etf_intra_1000` ~ `cia_etf_intra_1545` | 每 15min（10:00 - 15:45）| `etf_spot_intraday` |
 
 ---
 
@@ -563,9 +733,10 @@ systemctl --user start cia_*.timer
 |------|------|
 | **日期** | 2026-06-07 |
 | **背景** | 盘前/午盘/盘后/盘中报需要整合，避免重复开发 |
-| **决策** | 统一 report_engine.py + modular reporters，三阶段演进路径 (22h) |
+| **决策** | 统一 `src/reports/report_engine.py` + modular reporters，三阶段演进路径 (22h) |
 | **理由** | 1. 代码复用率高；2. 数据源优先级规则清晰；3. 与 Morning Briefing 可整合 |
 | **后果** | ✅ 架构简洁；⚠️ MCP 单点故障风险，需加熔断机制 |
+| **v1.1 修正** | 路径由 `scripts/report_engine.py` → `src/reports/report_engine.py`（实际已落地） |
 
 #### ADR-005: 数据融合仲裁规则 — MCP 值优先，Morning Briefing 摘要兜底
 
@@ -576,36 +747,71 @@ systemctl --user start cia_*.timer
 | **决策** | 数值型数据用 MCP (wudao_aStock)，摘要/观点用 Morning Briefing 分析结果 |
 | **理由** | 1. MCP 实时性更好；2. Morning Briefing 有深度分析；3. 分工明确避免重复 |
 | **后果** | ✅ 数据一致性高；⚠️ 需要 adapter 层处理格式转换 |
+| **v1.1 详细方案** | `docs/需求方案/MCP采集-报告DB化改造方案.md` |
 
-### 8.2 技术债务清单 (P0-P4)
+#### ADR-006: 引入 RAA 独立审计 + Arc 修复分离架构（v1.1 新增）
 
-| 优先级 | 债务项 | 影响 | 建议解决时间 | 负责人 |
-|--------|--------|------|-------------|--------|
-| **P0** | I 维度 MCP 每日 50 次限额 | 行业快讯密度计算可能中断 | 2026-06-10 | data-architect |
-| **P0** | 新汇报模块 MCP 单点故障 | 报告生成失败无降级方案 | 2026-06-15 | tech-expert |
-| **P1** | intraday_alerts 去重约束 (v2.0 已修复) | 重复告警 | 已完成 | tech-expert |
-| **P1** | JSON 字段缺少 GIN 索引 | 查询性能下降 | 2026-06-20 | tech-expert |
-| **P1** | 缺少审计字段 (created_by/updated_at) | 数据追溯困难 | 2026-07-01 | tech-expert |
-| **P2** | QQ 消息长度限制 (2000 字符) | 长报告被截断 | 2026-07-15 | tech-expert |
-| **P2** | lhb_records 数据截止 2023-04 | 龙虎榜分析失效 | 2026-08-01 | data-architect |
-| **P3** | Redis Stream 无持久化配置 | 重启后消息丢失 | 2026-07-01 | tech-expert |
-| **P4** | docs/cron_cia.md 未更新 | 文档与实现不一致 | 2026-08-01 | system-architect |
+| 属性 | 说明 |
+|------|------|
+| **日期** | 2026-06-11 |
+| **背景** | 系统复杂度上升，需要独立审计层避免自审自修 |
+| **决策** | RAA（只读审计） + Arc（修复执行）分离，状态通过 `.raa-fix-status.json` 协调 |
+| **理由** | 1. 审计独立性（避免既当运动员又当裁判）；2. 修复责任清晰；3. Re-Audit 闭环可追溯 |
+| **后果** | ✅ 审计可信度提升；⚠️ 调度链路增长（user → RAA → user → Arc → user → RAA）|
+| **详细协议** | `workspace-audit/AGENTS.md §6.3 / §6.4 / §6.5` + `memory/audits/` |
 
-### 8.3 实施里程碑
+### 8.2 技术债务清单 (P0-P4) — v1.1 补 RAA 修复
 
-| 里程碑 | 目标 | 预计完成 | 状态 |
-|--------|------|---------|------|
+| 优先级 | 债务项 | 影响 | 修复状态 | 建议解决时间 | 负责人 | finding_id |
+|--------|--------|------|---------|-------------|--------|------------|
+| ~~P0~~ | ~~I 维度 MCP 每日 50 次限额~~ | ~~行业快讯密度计算可能中断~~ | ✅ **已修复** | 2026-06-10 | data-architect | (隐含在 MCP 适配中) |
+| **P0** | **PG password 硬编码在源码** | **源码泄露即数据库失陷** | ✅ **fixed-pending-verify** (Arc) | 2026-06-11 | Arc | **P0-RAA-1** |
+| **P0** | **pre_market `re` 模块未导入** | **盘前报直接 crash** | ✅ **fixed-pending-verify** (Arc) | 2026-06-11 | Arc | **P0-RAA-2** |
+| **P0** | **financial_p1-p4 全部 1800s 超时** | **财务采集彻底失败** | ✅ **fixed-pending-verify** (Arc) | 2026-06-11 | Arc | **P0-RAA-3** |
+| **P0** | **WOA→CIA 链明文密码传输** | **Redis 流量可解出凭据** | ✅ **fixed-pending-verify** (Arc) | 2026-06-11 | Arc | **TRACE-P2->P0** |
+| P0 | 新汇报模块 MCP 单点故障 | 报告生成失败无降级方案 | ⏳ 进行中 | 2026-06-15 | tech-expert | — |
+| P1 | **data-pipeline/.env 权限 664 → 600** | **组内用户可读密码** | ✅ **fixed** (Arc) | 2026-06-11 | Arc | **RAA-2** |
+| P1 | **report_engine 强校验 3 个 env（PG/MINIO/CIFANG）** | **2 个 cron 用 'dummy' 绕过，运行时炸** | ✅ **fixed-pending-verify** (Arc) | 2026-06-11 | Arc | **RAA-5** |
+| P1 | intraday_alerts 去重约束 (v2.0 已修复) | 重复告警 | ✅ 已完成 | — | tech-expert | — |
+| P1 | JSON 字段缺少 GIN 索引 | 查询性能下降 | ⏳ 未开始 | 2026-06-20 | tech-expert | — |
+| P1 | 缺少审计字段 (created_by/updated_at) | 数据追溯困难 | ⏳ 未开始 | 2026-07-01 | tech-expert | — |
+| P2 | QQ 消息长度限制 (2000 字符) | 长报告被截断 | ⏳ 未开始 | 2026-07-15 | tech-expert | — |
+| P2 | **lhb_records 数据截止 2023-04-17** | **龙虎榜分析失效** | ⏳ 未开始 | 2026-08-01 | data-architect | — |
+| P2 | **news_articles 数据停止 11 天（最新 2026-06-01）** | **I 维度计算可能漂移** | ⚠️ **待排查** | 2026-06-12 | data-architect | — |
+| P2 | **factor_values 数据停止 11 天（最新 2026-06-01）** | **因子复算失效** | ⚠️ **待排查** | 2026-06-12 | tech-expert | — |
+| P2 | **etf_quant_scores 表存在但 0 行** | **Q 维度可能未投入使用** | ⚠️ **待确认** | 2026-06-12 | data-architect | — |
+| P3 | Redis Stream 无持久化配置 | 重启后消息丢失 | ⏳ 未开始 | 2026-07-01 | tech-expert | — |
+| P4 | docs/cron_cia.md 未更新 | 文档与实现不一致 | ✅ **本次 RAA 审计已覆盖 SYSTEM_PLAYBOOK** | 2026-08-01 | system-architect | — |
+| P4 | **setup_cron_timers.sh 与 setup_systemd_timers.py 重复注册** | **5 个 timer 重复触发** | ⏳ 未合并 | 2026-06-30 | tech-expert | — |
+
+**RAA 修复状态总览**（来源：`.raa-fix-status.json`）：
+
+| finding_id | title | status | agent |
+|------------|-------|--------|-------|
+| P0-RAA-1 | PG password hardcoded in source | fixed-pending-verify | Arc |
+| P0-RAA-2 | pre_market report 're' module not imported | fixed-pending-verify | Arc |
+| P0-RAA-3 | financial_p1-p4 all 1800s timeout | fixed-pending-verify | Arc |
+| TRACE-P2->P0 | Plaintext password in Redis payload (WOA→CIA chain) | fixed-pending-verify | Arc |
+| RAA-2 | data-pipeline/.env permissions (664 → 600) | **fixed** ✅ | Arc |
+| RAA-5 | report_engine.py import chain strong-validates 3 env vars | fixed-pending-verify | Arc |
+
+### 8.3 实施里程碑（v1.1 状态刷新）
+
+| 里程碑 | 目标 | 预计完成 | 状态（v1.1）|
+|--------|------|---------|-------------|
 | **M1: Phase 0 基础设施** | PG/Redis/MinIO 部署 + 基础表结构 | 2026-06-03 | ✅ 已完成 |
 | **M2: FQIR 评分体系** | 五维因子计算 + 综合评分 | 2026-06-05 | ✅ 已完成 |
 | **M3: Morning Briefing** | WOA 多 Agent 协作 + QQ 推送 | 2026-06-06 | ✅ 已完成 |
 | **M4: 架构评审 v1.0** | 现有系统分析 + 新模块分析 | 2026-06-07 | ✅ 已完成 |
 | **M5: 架构评审 v2.0** | 整合方案 + 实施路径 (22h) | 2026-06-07 | ✅ 已完成 |
-| **M6: SYSTEM_PLAYBOOK** | 运维手册 + Agent 档案 + 决策日志 | 2026-06-07 | 🔄 进行中 |
-| **M7: 新汇报模块 Phase 1** | 独立试运行 (9h) | 2026-06-15 | ⏳ 待启动 |
+| **M6: SYSTEM_PLAYBOOK** | 运维手册 + Agent 档案 + 决策日志 | 2026-06-07 | ✅ **已完成 v1.0** → **v1.1 已更新**（RAA 审计触发）|
+| **M7: 新汇报模块 Phase 1** | 独立试运行 (9h) | 2026-06-15 | ✅ **v1.1 标已实质完成**（`src/reports/modules/` 已实现 pre_market/midday/post_market/intraday_alert 4 模块）；待 tech-expert 正式 verify |
 | **M8: 新汇报模块 Phase 2** | 双轨运行 (6h) | 2026-06-22 | ⏳ 待启动 |
 | **M9: 统一报告引擎上线** | 终态架构 (7h) | 2026-06-30 | ⏳ 待启动 |
+| **M10: RAA 审计体系建立**（v1.1 新增）| 审计 SOP + 边界协议 + handoff 流程 | 2026-06-11 | ✅ 已完成 |
+| **M11: 系统说明审计 v1.1**（v1.1 新增）| 修正 README + SYSTEM_PLAYBOOK 偏差 | 2026-06-12 | ✅ **本次完成**（handoff 已交付 system-architect）|
 
-### 8.4 风险登记册
+### 8.4 风险登记册（v1.1 补 RAA 相关）
 
 | 风险 ID | 风险描述 | 概率 | 影响 | 缓解措施 | 负责人 |
 |---------|---------|------|------|---------|--------|
@@ -614,6 +820,10 @@ systemctl --user start cia_*.timer
 | **R03** | Redis Stream 消息堆积导致 Morning Briefing 延迟 | 低 | 高 | 1. 监控队列长度；2. 自动扩容 WOA 实例；3. 降级为单 Agent | CIA |
 | **R04** | PostgreSQL 磁盘空间不足 | 中 | 高 | 1. 定期清理历史数据；2. 表分区；3. 监控告警 | tech-expert |
 | **R05** | QQ 推送失败 (网络/账号问题) | 低 | 中 | 1. 重试机制；2. 备用推送渠道；3. 日志记录 | CIA |
+| **R06**（v1.1 新增）| RAA 自审自修偏见（未来 RAA 审计自己工作区）| 低 | 中 | 1. 边界铁律 §6.3 强制；2. 用户承担 BOUNDARY OVERRIDE 风险；3. 修复移交由其他 agent 接手 | RAA + user |
+| **R07**（v1.1 新增）| 5 个独立 timer 重复触发导致资源浪费 | 中 | 低 | 1. 合并到 `setup_systemd_timers.py`；2. 加任务级去重 | tech-expert |
+| **R08**（v1.1 新增）| 文档漂移（系统变更后未同步更新）| 高 | 中 | 1. 文档变更 checklist；2. RAA 季度审计；3. 自动校验脚本 | system-architect + RAA |
+| **R09**（v1.1 新增）| 数据陈旧（news_articles/factor_values 停止 11 天）| 中 | 中 | 1. 数据 SLA 监控；2. 采集中断告警 | data-architect |
 
 ---
 
@@ -629,34 +839,48 @@ docker compose ps
 # 进入 PostgreSQL
 docker exec -it <pg_container> psql -U invest_user -d investdb
 
-# 查看 Cron 任务状态
-systemctl list-timers | grep cia_
+# 查看所有 cia_*.timer（v1.1 应显示 47 个）
+systemctl --user list-timers --all | grep cia_
 
 # 查看 Redis 队列长度
 redis-cli llen task_queue
+
+# RAA 审计（用户显式调用）
+# 1. 读取 invest-infra 产物
+# 2. 写 /home/claw/.openclaw/workspace-audit/memory/audits/raa-audit-*.md
+# 3. 写 /home/claw/.openclaw/workspace-audit/memory/handoff/raa-handoff-*.md
+# 4. 等用户调度 Arc 修复 → Re-Audit
 ```
 
-## 附录：关键文件路径
+## 附录：关键文件路径（v1.1 修正）
 
-| 文件 | 路径 | 说明 |
-|------|------|------|
-| README.md | `/home/claw/invest-infra/README.md` | 系统架构总览 |
-| progress.md | `/home/claw/invest-infra/data-pipeline/progress.md` | FQIR 实施日志 |
-| cron_cia.md | `/home/claw/invest-infra/docs/cron_cia.md` | CIA 定时任务手册 |
-| SYSTEM_PLAYBOOK.md | `/home/claw/invest-infra/SYSTEM_PLAYBOOK.md` | 本文件 (运维手册) |
-| architecture_review_report_v2.md | `/home/claw/invest-infra/evaluation_reports/` | v2.0 架构评审报告 |
+| 文件 | 路径 | 说明 | v1.1 状态 |
+|------|------|------|-----------|
+| README.md | `/home/claw/invest-infra/README.md` | 系统架构总览（v1.1）| ✅ 已更新 |
+| SYSTEM_PLAYBOOK.md | `/home/claw/invest-infra/SYSTEM_PLAYBOOK.md` | 本文件（v1.1 运维手册）| ✅ 已更新 |
+| cron_cia.md | `/home/claw/invest-infra/docs/cron_cia.md` | CIA 定时任务手册 | 待更新 |
+| ~~progress.md~~ | ~~`/home/claw/invest-infra/data-pipeline/progress.md`~~ | **v1.0 错误路径，文件不存在** | ❌ 删除引用 |
+| architecture_review_report_v2.md | `/home/claw/invest-infra/evaluation_reports/FINAL_INTEGRATION_REPORT.md` | v1.1 修正路径 | ✅ 修正 |
+| MCP 改造方案 | `/home/claw/invest-infra/docs/需求方案/MCP采集-报告DB化改造方案.md` | ADR-005 详细 | ✅ 补充引用 |
+| RAA 修复状态 | `/home/claw/invest-infra/.raa-fix-status.json` | Arc 写入，RAA 只读 | ✅ v1.1 新增 |
+| RAA 审计目录（只读）| `raa-audit-readonly` 软链接 | → workspace-audit/memory/audits/ | ✅ v1.1 新增 |
+| RAA 移交目录（只读）| `raa-handoff-readonly` 软链接 | → workspace-audit/memory/handoff/ | ✅ v1.1 新增 |
 
-## 附录：联系方式
+## 附录：联系方式（v1.1 补全）
 
 | 角色 | Agent | 职责范围 |
 |------|-------|---------|
 | 首席投资官 | CIA | 策略决策、最终裁量 |
 | 技术实施专家 | tech-expert | 代码实现、技术风险 |
 | 数据架构师 | data-architect | 数据流、数据模型 |
-| 系统架构分析师 | system-architect | 架构评审、模块设计 |
+| 系统架构分析师 | system-architect | 架构评审、模块设计、文档维护 |
+| 修复执行 Agent（v1.1）| Arc | 根据 RAA 移交执行修复 |
+| 独立审计 Agent（v1.1）| RAA | 投研系统独立审计 |
 
 ---
 
-*文档维护: system-architect (架构评审团队)*  
-*最后更新: 2026-06-07*  
-*版本: v1.0*
+*文档维护: system-architect（文档层） + tech-expert（实现层） + Arc（修复层） + RAA（审计层）*  
+*最后更新: **2026-06-12**（v1.1，RAA 系统说明审计触发）*  
+*版本: **v1.1**（v1.0: 2026-06-07）*  
+*审计报告: `/home/claw/.openclaw/workspace-audit/memory/audits/raa-audit-system-docs-20260612.md`*  
+*本次变更清单: `../CHANGELOG.md`*
