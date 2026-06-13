@@ -29,7 +29,7 @@ if ENV_FILE.exists():
 def run(cmd: str, batch: int = 1) -> dict:
     from datetime import datetime
     import psycopg2
-    from src.pipeline_main import run_etf_spot_only, run_etf_pipeline, run_financial
+    from src.pipeline.pipeline_main import run_etf_spot_only, run_etf_pipeline, run_financial
     from src.factors.etf import run_etf_factor_calc
     from src.collector.etf import batch_fetch_etf_hist
     from src.signals.etf_alpha import compute_etf_alpha as _compute_alpha

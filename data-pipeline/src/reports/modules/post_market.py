@@ -16,7 +16,7 @@ logger = logging.getLogger(__name__)
 REQUIRED_DATA_TYPES = [
     "limit_stats",
     "hot_sectors",
-    "market_leaders",
+    "market_overview",
     "limit_up_ladder",
     "board_break",
     "capital_flow_mkt",
@@ -100,7 +100,12 @@ class PostMarketReporter:
 
         limit_stats = results.get("limit_stats", {})
         hot_sectors = results.get("hot_sectors", {})
-        leaders = results.get("market_leaders", {})
+        leaders = results.get("market_overview", {})  # market_overview 含温度/涨跌家数
+        # 注入 ladder 的 boardSummary/emotionMetrics 到 limit_stats（供子方法使用）
+        ladder_data = results.get("limit_up_ladder", {})
+        if isinstance(ladder_data, dict):
+            limit_stats["_board_summary"] = ladder_data.get("boardSummary", [])
+            limit_stats["_emotion_metrics"] = ladder_data.get("emotionMetrics", {})
         ladder = results.get("limit_up_ladder", {})
         board_break = results.get("board_break", {})
         flow_data = results.get("capital_flow_mkt", {})
@@ -124,41 +129,55 @@ class PostMarketReporter:
 
     def _build_summary(self, leaders: Dict) -> Dict[str, Any]:
         """构建 PostMarketFormatter._format_summary 期望的结构"""
-        main_lines = []
-        if isinstance(leaders, dict):
-            main_lines = leaders.get("mainLines", []) or []
-        indices = {}
-        for ml in main_lines[:3]:
-            name = ml.get("name", "")
-            change = ml.get("change_pct", ml.get("change", ""))
-            if name:
-                indices[name] = str(change) if change else "-"
-        counts = {}
-        sentiment = "未知"
+        rise = leaders.get("riseCount", 0) if isinstance(leaders, dict) else 0
+        fall = leaders.get("fallCount", 0) if isinstance(leaders, dict) else 0
+        temp = leaders.get("marketTemperature", 50) if isinstance(leaders, dict) else 50
+        if temp < 30:
+            sentiment, tomorrow = "冷", "等待修复"
+        elif temp < 45:
+            sentiment, tomorrow = "弱", "观察"
+        elif temp < 60:
+            sentiment, tomorrow = "中性", "观察"
+        else:
+            sentiment, tomorrow = "热", "注意轮动"
         return {
-            "indices": indices,
-            "counts": counts,
+            "indices": {},
+            "counts": {"rise": rise, "fall": fall},
             "amount": "-",
             "sentiment": sentiment,
-            "tomorrow_expect": "观察",
+            "tomorrow_expect": tomorrow,
         }
 
     def _extract_limit_stats(self, limit_stats: Dict) -> Dict[str, Any]:
         """构建 PostMarketFormatter._format_limit_stats 期望的结构"""
         current_up = limit_stats.get("sealedLimitUp", limit_stats.get("limitUp", 0))
         current_down = limit_stats.get("sealedLimitDown", limit_stats.get("limitDown", 0))
+        touched_up = limit_stats.get("touchedLimitUp", 0)
+        broken_up = limit_stats.get("brokenLimitUp", 0)
+        break_rate_pct = f"{round(broken_up / touched_up * 100, 1)}%" if touched_up else "-"
+        board_summary = limit_stats.get("_board_summary", [])
+        first_board = second_board = third_plus = "-"
+        for entry in board_summary:
+            lvl = entry.get("level", 0)
+            cnt = entry.get("count", 0)
+            if lvl == 1:
+                first_board = cnt
+            elif lvl == 2:
+                second_board = cnt
+            elif lvl >= 3:
+                third_plus = cnt
         return {
             "limit_up": current_up,
             "limit_up_yesterday": "-",
-            "seal_rate": limit_stats.get("sealRate", limit_stats.get("seal_rate", "-")),
-            "break_rate": limit_stats.get("breakRate", limit_stats.get("break_rate", "-")),
+            "seal_rate": f"{round(limit_stats.get("limitUpSealRate", 0) * 100, 1)}%" if limit_stats.get("limitUpSealRate") else "-",
+            "break_rate": break_rate_pct,
             "limit_down": current_down,
             "limit_down_yesterday": "-",
-            "broken": "-",
+            "broken": broken_up,
             "continued": "-",
-            "first_board": "-",
-            "second_board": "-",
-            "third_plus": "-",
+            "first_board": first_board,
+            "second_board": second_board,
+            "third_plus": third_plus,
         }
 
     def _build_main_review(self, hot_sectors: Dict, limit_stats: Dict) -> List[Dict]:
@@ -166,20 +185,19 @@ class PostMarketReporter:
         rows = []
         if isinstance(hot_sectors, dict):
             rows = hot_sectors.get("rows", []) or []
-        break_rate = limit_stats.get("breakRate", "")
-        try:
-            br_val = float(break_rate) if break_rate and str(break_rate).replace(".", "").isdigit() else 999
-        except (ValueError, TypeError):
-            br_val = 999
-        strength = "强" if br_val < 20 and limit_stats.get("sealedLimitUp", 0) > 30 else "观察"
+        emotion = limit_stats.get("_emotion_metrics", {})
+        promo = emotion.get("promotionRates", {})
+        br_val = promo.get("2to3", 0)
+        sealed = limit_stats.get("sealedLimitUp", 0)
+        strength = "强" if br_val >= 30 and sealed > 30 else "观察"
         main_review = []
-        for row in rows[:2]:
-            name = row.get("name", "-")
-            change = row.get("change", "-")
+        for row in rows[:3]:
+            core_stocks = row.get("coreStocks", [])
+            leaders = [{"name": s.get("name", ""), "code": s.get("code", "")} for s in core_stocks[:3]]
             main_review.append({
-                "sector": name,
-                "performance": str(change) if change else "-",
-                "leaders": [],
+                "sector": row.get("name", "-"),
+                "performance": row.get("highBoard", "-"),
+                "leaders": leaders,
                 "signal_strength": strength,
                 "tomorrow": "观察",
             })
@@ -192,11 +210,11 @@ class PostMarketReporter:
             rows = ladder.get("rows", []) or []
         return [
             {
-                "streak": 1,
+                "streak": row.get("level", 1) or 1,
                 "name": row.get("name", ""),
-                "code": "",
-                "reason": row.get("reason", ""),
-                "url": "",
+                "code": row.get("code", ""),
+                "reason": row.get("reasonType", ""),
+                "url": f"https://stock.quicktiny.cn/quote/{row.get('code', '')}",
             }
             for row in (rows[:20] or [])
         ]

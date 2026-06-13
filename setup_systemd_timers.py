@@ -30,7 +30,7 @@ USER_DIR = os.path.expanduser("~/.config/systemd/user")
 SINGLE_TASKS = [
     ("morning_briefing",   "*-*-* 05:50:00"),
     ("woa_audit",         "*-*-* 07:30:00"),
-    ("briefing_dispatch",  "*-*-* 07:40:00"),
+    # briefing_dispatch removed 2026-06-12: 已合并到 morning_briefing(06:30 派发),任务在 dispatcher.py TASK_MAP 中不存在
     ("etf_spot_morning",   "*-*-* 09:25:00"),
     ("etf_spot_intraday",  "*-*-* 09:35:00"),
     ("financial_p1",      "*-*-* 14:00:00"),
@@ -45,6 +45,16 @@ SINGLE_TASKS = [
     ("financial_p2",      "*-*-* 18:30:00"),
     ("financial_p3",      "*-*-* 19:30:00"),
     ("financial_p4",      "*-*-* 20:30:00"),
+    # ── 汇报类（之前为 orphan timers，统一纳入）────────────────────────
+    ("pre_market",       "*-*-* 09:00:00"),   # 盘前报
+    ("midday",           "*-*-* 12:00:00"),   # 午盘报
+    ("post_market",      "*-*-* 15:30:00"),   # 盘后报
+    ("collect_news",     "*-*-* 09:30:00"),   # 个股新闻采集（ARCH-4修复）
+    ("market_collect",   "*-*-* 15:05:00"),   # 收盘快照采集
+    ("lhb_collect",      "*-*-* 16:10:00"),   # 龙虎榜采集（ARCH-3修复）
+    # ── intraday_collect 每30min × 盘后时段（10:00-15:00）──────────
+    # 注意：intraday_collect 由 cia_intraday_collect.timer 统一轮询
+    # 以下为 OnUnitActiveSec 循环定时，非 OnCalendar
 ]
 
 TIMER_TPL = """[Unit]
@@ -90,6 +100,18 @@ StandardOutput=append:{log}
 StandardError=append:{log}
 """
 
+# ── Recurring (OnUnitActiveSec) timer templates ─────────────────────────────
+INTRADAY_TIMER_TPL = """[Unit]
+Description=CIA {name} timer (recurring)
+
+[Timer]
+OnUnitActiveSec={interval}
+Persistent=true
+
+[Install]
+WantedBy=timer.target
+"""
+
 
 def write_unit(path, content):
     with open(path, "w") as f:
@@ -118,6 +140,18 @@ def register_timers():
     # Watchdog
     write_unit(f"{USER_DIR}/cia_watchdog.timer", WATCHDOG_TIMER)
     write_unit(f"{USER_DIR}/cia_watchdog.service", WATCHDOG_SVC.format(dispatcher=DISPATCHER, log=LOG))
+    total += 1
+
+    # ── Recurring timers ──────────────────────────────────────────────────────
+    # intraday_collect: every 30 min during trading hours
+    write_unit(
+        f"{USER_DIR}/cia_intraday_collect.timer",
+        INTRADAY_TIMER_TPL.format(name="intraday_collect", interval="30min")
+    )
+    write_unit(
+        f"{USER_DIR}/cia_intraday_collect.service",
+        SVC_TPL.format(name="intraday_collect", task="intraday_collect", dispatcher=DISPATCHER, log=LOG)
+    )
     total += 1
 
     # Reload + start

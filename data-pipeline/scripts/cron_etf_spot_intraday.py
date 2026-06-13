@@ -27,6 +27,7 @@ def _load_env(filepath):
 
 # 加载 secrets（备用），再加载 .env（优先）
 _load_env(_secrets_dir / "tokens.env")
+_load_env(_secrets_dir / "cifang.env")   # CIFANG_TOKEN（次方量化）
 _load_env(_pipeline_dir / ".env")
 
 sys.path.insert(0, str(_pipeline_dir))
