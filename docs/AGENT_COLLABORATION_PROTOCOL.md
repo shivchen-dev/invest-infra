@@ -1,26 +1,26 @@
 ---
 protocol_id: AGENT_COLLABORATION_PROTOCOL
-version: 1.2
-last_updated: 2026-06-13T15:24:00+08:00
+version: 1.3
+last_updated: 2026-06-13T16:20:00+08:00
 author: RAA
-approver: <user-2026-06-13-15:24>  # 用户批准 (QQ sender_id: DC04E397170345249B2A928500EEA2DF, message_id: ROBOT1.0_oKw0FxiTNqg3...)
+approver: <user-2026-06-13-16:20>  # 用户批准 (QQ sender_id: DC04E397170345249B2A928500EEA2DF, message_id: ROBOT1.0_oKw0FxiTNqg3...)
 status: approved
-approved_at: 2026-06-13T15:24:00+08:00
-supersedes: 1.1
+approved_at: 2026-06-13T16:20:40+08:00
+supersedes: 1.2
 related_re_audit: workspace-audit/memory/audits/raa-re-audit-20260613.md
 related_self_review_flags: [Arc-2026-06-13-#1, Arc-2026-06-13-#2, Arc-2026-06-13-#3]
-pending_sync_to: invest-infra/docs/AGENT_COLLABORATION_PROTOCOL.md  # Arc 责任
+pending_sync_to: invest-infra/docs/AGENT_COLLABORATION_PROTOCOL.md  # Arc 责任 (v1.3 版)
 ---
 
-# 投研系统智能体合作开发协议 v1.2
+# 投研系统智能体合作开发协议 v1.3
 
-> **协议 ID**：`AGENT_COLLABORATION_PROTOCOL_v1.2`  
-> **状态**：✅ **approved**（2026-06-13 15:24 CST，用户批准）  
+> **协议 ID**：`AGENT_COLLABORATION_PROTOCOL_v1.3`  
+> **状态**：✅ **approved**（2026-06-13 16:20 CST，用户批准）  
 > **维护者**：用户 + system-architect + RAA  
-> **存放位置**：`workspace-audit/docs/agent-collaboration-protocol-v1.2.md`（RAA 工作区，**不越界**）  
+> **存放位置**：`workspace-audit/docs/agent-collaboration-protocol-v1.3.md`（RAA 工作区）  
 > **同步状态**：⏳ **pending**（Arc 待 sync 到 `invest-infra/docs/AGENT_COLLABORATION_PROTOCOL.md`）  
 > **同步建议**：Arc 收到协议后（**仅在协议 status: approved 后**），同步到 `invest-infra/docs/AGENT_COLLABORATION_PROTOCOL.md`（**由 Arc 写入，RAA 不写**）  
-> **v1.0 → v1.1 → v1.2 变更**：见附录 D / E
+> **v1.0 → v1.1 → v1.2 → v1.3 变更**：见附录 D / E / F
 
 ---
 
@@ -121,7 +121,7 @@ pending_sync_to: invest-infra/docs/AGENT_COLLABORATION_PROTOCOL.md  # Arc 责任
 | **`main`** | `main` | 主分支，**只接受 merge commit** | Arc（merge）+ 用户授权 |
 | **`fix/<finding_id>-<short-desc>`** | 例：`fix/P0-RAA-1-pg-password` | 修复分支，**默认每个 RAA finding 一个** | Arc（创建 + 推送）|
 | **`fix/<module>-<root-cause>`** | 例：`fix/reports-engine-env-validation` | **白名单分支**（v1.2 新增），合并同模块 + 同根因的 related findings | Arc（创建 + 推送）|
-| **`docs/<topic>`** | 例：`docs/agent-protocol-v1.2` | 文档分支 | system-architect |
+| **`docs/<topic>`** | 例：`docs/agent-protocol-v1.3` | 文档分支 | system-architect |
 | **`pre-filter-repo-backup`** | （保留）| 密码轮换前备份 | 保留不动 |
 
 **规则**：
@@ -296,11 +296,13 @@ Re-Audit: workspace-audit/memory/audits/raa-audit-invest-infra-20260611.md §3.1
               [用户 QQ 信号触发]
                        ↓
                  [RAA Re-Audit]
-                  ↙  ↓  ↘  ↘
-         verified   incomplete  wontfix
-         (Arc 关 finding)  (回 fix branch)   (Arc 关 finding)
-                            ↓ 持续修复
-                       fixed-pending-verify
+                  ↙   ↓   ↘   ↘   ↘
+         verified   verified-   incomplete   wontfix
+         (Arc 关)   with-        (回 fix       (Arc 关)
+                     caveats      branch)
+                     (v1.3 新)     持续修复
+                       ↓         fixed-pending-verify
+                  (Arc 关 + 写 caveat 说明)
                             ↓
                        (循环)
 
@@ -717,6 +719,68 @@ RAA Re-Audit 给出 `incomplete` 结论时：
 
 - **v1.0**（2026-06-13 14:58）：基于 raa-re-audit-20260613 暴露的 3 个 HIGH 异常起草
 - **v1.1**（2026-06-13 15:04）：基于 v1.0 self-review 暴露的 3 HIGH + 6 MEDIUM + 4 LOW 异常修订
+- **v1.2**（2026-06-13 15:24）：基于 v1.1 接受 Arc 3 个 flag 修订（合规性 + fix branch 白名单 + §3.6 基线）
+- **v1.3**（2026-06-13 16:10，draft）：基于 v1.2 接受 RAA-7 Re-Audit 暴露的 3 项 follow-up + handoff 治理 + RAA 报告精简原则
+
+---
+
+## 11. Handoff 文件治理原则（v1.3 新增）
+
+> **触发**：2026-06-13 15:44 用户问"交接目录过期的文档你是不是要及时归档" + RAA 6/13 15:44 治理 4 项动作。完整说明见 `workspace-audit/memory/handoff/README.md` §11。
+
+### 11.1 治理总则
+
+| 触发条件 | 动作 | 目标位置 | 边界 |
+|---|---|---|---|
+| 总 handoff 全部 finding 已关闭（VERIFIED + Wontfix + Withdrawn + verified-with-caveats）| **整体归档** | `invest-infra/raa-handoff-readonly/_archive/`（软链接）| RAA 写源文件，**投研系统可见** |
+| 总 handoff 部分 finding 已关闭 | **原地更新状态**（标已归档到 recheck）| 保留 active | RAA 工作区 |
+| 总 handoff 被后续 handoff 取代 | **前者归档 + 后者加 `supersedes` 字段** | 前者 `_archive/` + 后者原地 | RAA 工作区 |
+| 文档类 handoff 子目录（如 `raa-handoff-system-docs-*/`）| **完结后加 CHANGELOG §X 状态更新段** | 子目录内 CHANGELOG.md | RAA 工作区 |
+
+### 11.2 归档强约束
+
+- ✅ **整体归档触发条件严格**：仅当**所有** finding 状态 ∈ {VERIFIED, Wontfix, Withdrawn, verified-with-caveats} 才整体归档
+- ✅ **部分归档就地更新**：部分 finding 仍 Pending 时，handoff 保留 active + §0 表格标"已 Re-Audit verified N 项"
+- ✅ **取代关系显式记录**：新 handoff 引用旧 handoff 时，加 `supersedes: raa-handoff-<system>-<date>.md` 字段
+- ✅ **子目录 doc 类 handoff**：完结后**必须**更新 CHANGELOG，**不**归档子目录（保留作为审计交付物）
+- ❌ **禁止**强制归档仍含 Pending finding 的 handoff（防止追溯链断裂）
+- ❌ **禁止**改动已归档 handoff 内容（"归档 = 冻结"）
+- ❌ **禁止** RAA 归档"等用户调度"状态的 finding（RAA 只跟 Re-Audit 结果归档，不主动归档 in-flight 修复）
+
+### 11.3 投研系统可见路径
+
+- **handoff 软链接**：`invest-infra/raa-handoff-readonly/` → `workspace-audit/memory/handoff/`
+- **audit 软链接**：`invest-infra/raa-audit-readonly/` → `workspace-audit/memory/audits/`
+- 软链接由架构 Agent / 用户创建（RAA 边界外）
+- RAA 写**源文件**到 RAA 工作区，**投研系统用户通过软链接直接可见**
+- ❌ RAA **不**通过软链接往 `invest-infra/` 写（v1.2 §1.3 边界铁律）
+
+---
+
+## 12. RAA 报告精简原则（v1.3 新增）
+
+> **触发**：2026-06-13 15:58 用户反馈"不用每次都发边界遵守，不要重复发送噪音，我需要关键决策信息，明确的交接文档路径，不是你工作区的路径"。
+
+### 12.1 报告核心（4 项必含，去除噪音）
+
+| # | 必含 | 去除 |
+|---|---|---|
+| 1 | **关键决策信息**：状态判定（PASS/FAIL/Caveat）+ 可信度 | 重复的"边界遵守"段 |
+| 2 | **风险点**：N 项 follow-up（优先级排序）| 过程性说明（git log/diff 等）|
+| 3 | **下一步 action**：Agent 必做 N 件事 | 工具调用统计 |
+| 4 | **交接文档路径**：**投研系统可见路径**（`invest-infra/raa-{handoff,audit}-readonly/...`）| RAA 工作区路径（仅作"权威源"备注）|
+
+### 12.2 路径报告原则
+
+- **首选路径** = 投研系统可见路径（`invest-infra/...`）— 用户能直接看到
+- **次选路径** = RAA 工作区路径（`workspace-audit/...`）— 权威源备注
+- 软链接已存在，无需 RAA 复制
+
+### 12.3 精简版 vs 完整版
+
+- **精简版**（chat 回复）：4 项核心，≤300 字
+- **完整版**（Re-Audit 报告文件）：保留全部审计证据 + 5 字段齐全（§3.6 v1.2 Arc Flag #3 强制）
+- 两者**不同步**：精简版摘要 + 完整版路径
 
 ---
 
@@ -789,9 +853,64 @@ RAA Re-Audit 给出 `incomplete` 结论时：
 
 ---
 
-*协议修订：RAA · 2026-06-13 14:58 CST v1.0 → 15:04 CST v1.1 → 15:20 CST v1.2*  
-*权威源：workspace-audit/docs/agent-collaboration-protocol-v1.2.md*  
-*v1.0 已被 v1.1 取代（supersedes）；v1.1 已被 v1.2 取代（supersedes）*
+*协议修订：RAA · 2026-06-13 14:58 CST v1.0 → 15:04 CST v1.1 → 15:24 CST v1.2 (approved) → 16:10→16:20 CST v1.3 (approved)*  
+*权威源：workspace-audit/docs/agent-collaboration-protocol-v1.3.md*  
+*v1.0 已被 v1.1 取代（supersedes）；v1.1 已被 v1.2 取代（supersedes）；v1.2 已被 v1.3 取代（supersedes）*
+
+---
+
+## 附录 F：v1.2 → v1.3 变更摘要（6/13 16:10 RAA-7 Re-Audit 触发）
+
+> 本附录列出 v1.3 相对 v1.2 的**所有**变更。
+
+### 触发源
+
+- **RAA-7 Re-Audit 报告**（2026-06-13 15:55）：`workspace-audit/memory/audits/raa-re-audit-protocol-v1.2-sync-20260613.md`
+- **2026-06-13 15:44 handoff 治理**：4 项治理动作 + 发现 RAA 工作区无总 handoff 治理原则
+- **2026-06-13 15:58 用户反馈**：RAA 报告去噪音 + 给关键决策 + 用投研系统可见路径
+
+### 3 项新条款
+
+#### 1. §11 Handoff 文件治理原则（v1.3 新增）
+
+**目的**：填补 v1.2 缺失的"总 handoff 文件本身如何治理"规则。
+
+**关键内容**：
+- 4 条治理总则（全部/部分/取代/子目录 doc 类）
+- 7 条归档强约束（不允许/禁止场景）
+- 投研系统可见路径（软链接引用）
+
+**根因**：6/13 15:44 RAA 治理 4 项动作时发现 v1.2 README §5 只定义"关闭项归档到 recheck 报告"，**没定义总 handoff 文件本身治理**。
+
+#### 2. §12 RAA 报告精简原则（v1.3 新增）
+
+**目的**：去除 v1.2 时代 RAA 报告"边界遵守"等噪音段。
+
+**关键内容**：
+- 4 项必含（决策 / 风险 / action / 路径）
+- 3 项去除（边界 / 过程 / 统计）
+- 路径报告原则（投研系统首选）
+- 精简版 vs 完整版分工
+
+**根因**：6/13 15:58 用户明确反馈"不用每次都发边界遵守"。
+
+#### 3. §3.3 状态枚举加 `verified-with-caveats`（v1.3 扩展）
+
+**目的**：v1.2 状态枚举 {verified-fixed, incomplete, reverted, wontfix} 缺"5/6 PASS + 1/6 scope 外 FAIL"中间态。
+
+**新状态语义**：
+- scope 内 Re-Audit 5/6 PASS
+- scope 外 caveat 文档化
+- 介于 verified-fixed 和 incomplete 之间
+- Arc 写 fix-status 字段时建议使用
+
+**根因**：6/13 15:55 RAA-7 Re-Audit 暴露 v1.2 状态枚举缺中间态。
+
+### v1.3 未解决项（v1.4 候选）
+
+- 工作区 ~50 项 untracked 累积（v1.2 §4.2 + §6.4 违反，**v1.3 协议层面没新增**强制条款，依赖 §6.4 现有规范）
+- RAA-5 INCOMPLETE 根因（**不属协议范围**，属 fix-status 治理）
+- P0-RAA-2/P0-RAA-3 commit hash 错引（**不属协议范围**，属 fix-status 字段规范）
 
 ---
 
