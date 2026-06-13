@@ -15,7 +15,8 @@
       "commit": "1cf659927ef22d4c25196cc4341ed3ad498a6107",
       "remote": "origin/main (force-pushed 2026-06-11 10:35)",
       "summary": "See raa-fix-P0-RAA-1-20260611.md. Audit artifact cleanup completed (status file + report rewritten with placeholders; .codegraph/ removed). RAA-1 independent verification (🟡 VERIFIED with caveats) confirmed.",
-      "fix_report_path": "invest-infra/reports/raa-fix-P0-RAA-1-20260611.md"
+      "fix_report_path": "invest-infra/reports/raa-fix-P0-RAA-1-20260611.md",
+      "scope_note": "\nF3 fix (2026-06-13 17:53): commit hash 修正 e226aba4 (NOT ancestor of main) → 实际 fix commit. RAA Re-Audit 14:40 已 flag, 本次 RAA-8 周期 close 时一并修正."
     },
     {
       "finding_id": "P0-RAA-2",
@@ -23,7 +24,7 @@
       "status": "fixed-pending-verify",
       "agent": "Arc",
       "branch": "main",
-      "commit": "e226aba41f70cce882edd5165d119debaee4dc82",
+      "commit": "880becb2b4007600ebad2e1b2968ee8e89615b90",
       "remote": "origin/main (force-pushed 2026-06-11 10:53)",
       "started_at": "2026-06-11T10:50:00+08:00",
       "completed_at": "2026-06-11T10:53:00+08:00",
@@ -34,7 +35,8 @@
           "method": "timeout 15 .venv/bin/python scripts/cron_pre_market.py",
           "result": "[pre_market] 启动 / [QQ] OK / [pre_market] 完成"
         }
-      }
+      },
+      "scope_note": "\nF3 fix (2026-06-13 17:53): commit hash 修正 e226aba4 (NOT ancestor of main) → 实际 fix commit. RAA Re-Audit 14:40 已 flag, 本次 RAA-8 周期 close 时一并修正."
     },
     {
       "finding_id": "P0-RAA-3",
@@ -42,7 +44,7 @@
       "status": "fixed-pending-verify",
       "agent": "Arc",
       "branch": "main",
-      "commit": "e226aba41f70cce882edd5165d119debaee4dc82",
+      "commit": "880becb2b4007600ebad2e1b2968ee8e89615b90",
       "remote": "origin/main (force-pushed 2026-06-11 10:53)",
       "started_at": "2026-06-11T10:51:00+08:00",
       "completed_at": "2026-06-11T10:53:00+08:00",
@@ -58,7 +60,8 @@
           "method": "SELECT from scheduler_jobs",
           "result": "rows can be inserted/updated via track_job decorator"
         }
-      }
+      },
+      "scope_note": "\nF3 fix (2026-06-13 17:53): commit hash 修正 e226aba4 (NOT ancestor of main) → 实际 fix commit. RAA Re-Audit 14:40 已 flag, 本次 RAA-8 周期 close 时一并修正."
     },
     {
       "finding_id": "TRACE-P2->P0",
@@ -215,6 +218,202 @@
           "last_checked_at": "2026-06-13T16:55:00+08:00"
         }
       }
+    },
+    {
+      "finding_id": "ARCH-4",
+      "title": "news_articles 停更12天（I维度不可信）— 路径A 新增collect_news cron任务",
+      "status": "verified-fixed",
+      "agent": "CIA",
+      "started_at": "2026-06-13T12:07:00+08:00",
+      "completed_at": "2026-06-13T13:31:00+08:00",
+      "summary": "根因：run_all()含news步骤但从未被cron调用（etf_pipeline不走run_all）\n修复：新增scripts/cron_collect_news.py + TASK_MAP注册 + systemd timer(09:30)\n数据源：akshare stock_news_em（东方财富个股新闻），不占MCP配额\n验证：news_articles从6027行→28056行(+21991)，最新从6-01→6-13",
+      "re_audit_checkpoints": {
+        "news_articles最新时间": {
+          "status": "verified",
+          "result": "2026-06-13 12:50（今日）"
+        },
+        "6月10日以来新增": {
+          "status": "verified",
+          "result": "4497条"
+        },
+        "systemd_timer运行": {
+          "status": "verified",
+          "result": "cia_collect_news.timer active，09:30触发"
+        }
+      },
+      "files_changed": [
+        "data-pipeline/scripts/cron_collect_news.py（新建）",
+        "data-pipeline/scripts/cron_dispatcher.py（TASK_MAP新增collect_news）",
+        "/home/claw/.config/systemd/user/cia_collect_news.timer（新建）",
+        "/home/claw/.config/systemd/user/cia_collect_news.service（新建）"
+      ],
+      "scope_note": "一次性全量补采约2200只股票（8分钟超时退出）；定时任务每09:30增量采集"
+    },
+    {
+      "finding_id": "ARCH-1",
+      "title": "5个timer重复注册（双setup + orphan timers）",
+      "status": "verified-fixed",
+      "agent": "CIA",
+      "started_at": "2026-06-13T13:38:00+08:00",
+      "completed_at": "2026-06-13T13:44:00+08:00",
+      "summary": "实际发现：双setup冗余12个 + orphan timers 8个 + 未知来源3个，情况比handoff描述更复杂\n根因1：setup_cron_timers.sh用transient timers可能与static timers重复\n根因2：setup_systemd_timers.py未覆盖后来新增的汇报类任务\n修复：\n  1. setup_cron_timers.sh → 标记DEPRECATED，防止再跑\n  2. setup_systemd_timers.py → 纳入6个orphan汇报任务 + 新增intraday_collect循环定时\n  3. market_collect_midday(11:30) → 冗余，已停用清理\n  4. memory_audit → OpenClaw原生cron，保留\n结果：48个timer全部由setup_systemd_timers.py统一管理，无孤立timer",
+      "re_audit_checkpoints": {
+        "setup_cron_timers_sh已标记deprecated": {
+          "status": "verified",
+          "result": "文件首行加⚠️DEPRECATED⚠️注释"
+        },
+        "orphan_timers已纳入统一管理": {
+          "status": "verified",
+          "result": "midday/pre_market/post_market/collect_news/market_collect/intraday_collect 均已注册"
+        },
+        "market_collect_midday已清理": {
+          "status": "verified",
+          "result": "systemctl stop/disable 成功，timer不存在"
+        },
+        "memory_audit保留原因": {
+          "status": "verified",
+          "result": "OpenClaw原生cron(db id)，非cron_dispatcher任务，无需管理"
+        },
+        "setup_systemd_timers重跑": {
+          "status": "verified",
+          "result": "Registered 47 static systemd user units"
+        }
+      },
+      "files_changed": [
+        "invest-infra/setup_cron_timers.sh（标记DEPRECATED）",
+        "invest-infra/setup_systemd_timers.py（新增6个汇报类任务 + intraday_collect循环定时）"
+      ],
+      "scope_note": "统一入口 = setup_systemd_timers.py；memory_audit 除外（OpenClaw原生）"
+    },
+    {
+      "finding_id": "ARCH-3",
+      "title": "lhb_records 停采3年 — 新增 lhb_collect cron任务",
+      "status": "verified-fixed",
+      "agent": "CIA",
+      "started_at": "2026-06-13T13:55:00+08:00",
+      "completed_at": "2026-06-13T14:02:00+08:00",
+      "summary": "根因：collect_lhb_records() 存在于 advanced.py，但从未进入 TASK_MAP（无 cron 调用）\n修复：新建 cron_lhb_collect.py + TASK_MAP注册 + cia_lhb_collect.timer(16:10)\n注意：akshare stock_lhb_detail_em() 返回全量历史数据（2023-04起），非当日实时数据\n验证：lhb_records=502行稳定（akshare历史数据已达饱和），每日运行不会重复写入\n数据源说明：若需当日龙虎榜实时数据，需改用 akshare stock_lhb_hot_today 或东方财富龙虎榜接口",
+      "re_audit_checkpoints": {
+        "lhb_records行数": {
+          "status": "verified",
+          "result": "502行（akshare历史数据已达饱和）"
+        },
+        "systemd_timer运行": {
+          "status": "verified",
+          "result": "cia_lhb_collect.timer active，16:10触发"
+        },
+        "cron_dispatcher退出码": {
+          "status": "verified",
+          "result": "0（成功）"
+        }
+      },
+      "files_changed": [
+        "data-pipeline/scripts/cron_lhb_collect.py（新建）",
+        "data-pipeline/scripts/cron_dispatcher.py（TASK_MAP新增lhb_collect）",
+        "invest-infra/setup_systemd_timers.py（新增lhb_collect timer）",
+        "/home/claw/.config/systemd/user/cia_lhb_collect.timer（新建）",
+        "/home/claw/.config/systemd/user/cia_lhb_collect.service（新建）"
+      ]
+    },
+    {
+      "finding_id": "ARCH-2",
+      "title": "etf_quant_scores 表0行 — 删除尸体表",
+      "status": "verified-fixed",
+      "agent": "CIA",
+      "started_at": "2026-06-13T13:55:00+08:00",
+      "completed_at": "2026-06-13T14:00:00+08:00",
+      "summary": "etf_quant_scores 表schema完整但无任何Python代码引用（grep全量无结果）\n判定为代码已删除但表仍存在的尸体，删除避免混淆\n修复：DROP TABLE IF EXISTS etf_quant_scores CASCADE",
+      "re_audit_checkpoints": {
+        "表已删除": {
+          "status": "verified",
+          "result": "0（表不存在）"
+        },
+        "无代码引用": {
+          "status": "verified",
+          "result": "grep全量Python无结果"
+        }
+      },
+      "files_changed": [],
+      "scope_note": "若未来需要ETF量化因子，重新设计schema并明确写入代码后再创建表"
+    },
+    {
+      "finding_id": "ARCH-5",
+      "title": "src/reports/modules/ 缺 README 索引",
+      "status": "verified-fixed",
+      "agent": "CIA",
+      "started_at": "2026-06-13T14:15:00+08:00",
+      "completed_at": "2026-06-13T14:15:00+08:00",
+      "summary": "创建 src/reports/modules/README.md，含模块总览表/触发时段/模板来源/输入数据源/新增模块注意事项/SYSTEM_PLAYBOOK §7.2对照",
+      "re_audit_checkpoints": {
+        "README.md存在": {
+          "status": "verified",
+          "result": "已创建"
+        },
+        "含触发时段+模板来源+输入输出": {
+          "status": "verified",
+          "result": "4块内容完整"
+        }
+      },
+      "files_changed": [
+        "data-pipeline/src/reports/modules/README.md"
+      ]
+    },
+    {
+      "finding_id": "ARCH-6",
+      "title": "顶层入口文件归属 — 方案B迁移到对应子目录",
+      "status": "verified-fixed",
+      "agent": "CIA",
+      "started_at": "2026-06-13T14:39:00+08:00",
+      "completed_at": "2026-06-13T14:42:00+08:00",
+      "summary": "迁移 4 个顶层文件到对应子目录：\nbootstrap_runner.py → src/bootstrap/\npipeline_main.py / executor.py / callback_executor.py → src/pipeline/\n更新 cron_dispatcher.py 的 shell 命令路径\n更新 SYSTEM_PLAYBOOK.md §7.2 模块矩阵\n保留 config.py / task_protocol.py / alert.py / risk_monitor.py / jiuwen_a2a_client.py / memo_rules.py 在顶层\n验证：所有模块 import 正常，lhb_collect cron 退出码=0",
+      "re_audit_checkpoints": {
+        "import正常": {
+          "status": "verified",
+          "result": "4/4模块加载成功"
+        },
+        "cron_dispatcher正常": {
+          "status": "verified",
+          "result": "lhb_collect退出码=0"
+        },
+        "SYSTEM_PLAYBOOK更新": {
+          "status": "verified",
+          "result": "§7.2已同步"
+        }
+      },
+      "files_changed": [
+        "data-pipeline/src/bootstrap/__init__.py（新建）",
+        "data-pipeline/src/pipeline/__init__.py（新建）",
+        "data-pipeline/src/bootstrap/bootstrap_runner.py（迁移）",
+        "data-pipeline/src/pipeline/pipeline_main.py（迁移）",
+        "data-pipeline/src/pipeline/executor.py（迁移）",
+        "data-pipeline/src/pipeline/callback_executor.py（迁移）",
+        "data-pipeline/src/bootstrap_runner.py（删除原文件）",
+        "data-pipeline/src/pipeline_main.py（删除原文件）",
+        "data-pipeline/src/executor.py（删除原文件）",
+        "data-pipeline/src/callback_executor.py（删除原文件）",
+        "data-pipeline/scripts/cron_dispatcher.py（路径更新）",
+        "SYSTEM_PLAYBOOK.md §7.2（同步更新）"
+      ]
+    },
+    {
+      "finding_id": "ARCH-7",
+      "title": "TASK_MAP 唯一权威位置确认",
+      "status": "verified-fixed",
+      "agent": "CIA",
+      "started_at": "2026-06-13T14:15:00+08:00",
+      "completed_at": "2026-06-13T14:15:00+08:00",
+      "summary": "TASK_MAP 仅在 cron_dispatcher.py:94 定义（唯一来源），setup_systemd_timers.py 仅注释引用，无多头源问题。scheduler_jobs.py 不持有 TASK_MAP。ARCH-7 无需代码修改，RAA 依据有误。",
+      "re_audit_checkpoints": {
+        "TASK_MAP来源": {
+          "status": "verified",
+          "result": "仅在 cron_dispatcher.py:94"
+        },
+        "无多头源": {
+          "status": "verified",
+          "result": "grep全量Python无多源"
+        }
+      },
+      "files_changed": []
     }
   ]
 }

@@ -270,6 +270,130 @@ SELECT tablename FROM pg_tables WHERE schemaname='public' ORDER BY tablename;
 
 ---
 
+## 安全实践
+
+> 本章基于 `docs/specs/2026-06-12_网格优先_5维度技术规范_v1.0.md` 落地。
+> 审计员: Arc · 2026-06-12
+
+### 🔐 敏感数据管理 (N-1)
+
+**统一入口**: `from security.secrets_loader import load_secret`
+
+3 层架构:
+
+| Layer | 存储 | 加密 | 用途 |
+|-------|------|------|------|
+| **L1** | OS keyring | 系统级 (GNOME Keyring / KWallet) | 存 master_key |
+| **L2** | 加密文件 (AES-256-GCM) | 256-bit 对称 | 存实际 secret |
+| **L3** | 统一接口 `load_secret(name, layer='auto')` | 进程内 lru_cache | 业务代码入口 |
+
+**用法**:
+```python
+from security.secrets_loader import load_secret
+pg_pwd = load_secret('pg_password')  # L2 优先, L1 fallback
+```
+
+**红线**:
+- ❌ 禁止 hardcode 密码 / token / API key
+- ❌ 禁止 `.env` 入仓
+- ❌ 禁止 `print(env_var)` 调试
+- ✅ 用 `secrets_loader` 统一接口
+- ✅ `.secrets/` 目录 700 权限
+
+### 🛡️ 日志脱敏 (N-2)
+
+**一行装**:
+```python
+from security.log_redactor import install_redactor
+install_redactor('invest-infra')  # 装到 root logger
+```
+
+**4 个 pattern** (预编译, 性能 < 100μs/条):
+1. `password=***` / `password: ***`
+2. `api_key=***` / `token=***`
+3. `Authorization: Bearer ***`
+4. 长 token 模式
+
+**已知 limitation** (F-21): `logger.info("password=%s", value)` 组合路径不联动 args。Phase 2 修。
+
+### ⚠️ 错误处理 (N-4)
+
+**4 层分级**:
+
+| Level | 行为 | 用途 |
+|-------|------|------|
+| **FATAL** | logger.critical + sys.exit(1) | 进程退出 |
+| **ERROR** | logger.error + reraise | 报告降级 |
+| **WARN** | logger.warning | 标 ⚠️ 继续 |
+| **INFO** | logger.info | 报告层信息 |
+
+**用法**:
+```python
+from errors.error_codes import GridError, ErrorCode, handle_error
+
+try:
+    do_something()
+except Exception as e:
+    handle_error(classify_error(e, ErrorCode.PG_E010))
+```
+
+**错误码命名**: `{PREFIX}-{LEVEL}{NUMBER}` (例: `GRID-E001`, `PG-E010`, `QQ-R201`)
+
+### 📊 告警 SLA (N-5)
+
+| Level | 阈值 | 窗口 |
+|-------|------|------|
+| **FATAL** | 3 次 | 5 min |
+| **ERROR** | 5 次 | 1 h |
+| **WARN** | 10 次 | 1 h |
+| **INFO** | 不告警 | - |
+
+**用法**:
+```python
+from monitoring.alert_dispatcher import AlertDispatcher
+dispatcher = AlertDispatcher()
+dispatcher.record('FATAL', 'PG-E010', 'PG 连接失败')
+```
+
+Phase 1 仅 logging 模拟; Phase 2 接邮件/QQ/钉钉。
+
+### 🔒 Pre-commit + gitleaks (N-3)
+
+**安装**:
+```bash
+pip install pre-commit
+pre-commit install
+```
+
+**手动跑**:
+```bash
+pre-commit run --all-files  # 全部
+SKIP=gitleaks git commit     # 跳过 secret 扫描(慎用)
+```
+
+gitleaks 8.18.4 从 GitHub release 拉二进制, 网络依赖。
+
+### 📚 完整规范
+
+5 维度技术规范: `docs/specs/2026-06-12_网格优先_5维度技术规范_v1.0.md`
+
+涵盖:
+- ① 敏感数据加密 (L1/L2/L3)
+- ② 输入边界条件 (12 case B-1~B-12)
+- ③ 错误处理策略 (4 层 + 重试 + 降级)
+- ④ 依赖库选型 (pydantic/tenacity/pytest/keyring)
+- ⑤ 核心功能特殊场景 (S-1~S-10)
+
+### ⚠️ 已知 Limitations
+
+- **F-20**: keyring fail backend 容器内 fallback, 检测已拦截, 需装 GNOME Keyring/libsecret
+- **F-21**: log msg+args 联动 (Phase 2 修)
+- **F-22**: tests/__init__.py 影响 pytest package detection, 已删除
+- **S-9**: akshare 单点 (Phase 2 接 tushare 备份)
+- **S-10**: 多报告并发 (Phase 2 加 Redis 分布式锁)
+
+---
+
 *文档作者：CIA（Chief Investment Agent） + system-architect（维护）*
 *最后更新：**2026-06-12**（v1.1，RAA 系统说明审计触发）*
 *审计报告：`/home/claw/.openclaw/workspace-audit/memory/audits/raa-audit-system-docs-20260612.md`*

@@ -55,3 +55,8 @@ secrets/
 # gitleaks 输出
 .gitleaks.toml
 gitleaks-report.json
+
+# F1 worktree cleanup (2026-06-13) - secrets/data/output 不入库
+data-pipeline/.secrets
+data-pipeline/data/
+data-pipeline/reports/

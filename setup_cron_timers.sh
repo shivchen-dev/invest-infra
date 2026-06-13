@@ -1,6 +1,10 @@
 #!/bin/bash
-# setup_cron_timers.sh — 注册所有 CIA cron_dispatcher 定时任务为 systemd user timers
+# setup_cron_timers.sh — ⚠️ DEPRECATED ⚠️
+# 请改用 setup_systemd_timers.py（统一入口）
+# 此脚本使用 transient systemd-run timers，重启后丢失，且可能与 static timers 重复触发。
 # 用法: bash setup_cron_timers.sh
+
+set -e
 
 set -e
 SCRIPT="/home/claw/invest-infra/data-pipeline/.venv/bin/python /home/claw/invest-infra/data-pipeline/scripts/cron_dispatcher.py"
@@ -44,7 +48,7 @@ echo "=== 注册 CIA cron_dispatcher timers ==="
 # ── 早盘 ──────────────────────────────────────────────────
 reg_timer "morning_briefing" "*-*-* 05:50:00"
 reg_timer "woa_audit"        "*-*-* 07:30:00"
-reg_timer "briefing_dispatch""*-*-* 07:40:00"
+# briefing_dispatch removed 2026-06-12: 已合并到 morning_briefing(06:30 派发)
 reg_timer "etf_spot_morning" "*-*-* 09:25:00"
 reg_timer "etf_spot_intraday" "*-*-* 09:35:00"
 

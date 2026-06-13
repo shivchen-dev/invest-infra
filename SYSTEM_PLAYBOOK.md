@@ -1,13 +1,14 @@
 # CIA 定时任务系统 — 故障处理手册 (SYSTEM PLAYBOOK)
 
-> **版本**: v1.1 | **更新日期**: 2026-06-12  
+> **版本**: v1.2 | **更新日期**: 2026-06-12  
 > **维护者**: system-architect（文档） + tech-expert（实现） + Arc（修复执行） + RAA（独立审计）  
-> **审计触发**: 2026-06-12 08:37 RAA 系统说明审计  
+> **变更触发**: MCP 升级 + 投研系统数据源架构确认
 > **适用范围**: 所有定时任务运维人员
 
-> **v1.1 变更**：详见 `../CHANGELOG.md`（RAA 审计 + 修复触发）
-> - 头元信息刷新（版本/日期/维护者）
-> - §5 系统全景图：数据库表 10 → 43；任务数 22 → 47；删除已合并的 `briefing_dispatch`
+> **v1.2 变更**（详见 `../CHANGELOG.md`）：
+> - MCP 升级：50次/天 → **2000次/天，30次/分**（2026-06-12 确认）
+> - 数据源架构：MCP 完全接管采集入口写入 PG，报表生成全部走 PG
+> - ⚠️ **待实现**：策略驱动+WOA研判模式（见 §6.3 规划）
 > - §6 Agent 拓扑：补 RAA + Arc
 > - §7 模块矩阵：修正 L 维度路径（`etf_liquidity.py` → `etf.py`）、报告引擎路径（`scripts/` → `src/reports/`）
 > - §8.2 技术债务：补 RAA 6 个 fix
@@ -380,6 +381,8 @@ systemctl --user start cia_*.timer
 ┌──────────────────────────▼──────────────────────────────────┐
 │                    数据源层 (Data Sources)                   │
 │  MCP Tools (wudao_aStock/cls_news)                          │
+│    → 升级（2026-06-12）：2000次/天，30次/分                │
+│    → MCP 作为采集入口写入 PG，报表生成全部走 PG             │
 │  akshare | RSS Feeds | Local Historical DB                  │
 └─────────────────────────────────────────────────────────────┘
 ```
@@ -407,9 +410,10 @@ systemctl --user start cia_*.timer
 ```
 
 **数据流说明**:
-1. **Bronze → Silver**: MCP/akshare 采集原始数据 → PG 清洗入库
+1. **Bronze → Silver**: MCP 采集原始数据 → PG 清洗入库（**2026-06-12：MCP 2000次/天，写入 PG**）
 2. **Silver → Gold**: 因子计算 (F/I/Q/L/R) → ETF FQIR 综合评分
-3. **Gold → Consumption**: WOA 多 Agent 协作分析 → CIA 生成洞察 → QQ 推送
+3. **Gold → Consumption**（**当前**）: WOA 多 Agent 协作分析 → CIA 综合 → QQ 推送（混合模式）
+   - ⚠️ **待实现**：CIA 直接基于 PG+策略知识库生成报告 → WOA 研判裁判模式
 4. **Gold → RAA → Arc**（v1.1 新增）: 信号异常/计算偏差 → RAA 审计 → Arc 修复 → Re-Audit
 
 ### 5.4 核心数据库表 (PostgreSQL investdb) — v1.1 实际盘点
@@ -539,10 +543,13 @@ systemctl --user start cia_*.timer
 |------|------|
 | **角色** | 多 Agent 协作编排、任务分发与聚合 |
 | **核心专长** | A2A 通信、Redis Stream 消息队列、并行子任务调度 |
-| **工作模式** | 5 个并行子任务 → 结果聚合 → 通知 CIA |
-| **数据流** | task_queue (Redis) → WOA 分发 → cia_task_queue → CIA |
+| **当前工作模式** | 5 个并行子任务 → 结果聚合 → 通知 CIA（混合模式） |
+| **⚠️ 待升级** | 接收 CIA 生成的报告草稿 → 多 Agent 研判 → 评分/风险/建议 → 最终报告（裁判模式） |
+| **数据流（当前）** | task_queue (Redis) → WOA 分发 → cia_task_queue → CIA |
+| **数据流（目标）** | CIA 生成报告 → WOA 研判团队 → 评分输出 → QQ 推送 |
 | **关键文件** | `data-pipeline/scripts/cron_morning_briefing.py` |
 | **v1.0 → v1.1 修正** | 路径补全为 `data-pipeline/scripts/cron_morning_briefing.py`（v1.0 漏 `data-pipeline/` 前缀） |
+| **待实现** | 汇报系统从「混合模式」切换为「策略驱动 + WOA 研判」模式（目标，非现状） |
 
 #### 🏗️ system-architect — 系统架构分析师
 
@@ -595,15 +602,16 @@ systemctl --user start cia_*.timer
 | **核心协议** | 边界铁律 §6.3 / 模糊指令澄清 §6.5 / 同步协议 §6.2 / 调度协议 §6.4 |
 | **当前位置** | `AGENTS.md §7`（投研系统锚点）|
 
-### 6.3 Agent 协作模式（v1.1 补全）
+### 6.3 Agent 协作模式（v1.2 现状 + 待实现规划）
 
-| 场景 | 参与 Agent | 通信方式 | 输出 |
-|------|-----------|---------|------|
-| **Morning Briefing** | WOA → CIA | Redis Stream + A2A | QQ 盘前洞察 |
-| **架构评审** | system-architect + data-architect + tech-expert → CIA | send_message (多播/广播) | 架构评审报告 |
-| **技术实施** | tech-expert → WOA/CIA | send_message + 代码提交 | 功能模块 |
-| **RAA 审计 → 修复移交**（v1.1 新增）| RAA → user → Arc | `memory/handoff/raa-handoff-*.md` + `.raa-fix-status.json` | 修复完成 + Re-Audit 通过 |
-| **修复 Re-Audit**（v1.1 新增）| user → RAA | `memory/audits/raa-reaudit-*.md` | 验证通过 / 部分通过 / 未通过 |
+| 场景 | 参与 Agent | 通信方式 | 输出 | 状态 |
+|------|-----------|---------|------|------|
+| **Morning Briefing** | WOA → CIA | Redis Stream + A2A | QQ 盘前洞察 | ✅ 当前运行 |
+| **策略驱动+WOA研判** | CIA → WOA 研判团队 | A2A | WOA 评分/风险/建议 → 最终报告 | ⚠️ **待实现** |
+| **架构评审** | system-architect + data-architect + tech-expert → CIA | send_message (多播/广播) | 架构评审报告 | ✅ |
+| **技术实施** | tech-expert → WOA/CIA | send_message + 代码提交 | 功能模块 | ✅ |
+| **RAA 审计 → 修复移交**（v1.1 新增）| RAA → user → Arc | `memory/handoff/raa-handoff-*.md` + `.raa-fix-status.json` | 修复完成 + Re-Audit 通过 | ✅ |
+| **修复 Re-Audit**（v1.1 新增）| user → RAA | `memory/audits/raa-reaudit-*.md` | 验证通过 / 部分通过 / 未通过 | ✅ |
 
 ---
 
@@ -631,7 +639,8 @@ systemctl --user start cia_*.timer
 | ~~因子计算 - L~~ | ~~`src/factors/etf_liquidity.py`~~ | **v1.0 错误路径，文件不存在** | — |
 | **因子计算 - R** | `data-pipeline/src/factors/etf_risk.py` | 风险因子 (R 维度) | `etf_quotes` (HV/回撤) |
 | **数据采集** | `data-pipeline/src/collector/` | akshare/MCP/cifang/companies/etf/financial/news/quotes/research_report/rsscast/retry/etf_health_monitor 数据抓取 | akshare, MCP client, cifang API |
-| **数据管道** | `data-pipeline/src/pipeline/` | 任务调度追踪 + 错误隔离（`scheduler_jobs.py` + `error_isolation.py`）| PostgreSQL `psycopg2` |
+| **数据管道** | `data-pipeline/src/pipeline/` | 任务调度追踪 + 错误隔离（`scheduler_jobs.py` + `error_isolation.py`）+ 管线编排（`pipeline_main.py`）+ Redis Stream 执行器（`executor.py` + `callback_executor.py`）| PostgreSQL `psycopg2` |
+| **启动引导** | `data-pipeline/src/bootstrap/` | 批量任务入口（`bootstrap_runner.py`），接收 `cmd` 参数分发到各子任务 | `pipeline_main.py` |
 | **回测引擎** | `data-pipeline/src/backtest/` | 策略历史回测（engine/analyzers/feeds/strategies/report）| `etf_factor_values` |
 | **数据加载** | `data-pipeline/src/loader/` | 批量数据导入导出 | `pg.py` / `minio.py` |
 | **WOA 任务** | `data-pipeline/scripts/woa_tasks/` ← **v1.1 路径补全** | Morning Briefing 子任务定义 | Redis Stream |
@@ -725,7 +734,7 @@ systemctl --user start cia_*.timer
 | **背景** | 需要量化评估 ETF 投资价值 |
 | **决策** | F(行业情绪) + I(信息因子) + Q(财务质量) + L(流动性) + R(风险) |
 | **理由** | 1. 覆盖投资核心维度；2. 权重可配置 (F:20%, I:5%, Q:15%, L:15%, R:15%)；3. 支持扩展 |
-| **后果** | ✅ 评分体系完整；⚠️ I 维度依赖 MCP 每日 50 次限额，需优化 |
+| **后果** | ✅ 评分体系完整；⚠️ I 维度依赖 MCP 每日 50 次限额，需优化（**2026-06-12 已升级：2000次/天，30次/分，MCP 作为采集入口写入 PG**） |
 
 #### ADR-004: 新汇报模块采用统一报告引擎 (v2.0)
 
