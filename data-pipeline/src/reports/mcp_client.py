@@ -14,10 +14,20 @@ from functools import wraps
 logger = logging.getLogger(__name__)
 
 import os
+from typing import Optional
 
 # MCP 服务配置
 MCP_BASE_URL = os.getenv("MCP_BASE_URL", "https://stock.quicktiny.cn/api/mcp-stream")
-MCP_TOKEN = os.getenv("MCP_TOKEN", "")  # 必须通过环境变量设置，代码中不存明文
+
+# Lazy MCP token（首次调用时求值，避免 cron 环境变量加载晚于 import）
+_mcp_token: Optional[str] = None
+
+
+def get_mcp_token() -> str:
+    global _mcp_token
+    if _mcp_token is None:
+        _mcp_token = os.environ.get("MCP_TOKEN", "")
+    return _mcp_token
 
 # MCP 工具映射 (short_name -> mcp_tool_name)
 MCP_TOOLS = {
@@ -133,11 +143,12 @@ class MCPClient:
             }
         }
 
-        if not MCP_TOKEN:
+        _token = get_mcp_token()
+        if not _token:
             raise RuntimeError("MCP_TOKEN environment variable is not set. Cannot call MCP API.")
         headers = {
             "Content-Type": "application/json",
-            "Authorization": f"Bearer {MCP_TOKEN}"
+            "Authorization": f"Bearer {_token}"
         }
 
         req = urllib.request.Request(

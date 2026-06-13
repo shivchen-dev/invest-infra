@@ -121,7 +121,20 @@ class AlertConfig:
     webhook_url: str = env("ALERT_WEBHOOK_URL", "")
 
 
-cifang: CifangConfig = CifangConfig()
+_cifang_instance: Optional[CifangConfig] = None
+
+
+def get_cifang() -> CifangConfig:
+    """懒加载次方量化配置（首次访问时初始化，避免模块级 ValueError 阻断 report_engine）。"""
+    global _cifang_instance
+    if _cifang_instance is None:
+        _cifang_instance = CifangConfig()
+    return _cifang_instance
+
+
+def cifang_getter() -> CifangConfig:
+    """兼容性别名（已有调用方使用 cifang.xxx），指向 get_cifang()。"""
+    return get_cifang()
 rsscast: RssCastConfig = RssCastConfig()
 arbitrage: ArbitrageConfig = ArbitrageConfig()
 

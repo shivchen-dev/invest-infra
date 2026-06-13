@@ -17,7 +17,7 @@ from typing import Optional
 import requests
 
 from src.collector.retry import with_retry
-from src.config import cifang
+from src.config import get_cifang
 from src.loader import pg
 
 logger = logging.getLogger(__name__)
@@ -28,9 +28,10 @@ TIMEOUT = 15
 
 def _get(path: str, params: Optional[dict] = None) -> dict:
     """统一 GET 请求封装"""
-    url = f"{cifang.base_url}{path}"
+    _cfg = get_cifang()
+    url = f"{_cfg.base_url}{path}"
     try:
-        resp = requests.get(url, params=params or {}, headers=cifang.headers, timeout=TIMEOUT)
+        resp = requests.get(url, params=params or {}, headers=_cfg.headers, timeout=TIMEOUT)
         resp.raise_for_status()
         d = resp.json()
         if d.get("code") != 0:
