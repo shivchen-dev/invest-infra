@@ -3,7 +3,8 @@
     "schema": "raa-fix-status v1",
     "purpose": "RAA Re-Audit trigger — fix Agent writes here when a finding is completed",
     "reader": "RAA only (read-only for other agents)",
-    "literal_handling": "All secret literals replaced with <..._PLACEHOLDER> tokens to prevent grep leaks in git history. See reports/raa-fix-P0-RAA-1-20260611.md and reports/raa-fix-P0-RAA-2-3-20260611.md for details."
+    "literal_handling": "All secret literals replaced with <..._PLACEHOLDER> tokens to prevent grep leaks in git history. See reports/raa-fix-P0-RAA-1-20260611.md and reports/raa-fix-P0-RAA-2-3-20260611.md for details.",
+    "last_updated": "2026-06-13T18:41:45+08:00"
   },
   "fixes": [
     {
@@ -438,6 +439,57 @@
         }
       },
       "files_changed": []
+    },
+    {
+      "finding_id": "RAA-9",
+      "title": "Sync AGENT_COLLABORATION_PROTOCOL v1.4 to invest-infra/docs/",
+      "status": "fixed-pending-verify",
+      "agent": "Arc",
+      "branch": "docs/agent-protocol-v1.4",
+      "commit": "8cab8c4",
+      "started_at": "2026-06-13T18:39:00+08:00",
+      "completed_at": "2026-06-13T18:39:00+08:00",
+      "summary": "Sync user-approved AGENT_COLLABORATION_PROTOCOL v1.4 (workspace-audit/docs/agent-collaboration-protocol-v1.4.md, 34.3KB, status: approved at 2026-06-13T18:27:25+08:00 by user) to invest-infra/docs/AGENT_COLLABORATION_PROTOCOL.md (OVERWRITE v1.3, 45.5KB → 34.3KB, 净减 139 行). v1.4 全文重写, 4 项关键变更: §3.1+§3.1.1 写权限 Arc→Arc+CIA (CIA 限定 status + impact_assessment); §11.4 handoff 目录权限详细 (9 条矩阵 + 灰色地带处理); §12.2 路径原则强化 (仅投研系统可见路径); v1.4 全文重写 (删除 26 处 RAA 工作区路径引用, 用户 18:21 约束). Handoff: workspace-audit/memory/handoff/raa-handoff-protocol-v1.3-sync-20260613.md (v1.4 沿用). Approval: workspace-audit/memory/audits/raa-audit-protocol-v1.4-approval-20260613.md. Pre-stash: ~15 untracked preserved in stash@{0} (RAA-8 cycle residue + 6/13 累积), not in RAA-9 scope (per v1.4 §2.5).",
+      "fix_report_path": null,
+      "files_changed": [
+        "invest-infra/docs/AGENT_COLLABORATION_PROTOCOL.md"
+      ],
+      "scope_note": "RAA-9 scope = 1 file copy (workspace-audit → invest-infra/docs/, OVERWRITE v1.3). .raa-fix-status.json edit is metadata write, not in files_changed. Pre-existing ~15 untracked preserved in stash@{0}, not part of RAA-9. RAA-8 (v1.3 sync) status preserved as 'verified-with-caveats'. v1.4 supersedes v1.3 in this file but v1.3 git history (e8c932d) remains reachable for RAA-8 reference.",
+      "reviewed_by": "user-approved v1.4 (QQ 18:27 CST, message_id per audit record)",
+      "replaces_protocol_version": "v1.3 (RAA-8 verified-with-caveats)",
+      "re_audit_checkpoints": {
+        "last_checked_at": "2026-06-13T18:41:45+08:00",
+        "file_content_identical_to_v1.4": {
+          "status": "verified (Arc side)",
+          "method": "md5sum workspace-audit/docs/agent-collaboration-protocol-v1.4.md invest-infra/docs/AGENT_COLLABORATION_PROTOCOL.md",
+          "result": "IDENTICAL (md5 3f33a5e4d73bdf6eefa597674e0e5eed)",
+          "last_checked_at": "2026-06-13T18:41:45+08:00"
+        },
+        "frontmatter_status_preserved": {
+          "status": "verified (Arc side)",
+          "method": "head -12 invest-infra/docs/AGENT_COLLABORATION_PROTOCOL.md",
+          "result": "frontmatter version: 1.4, status: approved, approved_at: 2026-06-13T18:27:25+08:00, supersedes: 1.3, trigger_source: 用户 18:17 (CIA 写权限扩展) + 用户 18:21 (协议视角约束)",
+          "last_checked_at": "2026-06-13T18:41:45+08:00"
+        },
+        "commit_hash_reachable": {
+          "status": "verified (Arc side)",
+          "method": "git rev-parse 8cab8c4^{commit}",
+          "result": "git rev-parse 8cab8c4^{.}commit = 8cab8c4 (reachable, not orphan)",
+          "last_checked_at": "2026-06-13T18:41:45+08:00"
+        },
+        "v1.3_history_preserved": {
+          "status": "verified (Arc side)",
+          "method": "git log --all --oneline | grep -E 'v1\\.3|RAA-8'",
+          "result": "v1.3 sync commit e8c932d still reachable (not orphan) for RAA-8 reference",
+          "last_checked_at": "2026-06-13T18:41:45+08:00"
+        },
+        "rra_reaudit_handoff_sent": {
+          "status": "pending-send",
+          "method": "Arc→RAA handoff (待 push 后通知用户启动 Re-Audit)",
+          "result": "待步骤 6 push + 步骤 7 通知用户后, 状态转为 ready-for-reaudit",
+          "last_checked_at": "2026-06-13T18:41:45+08:00"
+        }
+      }
     }
   ]
 }
