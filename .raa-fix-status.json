@@ -116,6 +116,44 @@
         "C4: ReportEngine.run() returns True for all 4 types (pre_market/midday/post_market/intraday_alert)",
         "C5: 7-day no ValueError in cron logs"
       ]
+    },
+    {
+      "finding_id": "RAA-7",
+      "title": "Sync AGENT_COLLABORATION_PROTOCOL v1.2 to invest-infra/docs/",
+      "status": "fixed-pending-verify",
+      "agent": "Arc",
+      "branch": "docs/agent-protocol-v1.2-sync",
+      "commit": "c68e24e82c7bc8db13ecfebba4f85c60442467ae",
+      "started_at": "2026-06-13T15:43:14+08:00",
+      "completed_at": "2026-06-13T15:43:14+08:00",
+      "summary": "Sync user-approved AGENT_COLLABORATION_PROTOCOL v1.2 (workspace-audit/docs/agent-collaboration-protocol-v1.2.md, 39KB, status: approved at 2026-06-13T15:24:00+08:00 by user) to invest-infra/docs/AGENT_COLLABORATION_PROTOCOL.md. v1.2 addresses 3 Arc self-review flags (compliance boundary, fix branch whitelist, §3.6 number baseline). Handoff: workspace-audit/memory/handoff/raa-handoff-protocol-v1.2-sync-20260613.md. Pre-stash note: working tree had 14M+4D+30?? dirty state from prior fixes; stashed as 'pre-RAA-7-sync-stash 2026-06-13T15:42:30+08:00' to comply with v1.2 §2.5.",
+      "fix_report_path": null,
+      "files_changed": [
+        "invest-infra/docs/AGENT_COLLABORATION_PROTOCOL.md"
+      ],
+      "scope_note": "RAA-7 scope = 1 file copy (workspace-audit → invest-infra/docs/). .raa-fix-status.json edit is metadata write, not in files_changed. Pre-existing 14M+4D+30?? dirty state preserved in stash (not part of RAA-7). Branch 'docs/agent-protocol-v1.2-sync' is user-authorized doc-branch exception (RAA handoff §步骤 2); user approval = system-architect equivalent review per v1.2 §1.2.",
+      "reviewed_by": "user-approved v1.2 (QQ 15:24 CST, message_id per handoff)",
+      "re_audit_checkpoints": {
+        "last_checked_at": "2026-06-13T15:43:14+08:00",
+        "file_content_identical_to_v1.2": {
+          "status": "verified (Arc side)",
+          "method": "diff workspace-audit/docs/agent-collaboration-protocol-v1.2.md invest-infra/docs/AGENT_COLLABORATION_PROTOCOL.md",
+          "result": "IDENTICAL (0 byte diff)",
+          "last_checked_at": "2026-06-13T15:43:14+08:00"
+        },
+        "frontmatter_status_preserved": {
+          "status": "verified (Arc side)",
+          "method": "head -3 invest-infra/docs/AGENT_COLLABORATION_PROTOCOL.md",
+          "result": "frontmatter version: 1.2, status: approved (per v1.2 §3.4 + handoff 必查项)",
+          "last_checked_at": "2026-06-13T15:43:14+08:00"
+        },
+        "commit_hash_reachable": {
+          "status": "verified (Arc side)",
+          "method": "git rev-parse c68e24e82c7bc8db13ecfebba4f85c60442467ae^{commit}",
+          "result": "git rev-parse c68e24e82c7bc8db13ecfebba4f85c60442467ae^{commit} = c68e24e82c7bc8db13ecfebba4f85c60442467ae",
+          "last_checked_at": "2026-06-13T15:43:14+08:00"
+        }
+      }
     }
   ]
 }
