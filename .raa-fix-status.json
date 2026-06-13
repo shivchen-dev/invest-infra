@@ -438,6 +438,57 @@
         }
       },
       "files_changed": []
+    },
+    {
+      "finding_id": "RAA-10",
+      "title": "Sync AGENT_COLLABORATION_PROTOCOL v1.4 → v1.6 (skipped v1.5) to invest-infra/docs/",
+      "status": "fixed-pending-verify",
+      "agent": "Arc",
+      "branch": "docs/agent-protocol-v1.6-sync",
+      "commit": "3a8465f03f6e309d6df65bbad826b96f3b1b4dcb",
+      "started_at": "2026-06-13T19:14:00+08:00",
+      "completed_at": "2026-06-13T19:14:00+08:00",
+      "summary": "Sync user-approved AGENT_COLLABORATION_PROTOCOL v1.6 (workspace-audit/memory/handoff/raa-handoff-protocol-v1.6-source.md, 37.3KB / 37300 bytes, status: approved at 2026-06-13T19:11:40+08:00 by user) to invest-infra/docs/AGENT_COLLABORATION_PROTOCOL.md (OVERWRITE v1.3 on main, 45538 → 37300 bytes, net -8238 bytes / -18%, 455 insertions / 538 deletions). v1.6 协议宗旨 = 避免版本混乱, 5 项关键变更: (1) §5 标题 边界铁律 → Agent 写权限与冲突预防; (2) §5.2 BOUNDARY OVERRIDE 协议 整章移除 (RAA 内部原则 → LEARNINGS.md); (3) §5.3 越界检测 'RAA 必做扫描' 整章移除 (RAA 内部原则 → LEARNINGS.md); (4) §12 RAA 报告精简原则 (v1.5 已移) 再次明确归属 LEARNINGS.md; (5) 协议真正范围 = 仅跨 Agent 协作, 不含 RAA 内部纪律. Handoff: invest-infra/raa-handoff-readonly/raa-handoff-protocol-v1.4-to-v1.6-sync-20260613.md. Commit: 3a8465f (reachable, not orphan). RAA-9 v1.4 sync (commit 8cab8c4, branch docs/agent-protocol-v1.4) 同步失效 (v1.6 协议层 supersedes v1.4, 分支保留做历史归档, RAA-9 fix-status 状态保留 fixed-pending-verify 待 RAA 归档).",
+      "fix_report_path": null,
+      "files_changed": [
+        "invest-infra/docs/AGENT_COLLABORATION_PROTOCOL.md"
+      ],
+      "scope_note": "RAA-10 scope = 1 file copy (workspace-audit → invest-infra/docs/, OVERWRITE v1.3 → v1.6, 跳过 v1.4 sync 周期 + v1.5 起草周期). .raa-fix-status.json edit is metadata write, not in files_changed. 跳过原因: (a) v1.5 在 18:57 起草但未进入 Arc sync 周期 (RAA-9 fix-status entry 未写 v1.5 sync finding, 用户 19:11 明确 '1.5工作内容arc还没执行,直接跳过'); (b) v1.6 在 19:11 由用户 approved, supersedes v1.4 in protocol layer; (c) 协议宗旨 = 避免版本混乱, v1.4 → v1.6 跳跃符合协议精神. RAA-9 v1.4 sync 状态: branch docs/agent-protocol-v1.4 (commit 8cab8c4) 未 merge 到 main, v1.6 sync 完成后 RAA-9 在 fix-status 层保持 fixed-pending-verify, 实际被 v1.6 在 protocol 层 supersedes, 待 RAA-10 Re-Audit 后由 RAA 决定 RAA-9 归档/wontfix. v1.4 git history (8cab8c4) remains reachable for RAA-9 reference. v1.3 git history (e8c932d) remains reachable for RAA-8 reference.",
+      "reviewed_by": "user-approved v1.6 (QQ 19:11 CST, message_id per handoff)",
+      "replaces_protocol_version": "v1.3 (RAA-8 verified-with-caveats, on main) + v1.4 (RAA-9 fixed-pending-verify, branch unmerged)",
+      "re_audit_checkpoints": {
+        "last_checked_at": "2026-06-13T19:14:00+08:00",
+        "file_content_identical_to_v1.6": {
+          "status": "verified (Arc side)",
+          "method": "md5sum workspace-audit/memory/handoff/raa-handoff-protocol-v1.6-source.md invest-infra/docs/AGENT_COLLABORATION_PROTOCOL.md",
+          "result": "IDENTICAL (md5 47a01e12f42a2b2bfde1b21a332daf24)",
+          "last_checked_at": "2026-06-13T19:14:00+08:00"
+        },
+        "frontmatter_status_preserved": {
+          "status": "verified (Arc side)",
+          "method": "head -3 invest-infra/docs/AGENT_COLLABORATION_PROTOCOL.md",
+          "result": "frontmatter protocol_id: AGENT_COLLABORATION_PROTOCOL, version: 1.6, status: approved, approved_at: 2026-06-13T19:11:40+08:00, supersedes: 1.5, trigger_source: 用户 19:04 + 19:08",
+          "last_checked_at": "2026-06-13T19:14:00+08:00"
+        },
+        "commit_hash_reachable": {
+          "status": "verified (Arc side)",
+          "method": "git rev-parse 3a8465f03f6e309d6df65bbad826b96f3b1b4dcb^{commit}",
+          "result": "git rev-parse = 3a8465f03f6e309d6df65bbad826b96f3b1b4dcb (reachable, not orphan)",
+          "last_checked_at": "2026-06-13T19:14:00+08:00"
+        },
+        "v1.3_v1.4_history_preserved": {
+          "status": "verified (Arc side)",
+          "method": "git log --all --oneline | grep -E 'v1\\.[34]|RAA-[89]'",
+          "result": "v1.3 sync commit e8c932d (RAA-8) still reachable + v1.4 sync commit 8cab8c4 (RAA-9) still reachable on docs/agent-protocol-v1.4 branch",
+          "last_checked_at": "2026-06-13T19:14:00+08:00"
+        },
+        "rra_reaudit_handoff_sent": {
+          "status": "pending-send",
+          "method": "Arc→RAA handoff (待 push 后通知用户启动 Re-Audit)",
+          "result": "待步骤 6 push + 步骤 7 通知用户后, 状态转为 ready-for-reaudit",
+          "last_checked_at": "2026-06-13T19:14:00+08:00"
+        }
+      }
     }
   ]
 }
