@@ -164,6 +164,51 @@
           "last_checked_at": "2026-06-13T15:55:00+08:00"
         }
       }
+    },
+    {
+      "finding_id": "RAA-8",
+      "title": "Sync AGENT_COLLABORATION_PROTOCOL v1.3 to invest-infra/docs/",
+      "status": "fixed-pending-verify",
+      "agent": "Arc",
+      "branch": "docs/agent-protocol-v1.3-sync",
+      "commit": "e8c932daa3a8b7899345095a6203e960000d5847",
+      "started_at": "2026-06-13T16:28:09+08:00",
+      "completed_at": "2026-06-13T16:28:09+08:00",
+      "summary": "Sync user-approved AGENT_COLLABORATION_PROTOCOL v1.3 (workspace-audit/docs/agent-collaboration-protocol-v1.3.md, 45.5KB, status: approved at 2026-06-13T16:20:40+08:00 by user) to invest-infra/docs/AGENT_COLLABORATION_PROTOCOL.md (OVERWRITE v1.2). v1.3 adds 3 new sections: §3.3 verified-with-caveats state enum, §11 handoff governance (4 总则 + 7 强约束), §12 RAA report conciseness (4 必含 + 3 去除), + 附录 F (v1.2→v1.3 change summary). Handoff: workspace-audit/memory/handoff/raa-handoff-protocol-v1.3-sync-20260613.md. Approval: invest-infra/raa-audit-readonly/raa-audit-protocol-v1.3-approval-20260613.md. Pre-stash note: working tree had 45 dirty (RAA-7 cycle residue + 7 ARCH uncommitted + original 6/13 dirty); stashed as 'pre-RAA-8-sync-stash' to comply with v1.2 §2.5.",
+      "fix_report_path": null,
+      "files_changed": [
+        "invest-infra/docs/AGENT_COLLABORATION_PROTOCOL.md"
+      ],
+      "scope_note": "RAA-8 scope = 1 file copy (workspace-audit → invest-infra/docs/, OVERWRITE v1.2). .raa-fix-status.json edit is metadata write, not in files_changed. Pre-existing 45 dirty preserved in stash@{0}, not part of RAA-8. RAA-7 (v1.2) status preserved as 'verified-with-caveats' (RAA-7 cycle already closed). v1.3 supersedes v1.2 in this file but v1.2 git history (H1=c68e24e) remains reachable for RAA-7 reference.",
+      "reviewed_by": "user-approved v1.3 (QQ 16:20 CST, message_id per handoff)",
+      "replaces_protocol_version": "v1.2 (RAA-7 verified-with-caveats, merged 5713da7)",
+      "re_audit_checkpoints": {
+        "last_checked_at": "2026-06-13T16:28:09+08:00",
+        "file_content_identical_to_v1.3": {
+          "status": "verified (Arc side)",
+          "method": "diff workspace-audit/docs/agent-collaboration-protocol-v1.3.md invest-infra/docs/AGENT_COLLABORATION_PROTOCOL.md",
+          "result": "IDENTICAL (0 byte diff)",
+          "last_checked_at": "2026-06-13T16:28:09+08:00"
+        },
+        "frontmatter_status_preserved": {
+          "status": "verified (Arc side)",
+          "method": "head -10 invest-infra/docs/AGENT_COLLABORATION_PROTOCOL.md",
+          "result": "frontmatter version: 1.3, status: approved, approved_at: 2026-06-13T16:20:40+08:00, supersedes: 1.2",
+          "last_checked_at": "2026-06-13T16:28:09+08:00"
+        },
+        "commit_hash_reachable": {
+          "status": "verified (Arc side)",
+          "method": "git rev-parse e8c932daa3a8b7899345095a6203e960000d5847^{commit}",
+          "result": "git rev-parse e8c932daa3a8b7899345095a6203e960000d5847^{commit} = e8c932daa3a8b7899345095a6203e960000d5847",
+          "last_checked_at": "2026-06-13T16:28:09+08:00"
+        },
+        "v1.2_history_preserved": {
+          "status": "verified (Arc side)",
+          "method": "git rev-parse c68e24e82c7bc8db13ecfebba4f85c60442467ae^{commit} on new branch",
+          "result": "v1.2 H1=c68e24e still reachable (not orphan)",
+          "last_checked_at": "2026-06-13T16:28:09+08:00"
+        }
+      }
     }
   ]
 }
