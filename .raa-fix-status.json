@@ -457,7 +457,7 @@
       "reviewed_by": "user-approved v1.6 (QQ 19:11 CST, message_id per handoff)",
       "replaces_protocol_version": "v1.3 (RAA-8 verified-with-caveats, on main) + v1.4 (RAA-9 fixed-pending-verify, branch unmerged)",
       "re_audit_checkpoints": {
-        "last_checked_at": "2026-06-13T19:14:00+08:00",
+        "last_checked_at": "2026-06-13T19:19:35+08:00",
         "file_content_identical_to_v1.6": {
           "status": "verified (Arc side)",
           "method": "md5sum workspace-audit/memory/handoff/raa-handoff-protocol-v1.6-source.md invest-infra/docs/AGENT_COLLABORATION_PROTOCOL.md",
@@ -483,10 +483,10 @@
           "last_checked_at": "2026-06-13T19:14:00+08:00"
         },
         "rra_reaudit_handoff_sent": {
-          "status": "pending-send",
-          "method": "Arc→RAA handoff (待 push 后通知用户启动 Re-Audit)",
-          "result": "待步骤 6 push + 步骤 7 通知用户后, 状态转为 ready-for-reaudit",
-          "last_checked_at": "2026-06-13T19:14:00+08:00"
+          "status": "ready-for-reaudit",
+          "method": "Arc→RAA handoff: invest-infra/raa-handoff-readonly/raa-handoff-protocol-v1.4-to-v1.6-sync-20260613.md (v1.6 协议源 47a01e12... 同步完成 + push 成功 + QQ 通知用户 19:19 CST)",
+          "result": "RAA-10 sync 完成: docs/AGENT_COLLABORATION_PROTOCOL.md OVERWRITE v1.3 → v1.6 (45538 → 37300 bytes, -18%), commit 3a8465f on branch docs/agent-protocol-v1.6-sync (reachable, not orphan), fix-status entry 14 字段齐全, push 成功 (origin/docs/agent-protocol-v1.6-sync). v1.6 协议 5 项关键变更 (§5 标题 / §5.2 BOUNDARY OVERRIDE 移除 / §5.3 越界检测移除 / §12 明确归属 LEARNINGS / 协议范围 = 仅跨 Agent 协作). 跳过 v1.5 原因: 用户 19:11 明确. RAA-9 v1.4 sync 状态: v1.6 在 protocol 层 supersedes v1.4, RAA-9 branch docs/agent-protocol-v1.4 保留做历史归档, fix-status 状态保留 fixed-pending-verify 待 RAA-10 Re-Audit 时一并决策 (wontfix/归档/保留).",
+          "last_checked_at": "2026-06-13T19:19:35+08:00"
         }
       }
     }
