@@ -16,7 +16,16 @@
       "remote": "origin/main (force-pushed 2026-06-11 10:35)",
       "summary": "See raa-fix-P0-RAA-1-20260611.md. Audit artifact cleanup completed (status file + report rewritten with placeholders; .codegraph/ removed). RAA-1 independent verification (🟡 VERIFIED with caveats) confirmed.",
       "fix_report_path": "invest-infra/reports/raa-fix-P0-RAA-1-20260611.md",
-      "scope_note": "\nF3 fix (2026-06-13 17:53): commit hash 修正 e226aba4 (NOT ancestor of main) → 实际 fix commit. RAA Re-Audit 14:40 已 flag, 本次 RAA-8 周期 close 时一并修正."
+      "scope_note": "\nF3 fix (2026-06-13 17:53): commit hash 修正 e226aba4 (NOT ancestor of main) → 实际 fix commit. RAA Re-Audit 14:40 已 flag, 本次 RAA-8 周期 close 时一并修正.",
+      "re_audit_checkpoints": {
+        "last_checked_at": "2026-06-13T18:00:00+08:00",
+        "rra_reaudit_handoff_sent": {
+          "status": "ready-for-reaudit",
+          "method": "Arc→RAA handoff: invest-infra/raa-handoff-readonly/raa-handoff-f1f2f3f4-recheck-20260613.md",
+          "result": "F3 commit hash 修正 commit 1cf65992 on main (72e0981). P0-RAA-1 提交 RAA 综合 Re-Audit.",
+          "last_checked_at": "2026-06-13T18:00:00+08:00"
+        }
+      }
     },
     {
       "finding_id": "P0-RAA-2",
@@ -34,7 +43,14 @@
           "status": "verified",
           "method": "timeout 15 .venv/bin/python scripts/cron_pre_market.py",
           "result": "[pre_market] 启动 / [QQ] OK / [pre_market] 完成"
-        }
+        },
+        "rra_reaudit_handoff_sent": {
+          "status": "ready-for-reaudit",
+          "method": "Arc→RAA handoff: invest-infra/raa-handoff-readonly/raa-handoff-f1f2f3f4-recheck-20260613.md",
+          "result": "F3 commit hash 修正 commit 880becb2 on main (72e0981). P0-RAA-2 提交 RAA 综合 Re-Audit.",
+          "last_checked_at": "2026-06-13T18:00:00+08:00"
+        },
+        "last_checked_at": "2026-06-13T18:00:00+08:00"
       },
       "scope_note": "\nF3 fix (2026-06-13 17:53): commit hash 修正 e226aba4 (NOT ancestor of main) → 实际 fix commit. RAA Re-Audit 14:40 已 flag, 本次 RAA-8 周期 close 时一并修正."
     },
@@ -59,7 +75,14 @@
           "status": "verified",
           "method": "SELECT from scheduler_jobs",
           "result": "rows can be inserted/updated via track_job decorator"
-        }
+        },
+        "rra_reaudit_handoff_sent": {
+          "status": "ready-for-reaudit",
+          "method": "Arc→RAA handoff: invest-infra/raa-handoff-readonly/raa-handoff-f1f2f3f4-recheck-20260613.md",
+          "result": "F3 commit hash 修正 commit 880becb2 on main (72e0981). P0-RAA-3 提交 RAA 综合 Re-Audit.",
+          "last_checked_at": "2026-06-13T18:00:00+08:00"
+        },
+        "last_checked_at": "2026-06-13T18:00:00+08:00"
       },
       "scope_note": "\nF3 fix (2026-06-13 17:53): commit hash 修正 e226aba4 (NOT ancestor of main) → 实际 fix commit. RAA Re-Audit 14:40 已 flag, 本次 RAA-8 周期 close 时一并修正."
     },
@@ -111,13 +134,14 @@
         "data-pipeline/scripts/cron_midday.py",
         "data-pipeline/scripts/cron_post_market.py"
       ],
-      "scope_note": "RAA-5 scope = 2 files. RAA-6 (data-pipeline/.env plaintext + perms 664) deliberately NOT in this fix batch — to be filed as separate finding per user direction (2026-06-11 14:01).",
+      "scope_note": "RAA-5 scope = 2 files. RAA-6 (data-pipeline/.env plaintext + perms 664) deliberately NOT in this fix batch — to be filed as separate finding per user direction (2026-06-11 14:01).\\n\\nF4 follow-up (2026-06-13 17:53, commit 8703098): 根因修复 — config.py `cifang: CifangConfig = CifangConfig()` (module-level 急加载) 改为懒加载 `get_cifang()` + `cifang_getter()` 别名 + 4 caller sites (config.py/cifang.py/mcp_client.py/cron_dispatcher.py)。import 链不再因 CifangConfig validation 失败中断。RAA-5 INCOMPLETE 状态由本次 commit 闭环。",
       "raa_recheck_checkpoints": [
         "C1: from reports.report_engine import ReportEngine → no ValueError",
         "C2: cron_midday.py and cron_post_market.py no longer contain 'dummy' literal",
         "C3: Both scripts load from .secrets/*.env (setdefault semantics)",
         "C4: ReportEngine.run() returns True for all 4 types (pre_market/midday/post_market/intraday_alert)",
-        "C5: 7-day no ValueError in cron logs"
+        "C5: 7-day no ValueError in cron logs",
+        "C6: Arc→RAA handoff sent 2026-06-13T18:00:00+08:00 (invest-infra/raa-handoff-readonly/raa-handoff-f1f2f3f4-recheck-20260613.md). F1+F2+F3+F4 全部 commit on main (72e0981). F4 root cause commit 8703098 闭环 RAA-5 INCOMPLETE."
       ]
     },
     {
