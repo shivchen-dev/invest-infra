@@ -120,7 +120,7 @@
     {
       "finding_id": "RAA-7",
       "title": "Sync AGENT_COLLABORATION_PROTOCOL v1.2 to invest-infra/docs/",
-      "status": "fixed-pending-verify",
+      "status": "verified-with-caveats",
       "agent": "Arc",
       "branch": "docs/agent-protocol-v1.2-sync",
       "commit": "c68e24e82c7bc8db13ecfebba4f85c60442467ae",
@@ -131,10 +131,10 @@
       "files_changed": [
         "invest-infra/docs/AGENT_COLLABORATION_PROTOCOL.md"
       ],
-      "scope_note": "RAA-7 scope = 1 file copy (workspace-audit → invest-infra/docs/). .raa-fix-status.json edit is metadata write, not in files_changed. Pre-existing 14M+4D+30?? dirty state preserved in stash (not part of RAA-7). Branch 'docs/agent-protocol-v1.2-sync' is user-authorized doc-branch exception (RAA handoff §步骤 2); user approval = system-architect equivalent review per v1.2 §1.2.",
+      "scope_note": "RAA-7 scope = 1 file copy (workspace-audit → invest-infra/docs/). .raa-fix-status.json edit is metadata write, not in files_changed. Pre-existing 14M+4D+30?? dirty state preserved in stash (not part of RAA-7). Branch 'docs/agent-protocol-v1.2-sync' is user-authorized doc-branch exception (RAA handoff §步骤 2); user approval = system-architect equivalent review per v1.2 §1.2.\nRAA Re-Audit 2026-06-13 15:55 CST -> status upgraded to verified-with-caveats (5/6 PASS).",
       "reviewed_by": "user-approved v1.2 (QQ 15:24 CST, message_id per handoff)",
       "re_audit_checkpoints": {
-        "last_checked_at": "2026-06-13T15:43:14+08:00",
+        "last_checked_at": "2026-06-13T15:55:00+08:00",
         "file_content_identical_to_v1.2": {
           "status": "verified (Arc side)",
           "method": "diff workspace-audit/docs/agent-collaboration-protocol-v1.2.md invest-infra/docs/AGENT_COLLABORATION_PROTOCOL.md",
@@ -152,6 +152,16 @@
           "method": "git rev-parse c68e24e82c7bc8db13ecfebba4f85c60442467ae^{commit}",
           "result": "git rev-parse c68e24e82c7bc8db13ecfebba4f85c60442467ae^{commit} = c68e24e82c7bc8db13ecfebba4f85c60442467ae",
           "last_checked_at": "2026-06-13T15:43:14+08:00"
+        },
+        "rra_reaudit_verdict": {
+          "status": "verified-with-caveats",
+          "method": "RAA Re-Audit 2026-06-13 15:51-15:55 CST (user signal: 协议 v1.2 同步已 commit on fix branch，请启动 Re-Audit)",
+          "result": "5/6 PASS (1 caveat = worktree 50 dirty, not in RAA-7 scope)",
+          "rra_reaudit_report": "invest-infra/raa-audit-readonly/raa-re-audit-protocol-v1.2-sync-20260613.md",
+          "rra_reaudit_last_checked_at": "2026-06-13T15:55:00+08:00",
+          "rra_reaudit_overall_confidence": "92%",
+          "delta_pct": "5/6 = 0%, 1/6 = N/A (caveat not in scope)",
+          "last_checked_at": "2026-06-13T15:55:00+08:00"
         }
       }
     }
