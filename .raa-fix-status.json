@@ -15,7 +15,8 @@
       "commit": "1cf659927ef22d4c25196cc4341ed3ad498a6107",
       "remote": "origin/main (force-pushed 2026-06-11 10:35)",
       "summary": "See raa-fix-P0-RAA-1-20260611.md. Audit artifact cleanup completed (status file + report rewritten with placeholders; .codegraph/ removed). RAA-1 independent verification (🟡 VERIFIED with caveats) confirmed.",
-      "fix_report_path": "invest-infra/reports/raa-fix-P0-RAA-1-20260611.md"
+      "fix_report_path": "invest-infra/reports/raa-fix-P0-RAA-1-20260611.md",
+      "scope_note": "\nF3 fix (2026-06-13 17:53): commit hash 修正 e226aba4 (NOT ancestor of main) → 实际 fix commit. RAA Re-Audit 14:40 已 flag, 本次 RAA-8 周期 close 时一并修正."
     },
     {
       "finding_id": "P0-RAA-2",
@@ -23,7 +24,7 @@
       "status": "fixed-pending-verify",
       "agent": "Arc",
       "branch": "main",
-      "commit": "e226aba41f70cce882edd5165d119debaee4dc82",
+      "commit": "880becb2b4007600ebad2e1b2968ee8e89615b90",
       "remote": "origin/main (force-pushed 2026-06-11 10:53)",
       "started_at": "2026-06-11T10:50:00+08:00",
       "completed_at": "2026-06-11T10:53:00+08:00",
@@ -34,7 +35,8 @@
           "method": "timeout 15 .venv/bin/python scripts/cron_pre_market.py",
           "result": "[pre_market] 启动 / [QQ] OK / [pre_market] 完成"
         }
-      }
+      },
+      "scope_note": "\nF3 fix (2026-06-13 17:53): commit hash 修正 e226aba4 (NOT ancestor of main) → 实际 fix commit. RAA Re-Audit 14:40 已 flag, 本次 RAA-8 周期 close 时一并修正."
     },
     {
       "finding_id": "P0-RAA-3",
@@ -42,7 +44,7 @@
       "status": "fixed-pending-verify",
       "agent": "Arc",
       "branch": "main",
-      "commit": "e226aba41f70cce882edd5165d119debaee4dc82",
+      "commit": "880becb2b4007600ebad2e1b2968ee8e89615b90",
       "remote": "origin/main (force-pushed 2026-06-11 10:53)",
       "started_at": "2026-06-11T10:51:00+08:00",
       "completed_at": "2026-06-11T10:53:00+08:00",
@@ -58,7 +60,8 @@
           "method": "SELECT from scheduler_jobs",
           "result": "rows can be inserted/updated via track_job decorator"
         }
-      }
+      },
+      "scope_note": "\nF3 fix (2026-06-13 17:53): commit hash 修正 e226aba4 (NOT ancestor of main) → 实际 fix commit. RAA Re-Audit 14:40 已 flag, 本次 RAA-8 周期 close 时一并修正."
     },
     {
       "finding_id": "TRACE-P2->P0",
