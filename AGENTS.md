@@ -131,6 +131,22 @@
 2. 将 review 记录到 `.learnings/LEARNINGS.md`
 3. 按需 promotion 到 SOUL.md / AGENTS.md / TOOLS.md
 
+## 常用技能触发词（2026-06-15 立）
+
+**避免忘记技能的快速查询表。** 看到对应动作就立刻想到技能名。
+
+| 场景 | 技能 | 入口 |
+|------|------|------|
+| 写代码 / 改代码 / 调代码 | `clean-code` | 内置规则（≤20 行函数 / 问句布尔 / 无废话注释）|
+| 给 CC 发指令（修 bug / 跑 audit / 改代码）| `claude-cmd` | `python3 ~/.openclaw/workspace/skills/claude-cmd/claude-cmd-supervisor.py "<prompt>" 60` |
+| CC 卡了 / cwd 错 / 上下文污染 | `claude-mgmt` | `bash ~/.openclaw/workspace/skills/claude-mgmt/scripts/health.sh` |
+| CC cwd 错（workspace 不是 invest-infra）| `claude-mgmt` | `bash ~/.openclaw/workspace/skills/claude-mgmt/scripts/cwd_fix.sh /home/claw/invest-infra` |
+| CC 状态体检 | `claude-mgmt` | `bash ~/.openclaw/workspace/skills/claude-mgmt/scripts/status.sh` |
+| 给 CC 软清 / 硬清上下文 | `claude-mgmt` | `bash ~/.openclaw/workspace/skills/claude-mgmt/scripts/cleanup.sh [soft\|hard]` |
+| 后台跑大型 coding worker | `coding-agent` | `claude --permission-mode bypassPermissions --print < "$PROMPT"` |
+
+**核心心法：claude-cmd 管"送信"、claude-mgmt 管"会话状态"，互不重叠但互引。**
+
 ## Wiki / 外部方案落地流程
 用户分享 Wiki 或外部方案时：
 1. **先完整读取** `openclaw.json` 配置，不要假设缺失项
