@@ -1,97 +1,78 @@
 # MEMORY.md — Arc 热缓存
 
-> 高价值低噪音。MEMORY 解决"去哪找"，QMD 决定"找到什么"。
-> 详细 → memory/ 目录 | 搜索 → QMD
+> 纯索引层。搜记忆用工具，能找到东西是第一准则。
+> 搜索优先级：MEMORY.md（索引）→ Memvid Smart Frames → QMD 兜底
 
 ---
 
-## 🔌 QMD 索引入口
+## 🏛️ 记忆体系运转协议（静态规则）
+## ⚠️ 未经授权禁止修改
 
-- **Collection**: `workspace-memory`
-- **Source path**: `/home/claw/.openclaw/workspace/memory`
-- **Search priority**: `title exact` → `keyword` → `semantic`
-- **命中处理**: top-k(3-5) → 每条片段(5-20行) → 摘要注入
-- **注意**: 向量 embedding 模型下载被系统 kill，BM25 全文搜索可用，向量搜索暂停
+### 三层架构
+```
+L1 MEMORY.md    → 索引 + 协议
+L2 Memvid       → 叙事层（append-only）
+L3 memory/*.md  → 冷存储（兜底检索）
+```
 
----
+### 查询路由（搜记忆时用这棵树）
+**触发条件**：用户问及过往项目/决策/事件/偏好
 
-## ⚙️ 协议与做事原则
+① MEMORY.md 索引命中 → 去 Memvid 查关键词
+② Memvid 查询 → 命中 → 使用叙事片段
+③ QMD 兜底 → 命中 → 补充上下文
+④ 仍不命中 → 告知用户"未找到相关记忆"
+⑤ 重要决策需 ≥2 个独立来源确认
 
-- 做事原则：先方案，后执行；先确认，再推进
-- 汇报风格：结论先行，简短
-- 记忆入库标准：≥2条 — 影响决策(>2周)/重复使用/损失风险/可验证
-- **技能安装：P0 级 — 必须通过 skill-vetter 审查后方可安装**
-- **项目开发：P0 级 — 必须有用户明确授权（"授权"）或开始指令（"开始"），方可执行**
-- **外部咨询：默认进行（除非用户明确说"不咨询"）**
-- **搜索 ≠ 安装：clawhub search 只读，安装才需授权**
-- **发布流程：PATCH 直接 push；MINOR/MAJOR 走 release-manager**
-- **skills 目录：统一为 `skills/`（plural）**
+### 写入时机
+| 层 | 触发 | 说明 |
+|---|---|-|
+| memory/*.md | 每次对话 | 自动落盘 |
+| Memvid | 每日 04:00 cron + 里程碑 | 叙事同步 |
+| MEMORY.md | 仅 Agent 人工晋升 | 只写索引指针 |
 
----
+### 禁止写入红线
+❌ 系统自动写 MEMORY.md
+❌ 原始对话 copy 到 MEMORY.md
+❌ 完整项目细节写 MEMORY.md
+❌ 系统自动决定什么该进 MEMORY.md
 
-## 🎯 热缓存锚点词（Hot Anchors）
-
-**身份与上下文**
-- Arc · 小A · 主用户 · 用户画像 · 做事原则 · 汇报风格
-
-**记忆系统**
-- 双层记忆架构 · 热缓存 · 深度存储 · 原子事实链 · 程序职员
-- 晋升/降级 · 入库标准 · QMD · BM25 · 语义搜索 · skill-vetter
-
-**工具与环境**
-- OpenClaw · QMD · AMD780M (Phoenix3) · Vulkan
-- 工具配置详情 → TOOLS.md
-
-**项目与知识**
-- openclaw-memory-architecture · 双层记忆方案
-- llama-docker · DeepSeek-R1-Distill-Qwen-1.5B-Q8_0.gguf
-- agent-bridge v0.1.0 · DeepSeek/Qwen 对话桥（NFS /mnt/nfs-ai/skill/ 已挂载）；workspace 已独立清理（废弃文件已移除，git 结构正常）
-- NiuSync（暂停）· HarmonyOS 同步应用
-- FolderSync-HMOS（用户授权）· 鸿蒙文件同步应用，已推送 Gitee（chen-jian82/foldersync-hmos）；⚠️ MVP 架构风险：代码堆在 entry 模块，无 protocol 接口抽象层 → 后续扩展 SMB/定时同步需重构加 protocol/ 接口层
-
-**⚠️ 已验证错误（防重蹈）**
-- Vulkan GPU 穿透 → /dev/dri 配置
-- agent-bridge 多轮对话 → Bridge 实例复用
-- **工具失败时：停下来，不猜测，不伪造内容** — image 工具报 400 时直接告知用户不可见，请对方提供文字描述
-- **cron exec bug：`cd ... && python3` 复合命令被安全策略拦截 → 用 `python3 /full/path/to/script.py`**
-- **FolderSync-HMOS 架构缺陷**：当前代码堆在 entry 模块，无接口抽象层 → MVP 后需重构加 protocol/ 接口层
+### 静态 P0 协议
+⚠️ 技能安装 → skill-vetter 审查
+⚠️ 项目开发 → 授权/开始指令才执行
 
 ---
 
-## 📝 最近日志
+## 🚨 投研系统 PG-First 铁律（2026-06-15 立）
+**触发：** R0.2 数据管道修复（commit 3ea5ef3）— MCP vendor bug → 换 PG 解决
+**用户原话：** "投研系统数据以本地数据库为主，避免 MCP 等在线数据获取，没有数据就加强采集层，其他任何模块设计前提都是从 PG 获取"
 
-`memory/daily/2026-04-13.md` | `memory/daily/2026-04-14*.md` | `memory/daily/2026-04-16.md`
+- ✅ **设计前提**：所有投研模块查询时只走 PG（`etf_quotes` / `etf_alpha_signals` / `index_quotes` / `market_reports` / `investment_memos` 等）
+- ⚠️ **数据缺失** → 修采集层（cron / etl），**不**修模块去查 MCP
+- 🚫 **禁止**：Node 端在查询时 MCP fallback（vendor bug 风险，R0.2 教训）
+- ✅ **唯一允许接触 MCP 的层** = 采集层（cron 15:05 盘前 / 09:25 竞价）
+- ✅ **采集层异常** → 立即告警，不让消费层察觉
 
----
+**Phase 1 落地：** 选股 Dashboard 走 C 方案（cron 跑 `PreMarketFormatter` → 落库 `market_reports.messages` → Node 读 PG）
 
-## Promoted From Short-Term Memory
-
-**2026-04-13** — 首日会话，取名 Arc/小A，分享双层记忆方案。完成 QMD 安装、NFS 技能复制、skill-vetter P0 安全门槛确立、agent-bridge 项目从 NFS 复制到 workspace。
-
-**2026-04-14** — 记忆体系对比 + QMD 混合搜索调参（MMR+30天半衰期）；memory_consolidate + hindsight_reflect 脚本落地；browser agent QQ 路由修复；时区改为 Asia/Shanghai；llama-server Docker 配置；gateway pairing 解决。
-
-**2026-04-16** — NiuSync 项目命名、规划（已暂停）；agent-bridge v0.1.0 发布；skills 目录统一到 `skills/`；memory-sync-protocol + memory-audit-guardian 安装；MEMORY.md 净化（审计 B 级）；图片伪造事件复盘（工具失败时不停、捏造内容）
-
-**2026-04-15** — cron exec bug（`cd && python3` 被安全策略拦截）发现；QMD 向量 embedding 仍不可用（被系统 kill）；memory_consolidate 每日归档正常（0 项操作）；/tmp/openclaw-backup 清理（544MB）；workspace_cleanup 脚本误报修复
-
-**2026-04-16** — NiuSync 项目命名、规划（已暂停）；agent-bridge v0.1.0 发布；FolderSync-HMOS 项目启动（用户授权）；skills 目录统一到 `skills/`；memory-sync-protocol + memory-audit-guardian 安装；HOT.md 发布流程规则建立；小红书抓取 skill-xiaohongshu-scraper 审查；图片伪造事件复盘（工具失败时不停、捏造内容）
-
-**2026-04-17** — agent-bridge-ask 外部咨询流程建立；NiuSync 咨询（长文本）response_extractor 稳定性问题发现；图片伪造事件复盘完成
+详细规范 → `AGENTS.md` P0 #5 · 教训 → `TOOLS.md` MCP 章节
 
 ---
 
-> ⚠️ 详细档案（people/projects/glossary）不放 MEMORY，通过 QMD 检索
-> ⚠️ 工具配置详情 → TOOLS.md
-> ⚠️ 每日变更日志 → memory/daily/YYYY-MM-DD.md
+## 📂 项目索引（audit 驱动更新）
 
-## Promoted From Short-Term Memory (2026-04-17)
+| 项目/主题 | Memvid 查询关键词 |
+|-----------|------------------|
+| **智能投研体系** | `mem.find('智能投研 Phase 0', mode='lex')` |
+| **FolderSync-HMOS** | `mem.find('FolderSync', mode='lex')` |
+| **JiuwenSwarm** | `mem.find('JiuwenSwarm', mode='lex')` |
+| **agent-bridge** | `mem.find('agent-bridge', mode='lex')` |
+| **数据采集层** | `mem.find('数据采集层 批量修复', mode='lex')` |
+| **投研系统 P0 修复** | `mem.find('投研系统 P0', mode='lex')` |
+| **Claude Code 重构工作流** | `mem.find('Claude Code 重构', mode='lex')` |
+| **CIA Agent** | `mem.find('CIA Agent', mode='lex')` |
+| **KB 知识库** | `/home/claw/.openclaw/kb`（Claude Code 技巧、router 配置） |
 
-<!-- openclaw-memory-promotion:memory:memory/2026-04-14.md:339:342 -->
-- - - 创建 collection：workspace-memory - Embedding 模型已就绪（来自本地缓存路径） - 语义搜索验证通过（CPU 模式可用） ### 11:28 UTC — NFS 检查 - 用户提到 192.168.6.6 有 NFS 和 QMD 模型 - 当前机器 IP：192.168.6.50 - 无 root 权限，无法挂载 NFS - 模型文件已存在于 ~/.cache/qmd/models/ ## 待处理 - [ ] 创建 memory/projects/ 项目档案（openclaw-memory-architecture） - [ ] 创建 memory/knowledge/ 知识沉淀区 - [ ] 考虑程序职员角色的自动化（cron job 扫描日志） - [ ] 制定晋升/降级机制的执行规则 ## 决策记录 | 决策 | 理由 | |------|------| | 采用双层记忆架构 | 用户明确要求，结构更清晰 | | 不删除旧文件 | BOOTSTRAP.md 和旧 hello 文件保留归档 | [confidence=0.85 evidence=memory/daily/2026-04-13.md:31-54] - # 2026-04-13 日志归档 > 本文件已归档，内容迁移至 `memory/daily/2026-04-13.md` [confidence=0.70 evidence=memory/2026-04-13.md:1-4] <!-- openclaw:dreaming:rem:end --> [score=0.826 recalls=4 avg=1.000 source=memory/2026-04-14.md:339-342]
-<!-- openclaw-memory-promotion:memory:memory/2026-04-14.md:143:162 -->
-- - Candidate: Assistant: 模型已经在了！之前下载被 kill 是临时中断，但文件已存在。 检查下当前状态： - confidence: 0.58 - evidence: memory/.dreams/session-corpus/2026-04-13.txt:34-34 - recalls: 0 - status: staged - Candidate: Assistant: 模型文件存在，但 embedding 未完成（之前被 kill 了）。现在跑一次： - confidence: 0.58 - evidence: memory/.dreams/session-corpus/2026-04-13.txt:35-35 - recalls: 0 - status: staged - Candidate: Assistant: Embedding 完成。现在测试搜索： - confidence: 0.58 - evidence: memory/.dreams/session-corpus/2026-04-13.txt:36-36 - recalls: 0 - status: staged - Candidate: Assistant: QMD 语义搜索已就绪。 搜索结果： - `"双层记忆"` → 术语表(0.93) > 每日日志(0.56) > 用户档案(0.43) - `"用户偏好"` → 用户档案(0.92) > 每日日志(0.50) CPU 模式慢（每次 ~8-12 秒），但能跑。模型来自 NFS 那边的路径，之前下载中断但文件已缓存。 更新记忆和 TOOLS.md： - confidence: 0.58 - evidence: memory/.dreams/session-corpus/2026-04-13.txt:37-37 - recalls: 0 - status: staged [score=0.801 recalls=6 avg=0.815 source=memory/2026-04-14.md:143-162]
+---
 
-## Promoted From Short-Term Memory (2026-04-23)
-
-<!-- openclaw-memory-promotion:memory:memory/2026-04-17.md:423:425 -->
-- - Candidate: Possible Lasting Truths: - - 创建 collection：workspace-memory - Embedding 模型已就绪（来自本地缓存路径） - 语义搜索验证通过（CPU 模式可用） ### 11:28 UTC — NFS 检查 - 用户提到 192.168.6.6 有 NFS 和 QMD 模型 - 当前机器 IP：192.168.6.50 - 无 root 权限，无法挂载 NFS - 模型文件已存在于 ~/.cache/qmd/models/ ## 待处理 - [ ] 创建 memory/projects/ 项目档案（ - confidence: 0.62 - evidence: memory/2026-04-16.md:448-450 [score=0.856 recalls=0 avg=0.620 source=memory/2026-04-17.md:13-15]
+*最后更新：2026-06-06*  *静态协议区精简完成*

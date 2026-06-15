@@ -47,6 +47,37 @@ memory/*.md（原始日志，QMD 搜索）
 
 ---
 
+## 🚨 MCP 教训 — 投研系统 PG-First 根因（2026-06-15 立）
+
+**背景：** R0.2 数据管道 bug 复盘（commit 3ea5ef3）
+
+| 现象 | 根因 | 修复 |
+|------|------|------|
+| 14/14 ETF 现价=0 | `mcpClient.ts` 调错服务器（127.0.0.1:19100 = JiuwenClaw Gateway，不是 wudao_aStock MCP）| 换 PG `etf_quotes` 直读（441,979 行 cron 落库）|
+| 不同 code 返回同一份数据 | **wudao_aStock MCP vendor bug**（半导体的 26.23 给所有 ETF）| 同上 |
+| rebalance 13 alert 全部崩 | 上游现价=0 → 涨跌幅=0 → 偏离度=0 → 无 alert | 改 PG 后全 13 alert 正确 |
+
+**铁律（用户 2026-06-15 15:14 立）：**
+
+- 🚫 投研系统**查询时**只走 PG，禁止 MCP fallback
+- ⚠️ 数据缺失 → 修采集层（cron），不修模块
+- ✅ 唯一允许接触 MCP 的层 = 采集层（data-pipeline 内的 cron）
+- 🚨 采集层异常 → 立即告警，不让消费层察觉（消费层要"看起来一切正常"）
+
+**实现要点（避免重蹈）：**
+
+- 采集层：data-pipeline 的 15:05 / 09:25 / 09:00 cron 仍可调 MCP，但**结果必须落库**（`daily_market_snapshot` / `market_reports` / `etf_quotes` 等）
+- 消费层：Node 端 / Python 报表端**只读 PG**，禁止任何 `MCPClient` / `mcp.streamablehttp_client` 调用
+- 监控：采集层 fail → cron watchdog 告警 → 不影响消费层运行（消费层读旧数据 + 显示"数据延迟"标记）
+- 升级路径：未来加 "立即刷新" 功能 → 起 FastAPI sidecar 在采集层，**不**让消费层直接调 MCP
+
+**测试用例（写进 .learnings/）：**
+
+- 给 `mcpClient.ts`（如未来复活）加单测：mock MCP 返回错值 → 路由必须 fallback 到 PG 或报 503（**不**静默返回 0）
+- 给所有读 PG 的路由加"PG-only" lint 规则：禁止 import `mcpClient` / `wudao_aStock*`
+
+---
+
 ## 知识库（KB）
 - **路径**: `/home/claw/.openclaw/kb`
 - **内容**: Claude Code 使用技巧、router 配置等
@@ -58,8 +89,12 @@ memory/*.md（原始日志，QMD 搜索）
 
 - **目录**: `secrets/`（700 权限，仅自己可读）
 - **原则**: 令牌/密钥不写进任何明文 md 文件
-- **Gitee 令牌**: `secrets/gitee-token`
-- **使用方式**: `GITEE_TOKEN=$(cat /home/claw/.openclaw/workspace/secrets/gitee-token)`
+- **Gitee 推送凭据**（v2026-06-14 修正）：**`~/.git-credentials`**（git store mode 自动 cache，600 权限）
+  - **不要**用 `secrets/gitee-token`（已过时/失效）
+  - **不要**手动 `GITEE_TOKEN=*** ...)`（会跳过 git store helper）
+  - **正确用法**：直接 `git push -u origin main`（store helper 自动读 ~/.git-credentials）
+  - **重置 cache**：`git credential-store --file=~/.git-credentials erase`，再 push 重新输
+  - 旧 `secrets/gitee-token` 文件保留作 fallback（curl 调 Gitee API 验证时可能有用）
 - **QQBot Browser 令牌**: `secrets/qqbot-browser-token`
 - **格式**: `appId:clientSecret`（冒号分隔）
 - **使用方式**: `QQBOT_TOKEN=$(cat /home/claw/.openclaw/workspace/secrets/qqbot-browser-token)`
@@ -241,6 +276,106 @@ python3 ~/.openclaw/workspace/skills/claude-cmd/claude-cmd-supervisor.py "Fix th
 **ACK 判定**: 命令文本出现在 tmux pane 输出（非 shell 错误行）= Claude Code 已接收
 
 **前置条件**: tmux session `ccr-work` 必须存在且运行的是 `ccr code` 启动的 Claude Code，用 `tmux list-sessions \| grep ccr-work` 确认
+
+---
+
+## Claude Code Skills / Plugins（2026-06-14 装）
+
+### 已装清单（user scope）
+
+| Plugin | 来源 | **SKILL 真名** (SKILL.md frontmatter `name:`) | 干啥 |
+|---|---|---|---|
+| `frontend-design@claude-plugins-official` | Anthropic 官方 | **`frontend-design`** (同名) | 反 AI slop，强制 BOLD 美学方向 |
+| `react-best-practices@vercel-agent-skills` | Vercel 官方 | **`vercel-react-best-practices`** (带前缀!) | React/Next.js 性能优化 70 条规则 (8 类别) |
+
+### ⚠️ Skill invocation 铁律 (L-2026-06-14-04 14:07 验证)
+
+**plugin 名 ≠ skill 名**。Vercel 命名规范: `vercel-react-best-practices` (skill 真名带前缀)。
+- 错用法 (R6.1+R6.2 报 Unknown): `Use the react-best-practices skill to ...` (plugin 名)
+- 对用法 (L-04 验证 OK): `Skill(skill: "vercel-react-best-practices")` (colon form / skill 真名)
+- 对用法 (frontend-design 同名直接 OK): `Skill(skill: "frontend-design")`
+
+### 3 种 invocation 格式实测 (L-04 排查 14:04-14:07)
+
+| 格式 | 触发? | 结果 |
+|------|-------|------|
+| 自然语言 `Use the X skill to ...` | ❌ | system 不自动 invoke, 走训练数据 |
+| `load the X skill` | ❌ | 同上, 无 tool 调度 |
+| **`Skill(skill: "<SKILL.md frontmatter name>")`** | ✅ | colon form / 同名 都行, 必返 skill 内容 |
+| 描述触发 `apply the X principles` | ❌ | 无 tool, CC 拼训练数据 (弱) |
+
+### 装新 skill 后必走 (3 步)
+
+1. 读 `~/.claude/plugins/cache/<marketplace>/<plugin>/<version>/` 找 `SKILL.md` 的 frontmatter `name:` 字段 → 这是 skill 真名
+2. 重启 ccr-work session (kill + 重 attach + ccr)
+3. 第一个 prompt 试 `Skill(skill: "<真名>")` 验证
+
+### 触发模板 (修后)
+
+```text
+# 错（plugin 名）:
+Use the react-best-practices skill to refactor [代码/组件].
+
+# 对（skill 真名）:
+Skill(skill: "vercel-react-best-practices") — refactor [代码/组件] with 70 React/Next.js 性能规则.
+```
+
+### Vercel 70 规则 8 类别 (适用 Vite+React18 SPA 的: client-/rerender-/js- 部分)
+
+| 类别 | 前缀 | 条数 | 影响 | 适用 M2 R6? |
+|------|------|------|------|------------|
+| Eliminating Waterfalls | async- | 6 | CRITICAL | 部分 (RQ 已 dedup) |
+| Bundle Size | bundle- | 6 | CRITICAL | 部分 (tree-shake) |
+| Server-Side | server- | 10 | HIGH | ❌ 无 Next.js |
+| Client-Side Data Fetching | client- | 4 | MED-HIGH | ✅ (RQ dedup) |
+| **Re-render Optimization** | **rerender-** | **15** | MED | **✅ R6.3+ apply** |
+| Rendering Performance | rendering- | 11 | MED | ✅ (memo) |
+| JavaScript Performance | js- | 14 | LOW-MED | ✅ (filter/slice) |
+| Advanced Patterns | advanced- | 4 | LOW | 部分 |
+
+### Bonus (R6.3+ rerender- 候选)
+
+- **rerender-defer-reads**: `isFetching` 触发整表 re-render → useRef 或 query select callback
+- CandidatesPanel 90 行 table, refetch 时整表 re-render (invisible at 0 rows, visible at scale)
+
+### 自建 Marketplace：`vercel-agent-skills`
+
+- **原因**：`vercel-labs/agent-skills` 是 monorepo，根目录没 `.claude-plugin/marketplace.json`，不能直接 `marketplace add`
+- **方案**：手动 `git clone` + 写包装 `marketplace.json` + 注册到 `known_marketplaces.json`
+- **位置**：`/home/claw/.claude/plugins/marketplaces/vercel-agent-skills/`
+- **manifest 路径**：`.claude-plugin/marketplace.json`
+- **已声明 plugins**（只装了第 1 个）：
+  - `react-best-practices` ✅
+  - `web-design-guidelines` ⏳
+  - `composition-patterns` ⏳
+
+**维护操作**：
+```bash
+# 拉取最新
+cd /home/claw/.claude/plugins/marketplaces/vercel-agent-skills && git pull
+
+# 装备胎
+claude plugin install web-design-guidelines@vercel-agent-skills
+claude plugin install composition-patterns@vercel-agent-skills
+```
+
+### 装新 skill 的标准流程
+
+```bash
+# 1. 查 marketplace
+claude plugin marketplace list
+
+# 2. 装（标准 marketplace）
+claude plugin install <name>@<marketplace>
+
+# 3. 装（非标准仓库）
+#    手动 git clone + 写 marketplace.json + 注册到 known_marketplaces.json
+
+# 4. 重启 Claude Code（必须）
+tmux kill-session -t ccr-work
+tmux new-session -d -s ccr-work -c ~/.openclaw/workspace
+tmux send-keys -t ccr-work 'ccr' Enter
+```
 
 ---
 
