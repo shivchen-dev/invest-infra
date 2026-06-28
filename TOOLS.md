@@ -1,5 +1,65 @@
 # TOOLS.md - Local Notes
 
+> 本文件是**工具层执行手册**，记录 how to do。
+> 政策层（为什么这么做）→ `CLAUDE-CODE.md`；知识档案 → `kb/`。
+
+---
+
+## GTD 工具（gtd-tools skill）
+
+**⚠️ 操作 GTD 必须使用 gtd-tools skill（v3.6）**
+
+### gtd-sync.py — v3.6 统一入口（唯一）
+```bash
+# 流转（每个节点完成的唯一合规交付动作）
+python3 /home/claw/.openclaw/GTD/scripts/gtd-sync.py route agree   <task_id> <caller>
+python3 /home/claw/.openclaw/GTD/scripts/gtd-sync.py route reject  <task_id> <caller> --reason <驳回理由>
+
+# 列表
+python3 /home/claw/.openclaw/GTD/scripts/gtd-sync.py list
+
+# 校验（派单创建/流转后必做）
+python3 /home/claw/.openclaw/GTD/scripts/gtd-sync.py validate [task_id]
+
+# 打印 dispatch.md 模板
+python3 /home/claw/.openclaw/GTD/scripts/gtd-sync.py template
+
+# 单元测试
+python3 /home/claw/.openclaw/GTD/scripts/gtd-sync.py test
+```
+
+### 目录结构（v3.6）
+```
+GTD/
+├── 进行中/     ← 活着的任务
+├── 归档/       ← 已终态
+└── _recalled/ ← 召回记录
+```
+（旧的 1-dispatched/2-in-progress/3-re-audit/4-completed 保留兼容）
+
+### 流转规则（v3.6）
+- **agree**：当前节点 → 下一节点；最后节点 → 自动归档
+- **reject**：当前节点 → 上一节点；已归档任务 reject → 强制拦截（需用户授权）
+- **禁止静默交付**：完成工作 ≠ 交付，`route agree` = 唯一合规交付动作
+- **route 后写 Inbox**：每次 `route agree/reject/pause/resume` 成功后，自动向各 Agent Inbox 写 JSONL 事件
+- **无 registry.json**：物理目录为唯一权威，禁止手动 edit
+
+### 校验规则（gtd-sync.py validate）
+| 规则 | 说明 |
+|---|---|
+| A1 | project 派单缺 ## 审批流章节 / 工序 N+1 签字时 N 必须先签 |
+| A3 | task_source 非法 / D-1 自派单 |
+| A4 | 状态变更日志 hash 不匹配（防篡改）|
+| A5 | completion_criteria 缺失或为空 |
+| P0 | 强制交付物未填写（route agree 时拦截）|
+| LOC | dispatch.md 在无效状态目录 |
+| ID-MATCH | task_id 文件夹名与 dispatch.md 内的 task_id 不一致 |
+
+### 技能入口
+> 派单给 CC 前 / 流转状态 / 校验派单 → 使用 gtd-tools skill
+
+---
+
 ## 记忆系统架构
 
 ```
@@ -79,9 +139,40 @@ memory/*.md（原始日志，QMD 搜索）
 ---
 
 ## 知识库（KB）
-- **路径**: `/home/claw/.openclaw/kb`
-- **内容**: Claude Code 使用技巧、router 配置等
-- **用途**: 结构化知识沉淀，可通过 QMD 检索
+
+### 投研系统知识库（invest-infra） ⚠️
+- **路径**: `/home/claw/invest-infra/docs/KB/`
+- **结构**: `KB/backend/` · `KB/frontend/` 等，按投研系统模块分类
+- **用途**: 投研系统架构文档、故障模式、API 契约
+- ⚠️ **不要混淆**：这是投研系统的知识库，**不是** `~/.openclaw/kb/`
+
+### Claude Code 工具知识库（openclaw）
+- **路径**: `/home/claw/.openclaw/kb/`
+- **结构**: `cc/`（CC 核心用法）· `workflow/`（工程方法论）· `archive/`（过时内容）
+- **索引**: `kb/README.md` 主题映射表
+- **用途**: CC 工具手册 / 防幻觉 / Router 配置 / 重构实践
+- ⚠️ **CC 配置详情**（Provider/Session/Router/Skill）→ `kb/cc/config-cc.md`
+- ⚠️ **llama.cpp 档案**（启动参数/性能/编译）→ `kb/infra/llama-server.md`
+
+---
+
+## ETF Dashboard 前端（Vite）
+
+**本机 IP**: `192.168.6.50`
+
+**启动命令**（从 frontend 目录）：
+```bash
+cd /home/claw/invest-infra/etf-dashboard/frontend
+nohup npx vite --host 0.0.0.0 --port 3001 > /tmp/vite-frontend.log 2>&1 &
+```
+
+**访问**: `http://192.168.6.50:3001`（局域网）
+
+**注意**:
+- 前端是 **Vite**（非 Next.js），`package.json` 中 `dev: "vite"`
+- `start.sh` 只启动 Docker 基础设施（PostgreSQL / Redis / MinIO），不包含前端
+- 前端需要手动启动，或配置 PM2/systemd 持久化
+- 日志：`/tmp/vite-frontend.log`
 
 ---
 
@@ -101,334 +192,15 @@ memory/*.md（原始日志，QMD 搜索）
 
 ---
 
----
+## Claude Code（快速入口）
 
-## 多代理定时任务管理规范
+> **详细配置** → `kb/cc/config-cc.md`
+> **CC 使用规范**（铁律/SOP/派单/诊断）→ `CLAUDE-CODE.md`
 
-### 核心原则
-各 agent cron 完全隔离，时间错峰，owner 明确。
+**启动**: `tmux attach-session -t ccr-work` → pane 里 `ccr code`
 
-### 命名前缀
-`{agent}-{task-name}`，例 `arc-daily-memory-audit`、`cia-daily-learnings-promotion`。
-
-### Arc（workspace）时间分桶
-| 时间 | 任务 | 说明 |
-|------|------|------|
-| 04:00 | arc-memory-consolidate | 记忆整合脚本 |
-| 05:00 | arc-daily-memory-audit | 审计过去3天，更新MEMORY.md |
-| 周六 06:00 | arc-hindsight-reflect | 回顾反思脚本 |
-| 03:00 | Memory Dreaming Promotion | 系统级记忆晋升（managed-by=memory-core） |
-
-### CIA（workspace-cia）时间分桶
-| 时间 | 任务 | 说明 |
-|------|------|------|
-| 04:00 | Daily_Learnings_Promotion | 工作日每日晋升 |
-| 06:00（周一） | Weekly_Learnings_Maintenance | 周维护 |
-| 06:30（周一） | workspace-cleanup | 清理 |
-
-### 冲突规则
-- 同一时段禁止两个重量任务同时跑（内存/CPU 峰值）
-- 各 agent 的 isolated session 独立执行，不共享上下文
-- sessionTarget 决定哪个 agent 承接，禁止职责模糊
-
-## 本地 AI 服务（llama.cpp）
-
-### Llama Server（127.0.0.1:8080）— Qwen3.5-9B-Q4_0 MTP
-- **二进制**: `/home/claw/llama.cpp/build-vulkan/bin/llama-server`（Vulkan GPU 加速）
-- **模型**: `/home/claw/models/Qwen3.5-9B-Q4_0.gguf`（Qwen3.5 9B Q4_0 量化，MTP 架构，5.2GB）
-- **API**: `http://127.0.0.1:8080/v1/chat/completions`
-- **PID**: 当前运行中（`ps aux | grep llama-server` 查看）
-
-### 启动参数（2026-06-04 优化版）
-```bash
-nohup /home/claw/llama.cpp/build-vulkan/bin/llama-server \
-  -m /home/claw/models/Qwen3.5-9B-Q4_0.gguf \
-  --host 127.0.0.1 --port 8080 \
-  -np 2 -ngl 99 \
-  -c 2048 \
-  --rope-scaling yarn --rope-scale 1.0 \
-  --yarn-orig-ctx 262144 \
-  --override-kv qwen35.context_length=int:8192 \
-  --spec-type draft-mtp \
-  --spec-draft-n-max 2 \
-  --chat-template-kwargs '{"enable_thinking":false}' \
-  --no-warmup > /tmp/llama-server-vulkan.log 2>&1 &
-```
-
-### 性能指标（2026-06-04 实测）
-| 指标 | 值 |
-|------|-----|
-| 推理速度 | 19-24 tok/s |
-| MTP 接受率 | 83% |
-| GTT 占用 | 6.44 / 7.47 GB |
-| Context | 2K（rope 扩展到 8K）|
-| 思考模式 | 关闭 |
-
-### 定位
-- **适合**：cron 任务、文件处理、总结、代码审查等轻量任务
-- **不适合**：长文档分析、复杂推理、多模态
-- **分工**：复杂推理 → 35B 远程；日常 cron → 9B 本地
-
-### 内存架构（AMD Phoenix3 APU）
-- VRAM aperture: 512 MB（驱动+shader）
-- GTT（RAM 映射）: 7.47 GB（llama.cpp Vulkan 使用此区域）
-- 系统 RAM: 14 GB（共用池）
-- GTT 接近上限时会 OOM，监控 `cat /sys/devices/pci0000:00/0000:00:08.1/0000:05:00.0/mem_info_gtt_used`
-
-### 历史版本
-- **Qwen3.5-4B-Q4_0**: 早期版本，context 1024（baked GGUF 元数据限制），已替换
-- **Qwen3.5-4B-Q8_0**: 备选高质量量化（4.3 GB），未启用
-- **Qwen3.5-9B-Q5_K_M**: 备选高质量量化（5.2GB），未启用
-
-### 远程 AI 服务器（192.168.40.2:6060）
-- **模型**: `Qwen3.6-35B-A3B-Q8`
-- **用途**: 主用推理服务
+**派单**: `skills/claude-cmd/claude-cmd-simple.py`（唯一合法通信方式）
 
 ---
 
-## Llama.cpp Vulkan 编译记录
-- **源码**: `/home/claw/llama.cpp/`
-- **Vulkan build**: `/home/claw/llama.cpp/build-vulkan/`
-- **编译选项**: `-DGGML_VULKAN=ON -DGGML_CPU=ON -DGGML_HIP=OFF`
-- **SPIRV-Headers**: `/tmp/SPIRV-Headers/`（需手动 clone 并从 GitHub main 获取最新 spirv.hpp）
-- **Vulkan SDK**: 系统 headers (`/usr/include`) + loader (`/usr/lib/x86_64-linux-gnu/libvulkan.so`)
-- **glslc**: 系统自带（支持 cooperative_matrix，不支持 NV_cooperative_matrix2）
-
----
-
-## Claude Code
-
-### Provider: minimax (Anthropic 协议，2026-06-10 接入)
-
-**配置位置**：`~/.claude-code-router/config.json`
-
-```json
-{
-  "name": "minimax",
-  "api_base_url": "https://api.minimaxi.com/anthropic/v1/messages",
-  "models": ["MiniMax-M3"],
-  "transformer": { "use": ["Anthropic"] }   // ⚠️ 大写 A
-}
-```
-
-**3 个易踩的坑**：
-
-1. **`api_base_url` 必须是完整 endpoint**（含 `/v1/messages`），不是 base。ccr 不会自动拼路径。看 log：
-   ```
-   "requestUrl":"https://api.minimaxi.com/anthropic/v1/messages"  ← 实际发出去的
-   ```
-   ccr 行为：入站 `/v1/messages` → 出站直接用 `api_base_url`，不拼 endpoint 路径。
-
-2. **`transformer: { use: ["Anthropic"] }` 必须大写 A**。大小写敏感。大写触发 bypass（小写会做"OpenAI↔Anthropic"双转换）。
-   - 小写 `anthropic`：请求被转 OpenAI 格式发到 upstream（minimax 真 Anthropic → 错）
-   - 大写 `Anthropic`：bypass 路径，请求/响应**原样透传**
-
-3. **正确的 endpoint** 是 `https://api.minimaxi.com/anthropic/v1/messages`（catalog.json 主 provider 写法）。备 provider 的 `https://api.minimaxi.com/anthropic`（不带 `/v1`）会 404。
-
-**当前默认 + fallback 链**：
-```json
-"Router": { "default": "minimax,MiniMax-M3" },
-"fallback": {
-  "default": [
-    "remote-ai,Qwen3.6-35B-A3B-Q8",
-    "deepseek,deepseek-v4-flash"
-  ]
-}
-```
-
-**API key 备份**：`secrets/minimax-key`（700 权限，126 字节 `sk-cp-…`）
-
-**已验证场景**：chat ✅ / streaming SSE ✅ / tool_use ✅
-
-**成本**：¥0.6 input / ¥2.4 output per M tokens（比 35B 自建贵 5-10x），1M context window。
-
----
-
-### Session
-- **固定 session**: `ccr-work`（始终使用，不跟随其他 session）
-- **启动 Claude Code**: `tmux attach-session -t ccr-work && ccr`
-  - **必须用 `ccr`**，不能直接 `claude` —— `ccr` 加载 router 配置（model=Qwen3.6-35B），直接 `claude` 没有 router 会报 model 错误
-  - `ccr` = `/home/claw/.npm-global/bin/ccr` → `@musistudio/claude-code-router`
-- **确认状态**: `tmux list-sessions`（每次任务前确认 ccr-work 存活）
-
-### 路由
-- Router: `127.0.0.1:3456`
-- 默认 provider: `remote-ai`（Qwen3.6-35B）
-- 备用: `deepseek`（deepseek-v4-flash）
-- 切换: `~/.claude-code-router/config.json` → `Router.default`
-
-### 向 Claude Code 可靠通信机制
-
-**问题**: `tmux send-keys` 注入 TTY 层，交互式 prompt（安全确认、yes/no）会抢先捕获输入，导致命令被 shell 消费。
-
-**方案**: `~/.openclaw/workspace/skills/claude-cmd/claude-cmd-supervisor.py`
-- 发指令前检测交互式 prompt（trust_prompt / yes_no / interactive / cancelled / shell）
-- 自动处理 prompt 后再发命令
-- 用 ACK 确认命令被 Claude Code TUI 消费
-- 双向日志：技能文件夹 `tmp/claude-cmd.log`
-
-**用法**:
-```bash
-python3 ~/.openclaw/workspace/skills/claude-cmd/claude-cmd-supervisor.py "proceed" 60
-python3 ~/.openclaw/workspace/skills/claude-cmd/claude-cmd-supervisor.py "Fix the bug" 45
-```
-
-**ACK 判定**: 命令文本出现在 tmux pane 输出（非 shell 错误行）= Claude Code 已接收
-
-**前置条件**: tmux session `ccr-work` 必须存在且运行的是 `ccr code` 启动的 Claude Code，用 `tmux list-sessions \| grep ccr-work` 确认
-
----
-
-## Claude Code Skills / Plugins（2026-06-14 装）
-
-### 已装清单（user scope）
-
-| Plugin | 来源 | **SKILL 真名** (SKILL.md frontmatter `name:`) | 干啥 |
-|---|---|---|---|
-| `frontend-design@claude-plugins-official` | Anthropic 官方 | **`frontend-design`** (同名) | 反 AI slop，强制 BOLD 美学方向 |
-| `react-best-practices@vercel-agent-skills` | Vercel 官方 | **`vercel-react-best-practices`** (带前缀!) | React/Next.js 性能优化 70 条规则 (8 类别) |
-
-### ⚠️ Skill invocation 铁律 (L-2026-06-14-04 14:07 验证)
-
-**plugin 名 ≠ skill 名**。Vercel 命名规范: `vercel-react-best-practices` (skill 真名带前缀)。
-- 错用法 (R6.1+R6.2 报 Unknown): `Use the react-best-practices skill to ...` (plugin 名)
-- 对用法 (L-04 验证 OK): `Skill(skill: "vercel-react-best-practices")` (colon form / skill 真名)
-- 对用法 (frontend-design 同名直接 OK): `Skill(skill: "frontend-design")`
-
-### 3 种 invocation 格式实测 (L-04 排查 14:04-14:07)
-
-| 格式 | 触发? | 结果 |
-|------|-------|------|
-| 自然语言 `Use the X skill to ...` | ❌ | system 不自动 invoke, 走训练数据 |
-| `load the X skill` | ❌ | 同上, 无 tool 调度 |
-| **`Skill(skill: "<SKILL.md frontmatter name>")`** | ✅ | colon form / 同名 都行, 必返 skill 内容 |
-| 描述触发 `apply the X principles` | ❌ | 无 tool, CC 拼训练数据 (弱) |
-
-### 装新 skill 后必走 (3 步)
-
-1. 读 `~/.claude/plugins/cache/<marketplace>/<plugin>/<version>/` 找 `SKILL.md` 的 frontmatter `name:` 字段 → 这是 skill 真名
-2. 重启 ccr-work session (kill + 重 attach + ccr)
-3. 第一个 prompt 试 `Skill(skill: "<真名>")` 验证
-
-### 触发模板 (修后)
-
-```text
-# 错（plugin 名）:
-Use the react-best-practices skill to refactor [代码/组件].
-
-# 对（skill 真名）:
-Skill(skill: "vercel-react-best-practices") — refactor [代码/组件] with 70 React/Next.js 性能规则.
-```
-
-### Vercel 70 规则 8 类别 (适用 Vite+React18 SPA 的: client-/rerender-/js- 部分)
-
-| 类别 | 前缀 | 条数 | 影响 | 适用 M2 R6? |
-|------|------|------|------|------------|
-| Eliminating Waterfalls | async- | 6 | CRITICAL | 部分 (RQ 已 dedup) |
-| Bundle Size | bundle- | 6 | CRITICAL | 部分 (tree-shake) |
-| Server-Side | server- | 10 | HIGH | ❌ 无 Next.js |
-| Client-Side Data Fetching | client- | 4 | MED-HIGH | ✅ (RQ dedup) |
-| **Re-render Optimization** | **rerender-** | **15** | MED | **✅ R6.3+ apply** |
-| Rendering Performance | rendering- | 11 | MED | ✅ (memo) |
-| JavaScript Performance | js- | 14 | LOW-MED | ✅ (filter/slice) |
-| Advanced Patterns | advanced- | 4 | LOW | 部分 |
-
-### Bonus (R6.3+ rerender- 候选)
-
-- **rerender-defer-reads**: `isFetching` 触发整表 re-render → useRef 或 query select callback
-- CandidatesPanel 90 行 table, refetch 时整表 re-render (invisible at 0 rows, visible at scale)
-
-### 自建 Marketplace：`vercel-agent-skills`
-
-- **原因**：`vercel-labs/agent-skills` 是 monorepo，根目录没 `.claude-plugin/marketplace.json`，不能直接 `marketplace add`
-- **方案**：手动 `git clone` + 写包装 `marketplace.json` + 注册到 `known_marketplaces.json`
-- **位置**：`/home/claw/.claude/plugins/marketplaces/vercel-agent-skills/`
-- **manifest 路径**：`.claude-plugin/marketplace.json`
-- **已声明 plugins**（只装了第 1 个）：
-  - `react-best-practices` ✅
-  - `web-design-guidelines` ⏳
-  - `composition-patterns` ⏳
-
-**维护操作**：
-```bash
-# 拉取最新
-cd /home/claw/.claude/plugins/marketplaces/vercel-agent-skills && git pull
-
-# 装备胎
-claude plugin install web-design-guidelines@vercel-agent-skills
-claude plugin install composition-patterns@vercel-agent-skills
-```
-
-### 装新 skill 的标准流程
-
-```bash
-# 1. 查 marketplace
-claude plugin marketplace list
-
-# 2. 装（标准 marketplace）
-claude plugin install <name>@<marketplace>
-
-# 3. 装（非标准仓库）
-#    手动 git clone + 写 marketplace.json + 注册到 known_marketplaces.json
-
-# 4. 重启 Claude Code（必须）
-tmux kill-session -t ccr-work
-tmux new-session -d -s ccr-work -c ~/.openclaw/workspace
-tmux send-keys -t ccr-work 'ccr' Enter
-```
-
----
-
-## ⚡ AI 服务配置
-
-### 远程 AI 服务器（192.168.40.2:6060）
-- **模型**: `Qwen3.6-35B-A3B-Q8`
-- **用途**: 主用推理服务，~95 tok/s
-- **Cron 任务默认用此模型**
-
-### 本地 Llama Server（127.0.0.1:8080）
-- **二进制**: `/home/claw/llama.cpp/build-vulkan/bin/llama-server`
-- **模型**: `/home/claw/models/Qwen3.5-9B-Q4_0.gguf`（Qwen3.5 9B Q4_0，MTP 架构）
-- **API**: `http://127.0.0.1:8080/v1/chat/completions`
-- **启动参数**:
-  ```bash
-  nohup /home/claw/llama.cpp/build-vulkan/bin/llama-server \
-    -m /home/claw/models/Qwen3.5-9B-Q4_0.gguf \
-    --host 127.0.0.1 --port 8080 \
-    -np 2 -ngl 99 \
-    -c 2048 \
-    --rope-scaling yarn --rope-scale 1.0 \
-    --yarn-orig-ctx 262144 \
-    --override-kv qwen35.context_length=int:8192 \
-    --spec-type draft-mtp \
-    --spec-draft-n-max 2 \
-    --chat-template-kwargs '{"enable_thinking":false}' \
-    --no-warmup > /tmp/llama-server-vulkan.log 2>&1 &
-  ```
-- **性能**: ~19-24 tok/s，MTP 接受率 83%，GTT 占用 6.44/7.47 GB
-- **定位**: cron 任务、文件处理、总结、代码审查等轻量任务
-
-### 内存架构（AMD Phoenix3 APU）
-- VRAM aperture: 512 MB（驱动+shader）
-- GTT（RAM 映射）: 7.47 GB（llama.cpp Vulkan 使用此区域）
-- GTT 接近上限时会 OOM，监控 `cat /sys/devices/pci0000:00/0000:00:08.1/0000:05:00.0/mem_info_gtt_used`
-
-### 连接方式
-```bash
-tmux attach-session -t ccr-work
-claude
-```
-
-### 常用命令
-在 Claude Code TUI 里直接输入自然语言，例如：
-```
-audit /path/to/file
-fix /path/to/file
-review /path/to/file
-```
-
-### 路由
-- Router: `127.0.0.1:3456`
-- 默认 provider: `remote-ai`（Qwen3.6-35B）
-- 备用: `deepseek`（deepseek-v4-flash）
-- 切换: `~/.claude-code-router/config.json` → `Router.default`
+*最后更新：2026-06-28（CC 配置迁入 kb/cc/config-cc.md；llama 档案迁入 kb/infra/llama-server.md；多代理定时规范迁入 AGENTS.md）*
