@@ -1,27 +1,13 @@
-from __future__ import annotations
+"""Backward-compatibility shim.
 
-from dataclasses import dataclass
-from enum import StrEnum
+The domain has moved to a subpackage (``invest_domain.instruments.*``) so
+that ``Instrument`` can grow new fields without breaking every caller. This
+module re-exports the public symbols that were originally defined here so
+existing import paths (``from invest_domain.instruments import Instrument,
+InstrumentType``) keep working.
+"""
 
+from invest_domain.instruments.models import Instrument, InstrumentId, InstrumentType
+from invest_domain.instruments.values import InstrumentStatus
 
-class InstrumentType(StrEnum):
-    ETF = "ETF"
-    STOCK = "STOCK"
-    INDEX = "INDEX"
-
-
-@dataclass(frozen=True, slots=True)
-class Instrument:
-    symbol: str
-    name: str
-    exchange: str
-    instrument_type: InstrumentType
-    is_active: bool = True
-
-    def __post_init__(self) -> None:
-        if not self.symbol.strip():
-            raise ValueError("symbol must not be empty")
-        if not self.name.strip():
-            raise ValueError("name must not be empty")
-        if not self.exchange.strip():
-            raise ValueError("exchange must not be empty")
+__all__ = ["Instrument", "InstrumentId", "InstrumentStatus", "InstrumentType"]
