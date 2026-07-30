@@ -6,6 +6,7 @@ from typing import Any
 
 from sqlalchemy import (
     Boolean,
+    CheckConstraint,
     Date,
     DateTime,
     Index,
@@ -142,7 +143,13 @@ class RawProviderBatchRow(Base):
 
 class PipelineRunRow(Base):
     __tablename__ = "pipeline_runs"
-    __table_args__ = {"schema": "app"}
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('pending', 'running', 'succeeded', 'failed')",
+            name="ck_pipeline_runs_status_valid",
+        ),
+        {"schema": "app"},
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     job_name: Mapped[str] = mapped_column(String(120), nullable=False, index=True)
@@ -151,3 +158,12 @@ class PipelineRunRow(Base):
     started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     error_message: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+        onupdate=func.now(),
+    )

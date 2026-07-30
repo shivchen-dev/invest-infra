@@ -45,6 +45,7 @@ from invest_domain.market_data import (
     TradingStatus,
     bar_source_metadata_hash,
 )
+from invest_domain.pipeline import PipelineRun, PipelineRunStatus
 from invest_domain.shared.canonical import (
     CANONICAL_HASH_SCHEMA_VERSION,
     CanonicalizationError,
@@ -78,6 +79,8 @@ __all__ = [
     "InstrumentStatus",
     "InstrumentType",
     "LiquidityCriteria",
+    "PipelineRun",
+    "PipelineRunStatus",
     "PriceQualityCriteria",
     "ProviderBatch",
     "ProviderBatchStatus",

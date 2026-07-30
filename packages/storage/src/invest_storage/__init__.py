@@ -13,11 +13,13 @@ from invest_storage.providers import (
 from invest_storage.repositories import (
     NewProviderBatch,
     SqlAlchemyInstrumentRepository,
+    SqlAlchemyPipelineRunRepository,
     SqlAlchemyProviderBatchRepository,
     StoredProviderBatch,
 )
 from invest_storage.unit_of_work import (
     InstrumentRepositoryPort,
+    PipelineRunRepositoryPort,
     ProviderBatchRepositoryPort,
     SqlAlchemyUnitOfWork,
     UnitOfWork,
@@ -28,11 +30,13 @@ __all__ = [
     "InstrumentRepositoryPort",
     "InstrumentRow",
     "NewProviderBatch",
+    "PipelineRunRepositoryPort",
     "PipelineRunRow",
     "ProviderBatchRepositoryPort",
     "RawProviderBatchRow",
     "SessionProvider",
     "SqlAlchemyInstrumentRepository",
+    "SqlAlchemyPipelineRunRepository",
     "SqlAlchemyProviderBatchRepository",
     "SqlAlchemyUnitOfWork",
     "StoredProviderBatch",

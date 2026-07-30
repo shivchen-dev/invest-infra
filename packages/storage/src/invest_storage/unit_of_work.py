@@ -30,6 +30,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from invest_storage.providers import SessionProvider
 from invest_storage.repositories import (
     SqlAlchemyInstrumentRepository,
+    SqlAlchemyPipelineRunRepository,
     SqlAlchemyProviderBatchRepository,
 )
 
@@ -63,6 +64,18 @@ class ProviderBatchRepositoryPort(Protocol):
 
 
 @runtime_checkable
+class PipelineRunRepositoryPort(Protocol):
+    """Subset of the PipelineRun repository surface the UoW exposes."""
+
+    def start(self, run): ...
+    def mark_succeeded(self, run_id, *, finished_at): ...
+    def mark_failed(self, run_id, *, error: str, finished_at): ...
+    def get_by_id(self, run_id): ...
+    def list_recent(self, *, limit: int = 50, offset: int = 0): ...
+    def count_by_status(self, status: str) -> int: ...
+
+
+@runtime_checkable
 class UnitOfWork(Protocol):
     """Storage-layer transactional context.
 
@@ -74,6 +87,7 @@ class UnitOfWork(Protocol):
 
     instruments: InstrumentRepositoryPort
     provider_batches: ProviderBatchRepositoryPort
+    pipeline_runs: PipelineRunRepositoryPort
 
     def commit(self) -> None:
         """Persist the current transaction to the database."""
@@ -107,6 +121,7 @@ class SqlAlchemyUnitOfWork:
         self._session: Session | None = None
         self._instruments: SqlAlchemyInstrumentRepository | None = None
         self._provider_batches: SqlAlchemyProviderBatchRepository | None = None
+        self._pipeline_runs: SqlAlchemyPipelineRunRepository | None = None
         self._closed = True
         self._user_committed = False
 
@@ -130,6 +145,12 @@ class SqlAlchemyUnitOfWork:
         if self._provider_batches is None:
             self._provider_batches = SqlAlchemyProviderBatchRepository(self.session)
         return self._provider_batches
+
+    @property
+    def pipeline_runs(self) -> SqlAlchemyPipelineRunRepository:
+        if self._pipeline_runs is None:
+            self._pipeline_runs = SqlAlchemyPipelineRunRepository(self.session)
+        return self._pipeline_runs
 
     def commit(self) -> None:
         self.session.commit()
@@ -166,6 +187,7 @@ class SqlAlchemyUnitOfWork:
                 self._session = None
             self._instruments = None
             self._provider_batches = None
+            self._pipeline_runs = None
             self._user_committed = False
             self._closed = True
 
@@ -176,6 +198,7 @@ class SqlAlchemyUnitOfWork:
 
 __all__ = [
     "InstrumentRepositoryPort",
+    "PipelineRunRepositoryPort",
     "ProviderBatchRepositoryPort",
     "SqlAlchemyUnitOfWork",
     "UnitOfWork",

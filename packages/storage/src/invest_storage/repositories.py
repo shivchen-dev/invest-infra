@@ -1,8 +1,8 @@
 """Repository implementations for the M1 Storage layer.
 
 Each repository owns its ORM-to-domain mapping: callers always receive
-domain objects, never SQLAlchemy ORM rows. The two repositories in this
-module cover the tables introduced by M1 increments 2 and 3:
+domain objects, never SQLAlchemy ORM rows. The repositories in this
+module cover the tables introduced by M1 increments 2, 3 and 5:
 
 - :class:`SqlAlchemyInstrumentRepository` persists the canonical
   ``core.instruments`` rows. The partial unique index on
@@ -12,6 +12,10 @@ module cover the tables introduced by M1 increments 2 and 3:
   rows in ``raw.provider_batches``. The unique constraint on
   ``(provider_key, dataset_key, request_key)`` is enforced by the
   database; a second insert with the same triplet raises ``IntegrityError``.
+- :class:`SqlAlchemyPipelineRunRepository` records one execution of a
+  pipeline job in ``app.pipeline_runs``. Status transitions
+  (``start`` / ``mark_succeeded`` / ``mark_failed``) are owned by the
+  repository; lifecycle timestamps are filled in by the database.
 
 The :class:`StoredProviderBatch` dataclass is the domain-side handle for
 a persisted provider batch. It intentionally mirrors
@@ -35,12 +39,13 @@ from invest_domain.instruments import (
     InstrumentStatus,
     InstrumentType,
 )
+from invest_domain.pipeline import PipelineRun, PipelineRunStatus
 from invest_domain.shared.values import Currency
 from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 
-from invest_storage.models import InstrumentRow, RawProviderBatchRow
+from invest_storage.models import InstrumentRow, PipelineRunRow, RawProviderBatchRow
 
 
 @dataclass(frozen=True, slots=True)
@@ -348,6 +353,167 @@ def _row_to_instrument(row: InstrumentRow) -> Instrument:
         provider_symbol_map=dict(row.provider_symbol_map or {}),
         valid_from=_as_date(row.valid_from),
         valid_to=_as_date(row.valid_to),
+    )
+
+
+class SqlAlchemyPipelineRunRepository:
+    """Read/write access to ``app.pipeline_runs``.
+
+    The repository never commits: it only mutates the session, and the
+    surrounding :class:`invest_storage.unit_of_work.SqlAlchemyUnitOfWork`
+    owns the transaction boundary. All public methods return the
+    domain-side :class:`invest_domain.pipeline.PipelineRun` rather than
+    the SQLAlchemy ORM row so callers can stay free of storage
+    machinery.
+
+    The repository treats :meth:`start` as the transition into the
+    ``running`` state regardless of the input status; the application
+    layer is expected to hand in a fully-formed :class:`PipelineRun`
+    and rely on the repository to assign the storage-side identity and
+    the lifecycle timestamps.
+    """
+
+    _START_STATUS = PipelineRunStatus.RUNNING.value
+
+    def __init__(self, session: Session) -> None:
+        self._session = session
+
+    def start(self, run: PipelineRun) -> PipelineRun:
+        """Insert a new ``pipeline_runs`` row in the ``running`` state.
+
+        The input ``run`` is taken as the canonical payload for
+        ``job_name``, ``algorithm_version`` and ``started_at``;
+        ``status`` is overwritten with ``"running"`` and a fresh UUID is
+        generated in Python. ``error_message`` is reset to ``None`` so
+        a re-used domain value cannot leak a stale failure message into
+        a brand-new run.
+
+        Returns the persisted :class:`PipelineRun` carrying the
+        assigned UUID and the server-generated ``created_at`` /
+        ``updated_at`` timestamps.
+        """
+
+        row = PipelineRunRow(
+            id=uuid.uuid4(),
+            job_name=run.job_name,
+            algorithm_version=run.algorithm_version,
+            status=self._START_STATUS,
+            started_at=run.started_at,
+            finished_at=None,
+            error_message=None,
+        )
+        self._session.add(row)
+        self._session.flush()
+        return _row_to_pipeline_run(row)
+
+    def mark_succeeded(
+        self, run_id: UUID, *, finished_at: datetime
+    ) -> PipelineRun:
+        """Transition a run into the ``succeeded`` terminal state.
+
+        Updates ``status='succeeded'`` and ``finished_at``; ``error_message``
+        is reset to ``None`` so a previous transient failure is not
+        carried forward.
+        """
+
+        row = self._session.get(PipelineRunRow, run_id)
+        if row is None:
+            raise LookupError(
+                f"PipelineRun {run_id!s} not found; cannot mark succeeded"
+            )
+        row.status = PipelineRunStatus.SUCCEEDED.value
+        row.finished_at = finished_at
+        row.error_message = None
+        self._session.flush()
+        return _row_to_pipeline_run(row)
+
+    def mark_failed(
+        self, run_id: UUID, *, error: str, finished_at: datetime
+    ) -> PipelineRun:
+        """Transition a run into the ``failed`` terminal state.
+
+        Updates ``status='failed'``, ``finished_at`` and ``error_message``.
+        Raises :class:`ValueError` when ``error`` is empty so the
+        repository never writes a meaningless failure record.
+        """
+
+        if not isinstance(error, str) or not error.strip():
+            raise ValueError(
+                "SqlAlchemyPipelineRunRepository.mark_failed requires a "
+                "non-empty error message"
+            )
+        row = self._session.get(PipelineRunRow, run_id)
+        if row is None:
+            raise LookupError(
+                f"PipelineRun {run_id!s} not found; cannot mark failed"
+            )
+        row.status = PipelineRunStatus.FAILED.value
+        row.finished_at = finished_at
+        row.error_message = error
+        self._session.flush()
+        return _row_to_pipeline_run(row)
+
+    def get_by_id(self, run_id: UUID) -> PipelineRun | None:
+        """Return the run for ``run_id`` or ``None`` if absent."""
+
+        row = self._session.get(PipelineRunRow, run_id)
+        return _row_to_pipeline_run(row) if row is not None else None
+
+    def list_recent(
+        self, *, limit: int = 50, offset: int = 0
+    ) -> list[PipelineRun]:
+        """Return runs ordered by ``started_at`` descending.
+
+        The descending ``started_at`` order matches the dashboard use
+        case where the most recent run must come first; ties on
+        ``started_at`` (e.g. two runs scheduled for the same instant)
+        are broken by ``id`` so the result is stable.
+        """
+
+        if limit < 0:
+            raise ValueError(f"limit must be >= 0, got {limit}")
+        if offset < 0:
+            raise ValueError(f"offset must be >= 0, got {offset}")
+        stmt = (
+            select(PipelineRunRow)
+            .order_by(
+                PipelineRunRow.started_at.desc(),
+                PipelineRunRow.id.asc(),
+            )
+            .limit(limit)
+            .offset(offset)
+        )
+        rows = self._session.scalars(stmt).all()
+        return [_row_to_pipeline_run(row) for row in rows]
+
+    def count_by_status(self, status: str) -> int:
+        """Return the number of runs in the given ``status``.
+
+        ``status`` is taken as a raw string so callers can drive the
+        count with the canonical lowercase vocabulary without having
+        to construct a :class:`PipelineRunStatus`. An unknown value
+        yields zero rather than raising so the repository can be
+        probed safely from operational dashboards.
+        """
+
+        stmt = (
+            select(PipelineRunRow.id)
+            .where(PipelineRunRow.status == status)
+        )
+        return len(self._session.scalars(stmt).all())
+
+
+def _row_to_pipeline_run(row: PipelineRunRow) -> PipelineRun:
+    return PipelineRun(
+        id=row.id,
+        job_name=row.job_name,
+        algorithm_version=row.algorithm_version,
+        status=row.status,
+        started_at=row.started_at,
+        finished_at=row.finished_at,
+        error_message=row.error_message,
+        created_at=row.created_at,
+        updated_at=row.updated_at,
     )
 
 

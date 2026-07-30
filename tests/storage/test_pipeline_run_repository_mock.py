@@ -1,0 +1,240 @@
+"""Mock-based unit tests for :class:`SqlAlchemyPipelineRunRepository`.
+
+The tests drive a :class:`unittest.mock.MagicMock` ``Session`` so the
+:class:`invest_storage.repositories.SqlAlchemyPipelineRunRepository`
+can be verified without spinning up Testcontainers or speaking to a real
+PostgreSQL. The repository never opens its own session, never commits,
+and always returns the domain-side :class:`invest_domain.pipeline.PipelineRun`;
+these tests pin all three contracts.
+
+Each test exercises exactly one behaviour so a future regression in
+either the SQLAlchemy call shape (``add`` / ``flush`` / ``get`` /
+``scalars``) or the ORM-to-domain mapping can be localised.
+"""
+
+from __future__ import annotations
+
+import unittest
+from datetime import UTC, datetime
+from typing import Any
+from unittest.mock import MagicMock
+from uuid import UUID, uuid4
+
+from invest_domain.pipeline import PipelineRun, PipelineRunStatus
+from invest_storage.models import PipelineRunRow
+from invest_storage.repositories import SqlAlchemyPipelineRunRepository
+
+
+def _make_run(
+    *,
+    job_name: str = "etf_daily",
+    algorithm_version: str = "v1.0",
+    status: PipelineRunStatus | str = PipelineRunStatus.PENDING,
+    started_at: datetime | None = None,
+    finished_at: datetime | None = None,
+    error_message: str | None = None,
+) -> PipelineRun:
+    return PipelineRun(
+        job_name=job_name,
+        algorithm_version=algorithm_version,
+        status=status,
+        started_at=started_at or datetime(2026, 7, 30, 12, 0, tzinfo=UTC),
+        finished_at=finished_at,
+        error_message=error_message,
+    )
+
+
+def _make_row(
+    *,
+    row_id: UUID | None = None,
+    job_name: str = "etf_daily",
+    status: str = "running",
+    algorithm_version: str = "v1.0",
+    started_at: datetime | None = None,
+    finished_at: datetime | None = None,
+    error_message: str | None = None,
+    created_at: datetime | None = None,
+    updated_at: datetime | None = None,
+) -> MagicMock:
+    """Build a mock that looks like a :class:`PipelineRunRow`."""
+
+    base = datetime(2026, 7, 30, 12, 0, tzinfo=UTC)
+    row = MagicMock(spec=PipelineRunRow)
+    row.id = row_id or uuid4()
+    row.job_name = job_name
+    row.status = status
+    row.algorithm_version = algorithm_version
+    row.started_at = started_at or base
+    row.finished_at = finished_at
+    row.error_message = error_message
+    row.created_at = created_at or base
+    row.updated_at = updated_at or base
+    return row
+
+
+class SqlAlchemyPipelineRunRepositoryMockTests(unittest.TestCase):
+    """Mock-based tests for :class:`SqlAlchemyPipelineRunRepository`."""
+
+    def setUp(self) -> None:
+        self._session = MagicMock(name="Session")
+        self._repo = SqlAlchemyPipelineRunRepository(self._session)
+
+    # ------------------------------------------------------------------
+    # start
+    # ------------------------------------------------------------------
+
+    def test_start_inserts_row_with_status_running(self) -> None:
+        run = _make_run(status=PipelineRunStatus.PENDING)
+
+        self._repo.start(run)
+
+        self.assertEqual(self._session.add.call_count, 1)
+        self.assertEqual(self._session.flush.call_count, 1)
+        added_row = self._session.add.call_args[0][0]
+        self.assertIsInstance(added_row, PipelineRunRow)
+        self.assertEqual(added_row.status, "running")
+        self.assertEqual(added_row.job_name, "etf_daily")
+        self.assertEqual(added_row.algorithm_version, "v1.0")
+        self.assertEqual(added_row.started_at, run.started_at)
+        self.assertIsNone(added_row.error_message)
+        self.assertIsNone(added_row.finished_at)
+
+    def test_start_returns_pipeline_run_with_persisted_id(self) -> None:
+        run = _make_run()
+        persisted_id = uuid4()
+
+        def _attach_row(_row: Any) -> None:
+            _row.id = persisted_id
+
+        self._session.add.side_effect = _attach_row
+
+        result = self._repo.start(run)
+
+        self.assertIsInstance(result, PipelineRun)
+        self.assertEqual(result.id, persisted_id)
+        self.assertEqual(result.status_value, "running")
+        self.assertEqual(result.job_name, run.job_name)
+        self.assertEqual(result.algorithm_version, run.algorithm_version)
+        self.assertEqual(result.started_at, run.started_at)
+        self.assertIsNone(result.finished_at)
+        self.assertIsNone(result.error_message)
+
+    # ------------------------------------------------------------------
+    # mark_succeeded
+    # ------------------------------------------------------------------
+
+    def test_mark_succeeded_updates_status_and_finished_at(self) -> None:
+        run_id = uuid4()
+        existing = _make_row(row_id=run_id, status="running")
+        self._session.get.return_value = existing
+        finished_at = datetime(2026, 7, 30, 12, 5, tzinfo=UTC)
+
+        result = self._repo.mark_succeeded(run_id, finished_at=finished_at)
+
+        self._session.get.assert_called_once_with(PipelineRunRow, run_id)
+        self.assertEqual(existing.status, "succeeded")
+        self.assertEqual(existing.finished_at, finished_at)
+        self.assertIsNone(existing.error_message)
+        self.assertEqual(self._session.flush.call_count, 1)
+        self.assertIsInstance(result, PipelineRun)
+        self.assertEqual(result.id, run_id)
+        self.assertEqual(result.status_value, "succeeded")
+        self.assertEqual(result.finished_at, finished_at)
+        self.assertIsNone(result.error_message)
+
+    # ------------------------------------------------------------------
+    # mark_failed
+    # ------------------------------------------------------------------
+
+    def test_mark_failed_sets_error_and_status(self) -> None:
+        run_id = uuid4()
+        existing = _make_row(row_id=run_id, status="running")
+        self._session.get.return_value = existing
+        finished_at = datetime(2026, 7, 30, 12, 5, tzinfo=UTC)
+
+        result = self._repo.mark_failed(
+            run_id, error="provider timeout", finished_at=finished_at
+        )
+
+        self._session.get.assert_called_once_with(PipelineRunRow, run_id)
+        self.assertEqual(existing.status, "failed")
+        self.assertEqual(existing.finished_at, finished_at)
+        self.assertEqual(existing.error_message, "provider timeout")
+        self.assertEqual(self._session.flush.call_count, 1)
+        self.assertIsInstance(result, PipelineRun)
+        self.assertEqual(result.status_value, "failed")
+        self.assertEqual(result.error_message, "provider timeout")
+        self.assertEqual(result.finished_at, finished_at)
+
+    # ------------------------------------------------------------------
+    # get_by_id
+    # ------------------------------------------------------------------
+
+    def test_get_by_id_returns_run_when_present(self) -> None:
+        run_id = uuid4()
+        row = _make_row(
+            row_id=run_id,
+            status="succeeded",
+            finished_at=datetime(2026, 7, 30, 12, 5, tzinfo=UTC),
+        )
+        self._session.get.return_value = row
+
+        result = self._repo.get_by_id(run_id)
+
+        self._session.get.assert_called_once_with(PipelineRunRow, run_id)
+        self.assertIsNotNone(result)
+        assert result is not None
+        self.assertIsInstance(result, PipelineRun)
+        self.assertEqual(result.id, run_id)
+        self.assertEqual(result.status_value, "succeeded")
+        self.assertEqual(result.finished_at, row.finished_at)
+
+    def test_get_by_id_returns_none_when_absent(self) -> None:
+        missing = uuid4()
+        self._session.get.return_value = None
+
+        result = self._repo.get_by_id(missing)
+
+        self._session.get.assert_called_once_with(PipelineRunRow, missing)
+        self.assertIsNone(result)
+
+    # ------------------------------------------------------------------
+    # list_recent
+    # ------------------------------------------------------------------
+
+    def test_list_recent_returns_runs_ordered_by_started_at_desc(self) -> None:
+        first = _make_row(started_at=datetime(2026, 7, 30, 14, 0, tzinfo=UTC))
+        second = _make_row(started_at=datetime(2026, 7, 30, 13, 0, tzinfo=UTC))
+        scalars_mock = self._session.scalars.return_value
+        scalars_mock.all.return_value = [first, second]
+
+        result = self._repo.list_recent(limit=10, offset=0)
+
+        self.assertEqual(self._session.scalars.call_count, 1)
+        scalars_mock.all.assert_called_once_with()
+        self.assertEqual(len(result), 2)
+        self.assertEqual([item.id for item in result], [first.id, second.id])
+        self.assertEqual(
+            [item.started_at for item in result],
+            [first.started_at, second.started_at],
+        )
+        for item in result:
+            self.assertIsInstance(item, PipelineRun)
+
+    # ------------------------------------------------------------------
+    # count_by_status
+    # ------------------------------------------------------------------
+
+    def test_count_by_status_filters_correctly(self) -> None:
+        scalars_mock = self._session.scalars.return_value
+        scalars_mock.all.return_value = [uuid4(), uuid4()]
+
+        result = self._repo.count_by_status("running")
+
+        self.assertEqual(self._session.scalars.call_count, 1)
+        scalars_mock.all.assert_called_once_with()
+        self.assertEqual(result, 2)
+
+
+if __name__ == "__main__":
+    unittest.main()
