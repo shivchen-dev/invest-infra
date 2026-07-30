@@ -1,0 +1,182 @@
+"""Unit-of-Work protocol and SQLAlchemy implementation.
+
+A UnitOfWork (UoW) wraps a single SQLAlchemy ``Session`` plus the
+repositories that operate against it. The application layer enters the
+UoW, mutates rows through the repository properties, then either commits
+or rolls back - the UoW owns the transaction boundary.
+
+Design constraints (see M1 increment 3 plan):
+
+- ``commit()`` / ``rollback()`` mirror the underlying ``Session`` API.
+- The UoW is a context manager: ``__enter__`` returns ``self``,
+  ``__exit__`` commits on clean exit and rolls back on exception, then
+  closes the session.
+- Repositories are exposed as cached properties: ``uow.instruments`` and
+  ``uow.provider_batches``. The same repository instance is reused for
+  the lifetime of the UoW so identity-based caching (e.g. SQLAlchemy's
+  identity map) works as expected.
+- The protocol (``UnitOfWork``) keeps the application layer decoupled
+  from SQLAlchemy; the SQLAlchemy implementation
+  (:class:`SqlAlchemyUnitOfWork`) is the only adapter in M1.
+"""
+
+from __future__ import annotations
+
+from types import TracebackType
+from typing import Protocol, runtime_checkable
+
+from sqlalchemy.orm import Session, sessionmaker
+
+from invest_storage.providers import SessionProvider
+from invest_storage.repositories import (
+    SqlAlchemyInstrumentRepository,
+    SqlAlchemyProviderBatchRepository,
+)
+
+
+@runtime_checkable
+class InstrumentRepositoryPort(Protocol):
+    """Subset of the Instrument repository surface the UoW exposes.
+
+    Defined as a Protocol so callers can type-hint against it without
+    importing the SQLAlchemy implementation. The Protocol is deliberately
+    structural: any object that implements the methods satisfies it.
+    """
+
+    def upsert_many(self, instruments): ...
+    def get_by_id(self, instrument_id): ...
+    def get_by_business_key(self, *, exchange: str, symbol: str): ...
+    def list_active(self, *, limit: int = 100, offset: int = 0): ...
+    def count_active(self) -> int: ...
+
+
+@runtime_checkable
+class ProviderBatchRepositoryPort(Protocol):
+    """Subset of the ProviderBatch repository surface the UoW exposes."""
+
+    def add(self, batch): ...
+    def get_by_id(self, batch_id): ...
+    def get_by_request(self, *, provider_key: str, dataset_key: str, request_key: str): ...
+    def list_by_provider_dataset(
+        self, *, provider_key: str, dataset_key: str, limit: int = 100, offset: int = 0
+    ): ...
+
+
+@runtime_checkable
+class UnitOfWork(Protocol):
+    """Storage-layer transactional context.
+
+    The application layer interacts with a UoW through its repository
+    properties and :meth:`commit` / :meth:`rollback`. The
+    ``with uow:`` form is preferred because it handles commit/rollback/
+    close automatically based on whether the block raised.
+    """
+
+    instruments: InstrumentRepositoryPort
+    provider_batches: ProviderBatchRepositoryPort
+
+    def commit(self) -> None:
+        """Persist the current transaction to the database."""
+
+    def rollback(self) -> None:
+        """Discard every change made in the current transaction."""
+
+    def __enter__(self) -> UnitOfWork:
+        ...
+
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        tb: TracebackType | None,
+    ) -> None:
+        ...
+
+
+class SqlAlchemyUnitOfWork:
+    """SQLAlchemy-backed implementation of :class:`UnitOfWork`.
+
+    A fresh ``Session`` is opened in :meth:`__enter__`; repository
+    properties are lazily constructed on first access and reused for the
+    rest of the UoW's lifetime. The session is closed in
+    :meth:`__exit__` regardless of commit/rollback outcome.
+    """
+
+    def __init__(self, session_factory: SessionProvider | sessionmaker[Session]) -> None:
+        self._session_factory = session_factory
+        self._session: Session | None = None
+        self._instruments: SqlAlchemyInstrumentRepository | None = None
+        self._provider_batches: SqlAlchemyProviderBatchRepository | None = None
+        self._closed = True
+        self._user_committed = False
+
+    @property
+    def session(self) -> Session:
+        if self._session is None:
+            raise RuntimeError(
+                "UnitOfWork.session accessed outside of 'with' block; "
+                "enter the UnitOfWork context manager first"
+            )
+        return self._session
+
+    @property
+    def instruments(self) -> SqlAlchemyInstrumentRepository:
+        if self._instruments is None:
+            self._instruments = SqlAlchemyInstrumentRepository(self.session)
+        return self._instruments
+
+    @property
+    def provider_batches(self) -> SqlAlchemyProviderBatchRepository:
+        if self._provider_batches is None:
+            self._provider_batches = SqlAlchemyProviderBatchRepository(self.session)
+        return self._provider_batches
+
+    def commit(self) -> None:
+        self.session.commit()
+        self._user_committed = True
+
+    def rollback(self) -> None:
+        self.session.rollback()
+        self._user_committed = True
+
+    def __enter__(self) -> SqlAlchemyUnitOfWork:
+        self._session = self._session_factory()
+        self._closed = False
+        self._user_committed = False
+        return self
+
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        tb: TracebackType | None,
+    ) -> None:
+        try:
+            if exc_type is not None:
+                self.rollback()
+            elif not self._user_committed:
+                try:
+                    self.commit()
+                except Exception:
+                    self.rollback()
+                    raise
+        finally:
+            if self._session is not None:
+                self._session.close()
+                self._session = None
+            self._instruments = None
+            self._provider_batches = None
+            self._user_committed = False
+            self._closed = True
+
+    @property
+    def closed(self) -> bool:
+        return self._closed
+
+
+__all__ = [
+    "InstrumentRepositoryPort",
+    "ProviderBatchRepositoryPort",
+    "SqlAlchemyUnitOfWork",
+    "UnitOfWork",
+]
