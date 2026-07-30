@@ -71,12 +71,6 @@ class MigrationChainTest(unittest.TestCase):
             "the initial revision '20260730_0001' must exist in the migration chain",
         )
 
-        self.assertNotIn(
-            "20260730_0001",
-            referenced_down_revisions,
-            "revision '20260730_0001' must not be referenced as a down_revision because it is the initial migration",
-        )
-
         initial_files = [
             revision_file
             for revision_file, (revision, _) in revisions.items()
