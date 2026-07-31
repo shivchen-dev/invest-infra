@@ -17,6 +17,10 @@ from sqlalchemy.orm import Session
 
 from invest_pipeline.adapters import FixtureDevInstrumentProvider
 from invest_pipeline.config import get_settings
+from invest_pipeline.etf_daily_bars import (
+    upsert_etf_daily_bars,
+    write_etf_daily_bars_raw,
+)
 from invest_pipeline.etf_instruments import (
     upsert_etf_instruments,
     write_etf_instruments_raw,
@@ -223,5 +227,180 @@ def etf_instruments(context) -> dg.MaterializeResult:
             "row_count": count,
             "as_of": as_of.isoformat(),
             "skipped": False,
+        }
+    )
+
+
+_DEFAULT_DAILY_BARS_START = date(2026, 7, 23)
+_DEFAULT_DAILY_BARS_END = date(2026, 7, 30)
+
+
+@dg.asset(
+    group_name="market_data",
+    compute_kind="python",
+    deps=[etf_instruments_raw],
+)
+def etf_daily_bars_raw(
+    context,
+    *,
+    start_date: date | None = None,
+    end_date: date | None = None,
+) -> dg.MaterializeResult:
+    """Persist the PR-02 three-layer evidence bundle for ETF daily bars.
+
+    Calls the ``fixture_dev`` adapter for the configured universe
+    (the 12 SSE / SZSE ETFs) over ``[start_date, end_date]``, hands
+    the request / attempt / batch triple to
+    :func:`invest_pipeline.etf_daily_bars.write_etf_daily_bars_raw`,
+    and surfaces the storage-assigned UUIDs through Dagster metadata.
+
+    Depends on :func:`etf_instruments_raw` so the canonical
+    ``core.instruments`` rows exist by the time the downstream
+    upsert runs (the daily-bars upsert resolves
+    ``symbol -> core.instruments.id`` via the partial unique business
+    key). A failed attempt persists the request + attempt only — no
+    batch row is created.
+    """
+
+    provider = FixtureDevInstrumentProvider()
+    start = start_date or _DEFAULT_DAILY_BARS_START
+    end = end_date or _DEFAULT_DAILY_BARS_END
+    symbols = [item.symbol for item in provider.list_instruments()]
+
+    engine = build_engine(get_settings().database_url)
+    factory = session_factory(engine)
+    try:
+        from invest_storage import SqlAlchemyUnitOfWork
+
+        result = write_etf_daily_bars_raw(
+            provider,
+            factory,
+            symbols=symbols,
+            start_date=start,
+            end_date=end,
+            unit_of_work_factory=SqlAlchemyUnitOfWork,
+        )
+    finally:
+        engine.dispose()
+
+    context.log.info(
+        "etf_daily_bars_raw: provider=%s request=%s attempt=%s batch=%s "
+        "status=%s records=%s window=%s..%s",
+        provider.provider_key,
+        result.request_id,
+        result.attempt_id,
+        result.batch_id,
+        result.request_status,
+        result.record_count,
+        start.isoformat(),
+        end.isoformat(),
+    )
+    return dg.MaterializeResult(
+        metadata={
+            "provider": provider.provider_key,
+            "request_id": str(result.request_id),
+            "attempt_id": str(result.attempt_id),
+            "batch_id": str(result.batch_id) if result.batch_id else "",
+            "request_status": result.request_status,
+            "attempt_status": result.attempt_status,
+            "record_count": result.record_count,
+            "start_date": start.isoformat(),
+            "end_date": end.isoformat(),
+            "symbol_count": len(symbols),
+        }
+    )
+
+
+@dg.asset(
+    group_name="market_data",
+    compute_kind="python",
+    deps=[etf_daily_bars_raw],
+)
+def etf_daily_bars(
+    context,
+    *,
+    start_date: date | None = None,
+    end_date: date | None = None,
+) -> dg.MaterializeResult:
+    """Upsert standardized ETF daily bars into ``core.daily_bars``.
+
+    Depends on :func:`etf_daily_bars_raw` and re-opens a fresh
+    transaction to read the persisted attempt's
+    ``response_payload_json`` sidecar. The records are deserialized,
+    the real ``core.instruments.id`` is resolved per ``symbol``, and
+    the resulting :class:`invest_domain.market_data.models.DailyBar`
+    list is handed to
+    :meth:`invest_storage.SqlAlchemyDailyBarRepository.upsert_many`.
+    The repository applies the ADR-0006 §3 revision rules: identical
+    business content is a no-op, content change increments the
+    revision.
+
+    If the upstream attempt failed the asset surfaces a
+    :class:`MaterializeResult` with ``inserted=0`` and a ``skipped``
+    note rather than raising, mirroring the etf_instruments asset's
+    "no retry loop on contract failure" stance.
+    """
+
+    provider = FixtureDevInstrumentProvider()
+    start = start_date or _DEFAULT_DAILY_BARS_START
+    end = end_date or _DEFAULT_DAILY_BARS_END
+    symbols = [item.symbol for item in provider.list_instruments()]
+    request_key = (
+        f"daily-bars-{start.isoformat()}-{end.isoformat()}-"
+        f"{'-'.join(symbols)}"
+    )
+
+    engine = build_engine(get_settings().database_url)
+    factory = session_factory(engine)
+    try:
+        from invest_storage import SqlAlchemyUnitOfWork
+
+        with SqlAlchemyUnitOfWork(factory) as uow:
+            stored_request = uow.provider_requests.get_by_logical_key(
+                provider_key=provider.provider_key,
+                dataset_key="etf_daily_bars",
+                request_key=request_key,
+            )
+        if stored_request is None or stored_request.status == "failed":
+            context.log.warning(
+                "etf_daily_bars: upstream attempt failed or missing for %s; "
+                "skipping core.daily_bars upsert",
+                request_key,
+            )
+            return dg.MaterializeResult(
+                metadata={
+                    "inserted": 0,
+                    "skipped": 0,
+                    "skipped_asset": True,
+                    "reason": "upstream attempt failed or missing",
+                    "request_key": request_key,
+                }
+            )
+        summary = upsert_etf_daily_bars(
+            factory,
+            provider_key=provider.provider_key,
+            dataset_key="etf_daily_bars",
+            request_key=request_key,
+            unit_of_work_factory=SqlAlchemyUnitOfWork,
+        )
+    finally:
+        engine.dispose()
+
+    context.log.info(
+        "etf_daily_bars: inserted=%s skipped=%s total=%s for window=%s..%s",
+        summary.inserted,
+        summary.skipped,
+        summary.total,
+        start.isoformat(),
+        end.isoformat(),
+    )
+    return dg.MaterializeResult(
+        metadata={
+            "inserted": summary.inserted,
+            "skipped": summary.skipped,
+            "total": summary.total,
+            "request_key": request_key,
+            "start_date": start.isoformat(),
+            "end_date": end.isoformat(),
         }
     )

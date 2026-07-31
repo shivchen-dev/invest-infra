@@ -34,6 +34,7 @@ from invest_storage.providers import SessionProvider
 from invest_storage.repositories import (
     SqlAlchemyCandidatePoolItemRepository,
     SqlAlchemyCandidatePoolRunRepository,
+    SqlAlchemyDailyBarRepository,
     SqlAlchemyInstrumentRepository,
     SqlAlchemyPipelineRunRepository,
     SqlAlchemyProviderAttemptRepository,
@@ -161,6 +162,30 @@ class CandidatePoolItemRepositoryPort(Protocol):
 
 
 @runtime_checkable
+class DailyBarRepositoryPort(Protocol):
+    """Subset of the DailyBar repository surface the UoW exposes.
+
+    The :class:`invest_storage.repositories.SqlAlchemyDailyBarRepository`
+    is the only adapter in M1; the Protocol keeps the application
+    layer decoupled from the concrete class. ``upsert_many`` is the
+    only write path so callers cannot bypass the ADR-0006 revision
+    comparison; ``get_latest`` and ``get_exact`` mirror the
+    snapshot-vs-replay split called out in ADR-0006 §6.
+    """
+
+    def upsert_many(self, bars): ...
+    def get_latest(
+        self, *, instrument_id, trade_date, adjustment
+    ): ...
+    def get_exact(
+        self, *, instrument_id, trade_date, adjustment, revision: int
+    ): ...
+    def list_by_instrument_and_range(
+        self, *, instrument_id, start_date, end_date, adjustment
+    ): ...
+
+
+@runtime_checkable
 class UnitOfWork(Protocol):
     """Storage-layer transactional context.
 
@@ -177,6 +202,7 @@ class UnitOfWork(Protocol):
     pipeline_runs: PipelineRunRepositoryPort
     candidate_pool_runs: CandidatePoolRunRepositoryPort
     candidate_pool_items: CandidatePoolItemRepositoryPort
+    daily_bars: DailyBarRepositoryPort
 
     def commit(self) -> None:
         """Persist the current transaction to the database."""
@@ -215,6 +241,7 @@ class SqlAlchemyUnitOfWork:
         self._pipeline_runs: SqlAlchemyPipelineRunRepository | None = None
         self._candidate_pool_runs: SqlAlchemyCandidatePoolRunRepository | None = None
         self._candidate_pool_items: SqlAlchemyCandidatePoolItemRepository | None = None
+        self._daily_bars: SqlAlchemyDailyBarRepository | None = None
         self._closed = True
         self._user_committed = False
 
@@ -269,6 +296,12 @@ class SqlAlchemyUnitOfWork:
             self._candidate_pool_items = SqlAlchemyCandidatePoolItemRepository(self.session)
         return self._candidate_pool_items
 
+    @property
+    def daily_bars(self) -> SqlAlchemyDailyBarRepository:
+        if self._daily_bars is None:
+            self._daily_bars = SqlAlchemyDailyBarRepository(self.session)
+        return self._daily_bars
+
     def commit(self) -> None:
         self.session.commit()
         self._user_committed = True
@@ -309,6 +342,7 @@ class SqlAlchemyUnitOfWork:
             self._pipeline_runs = None
             self._candidate_pool_runs = None
             self._candidate_pool_items = None
+            self._daily_bars = None
             self._user_committed = False
             self._closed = True
 
@@ -320,6 +354,7 @@ class SqlAlchemyUnitOfWork:
 __all__ = [
     "CandidatePoolItemRepositoryPort",
     "CandidatePoolRunRepositoryPort",
+    "DailyBarRepositoryPort",
     "InstrumentRepositoryPort",
     "PipelineRunRepositoryPort",
     "ProviderAttemptRepositoryPort",

@@ -62,15 +62,19 @@ from invest_domain.instruments import (
     InstrumentStatus,
     InstrumentType,
 )
+from invest_domain.market_data.models import BarSource, DailyBar
+from invest_domain.market_data.values import Adjust, TradingStatus
 from invest_domain.pipeline import PipelineRun, PipelineRunStatus
+from invest_domain.shared.canonical import CANONICAL_HASH_SCHEMA_VERSION
 from invest_domain.shared.values import Currency
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 
 from invest_storage.models import (
     CandidatePoolItemRow,
     CandidatePoolRunRow,
+    DailyBarRow,
     InstrumentRow,
     PipelineRunRow,
     ProviderAttemptRow,
@@ -180,6 +184,69 @@ class NewProviderBatch:
     payload_sha256: str
     status: str = "succeeded"
     warnings: list[Any] = field(default_factory=list)
+
+
+@dataclass(frozen=True, slots=True)
+class StoredDailyBar:
+    """Domain-side view of a persisted ``core.daily_bars`` row.
+
+    Carries every field the :class:`invest_domain.market_data.models.DailyBar`
+    needs to be reconstructed, plus the storage-assigned ``id`` and
+    server-generated ``created_at``. ``row_hash`` is the deterministic
+    business-content digest the domain validated at construction time;
+    callers that want a full :class:`DailyBar` instance should rebuild it
+    through :meth:`DailyBar.build` so the domain invariants run again
+    on the round-trip.
+    """
+
+    id: UUID
+    instrument_id: UUID
+    trade_date: date
+    open: Decimal | None
+    high: Decimal | None
+    low: Decimal | None
+    close: Decimal | None
+    prev_close: Decimal | None
+    volume: Decimal | None
+    amount: Decimal | None
+    adjustment: str
+    trading_status: str
+    source_provider: str
+    source_batch_id: UUID | None
+    observed_at: datetime
+    revision: int
+    row_hash: str
+    created_at: datetime | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class NewDailyBar:
+    """Input shape for :meth:`SqlAlchemyDailyBarRepository.upsert_many`.
+
+    The caller is responsible for validating the OHLCV business content
+    through :class:`invest_domain.market_data.models.DailyBar` before
+    handing the bar to the repository; this dataclass is the
+    "transport" shape the application service uses. ``revision`` on
+    the input is taken as ``1`` and the repository may bump it to
+    ``latest + 1`` when the business content has actually changed (see
+    ADR-0006 §3).
+    """
+
+    instrument_id: UUID
+    trade_date: date
+    open: Decimal | None
+    high: Decimal | None
+    low: Decimal | None
+    close: Decimal | None
+    prev_close: Decimal | None
+    volume: Decimal | None
+    amount: Decimal | None
+    adjustment: Adjust
+    trading_status: TradingStatus
+    source_provider: str
+    source_batch_id: UUID | None
+    observed_at: datetime
+    row_hash: str
 
 
 class SqlAlchemyInstrumentRepository:
@@ -625,6 +692,316 @@ class SqlAlchemyProviderBatchRepository:
             .offset(offset)
         ).all()
         return [_row_to_stored_batch(row) for row in rows]
+
+
+class SqlAlchemyDailyBarRepository:
+    """Read/write access to ``core.daily_bars`` with ADR-0006 revision semantics.
+
+    The repository owns the revision-allocation algorithm defined in
+    ADR-0006 §3: a write only advances the revision when the incoming
+    business content (as identified by ``row_hash``) differs from the
+    latest persisted row for ``(instrument_id, trade_date, adjustment)``.
+    Re-collects of the same business content are a no-op; the new
+    ``raw.provider_batches`` row still records the audit trail but no
+    additional ``core.daily_bars`` row is created.
+
+    All write paths route through :meth:`upsert_many`; there is no
+    single-row ``add`` so callers cannot accidentally bypass the
+    row-hash comparison. The database-level ``UNIQUE (instrument_id,
+    trade_date, adjustment, revision)`` constraint is the final
+    concurrency guard, but the repository reads the latest revision
+    inside the same UnitOfWork so the deterministic content comparison
+    runs before the INSERT.
+
+    A failed attempt does not produce a batch row, so the application
+    service must NOT call :meth:`upsert_many` on the
+    :class:`invest_domain.market_data.models.ProviderBatch` returned
+    from a failed ``ProviderAttempt``. The pipeline asset enforces this
+    by gating ``upsert_etf_daily_bars`` on the attempt status.
+    """
+
+    def __init__(self, session: Session) -> None:
+        self._session = session
+
+    def _next_revision(
+        self,
+        *,
+        instrument_id: UUID,
+        trade_date: date,
+        adjustment: Adjust,
+    ) -> int:
+        """Return the next ``revision`` number for the given logical key.
+
+        The lookup is scoped to the current session so the read sees
+        any rows added by :meth:`upsert_many` earlier in the same
+        transaction (identity-map behaviour). Returns ``1`` when no
+        row exists for the logical key.
+        """
+
+        current_max = self._session.execute(
+            select(func.max(DailyBarRow.revision)).where(
+                DailyBarRow.instrument_id == instrument_id,
+                DailyBarRow.trade_date == trade_date,
+                DailyBarRow.adjustment == adjustment.value,
+            )
+        ).scalar()
+        return 1 if current_max is None else int(current_max) + 1
+
+    def get_latest(
+        self,
+        *,
+        instrument_id: UUID | InstrumentId,
+        trade_date: date,
+        adjustment: Adjust,
+    ) -> StoredDailyBar | None:
+        """Return the row with the highest ``revision`` for the logical key.
+
+        Per ADR-0006 §6 this is the recommended read surface for new
+        snapshot builders. The caller may also use
+        :meth:`get_exact` to pin a specific revision for replay.
+        """
+
+        raw_id = (
+            instrument_id.value
+            if isinstance(instrument_id, InstrumentId)
+            else instrument_id
+        )
+        row = self._session.execute(
+            select(DailyBarRow)
+            .where(
+                DailyBarRow.instrument_id == raw_id,
+                DailyBarRow.trade_date == trade_date,
+                DailyBarRow.adjustment == adjustment.value,
+            )
+            .order_by(DailyBarRow.revision.desc())
+            .limit(1)
+        ).scalar_one_or_none()
+        return _row_to_stored_daily_bar(row) if row is not None else None
+
+    def get_exact(
+        self,
+        *,
+        instrument_id: UUID | InstrumentId,
+        trade_date: date,
+        adjustment: Adjust,
+        revision: int,
+    ) -> StoredDailyBar | None:
+        """Return the row at the exact ``revision`` for the logical key."""
+
+        if revision < 1:
+            raise ValueError(f"revision must be >= 1, got {revision}")
+        raw_id = (
+            instrument_id.value
+            if isinstance(instrument_id, InstrumentId)
+            else instrument_id
+        )
+        row = self._session.execute(
+            select(DailyBarRow)
+            .where(
+                DailyBarRow.instrument_id == raw_id,
+                DailyBarRow.trade_date == trade_date,
+                DailyBarRow.adjustment == adjustment.value,
+                DailyBarRow.revision == revision,
+            )
+            .limit(1)
+        ).scalar_one_or_none()
+        return _row_to_stored_daily_bar(row) if row is not None else None
+
+    def list_by_instrument_and_range(
+        self,
+        *,
+        instrument_id: UUID | InstrumentId,
+        start_date: date,
+        end_date: date,
+        adjustment: Adjust,
+    ) -> Sequence[StoredDailyBar]:
+        """Return every revision of the bars in ``[start_date, end_date]``.
+
+        The result includes all revisions of the matching
+        ``(instrument_id, trade_date, adjustment)`` triplets, ordered
+        by ``trade_date`` then ``revision`` ascending so the caller can
+        group revisions in a single pass. :class:`Market` use cases
+        that need "the latest revision per day" should feed the result
+        through :meth:`get_latest` (per ADR-0006 §5); candidate-pool
+        replay MUST NOT use this list directly.
+        """
+
+        if end_date < start_date:
+            raise ValueError(
+                f"end_date {end_date.isoformat()} must be on or after "
+                f"start_date {start_date.isoformat()}"
+            )
+        raw_id = (
+            instrument_id.value
+            if isinstance(instrument_id, InstrumentId)
+            else instrument_id
+        )
+        rows = self._session.execute(
+            select(DailyBarRow)
+            .where(
+                DailyBarRow.instrument_id == raw_id,
+                DailyBarRow.trade_date >= start_date,
+                DailyBarRow.trade_date <= end_date,
+                DailyBarRow.adjustment == adjustment.value,
+            )
+            .order_by(
+                DailyBarRow.trade_date.asc(),
+                DailyBarRow.revision.asc(),
+            )
+        ).scalars().all()
+        return [_row_to_stored_daily_bar(row) for row in rows]
+
+    def upsert_many(self, bars: Sequence[NewDailyBar | DailyBar]) -> list[StoredDailyBar]:
+        """Persist ``bars`` into ``core.daily_bars`` under ADR-0006 revision rules.
+
+        The algorithm follows ADR-0006 §3:
+
+        - For each bar, look up the latest persisted row for the
+          ``(instrument_id, trade_date, adjustment)`` logical key.
+        - If no row exists, insert with ``revision = 1``.
+        - If a row exists and its ``row_hash`` equals the incoming
+          ``row_hash``, skip — the re-collect is a no-op at the core
+          layer, only the ``raw.provider_batches`` audit row is added.
+        - If a row exists and the hashes differ, insert with
+          ``revision = latest + 1``.
+
+        Returns the list of rows actually written (rows whose content
+        matched the latest revision are NOT in the result). The order
+        of the returned list mirrors the input order so callers can
+        correlate ``upsert_many`` invocations with the original
+        Provider batch.
+        """
+
+        if not bars:
+            return []
+
+        written: list[StoredDailyBar] = []
+        for bar in bars:
+            (instrument_id, trade_date, adjustment, payload) = _normalise_bar(bar)
+            latest = self.get_latest(
+                instrument_id=instrument_id,
+                trade_date=trade_date,
+                adjustment=adjustment,
+            )
+            if latest is not None and latest.row_hash == payload["row_hash"]:
+                continue
+            next_revision = self._next_revision(
+                instrument_id=instrument_id,
+                trade_date=trade_date,
+                adjustment=adjustment,
+            )
+            row = DailyBarRow(
+                id=uuid.uuid4(),
+                instrument_id=instrument_id,
+                trade_date=trade_date,
+                open=payload["open"],
+                high=payload["high"],
+                low=payload["low"],
+                close=payload["close"],
+                prev_close=payload["prev_close"],
+                volume=payload["volume"],
+                amount=payload["amount"],
+                adjustment=adjustment.value,
+                trading_status=payload["trading_status"],
+                source_provider=payload["source_provider"],
+                source_batch_id=payload["source_batch_id"],
+                observed_at=payload["observed_at"],
+                revision=next_revision,
+                row_hash=payload["row_hash"],
+            )
+            self._session.add(row)
+            self._session.flush()
+            written.append(_row_to_stored_daily_bar(row))
+        return written
+
+
+def _normalise_bar(
+    bar: NewDailyBar | DailyBar,
+) -> tuple[UUID, date, Adjust, dict[str, Any]]:
+    """Reduce the input ``bar`` to a canonical ``(id, date, adjust, payload)`` tuple.
+
+    The repository accepts either the domain :class:`DailyBar` (full
+    validation already done) or a transport-shape :class:`NewDailyBar`
+    straight from the application service. The ``payload`` is the
+    keyword-argument shape that the row builder consumes.
+    """
+
+    if isinstance(bar, DailyBar):
+        return (
+            bar.instrument_id.value,
+            bar.trade_date,
+            bar.adjustment,
+            {
+                "open": bar.open,
+                "high": bar.high,
+                "low": bar.low,
+                "close": bar.close,
+                "prev_close": bar.prev_close,
+                "volume": bar.volume,
+                "amount": bar.amount,
+                "trading_status": bar.trading_status.value,
+                "source_provider": bar.source.provider_key,
+                "source_batch_id": bar.source.source_batch_id,
+                "observed_at": bar.source.observed_at,
+                "row_hash": bar.compute_row_hash(),
+            },
+        )
+    if isinstance(bar, NewDailyBar):
+        return (
+            bar.instrument_id,
+            bar.trade_date,
+            bar.adjustment,
+            {
+                "open": bar.open,
+                "high": bar.high,
+                "low": bar.low,
+                "close": bar.close,
+                "prev_close": bar.prev_close,
+                "volume": bar.volume,
+                "amount": bar.amount,
+                "trading_status": bar.trading_status.value,
+                "source_provider": bar.source_provider,
+                "source_batch_id": bar.source_batch_id,
+                "observed_at": bar.observed_at,
+                "row_hash": bar.row_hash,
+            },
+        )
+    raise TypeError(
+        "upsert_many accepts invest_domain.market_data.models.DailyBar or "
+        "invest_storage.repositories.NewDailyBar, "
+        f"got {type(bar).__name__}"
+    )
+
+
+def _row_to_stored_daily_bar(row: DailyBarRow) -> StoredDailyBar:
+    return StoredDailyBar(
+        id=row.id,
+        instrument_id=row.instrument_id,
+        trade_date=row.trade_date,
+        open=_as_decimal(row.open),
+        high=_as_decimal(row.high),
+        low=_as_decimal(row.low),
+        close=_as_decimal(row.close),
+        prev_close=_as_decimal(row.prev_close),
+        volume=_as_decimal(row.volume),
+        amount=_as_decimal(row.amount),
+        adjustment=row.adjustment,
+        trading_status=row.trading_status,
+        source_provider=row.source_provider,
+        source_batch_id=row.source_batch_id,
+        observed_at=row.observed_at,
+        revision=row.revision,
+        row_hash=row.row_hash,
+        created_at=row.created_at,
+    )
+
+
+def _as_decimal(value: Any) -> Decimal | None:
+    if value is None:
+        return None
+    if isinstance(value, Decimal):
+        return value
+    return Decimal(str(value))
 
 
 def _excluded_set() -> dict[str, Any]:

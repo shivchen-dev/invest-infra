@@ -6,6 +6,17 @@ The deterministic fixture is loaded from
 ``etf_instruments.json`` so tests and local dev always see the same
 12-ETF SSE / SZSE universe (ADR-0004 phase 1 market scope).
 
+PR-06 extends the adapter with :meth:`FixtureDevInstrumentProvider.
+fetch_daily_bars` (the previous placeholder returned an empty batch).
+The on-disk daily-bars fixture
+``etf_daily_bars.json`` carries 6 trading days of OHLCV per ETF
+(2026-07-23 to 2026-07-30) so the full
+``fixture_dev -> raw.* -> core.daily_bars`` pipeline can be exercised
+end-to-end with deterministic content. Records are converted to
+domain :class:`invest_domain.market_data.models.DailyBar` instances
+with ``revision=1``; the storage layer bumps the revision if the
+business content has actually changed (ADR-0006 §3).
+
 Callers that need to exercise the failure path (contract tests for
 ``raw.provider_attempts`` CHECK constraints, retry policies, etc.) can
 either pass ``simulate_failure=True`` to the constructor or call
@@ -18,6 +29,7 @@ from __future__ import annotations
 import json
 from collections.abc import Sequence
 from datetime import UTC, date, datetime
+from decimal import Decimal
 from hashlib import sha256
 from pathlib import Path
 from typing import Any
@@ -28,8 +40,9 @@ from invest_domain.instruments import (
     InstrumentStatus,
     InstrumentType,
 )
-from invest_domain.instruments.models import _validate_optional_exchange
+from invest_domain.instruments.models import InstrumentId, _validate_optional_exchange
 from invest_domain.market_data.models import (
+    BarSource,
     DailyBar,
     ProviderAttempt,
     ProviderAttemptStatus,
@@ -38,10 +51,15 @@ from invest_domain.market_data.models import (
     ProviderFailureStage,
     ProviderRequest,
 )
+from invest_domain.market_data.values import Adjust, TradingStatus
 from invest_domain.shared.values import Currency
 
 _FIXTURE_PATH = Path(__file__).resolve().parent / "etf_instruments.json"
+_DAILY_BARS_FIXTURE_PATH = (
+    Path(__file__).resolve().parent / "etf_daily_bars.json"
+)
 _RECORDS_SCHEMA_VERSION = 1
+_DAILY_BARS_SCHEMA_VERSION = 1
 _SIMULATED_FAILURE_ERROR_CODE = "simulated_failure"
 _SIMULATED_FAILURE_ERROR_MESSAGE = (
     "fixture_dev forced failure for contract tests "
@@ -162,6 +180,153 @@ def deserialize_records(payload_json: str | bytes | bytearray | None) -> list[In
     return [_record_to_instrument(entry) for entry in raw_records]
 
 
+def _load_daily_bars_records() -> list[dict[str, Any]]:
+    """Load and validate the on-disk daily-bars fixture.
+
+    Mirrors :func:`_load_fixture_records`: the JSON is the canonical
+    source of truth, the helper raises :class:`ValueError` on missing
+    fields so the adapter never silently returns malformed data. The
+    fixture is a flat list of ``symbol / trade_date / OHLCV`` rows; the
+    adapter filters by ``symbols`` and ``[start_date, end_date]`` per
+    request.
+    """
+
+    if not _DAILY_BARS_FIXTURE_PATH.exists():
+        raise FileNotFoundError(
+            f"fixture_dev etf_daily_bars.json not found at "
+            f"{_DAILY_BARS_FIXTURE_PATH}"
+        )
+    payload = json.loads(_DAILY_BARS_FIXTURE_PATH.read_text(encoding="utf-8"))
+    if not isinstance(payload, list):
+        raise ValueError(
+            f"fixture_dev etf_daily_bars.json must be a list, got {type(payload).__name__}"
+        )
+    required = {
+        "symbol",
+        "trade_date",
+        "open",
+        "high",
+        "low",
+        "close",
+        "prev_close",
+        "volume",
+        "amount",
+        "trading_status",
+    }
+    cleaned: list[dict[str, Any]] = []
+    for index, entry in enumerate(payload):
+        if not isinstance(entry, dict):
+            raise ValueError(
+                f"fixture_dev etf_daily_bars.json[{index}] must be a dict, "
+                f"got {type(entry).__name__}"
+            )
+        missing = required - set(entry)
+        if missing:
+            raise ValueError(
+                f"fixture_dev etf_daily_bars.json[{index}] is missing fields: "
+                f"{sorted(missing)}"
+            )
+        cleaned.append(dict(entry))
+    return cleaned
+
+
+def _daily_bars_record_to_raw(
+    record: dict[str, Any],
+    *,
+    source_batch_id: Any,
+    observed_at: datetime,
+) -> dict[str, Any]:
+    """Build the raw dict shape the ``core.daily_bars`` sidecar persists.
+
+    The sidecar carries the original ``symbol`` (not the placeholder
+    ``instrument_id``) so the application service can re-resolve the
+    real ``core.instruments.id`` via ``(symbol, exchange)`` at upsert
+    time.
+    """
+
+    return {
+        "symbol": record["symbol"],
+        "trade_date": record["trade_date"],
+        "open": record["open"],
+        "high": record["high"],
+        "low": record["low"],
+        "close": record["close"],
+        "prev_close": record["prev_close"],
+        "volume": record["volume"],
+        "amount": record["amount"],
+        "trading_status": record["trading_status"],
+        "source_provider": "fixture_dev",
+        "source_batch_id": str(source_batch_id),
+        "observed_at": observed_at.isoformat(),
+    }
+
+
+def serialize_daily_bars(
+    records: Sequence[dict[str, Any]],
+    *,
+    source_batch_id: Any,
+    observed_at: datetime,
+) -> str:
+    """Build the JSONB sidecar that carries standardized bars through ``raw.*``.
+
+    Mirrors :func:`_serialize_records` for the daily-bar payload. The
+    ``records`` argument is the filtered subset of the JSON fixture
+    (each entry is a ``symbol / trade_date / OHLCV`` dict); the
+    ``source_batch_id`` and ``observed_at`` are stamped by the
+    adapter. The application service reads the sidecar, looks up the
+    real ``core.instruments.id`` per ``symbol`` and constructs the
+    final :class:`invest_domain.market_data.models.DailyBar` for the
+    repository.
+    """
+
+    payload = {
+        "schema_version": _DAILY_BARS_SCHEMA_VERSION,
+        "records": [
+            _daily_bars_record_to_raw(
+                record,
+                source_batch_id=source_batch_id,
+                observed_at=observed_at,
+            )
+            for record in records
+        ],
+    }
+    return json.dumps(payload, ensure_ascii=False, sort_keys=True)
+
+
+def deserialize_daily_bars(
+    payload_json: str | bytes | bytearray | None,
+) -> list[dict[str, Any]]:
+    """Inverse of :func:`serialize_daily_bars`; used by the core-daily-bars asset.
+
+    The application service uses the returned dicts as a transport
+    shape: it looks up the real ``core.instruments.id`` by
+    ``(symbol, exchange)`` and constructs the final
+    :class:`invest_domain.market_data.models.DailyBar` for the
+    repository.
+    """
+
+    if payload_json is None:
+        return []
+    if isinstance(payload_json, (bytes, bytearray)):
+        payload_json = payload_json.decode("utf-8")
+    payload = json.loads(payload_json)
+    if not isinstance(payload, dict):
+        raise ValueError(
+            f"daily-bars payload must be a dict, got {type(payload).__name__}"
+        )
+    if payload.get("schema_version") != _DAILY_BARS_SCHEMA_VERSION:
+        raise ValueError(
+            "unsupported daily-bars payload schema_version "
+            f"{payload.get('schema_version')!r}; expected {_DAILY_BARS_SCHEMA_VERSION}"
+        )
+    raw_records = payload.get("records", [])
+    if not isinstance(raw_records, list):
+        raise ValueError(
+            f"daily-bars payload 'records' must be a list, got {type(raw_records).__name__}"
+        )
+    return [dict(entry) for entry in raw_records]
+
+
 class FixtureDevInstrumentProvider:
     """Deterministic fixture of A-share ETFs used by tests and local dev.
 
@@ -184,6 +349,17 @@ class FixtureDevInstrumentProvider:
         self._instruments: tuple[Instrument, ...] = tuple(
             _record_to_instrument(record) for record in self._fixture_records
         )
+        self._daily_bars_records: tuple[dict[str, Any], ...] = tuple(
+            _load_daily_bars_records()
+        )
+        # Stable placeholder UUID per symbol so the adapter can
+        # build a domain :class:`DailyBar` without knowing the real
+        # ``core.instruments.id``. The application service re-maps
+        # ``symbol -> core.instruments.id`` before persisting.
+        self._placeholder_instrument_ids: dict[str, InstrumentId] = {
+            record["symbol"]: InstrumentId.generate()
+            for record in self._daily_bars_records
+        }
 
     @property
     def provider_key(self) -> str:
@@ -191,6 +367,16 @@ class FixtureDevInstrumentProvider:
 
     def list_instruments(self) -> Sequence[Instrument]:
         return self._instruments
+
+    def list_daily_bars_records(self) -> Sequence[dict[str, Any]]:
+        """Return the parsed daily-bars fixture rows (test-only helper)."""
+
+        return self._daily_bars_records
+
+    def placeholder_instrument_id(self, symbol: str) -> InstrumentId | None:
+        """Return the stable placeholder UUID the adapter assigned to ``symbol``."""
+
+        return self._placeholder_instrument_ids.get(symbol)
 
     def simulate_failure(self) -> None:
         """Force the next :meth:`fetch_instruments` call into the failure branch."""
@@ -298,12 +484,31 @@ class FixtureDevInstrumentProvider:
         start_date: date,
         end_date: date,
     ) -> tuple[ProviderRequest, ProviderAttempt, ProviderBatch[DailyBar] | None]:
-        """Return an empty PR-02 three-layer bundle for daily bars.
+        """Return the PR-02 three-layer evidence bundle for daily bars.
 
-        The fixture has no canned daily-bar fixture yet; it always
-        reports a successful empty batch so callers can exercise the
-        full request / attempt / batch persistence path.
+        Filters the on-disk ``etf_daily_bars.json`` by ``symbols`` and
+        ``[start_date, end_date]`` and constructs domain
+        :class:`invest_domain.market_data.models.DailyBar` instances
+        with ``revision=1``. The ``BarSource.source_batch_id`` is the
+        batch's ``attempt_id`` so the lineage
+        ``raw.provider_attempts -> core.daily_bars`` is enforced by the
+        FK. The application service re-maps
+        ``symbol -> core.instruments.id`` at upsert time; the
+        ``InstrumentId`` carried on the returned bars is a stable
+        placeholder UUID (see :attr:`placeholder_instrument_id`).
+
+        On :meth:`simulate_failure` the adapter returns a failed
+        attempt with no batch — the application service skips the
+        ``core.daily_bars`` upsert in that case (a failed attempt
+        leaves no batch behind per the domain model and
+        ``ck_provider_attempts_failed_has_error``).
         """
+
+        if end_date < start_date:
+            raise ValueError(
+                f"end_date {end_date.isoformat()} must be on or after "
+                f"start_date {start_date.isoformat()}"
+            )
 
         started = _now()
         finished = _now()
@@ -324,6 +529,28 @@ class FixtureDevInstrumentProvider:
             },
             created_at=started,
         )
+
+        if self._simulate_failure:
+            attempt = ProviderAttempt(
+                request_id=request_id,
+                attempt_number=1,
+                status=ProviderAttemptStatus.FAILED,
+                started_at=started,
+                finished_at=finished,
+                duration_ms=max(int((finished - started).total_seconds() * 1000), 0),
+                error_stage=ProviderFailureStage.PROVIDER,
+                error_code=_SIMULATED_FAILURE_ERROR_CODE,
+                error_message=_SIMULATED_FAILURE_ERROR_MESSAGE,
+            )
+            return request, attempt, None
+
+        bars, matched_records = self._build_daily_bars(
+            symbols,
+            start_date,
+            end_date,
+            source_batch_id=attempt_id,
+            observed_at=finished,
+        )
         attempt = ProviderAttempt(
             request_id=request_id,
             attempt_number=1,
@@ -334,14 +561,82 @@ class FixtureDevInstrumentProvider:
         )
         batch = ProviderBatch(
             attempt_id=attempt_id,
-            records=(),
-            raw_payload_hash=sha256(b"[]").hexdigest(),
+            records=tuple(bars),
+            raw_payload_hash=self._daily_bars_raw_hash(matched_records),
             status=ProviderBatchStatus.SUCCEEDED,
         )
         return request, attempt, batch
 
+    def _build_daily_bars(
+        self,
+        symbols: Sequence[str],
+        start_date: date,
+        end_date: date,
+        *,
+        source_batch_id: Any,
+        observed_at: datetime,
+    ) -> tuple[list[DailyBar], list[dict[str, Any]]]:
+        symbol_set = {item for item in symbols}
+        bars: list[DailyBar] = []
+        matched: list[dict[str, Any]] = []
+        for record in self._daily_bars_records:
+            if record["symbol"] not in symbol_set:
+                continue
+            trade_date = date.fromisoformat(record["trade_date"])
+            if trade_date < start_date or trade_date > end_date:
+                continue
+            instrument_id = self._placeholder_instrument_ids[record["symbol"]]
+            source = BarSource(
+                provider_key=self.provider_key,
+                source_batch_id=source_batch_id,
+                observed_at=observed_at,
+            )
+            bar = DailyBar.build(
+                instrument_id=instrument_id,
+                trade_date=trade_date,
+                open=Decimal(record["open"]),
+                high=Decimal(record["high"]),
+                low=Decimal(record["low"]),
+                close=Decimal(record["close"]),
+                prev_close=Decimal(record["prev_close"]),
+                volume=Decimal(record["volume"]),
+                amount=Decimal(record["amount"]),
+                adjustment=Adjust.NONE,
+                trading_status=TradingStatus(record["trading_status"]),
+                source=source,
+                revision=1,
+            )
+            bars.append(bar)
+            matched.append(record)
+        return bars, matched
+
+    def _daily_bars_raw_hash(self, records: Sequence[dict[str, Any]]) -> str:
+        """Return a deterministic SHA-256 of the matched batch payload.
+
+        Mirrors the instruments path (the SHA-256 of the JSON fixture
+        file) but scoped to the matched ``(symbol, trade_date)`` rows
+        so ``raw.provider_batches.payload_sha256`` is
+        request-scoped rather than file-scoped.
+        """
+
+        payload = json.dumps(
+            [
+                {
+                    "symbol": record["symbol"],
+                    "trade_date": record["trade_date"],
+                }
+                for record in records
+            ],
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        return sha256(payload.encode("utf-8")).hexdigest()
+
 
 __all__ = [
     "FixtureDevInstrumentProvider",
+    "deserialize_daily_bars",
     "deserialize_records",
+    "serialize_daily_bars",
 ]

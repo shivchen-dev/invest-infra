@@ -550,3 +550,124 @@ class CandidatePoolItemRow(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
+
+
+class DailyBarRow(Base):
+    """One row of standardized daily OHLCV data per ADR-0005 / ADR-0006.
+
+    The composite primary key ``(instrument_id, trade_date, adjustment,
+    revision)`` is enforced by the database so the same business content
+    can coexist across revisions without losing history. ``row_hash``
+    is the deterministic business-content digest computed by the domain
+    layer (:meth:`invest_domain.market_data.models.DailyBar.
+    compute_row_hash`); the storage layer treats it as an opaque audit
+    token and does not recompute it. The audit fields
+    ``source_provider`` / ``source_batch_id`` / ``observed_at`` are NOT
+    part of the row hash, so re-collects from a different batch do not
+    require a new revision.
+    """
+
+    __tablename__ = "daily_bars"
+    __table_args__ = (
+        CheckConstraint(
+            "revision >= 1",
+            name="ck_daily_bars_revision_positive",
+        ),
+        CheckConstraint(
+            "adjustment = 'none'",
+            name="ck_daily_bars_adjustment_none_only",
+        ),
+        CheckConstraint(
+            "trading_status IN ('normal', 'suspended')",
+            name="ck_daily_bars_trading_status_valid",
+        ),
+        CheckConstraint(
+            "length(source_provider) > 0",
+            name="ck_daily_bars_source_provider_nonempty",
+        ),
+        CheckConstraint(
+            "length(row_hash) > 0",
+            name="ck_daily_bars_row_hash_nonempty",
+        ),
+        CheckConstraint(
+            "open IS NULL OR open > 0",
+            name="ck_daily_bars_open_positive",
+        ),
+        CheckConstraint(
+            "high IS NULL OR high > 0",
+            name="ck_daily_bars_high_positive",
+        ),
+        CheckConstraint(
+            "low IS NULL OR low > 0",
+            name="ck_daily_bars_low_positive",
+        ),
+        CheckConstraint(
+            "close IS NULL OR close > 0",
+            name="ck_daily_bars_close_positive",
+        ),
+        CheckConstraint(
+            "prev_close IS NULL OR prev_close > 0",
+            name="ck_daily_bars_prev_close_positive",
+        ),
+        CheckConstraint(
+            "volume IS NULL OR volume >= 0",
+            name="ck_daily_bars_volume_nonneg",
+        ),
+        CheckConstraint(
+            "amount IS NULL OR amount >= 0",
+            name="ck_daily_bars_amount_nonneg",
+        ),
+        CheckConstraint(
+            "high IS NULL OR close IS NULL OR open IS NULL OR low IS NULL "
+            "OR high >= GREATEST(open, close, low)",
+            name="ck_daily_bars_high_ge_ohlc",
+        ),
+        CheckConstraint(
+            "low IS NULL OR close IS NULL OR open IS NULL OR high IS NULL "
+            "OR low <= LEAST(open, close, high)",
+            name="ck_daily_bars_low_le_ohlc",
+        ),
+        ForeignKeyConstraint(
+            ["instrument_id"],
+            ["core.instruments.id"],
+            name="fk_daily_bars_instrument_id_core_instruments",
+        ),
+        ForeignKeyConstraint(
+            ["source_batch_id"],
+            ["raw.provider_batches.id"],
+            name="fk_daily_bars_source_batch_id_raw_provider_batches",
+        ),
+        Index("ix_daily_bars_instrument_trade_date", "instrument_id", "trade_date"),
+        Index("ix_daily_bars_trade_date", "trade_date"),
+        Index("ix_daily_bars_source_batch_id", "source_batch_id"),
+        {"schema": "core"},
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    instrument_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True
+    )
+    trade_date: Mapped[date] = mapped_column(Date, primary_key=True)
+    open: Mapped[Any | None] = mapped_column(Numeric(38, 18), nullable=True)
+    high: Mapped[Any | None] = mapped_column(Numeric(38, 18), nullable=True)
+    low: Mapped[Any | None] = mapped_column(Numeric(38, 18), nullable=True)
+    close: Mapped[Any | None] = mapped_column(Numeric(38, 18), nullable=True)
+    prev_close: Mapped[Any | None] = mapped_column(Numeric(38, 18), nullable=True)
+    volume: Mapped[Any | None] = mapped_column(Numeric(38, 18), nullable=True)
+    amount: Mapped[Any | None] = mapped_column(Numeric(38, 18), nullable=True)
+    adjustment: Mapped[str] = mapped_column(String(16), primary_key=True)
+    trading_status: Mapped[str] = mapped_column(String(16), nullable=False)
+    source_provider: Mapped[str] = mapped_column(String(64), nullable=False)
+    source_batch_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), nullable=True
+    )
+    observed_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    revision: Mapped[int] = mapped_column(Integer, primary_key=True)
+    row_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
