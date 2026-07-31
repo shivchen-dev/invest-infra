@@ -11,7 +11,7 @@
   - 新建：`packages/domain/src/invest_domain/...`（新子包与对象）
   - 新建：`packages/storage/src/invest_storage/...`（新 Repository、Unit of Work、模型视图）
   - 新建：`apps/api/src/invest_api/...` 新模块（不动现有 routes/main 业务路径中的逻辑，只追加）
-  - 新建：`apps/api/migrations/versions/...` 新迁移文件
+  - 新建：`apps/migrations/migrations/versions/...` 新迁移文件（2026-07-31 起，迁移已独立为 `apps/migrations`）
   - 新建：`apps/pipeline/src/invest_pipeline/adapters/...`（占位，但不得引用未声明依赖）
   - 新建：`apps/pipeline/src/invest_pipeline/jobs/...`、`apps/pipeline/src/invest_pipeline/quality/...`、`apps/pipeline/src/invest_pipeline/candidate_pool/...`
   - 新建：`contracts/provider-fixtures/`、`contracts/golden-cases/`

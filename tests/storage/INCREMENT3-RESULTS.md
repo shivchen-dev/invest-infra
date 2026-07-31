@@ -101,9 +101,11 @@ pass.
 
 ### Files NOT modified
 
-- `apps/api/migrations/versions/20260730_0001_initial.py`
-- `apps/api/migrations/versions/20260730_0002_instruments_uuid_identity.py`
-- `apps/api/migrations/versions/20260730_0003_provider_batches_raw_evidence.py`
+> **Note (2026-07-31):** Migration files have been moved from `apps/api/migrations/` to `apps/migrations/migrations/`. The paths below reflect the historical location at the time of testing.
+
+- `apps/api/migrations/versions/20260730_0001_initial.py` (now `apps/migrations/migrations/versions/`)
+- `apps/api/migrations/versions/20260730_0002_instruments_uuid_identity.py` (now `apps/migrations/migrations/versions/`)
+- `apps/api/migrations/versions/20260730_0003_provider_batches_raw_evidence.py` (now `apps/migrations/migrations/versions/`)
 - `packages/storage/src/invest_storage/database.py` — kept as the low-level
   engine / session primitive; the new `providers.py` re-exports the symbols
   callers need.

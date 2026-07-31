@@ -6,7 +6,7 @@
 
 ## Context
 
-当前迁移 `apps/api/migrations/versions/20260730_0001_initial.py` 只创建 `core.instruments` 和孤立的 `app.pipeline_runs`，没有日行情。计划文档建议 revision 主键和 latest view，但未完全定义相同内容重采、并发分配 revision、来源变化或历史结果处理。
+当前迁移 `apps/migrations/migrations/versions/20260730_0001_initial.py`（原 `apps/api/migrations/`，2026-07-31 迁移至独立 migration app）只创建 `core.instruments` 和孤立的 `app.pipeline_runs`，没有日行情。计划文档建议 revision 主键和 latest view，但未完全定义相同内容重采、并发分配 revision、来源变化或历史结果处理。
 
 ## Decision
 

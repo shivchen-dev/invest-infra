@@ -61,8 +61,10 @@ docker compose up --build
 首次启动后执行迁移：
 
 ```bash
-docker compose exec api uv run alembic upgrade head
+cd apps/migrations && uv run alembic upgrade head
 ```
+
+（或使用 `make migrate`，独立 migration app 位于 `apps/migrations/`，API 容器不再包含 alembic）
 
 在 Dagster 页面 materialize `seed_instruments`，再刷新 Web 页面。
 
