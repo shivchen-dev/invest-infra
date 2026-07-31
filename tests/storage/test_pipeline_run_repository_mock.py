@@ -27,32 +27,35 @@ from invest_storage.repositories import SqlAlchemyPipelineRunRepository
 
 def _make_run(
     *,
-    job_name: str = "etf_daily",
-    algorithm_version: str = "v1.0",
-    status: PipelineRunStatus | str = PipelineRunStatus.PENDING,
+    job_key: str = "etf_daily",
+    trigger_type: str = "manual",
+    algorithm_version: str | None = "v1.0",
+    status: PipelineRunStatus | str = PipelineRunStatus.RUNNING,
     started_at: datetime | None = None,
     finished_at: datetime | None = None,
-    error_message: str | None = None,
+    error_summary: str | None = None,
 ) -> PipelineRun:
     return PipelineRun(
-        job_name=job_name,
-        algorithm_version=algorithm_version,
+        job_key=job_key,
+        trigger_type=trigger_type,
         status=status,
+        algorithm_version=algorithm_version,
         started_at=started_at or datetime(2026, 7, 30, 12, 0, tzinfo=UTC),
         finished_at=finished_at,
-        error_message=error_message,
+        error_summary=error_summary,
     )
 
 
 def _make_row(
     *,
     row_id: UUID | None = None,
-    job_name: str = "etf_daily",
+    job_key: str = "etf_daily",
+    trigger_type: str = "manual",
     status: str = "running",
-    algorithm_version: str = "v1.0",
+    algorithm_version: str | None = "v1.0",
     started_at: datetime | None = None,
     finished_at: datetime | None = None,
-    error_message: str | None = None,
+    error_summary: str | None = None,
     created_at: datetime | None = None,
     updated_at: datetime | None = None,
 ) -> MagicMock:
@@ -61,12 +64,13 @@ def _make_row(
     base = datetime(2026, 7, 30, 12, 0, tzinfo=UTC)
     row = MagicMock(spec=PipelineRunRow)
     row.id = row_id or uuid4()
-    row.job_name = job_name
+    row.job_key = job_key
+    row.trigger_type = trigger_type
     row.status = status
     row.algorithm_version = algorithm_version
     row.started_at = started_at or base
     row.finished_at = finished_at
-    row.error_message = error_message
+    row.error_summary = error_summary
     row.created_at = created_at or base
     row.updated_at = updated_at or base
     return row
@@ -84,7 +88,7 @@ class SqlAlchemyPipelineRunRepositoryMockTests(unittest.TestCase):
     # ------------------------------------------------------------------
 
     def test_start_inserts_row_with_status_running(self) -> None:
-        run = _make_run(status=PipelineRunStatus.PENDING)
+        run = _make_run()
 
         self._repo.start(run)
 
@@ -93,10 +97,10 @@ class SqlAlchemyPipelineRunRepositoryMockTests(unittest.TestCase):
         added_row = self._session.add.call_args[0][0]
         self.assertIsInstance(added_row, PipelineRunRow)
         self.assertEqual(added_row.status, "running")
-        self.assertEqual(added_row.job_name, "etf_daily")
+        self.assertEqual(added_row.job_key, "etf_daily")
         self.assertEqual(added_row.algorithm_version, "v1.0")
         self.assertEqual(added_row.started_at, run.started_at)
-        self.assertIsNone(added_row.error_message)
+        self.assertIsNone(added_row.error_summary)
         self.assertIsNone(added_row.finished_at)
 
     def test_start_returns_pipeline_run_with_persisted_id(self) -> None:
@@ -113,11 +117,11 @@ class SqlAlchemyPipelineRunRepositoryMockTests(unittest.TestCase):
         self.assertIsInstance(result, PipelineRun)
         self.assertEqual(result.id, persisted_id)
         self.assertEqual(result.status_value, "running")
-        self.assertEqual(result.job_name, run.job_name)
+        self.assertEqual(result.job_key, run.job_key)
         self.assertEqual(result.algorithm_version, run.algorithm_version)
         self.assertEqual(result.started_at, run.started_at)
         self.assertIsNone(result.finished_at)
-        self.assertIsNone(result.error_message)
+        self.assertIsNone(result.error_summary)
 
     # ------------------------------------------------------------------
     # mark_succeeded
@@ -134,13 +138,13 @@ class SqlAlchemyPipelineRunRepositoryMockTests(unittest.TestCase):
         self._session.get.assert_called_once_with(PipelineRunRow, run_id)
         self.assertEqual(existing.status, "succeeded")
         self.assertEqual(existing.finished_at, finished_at)
-        self.assertIsNone(existing.error_message)
+        self.assertIsNone(existing.error_summary)
         self.assertEqual(self._session.flush.call_count, 1)
         self.assertIsInstance(result, PipelineRun)
         self.assertEqual(result.id, run_id)
         self.assertEqual(result.status_value, "succeeded")
         self.assertEqual(result.finished_at, finished_at)
-        self.assertIsNone(result.error_message)
+        self.assertIsNone(result.error_summary)
 
     # ------------------------------------------------------------------
     # mark_failed
@@ -159,11 +163,11 @@ class SqlAlchemyPipelineRunRepositoryMockTests(unittest.TestCase):
         self._session.get.assert_called_once_with(PipelineRunRow, run_id)
         self.assertEqual(existing.status, "failed")
         self.assertEqual(existing.finished_at, finished_at)
-        self.assertEqual(existing.error_message, "provider timeout")
+        self.assertEqual(existing.error_summary, "provider timeout")
         self.assertEqual(self._session.flush.call_count, 1)
         self.assertIsInstance(result, PipelineRun)
         self.assertEqual(result.status_value, "failed")
-        self.assertEqual(result.error_message, "provider timeout")
+        self.assertEqual(result.error_summary, "provider timeout")
         self.assertEqual(result.finished_at, finished_at)
 
     # ------------------------------------------------------------------

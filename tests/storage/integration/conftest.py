@@ -23,7 +23,7 @@ from sqlalchemy.orm import Session
 
 @pytest.fixture(scope="session", autouse=True)
 def _create_schemas_and_tables(engine: Engine) -> Iterator[None]:
-    """Create ``raw`` / ``core`` / ``ops`` / ``app`` schemas and ORM tables once.
+    """Create ``raw`` / ``core`` / ``ops`` / ``app`` / ``analytics`` schemas and ORM tables once.
 
     Autouse within this conftest only - mock tests in the parent
     directory never instantiate the ``engine`` fixture and therefore
@@ -35,6 +35,7 @@ def _create_schemas_and_tables(engine: Engine) -> Iterator[None]:
         connection.execute(text("CREATE SCHEMA IF NOT EXISTS raw"))
         connection.execute(text("CREATE SCHEMA IF NOT EXISTS ops"))
         connection.execute(text("CREATE SCHEMA IF NOT EXISTS app"))
+        connection.execute(text("CREATE SCHEMA IF NOT EXISTS analytics"))
     Base.metadata.create_all(engine)
     yield
 
@@ -52,7 +53,7 @@ def _truncate_between_tests(engine: Engine) -> Iterator[None]:
 
     tables = [
         f'"{schema}"."{table.name}"'
-        for schema in ("raw", "core", "ops", "app")
+        for schema in ("raw", "core", "ops", "app", "analytics")
         for table in reversed(Base.metadata.sorted_tables)
         if table.schema == schema
     ]

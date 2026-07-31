@@ -1,6 +1,8 @@
 from invest_storage.database import build_engine, session_factory, session_scope
 from invest_storage.models import (
     Base,
+    CandidatePoolItemRow,
+    CandidatePoolRunRow,
     InstrumentRow,
     PipelineRunRow,
     ProviderAttemptRow,
@@ -16,6 +18,8 @@ from invest_storage.repositories import (
     NewProviderAttempt,
     NewProviderBatch,
     NewProviderRequest,
+    SqlAlchemyCandidatePoolItemRepository,
+    SqlAlchemyCandidatePoolRunRepository,
     SqlAlchemyInstrumentRepository,
     SqlAlchemyPipelineRunRepository,
     SqlAlchemyProviderAttemptRepository,
@@ -26,6 +30,8 @@ from invest_storage.repositories import (
     StoredProviderRequest,
 )
 from invest_storage.unit_of_work import (
+    CandidatePoolItemRepositoryPort,
+    CandidatePoolRunRepositoryPort,
     InstrumentRepositoryPort,
     PipelineRunRepositoryPort,
     ProviderAttemptRepositoryPort,
@@ -37,6 +43,10 @@ from invest_storage.unit_of_work import (
 
 __all__ = [
     "Base",
+    "CandidatePoolItemRepositoryPort",
+    "CandidatePoolItemRow",
+    "CandidatePoolRunRepositoryPort",
+    "CandidatePoolRunRow",
     "InstrumentRepositoryPort",
     "InstrumentRow",
     "NewProviderAttempt",
@@ -51,6 +61,8 @@ __all__ = [
     "ProviderRequestRow",
     "RawProviderBatchRow",
     "SessionProvider",
+    "SqlAlchemyCandidatePoolItemRepository",
+    "SqlAlchemyCandidatePoolRunRepository",
     "SqlAlchemyInstrumentRepository",
     "SqlAlchemyPipelineRunRepository",
     "SqlAlchemyProviderAttemptRepository",

@@ -25,6 +25,13 @@ module cover:
   succeeded or partially succeeded.
 - :class:`SqlAlchemyPipelineRunRepository` — one row per execution of
   a pipeline job in ``ops.pipeline_runs``.
+- :class:`SqlAlchemyCandidatePoolRunRepository` — one row per
+  candidate-pool calculation in ``analytics.candidate_pool_runs``.
+  Drives the legal state-machine transitions through
+  :meth:`invest_domain.candidate_pool.models.CandidatePoolRun.transition_to`.
+- :class:`SqlAlchemyCandidatePoolItemRepository` — per-instrument
+  judgments belonging to a run, persisted in
+  ``analytics.candidate_pool_items``.
 
 Each domain-side dataclass is free of SQLAlchemy machinery, so
 application / domain code can pass them around without importing the
@@ -36,10 +43,19 @@ from __future__ import annotations
 import uuid
 from collections.abc import Sequence
 from dataclasses import dataclass, field
-from datetime import date, datetime
+from datetime import UTC, date, datetime
+from decimal import Decimal
 from typing import Any
 from uuid import UUID
 
+from invest_domain.candidate_pool.models import (
+    CandidatePoolItem,
+    CandidatePoolRun,
+    CandidatePoolStatus,
+    ExclusionReason,
+    RuleOutcome,
+    RuleSeverity,
+)
 from invest_domain.instruments import (
     Instrument,
     InstrumentId,
@@ -53,6 +69,8 @@ from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 
 from invest_storage.models import (
+    CandidatePoolItemRow,
+    CandidatePoolRunRow,
     InstrumentRow,
     PipelineRunRow,
     ProviderAttemptRow,
@@ -867,6 +885,268 @@ def _row_to_stored_batch(row: RawProviderBatchRow) -> StoredProviderBatch:
     )
 
 
+class SqlAlchemyCandidatePoolRunRepository:
+    """Read/write access to ``analytics.candidate_pool_runs``.
+
+    The repository owns persistence but never the state-machine
+    semantics: every transition flows through the domain method
+    :meth:`invest_domain.candidate_pool.models.CandidatePoolRun.transition_to`
+    so that illegal ``CALCULATED -> PUBLISHED`` etc. attempts are
+    rejected by the domain, not the database. The repository only
+    translates the resulting :class:`CandidatePoolRun` into a row update.
+
+    The natural unique key
+    ``(trade_date, algorithm_key, algorithm_version, parameter_hash,
+    input_snapshot_id)`` is enforced by the database; duplicate inserts
+    surface as :class:`sqlalchemy.exc.IntegrityError`.
+    """
+
+    def __init__(self, session: Session) -> None:
+        self._session = session
+
+    def add(
+        self,
+        run: CandidatePoolRun,
+        *,
+        quality_summary: dict[str, Any] | None = None,
+    ) -> CandidatePoolRun:
+        """Persist a brand-new ``calculated`` run.
+
+        The input ``run`` must already be in the ``CALCULATED`` state;
+        :meth:`transition_status` is the only path to the terminal
+        states. ``quality_summary`` is an opaque JSONB blob for the
+        storage layer; the domain ``CandidatePoolRun`` does not carry
+        it, so it is supplied here out-of-band. ``started_at`` defaults
+        to ``run.created_at`` so the two timestamps stay aligned when
+        the application does not pass an explicit value.
+        """
+
+        if run.status is not CandidatePoolStatus.CALCULATED:
+            raise ValueError(
+                "SqlAlchemyCandidatePoolRunRepository.add requires the run to "
+                f"be in CALCULATED state, got {run.status.value!r}"
+            )
+        row = CandidatePoolRunRow(
+            id=run.id,
+            trade_date=run.trade_date,
+            algorithm_key=run.algorithm_key,
+            algorithm_version=run.algorithm_version,
+            parameter_set_key=run.parameter_set_key,
+            parameter_hash=run.parameter_hash,
+            input_snapshot_id=run.input_snapshot_id,
+            input_row_count=run.input_row_count,
+            included_count=run.included_count,
+            status=run.status.value,
+            started_at=run.created_at,
+            finished_at=run.finished_at,
+            published_at=run.published_at,
+            rejected_at=run.rejected_at,
+            rejection_reason=run.rejection_reason,
+            quality_summary=dict(quality_summary) if quality_summary else {},
+        )
+        self._session.add(row)
+        self._session.flush()
+        return _row_to_candidate_pool_run(row)
+
+    def get_by_id(self, run_id: UUID) -> CandidatePoolRun | None:
+        """Return the run with ``run_id`` or ``None`` if absent."""
+
+        row = self._session.get(CandidatePoolRunRow, run_id)
+        return _row_to_candidate_pool_run(row) if row is not None else None
+
+    def list_by_status(
+        self,
+        status: CandidatePoolStatus | str,
+        *,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> Sequence[CandidatePoolRun]:
+        """Return runs in ``status`` ordered by ``trade_date`` desc then ``id`` asc.
+
+        The descending ``trade_date`` order matches the dashboard use
+        case where the most recent trade-day must come first. An
+        unknown ``status`` value yields an empty result rather than
+        raising so the repository can be probed safely.
+        """
+
+        if limit < 0:
+            raise ValueError(f"limit must be >= 0, got {limit}")
+        if offset < 0:
+            raise ValueError(f"offset must be >= 0, got {offset}")
+        status_value = (
+            status.value if isinstance(status, CandidatePoolStatus) else str(status)
+        )
+        stmt = (
+            select(CandidatePoolRunRow)
+            .where(CandidatePoolRunRow.status == status_value)
+            .order_by(
+                CandidatePoolRunRow.trade_date.desc(),
+                CandidatePoolRunRow.id.asc(),
+            )
+            .limit(limit)
+            .offset(offset)
+        )
+        rows = self._session.scalars(stmt).all()
+        return [_row_to_candidate_pool_run(row) for row in rows]
+
+    def list_by_trade_date(
+        self,
+        trade_date: date,
+        *,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> Sequence[CandidatePoolRun]:
+        """Return runs for ``trade_date`` ordered by ``created_at`` desc then ``id`` asc.
+
+        The descending ``created_at`` order surfaces the latest run
+        for the trade-day first; ties on ``created_at`` (e.g. two
+        runs scheduled for the same instant) are broken by ``id`` so
+        the result is stable.
+        """
+
+        if limit < 0:
+            raise ValueError(f"limit must be >= 0, got {limit}")
+        if offset < 0:
+            raise ValueError(f"offset must be >= 0, got {offset}")
+        stmt = (
+            select(CandidatePoolRunRow)
+            .where(CandidatePoolRunRow.trade_date == trade_date)
+            .order_by(
+                CandidatePoolRunRow.created_at.desc(),
+                CandidatePoolRunRow.id.asc(),
+            )
+            .limit(limit)
+            .offset(offset)
+        )
+        rows = self._session.scalars(stmt).all()
+        return [_row_to_candidate_pool_run(row) for row in rows]
+
+    def transition_status(
+        self,
+        run_id: UUID,
+        new_status: CandidatePoolStatus,
+        *,
+        at: datetime | None = None,
+        rejection_reason: str | None = None,
+    ) -> CandidatePoolRun:
+        """Persist a state-machine transition.
+
+        The current row is loaded, the domain
+        :meth:`CandidatePoolRun.transition_to` is invoked to enforce
+        the legal transition graph, and the resulting
+        :class:`CandidatePoolRun` is written back. ``at`` is the
+        timezone-aware UTC timestamp for terminal-state transitions
+        (``PUBLISHED`` / ``REJECTED``); ``rejection_reason`` is required
+        by the domain invariant when transitioning to ``REJECTED``.
+        """
+
+        row = self._session.get(CandidatePoolRunRow, run_id)
+        if row is None:
+            raise LookupError(
+                f"CandidatePoolRun {run_id!s} not found; cannot transition status"
+            )
+        current = _row_to_candidate_pool_run(row)
+        transitioned = current.transition_to(
+            new_status, at=at, rejection_reason=rejection_reason
+        )
+        row.status = transitioned.status.value
+        row.published_at = transitioned.published_at
+        row.rejected_at = transitioned.rejected_at
+        row.rejection_reason = transitioned.rejection_reason
+        if transitioned.finished_at is not None:
+            row.finished_at = transitioned.finished_at
+        elif new_status is CandidatePoolStatus.VALIDATED:
+            row.finished_at = at if at is not None else datetime.now(tz=UTC)
+        self._session.flush()
+        return _row_to_candidate_pool_run(row)
+
+
+class SqlAlchemyCandidatePoolItemRepository:
+    """Read/write access to ``analytics.candidate_pool_items``.
+
+    One row per ``(run_id, instrument_id)`` pair; the composite primary
+    key is enforced by the database. Items are persisted in bulk via
+    :meth:`bulk_add` so a full result set is written with a single
+    ``INSERT`` round-trip.
+
+    The JSONB columns ``metrics``, ``rule_results`` and
+    ``exclusion_reasons`` are JSON-encoded using the
+    :mod:`invest_storage.repositories` helpers so the storage layer
+    stays free of domain-specific value objects.
+    """
+
+    def __init__(self, session: Session) -> None:
+        self._session = session
+
+    def bulk_add(
+        self,
+        run_id: UUID,
+        items: Sequence[CandidatePoolItem],
+    ) -> int:
+        """Persist every ``items`` entry against ``run_id``.
+
+        Returns the number of rows actually inserted. The database
+        rejects duplicate ``(run_id, instrument_id)`` pairs with
+        :class:`sqlalchemy.exc.IntegrityError` so the caller can rely
+        on a single, deterministic bulk-insert contract.
+        """
+
+        if not items:
+            return 0
+        rows = [
+            CandidatePoolItemRow(
+                id=uuid.uuid4(),
+                run_id=run_id,
+                instrument_id=item.instrument_id.value,
+                included=item.included,
+                rank=item.rank,
+                total_score=item.total_score,
+                metrics=_metrics_to_json(item.metrics),
+                rule_results=[_rule_outcome_to_json(r) for r in item.rule_results],
+                exclusion_reasons=[
+                    _exclusion_reason_to_json(r) for r in item.exclusion_reasons
+                ],
+            )
+            for item in items
+        ]
+        self._session.add_all(rows)
+        self._session.flush()
+        return len(rows)
+
+    def list_by_run_id(
+        self,
+        run_id: UUID,
+        *,
+        limit: int = 10_000,
+        offset: int = 0,
+    ) -> Sequence[CandidatePoolItem]:
+        """Return the items for ``run_id`` ordered by ``included`` desc then ``rank`` asc.
+
+        Included items (rank > 0) come first, ordered by ascending
+        rank; excluded items follow in ``created_at`` ascending order.
+        The composite primary key ``(run_id, instrument_id)`` is the
+        natural tiebreaker for excluded items where no rank is set.
+        """
+
+        if limit < 0:
+            raise ValueError(f"limit must be >= 0, got {limit}")
+        if offset < 0:
+            raise ValueError(f"offset must be >= 0, got {offset}")
+        stmt = (
+            select(CandidatePoolItemRow)
+            .where(CandidatePoolItemRow.run_id == run_id)
+            .order_by(
+                CandidatePoolItemRow.included.desc(),
+                CandidatePoolItemRow.rank.asc().nulls_last(),
+                CandidatePoolItemRow.instrument_id.asc(),
+            )
+            .limit(limit)
+            .offset(offset)
+        )
+        rows = self._session.scalars(stmt).all()
+        return [_row_to_candidate_pool_item(row) for row in rows]
+
+
 def _as_date(value: Any) -> date | None:
     if value is None:
         return None
@@ -885,3 +1165,130 @@ def _status_value(value: InstrumentStatus) -> str:
 
 def _provider_symbol_map(value: dict[str, str] | None) -> dict[str, str]:
     return dict(value) if value else {}
+
+
+def _row_to_candidate_pool_run(row: CandidatePoolRunRow) -> CandidatePoolRun:
+    return CandidatePoolRun(
+        id=row.id,
+        trade_date=row.trade_date,
+        algorithm_key=row.algorithm_key,
+        algorithm_version=row.algorithm_version,
+        parameter_set_key=row.parameter_set_key,
+        parameter_hash=row.parameter_hash,
+        input_snapshot_id=row.input_snapshot_id,
+        input_row_count=row.input_row_count,
+        included_count=row.included_count,
+        status=CandidatePoolStatus(row.status),
+        created_at=row.started_at,
+        finished_at=row.finished_at,
+        published_at=row.published_at,
+        rejected_at=row.rejected_at,
+        rejection_reason=row.rejection_reason,
+    )
+
+
+def _row_to_candidate_pool_item(row: CandidatePoolItemRow) -> CandidatePoolItem:
+    metrics = _metrics_from_json(row.metrics)
+    rule_results = tuple(
+        _rule_outcome_from_json(entry) for entry in (row.rule_results or [])
+    )
+    exclusion_reasons = tuple(
+        _exclusion_reason_from_json(entry) for entry in (row.exclusion_reasons or [])
+    )
+    return CandidatePoolItem(
+        instrument_id=InstrumentId(row.instrument_id),
+        included=row.included,
+        rank=row.rank,
+        total_score=(
+            Decimal(row.total_score) if row.total_score is not None else None
+        ),
+        metrics=metrics,
+        rule_results=rule_results,
+        exclusion_reasons=exclusion_reasons,
+    )
+
+
+def _metrics_to_json(metrics: Any) -> dict[str, str]:
+    """Encode ``metrics`` (Mapping[str, Decimal]) as JSONB-compatible dict[str, str].
+
+    Decimals are serialised as strings to preserve precision through
+    JSON; the JSON loader parses them back with
+    :func:`_metrics_from_json`.
+    """
+
+    if not metrics:
+        return {}
+    result: dict[str, str] = {}
+    for key, value in dict(metrics).items():
+        if isinstance(value, Decimal):
+            result[str(key)] = format(value, "f")
+        else:
+            result[str(key)] = str(value)
+    return result
+
+
+def _metrics_from_json(value: Any) -> dict[str, Decimal]:
+    """Decode a JSONB ``metrics`` blob into Mapping[str, Decimal]."""
+
+    if not value:
+        return {}
+    return {str(key): Decimal(str(entry)) for key, entry in dict(value).items()}
+
+
+def _rule_outcome_to_json(outcome: RuleOutcome) -> dict[str, Any]:
+    """Encode a :class:`RuleOutcome` as a JSONB-compatible dict."""
+
+    payload: dict[str, Any] = {
+        "rule_key": outcome.rule_key,
+        "passed": outcome.passed,
+        "severity": outcome.severity.value,
+    }
+    if outcome.value is not None:
+        payload["value"] = format(outcome.value, "f")
+    if outcome.threshold is not None:
+        payload["threshold"] = format(outcome.threshold, "f")
+    if outcome.message is not None:
+        payload["message"] = outcome.message
+    return payload
+
+
+def _rule_outcome_from_json(value: Any) -> RuleOutcome:
+    """Decode a JSONB-encoded rule outcome into a :class:`RuleOutcome`."""
+
+    if not isinstance(value, dict):
+        raise TypeError(
+            f"rule_results entry must be a dict, got {type(value).__name__}"
+        )
+    rule_key = value.get("rule_key")
+    if not rule_key:
+        raise ValueError("rule_results entry missing non-empty 'rule_key'")
+    passed = bool(value.get("passed"))
+    severity = RuleSeverity(str(value.get("severity", RuleSeverity.ERROR.value)))
+    raw_value = value.get("value")
+    raw_threshold = value.get("threshold")
+    return RuleOutcome(
+        rule_key=str(rule_key),
+        passed=passed,
+        severity=severity,
+        value=Decimal(str(raw_value)) if raw_value is not None else None,
+        threshold=Decimal(str(raw_threshold)) if raw_threshold is not None else None,
+        message=value.get("message"),
+    )
+
+
+def _exclusion_reason_to_json(reason: ExclusionReason) -> dict[str, str]:
+    return {"code": reason.code, "message": reason.message}
+
+
+def _exclusion_reason_from_json(value: Any) -> ExclusionReason:
+    if not isinstance(value, dict):
+        raise TypeError(
+            f"exclusion_reasons entry must be a dict, got {type(value).__name__}"
+        )
+    code = value.get("code")
+    message = value.get("message")
+    if not code:
+        raise ValueError("exclusion_reasons entry missing non-empty 'code'")
+    if not message:
+        raise ValueError("exclusion_reasons entry missing non-empty 'message'")
+    return ExclusionReason(code=str(code), message=str(message))

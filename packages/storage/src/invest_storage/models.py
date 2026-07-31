@@ -10,9 +10,11 @@ from sqlalchemy import (
     Date,
     DateTime,
     ForeignKey,
+    ForeignKeyConstraint,
     Index,
     Integer,
     MetaData,
+    Numeric,
     String,
     Text,
     UniqueConstraint,
@@ -334,4 +336,217 @@ class PipelineRunRow(Base):
         nullable=False,
         server_default=func.now(),
         onupdate=func.now(),
+    )
+
+
+class CandidatePoolRunRow(Base):
+    """One execution of a candidate-pool calculation (ADR-0008 / plan §5.6).
+
+    PR-03 introduces the ``analytics.candidate_pool_runs`` table as the
+    persistent record of a candidate-pool calculation. The natural unique
+    key ``(trade_date, algorithm_key, algorithm_version, parameter_hash,
+    input_snapshot_id)`` enforces that two distinct runs cannot claim
+    the same inputs and policy fingerprint - this is the guard that
+    prevents accidental double-publication.
+
+    The state machine is enforced by :meth:`invest_domain.candidate_pool.
+    models.CandidatePoolRun.transition_to` and persisted via
+    :meth:`invest_storage.repositories.SqlAlchemyCandidatePoolRunRepository
+    .transition_status`; the database CHECK constraint
+    ``ck_candidate_pool_runs_status_valid`` only enforces the value
+    vocabulary, not the legal transition graph.
+    """
+
+    __tablename__ = "candidate_pool_runs"
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('calculated', 'validated', 'published', 'rejected')",
+            name="ck_candidate_pool_runs_status_valid",
+        ),
+        CheckConstraint(
+            "length(algorithm_key) > 0",
+            name="ck_candidate_pool_runs_algorithm_key_nonempty",
+        ),
+        CheckConstraint(
+            "length(algorithm_version) > 0",
+            name="ck_candidate_pool_runs_algorithm_version_nonempty",
+        ),
+        CheckConstraint(
+            "length(parameter_set_key) > 0",
+            name="ck_candidate_pool_runs_parameter_set_key_nonempty",
+        ),
+        CheckConstraint(
+            "length(parameter_hash) > 0",
+            name="ck_candidate_pool_runs_parameter_hash_nonempty",
+        ),
+        CheckConstraint(
+            "input_row_count >= 0",
+            name="ck_candidate_pool_runs_input_row_count_nonneg",
+        ),
+        CheckConstraint(
+            "included_count >= 0",
+            name="ck_candidate_pool_runs_included_count_nonneg",
+        ),
+        CheckConstraint(
+            "included_count <= input_row_count",
+            name="ck_candidate_pool_runs_included_le_input",
+        ),
+        CheckConstraint(
+            "finished_at IS NULL OR finished_at >= started_at",
+            name="ck_candidate_pool_runs_finished_after_started",
+        ),
+        CheckConstraint(
+            "published_at IS NULL OR published_at >= started_at",
+            name="ck_candidate_pool_runs_published_after_started",
+        ),
+        CheckConstraint(
+            "rejected_at IS NULL OR rejected_at >= started_at",
+            name="ck_candidate_pool_runs_rejected_after_started",
+        ),
+        CheckConstraint(
+            "status <> 'rejected' OR rejection_reason IS NOT NULL",
+            name="ck_candidate_pool_runs_rejected_has_reason",
+        ),
+        CheckConstraint(
+            "status <> 'published' OR published_at IS NOT NULL",
+            name="ck_candidate_pool_runs_published_has_timestamp",
+        ),
+        UniqueConstraint(
+            "trade_date",
+            "algorithm_key",
+            "algorithm_version",
+            "parameter_hash",
+            "input_snapshot_id",
+            name="uq_candidate_pool_runs_natural_key",
+        ),
+        Index("ix_candidate_pool_runs_status", "status"),
+        Index("ix_candidate_pool_runs_trade_date", "trade_date"),
+        Index(
+            "ix_candidate_pool_runs_trade_date_status",
+            "trade_date",
+            "status",
+        ),
+        {"schema": "analytics"},
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    trade_date: Mapped[date] = mapped_column(Date, nullable=False)
+    algorithm_key: Mapped[str] = mapped_column(String(80), nullable=False)
+    algorithm_version: Mapped[str] = mapped_column(String(80), nullable=False)
+    parameter_set_key: Mapped[str] = mapped_column(String(80), nullable=False)
+    parameter_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    input_snapshot_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), nullable=False
+    )
+    input_row_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    included_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    status: Mapped[str] = mapped_column(String(24), nullable=False)
+    started_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    finished_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    published_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    rejected_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    rejection_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    quality_summary: Mapped[dict[str, Any]] = mapped_column(
+        JSONB,
+        nullable=False,
+        server_default=text("'{}'::jsonb"),
+        default=dict,
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
+class CandidatePoolItemRow(Base):
+    """One per-instrument judgment belonging to a :class:`CandidatePoolRunRow`.
+
+    PR-03 introduces the ``analytics.candidate_pool_items`` table to
+    persist every include / exclude decision produced by the calculator
+    (plan §5.7). The composite primary key ``(run_id, instrument_id)``
+    enforces the ADR-0008 invariant that each input instrument appears
+    exactly once per run. ``metrics``, ``rule_results`` and
+    ``exclusion_reasons`` are JSONB to keep the storage free of
+    ORM-specific value objects.
+    """
+
+    __tablename__ = "candidate_pool_items"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["run_id"],
+            ["analytics.candidate_pool_runs.id"],
+            name="fk_candidate_pool_items_run_id_analytics_candidate_pool_runs",
+        ),
+        ForeignKeyConstraint(
+            ["instrument_id"],
+            ["core.instruments.id"],
+            name="fk_candidate_pool_items_instrument_id_core_instruments",
+        ),
+        CheckConstraint(
+            "(NOT included) OR (rank IS NOT NULL AND total_score IS NOT NULL)",
+            name="ck_candidate_pool_items_included_has_rank_and_score",
+        ),
+        CheckConstraint(
+            "(NOT included) OR rank >= 1",
+            name="ck_candidate_pool_items_rank_positive_when_included",
+        ),
+        CheckConstraint(
+            "NOT included OR jsonb_array_length(exclusion_reasons) = 0",
+            name="ck_candidate_pool_items_included_has_no_exclusions",
+        ),
+        CheckConstraint(
+            "included OR jsonb_array_length(exclusion_reasons) >= 1",
+            name="ck_candidate_pool_items_excluded_has_reasons",
+        ),
+        Index("ix_candidate_pool_items_run_id", "run_id"),
+        Index("ix_candidate_pool_items_instrument_id", "instrument_id"),
+        Index(
+            "ix_candidate_pool_items_run_id_included",
+            "run_id",
+            "included",
+        ),
+        {"schema": "analytics"},
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), nullable=False, default=uuid.uuid4
+    )
+    run_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True
+    )
+    instrument_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True
+    )
+    included: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    rank: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    total_score: Mapped[Any | None] = mapped_column(Numeric(38, 18), nullable=True)
+    metrics: Mapped[dict[str, Any]] = mapped_column(
+        JSONB,
+        nullable=False,
+        server_default=text("'{}'::jsonb"),
+        default=dict,
+    )
+    rule_results: Mapped[list[Any]] = mapped_column(
+        JSONB,
+        nullable=False,
+        server_default=text("'[]'::jsonb"),
+        default=list,
+    )
+    exclusion_reasons: Mapped[list[Any]] = mapped_column(
+        JSONB,
+        nullable=False,
+        server_default=text("'[]'::jsonb"),
+        default=list,
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
     )

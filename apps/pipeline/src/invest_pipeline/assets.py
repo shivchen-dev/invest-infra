@@ -3,10 +3,6 @@ from __future__ import annotations
 from datetime import date
 
 import dagster as dg
-from sqlalchemy.orm import Session
-
-from invest_pipeline.adapters import FixtureDevInstrumentProvider
-from invest_pipeline.config import get_settings
 from invest_storage.database import build_engine, session_factory
 from invest_storage.repositories import (
     NewProviderAttempt,
@@ -17,6 +13,10 @@ from invest_storage.repositories import (
     SqlAlchemyProviderBatchRepository,
     SqlAlchemyProviderRequestRepository,
 )
+from sqlalchemy.orm import Session
+
+from invest_pipeline.adapters import FixtureDevInstrumentProvider
+from invest_pipeline.config import get_settings
 
 
 @dg.asset(group_name="market_data", compute_kind="python")

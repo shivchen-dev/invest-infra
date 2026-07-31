@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from datetime import date, datetime, timezone
+from datetime import UTC, date, datetime
 from hashlib import sha256
 from typing import TypeVar
 from uuid import uuid4
@@ -20,7 +20,7 @@ T = TypeVar("T")
 
 
 def _now() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 class FixtureDevInstrumentProvider:

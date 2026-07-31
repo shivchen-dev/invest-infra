@@ -13,9 +13,11 @@ Design constraints (see M1 increment 3 plan):
   closes the session.
 - Repositories are exposed as cached properties: ``uow.instruments``,
   ``uow.provider_requests``, ``uow.provider_attempts``,
-  ``uow.provider_batches`` and ``uow.pipeline_runs``. The same repository
-  instance is reused for the lifetime of the UoW so identity-based
-  caching (e.g. SQLAlchemy's identity map) works as expected.
+  ``uow.provider_batches``, ``uow.pipeline_runs``,
+  ``uow.candidate_pool_runs`` and ``uow.candidate_pool_items``. The
+  same repository instance is reused for the lifetime of the UoW so
+  identity-based caching (e.g. SQLAlchemy's identity map) works as
+  expected.
 - The protocol (``UnitOfWork``) keeps the application layer decoupled
   from SQLAlchemy; the SQLAlchemy implementation
   (:class:`SqlAlchemyUnitOfWork`) is the only adapter in M1.
@@ -30,6 +32,8 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from invest_storage.providers import SessionProvider
 from invest_storage.repositories import (
+    SqlAlchemyCandidatePoolItemRepository,
+    SqlAlchemyCandidatePoolRunRepository,
     SqlAlchemyInstrumentRepository,
     SqlAlchemyPipelineRunRepository,
     SqlAlchemyProviderAttemptRepository,
@@ -131,6 +135,32 @@ class PipelineRunRepositoryPort(Protocol):
 
 
 @runtime_checkable
+class CandidatePoolRunRepositoryPort(Protocol):
+    """Subset of the CandidatePoolRun repository surface the UoW exposes."""
+
+    def add(self, run, *, quality_summary=None): ...
+    def get_by_id(self, run_id): ...
+    def list_by_status(self, status, *, limit: int = 100, offset: int = 0): ...
+    def list_by_trade_date(self, trade_date, *, limit: int = 100, offset: int = 0): ...
+    def transition_status(
+        self,
+        run_id,
+        new_status,
+        *,
+        at=None,
+        rejection_reason=None,
+    ): ...
+
+
+@runtime_checkable
+class CandidatePoolItemRepositoryPort(Protocol):
+    """Subset of the CandidatePoolItem repository surface the UoW exposes."""
+
+    def bulk_add(self, run_id, items): ...
+    def list_by_run_id(self, run_id, *, limit: int = 10_000, offset: int = 0): ...
+
+
+@runtime_checkable
 class UnitOfWork(Protocol):
     """Storage-layer transactional context.
 
@@ -145,6 +175,8 @@ class UnitOfWork(Protocol):
     provider_attempts: ProviderAttemptRepositoryPort
     provider_batches: ProviderBatchRepositoryPort
     pipeline_runs: PipelineRunRepositoryPort
+    candidate_pool_runs: CandidatePoolRunRepositoryPort
+    candidate_pool_items: CandidatePoolItemRepositoryPort
 
     def commit(self) -> None:
         """Persist the current transaction to the database."""
@@ -181,6 +213,8 @@ class SqlAlchemyUnitOfWork:
         self._provider_attempts: SqlAlchemyProviderAttemptRepository | None = None
         self._provider_batches: SqlAlchemyProviderBatchRepository | None = None
         self._pipeline_runs: SqlAlchemyPipelineRunRepository | None = None
+        self._candidate_pool_runs: SqlAlchemyCandidatePoolRunRepository | None = None
+        self._candidate_pool_items: SqlAlchemyCandidatePoolItemRepository | None = None
         self._closed = True
         self._user_committed = False
 
@@ -223,6 +257,18 @@ class SqlAlchemyUnitOfWork:
             self._pipeline_runs = SqlAlchemyPipelineRunRepository(self.session)
         return self._pipeline_runs
 
+    @property
+    def candidate_pool_runs(self) -> SqlAlchemyCandidatePoolRunRepository:
+        if self._candidate_pool_runs is None:
+            self._candidate_pool_runs = SqlAlchemyCandidatePoolRunRepository(self.session)
+        return self._candidate_pool_runs
+
+    @property
+    def candidate_pool_items(self) -> SqlAlchemyCandidatePoolItemRepository:
+        if self._candidate_pool_items is None:
+            self._candidate_pool_items = SqlAlchemyCandidatePoolItemRepository(self.session)
+        return self._candidate_pool_items
+
     def commit(self) -> None:
         self.session.commit()
         self._user_committed = True
@@ -261,6 +307,8 @@ class SqlAlchemyUnitOfWork:
             self._provider_attempts = None
             self._provider_batches = None
             self._pipeline_runs = None
+            self._candidate_pool_runs = None
+            self._candidate_pool_items = None
             self._user_committed = False
             self._closed = True
 
@@ -270,6 +318,8 @@ class SqlAlchemyUnitOfWork:
 
 
 __all__ = [
+    "CandidatePoolItemRepositoryPort",
+    "CandidatePoolRunRepositoryPort",
     "InstrumentRepositoryPort",
     "PipelineRunRepositoryPort",
     "ProviderAttemptRepositoryPort",
