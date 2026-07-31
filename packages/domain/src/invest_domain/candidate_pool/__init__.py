@@ -1,5 +1,9 @@
 """Public re-exports for the ``candidate_pool`` bounded context."""
 
+from invest_domain.candidate_pool.calculator import (
+    DefaultMinimumCandidatePoolCalculator,
+    MinimumCandidatePoolCalculator,
+)
 from invest_domain.candidate_pool.models import (
     CalculationContext,
     CandidatePoolItem,
@@ -29,9 +33,11 @@ __all__ = [
     "CandidatePoolRun",
     "CandidatePoolStatus",
     "CandidatePoolSummary",
+    "DefaultMinimumCandidatePoolCalculator",
     "EligibilityCriteria",
     "ExclusionReason",
     "LiquidityCriteria",
+    "MinimumCandidatePoolCalculator",
     "PriceQualityCriteria",
     "RiskCriteria",
     "RuleOutcome",

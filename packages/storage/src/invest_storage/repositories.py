@@ -70,7 +70,6 @@ from invest_domain.shared.canonical import CANONICAL_HASH_SCHEMA_VERSION
 from invest_domain.shared.values import Currency
 from sqlalchemy import func, select
 from sqlalchemy.dialects.postgresql import insert
-from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from invest_storage.models import (
@@ -1052,34 +1051,34 @@ class InputSnapshotRepository:
         self._session = session
 
     def add(self, snapshot: InputSnapshot) -> InputSnapshot:
+        statement = (
+            insert(InputSnapshotRow)
+            .values(
+                id=snapshot.id,
+                snapshot_date=snapshot.snapshot_date,
+                instrument_ids=[str(value) for value in snapshot.instrument_ids],
+                content_hash=snapshot.content_hash,
+                row_count=snapshot.row_count,
+                created_at=snapshot.created_at,
+            )
+            .on_conflict_do_nothing(
+                constraint="uq_input_snapshots_date_hash",
+            )
+            .returning(InputSnapshotRow.id)
+        )
+        inserted_id = self._session.execute(statement).scalar_one_or_none()
+        if inserted_id is not None:
+            return snapshot
+
         existing = self.get_by_date_and_hash(
             snapshot.snapshot_date,
             snapshot.content_hash,
         )
-        if existing is not None:
-            return existing
-
-        row = InputSnapshotRow(
-            id=snapshot.id,
-            snapshot_date=snapshot.snapshot_date,
-            instrument_ids=[str(value) for value in snapshot.instrument_ids],
-            content_hash=snapshot.content_hash,
-            row_count=snapshot.row_count,
-            created_at=snapshot.created_at,
-        )
-        self._session.add(row)
-        try:
-            self._session.flush()
-        except IntegrityError:
-            self._session.rollback()
-            existing = self.get_by_date_and_hash(
-                snapshot.snapshot_date,
-                snapshot.content_hash,
+        if existing is None:
+            raise RuntimeError(
+                "input snapshot insert conflicted but the existing row was not found"
             )
-            if existing is not None:
-                return existing
-            raise
-        return _row_to_input_snapshot(row)
+        return existing
 
     def get_by_date_and_hash(
         self,

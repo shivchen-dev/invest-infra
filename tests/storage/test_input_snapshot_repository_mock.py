@@ -7,7 +7,6 @@ from uuid import UUID, uuid4
 
 from invest_domain.input_snapshot import InputSnapshot
 from invest_storage import InputSnapshotRepository, InputSnapshotRow
-from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 
@@ -45,53 +44,46 @@ class InputSnapshotRepositoryMockTests(unittest.TestCase):
 
     def test_add_inserts_json_compatible_row_and_returns_domain_model(self) -> None:
         snapshot = _make_snapshot()
-        self._session.scalars.return_value.first.return_value = None
+        self._session.execute.return_value.scalar_one_or_none.return_value = snapshot.id
 
         result = self._repo.add(snapshot)
 
-        self._session.add.assert_called_once()
-        self._session.flush.assert_called_once_with()
-        row = self._session.add.call_args.args[0]
-        self.assertIsInstance(row, InputSnapshotRow)
-        self.assertEqual(row.id, snapshot.id)
-        self.assertEqual(row.snapshot_date, snapshot.snapshot_date)
+        self._session.execute.assert_called_once()
+        statement = self._session.execute.call_args.args[0]
+        params = statement.compile().params
+        self.assertEqual(params["id"], snapshot.id)
+        self.assertEqual(params["snapshot_date"], snapshot.snapshot_date)
         self.assertEqual(
-            row.instrument_ids,
+            params["instrument_ids"],
             [str(value) for value in snapshot.instrument_ids],
         )
-        self.assertEqual(row.content_hash, snapshot.content_hash)
-        self.assertEqual(row.row_count, snapshot.row_count)
+        self.assertEqual(params["content_hash"], snapshot.content_hash)
+        self.assertEqual(params["row_count"], snapshot.row_count)
         self.assertEqual(result, snapshot)
+        self._session.rollback.assert_not_called()
 
-    def test_add_returns_existing_without_insert(self) -> None:
+    def test_add_returns_existing_after_unique_conflict(self) -> None:
         snapshot = _make_snapshot()
         existing = _make_snapshot(snapshot_id=uuid4())
+        self._session.execute.return_value.scalar_one_or_none.return_value = None
         self._session.scalars.return_value.first.return_value = _make_row(existing)
 
         result = self._repo.add(snapshot)
 
         self.assertEqual(result, existing)
-        self._session.add.assert_not_called()
-        self._session.flush.assert_not_called()
+        self._session.execute.assert_called_once()
+        self._session.scalars.assert_called_once()
+        self._session.rollback.assert_not_called()
 
-    def test_add_returns_existing_after_unique_conflict(self) -> None:
+    def test_add_raises_if_conflicting_row_disappears(self) -> None:
         snapshot = _make_snapshot()
-        existing = _make_snapshot(snapshot_id=uuid4())
-        self._session.scalars.return_value.first.side_effect = [
-            None,
-            _make_row(existing),
-        ]
-        self._session.flush.side_effect = IntegrityError(
-            "INSERT",
-            {},
-            Exception("uq_input_snapshots_date_hash"),
-        )
+        self._session.execute.return_value.scalar_one_or_none.return_value = None
+        self._session.scalars.return_value.first.return_value = None
 
-        result = self._repo.add(snapshot)
+        with self.assertRaises(RuntimeError):
+            self._repo.add(snapshot)
 
-        self.assertEqual(result, existing)
-        self._session.rollback.assert_called_once_with()
-        self.assertEqual(self._session.scalars.call_count, 2)
+        self._session.rollback.assert_not_called()
 
     def test_get_by_date_and_hash_maps_row(self) -> None:
         snapshot = _make_snapshot()

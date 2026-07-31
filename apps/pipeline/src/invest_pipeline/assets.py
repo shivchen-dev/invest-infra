@@ -3,7 +3,9 @@ from __future__ import annotations
 from datetime import date
 
 import dagster as dg
+from invest_domain.instruments import InstrumentType
 from invest_storage.database import build_engine, session_factory
+from invest_storage.models import InstrumentRow
 from invest_storage.repositories import (
     NewProviderAttempt,
     NewProviderBatch,
@@ -13,6 +15,7 @@ from invest_storage.repositories import (
     SqlAlchemyProviderBatchRepository,
     SqlAlchemyProviderRequestRepository,
 )
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from invest_pipeline.adapters import FixtureDevInstrumentProvider
@@ -415,33 +418,30 @@ def etf_daily_bars(
     group_name="market_data",
     compute_kind="python",
     deps=[etf_instruments],
+    partitions_def=_ETF_INPUT_SNAPSHOT_PARTITIONS,
 )
 def etf_input_snapshot(context) -> dg.MaterializeResult:
-    """Capture the day's ETF universe as an :class:`InputSnapshot`.
-
-    Depends on :func:`etf_instruments` so the canonical ``core.instruments``
-    rows are available before the snapshot is built. The asset reads all
-    currently listed ETFs, computes a deterministic SHA-256 hash over
-    the sorted UUID set, and writes a single row into
-    ``analytics.input_snapshots``. Repeated runs with the same input set
-    produce the same ``content_hash`` and therefore are idempotent at the
-    storage layer via the ``uq_input_snapshots_date_hash`` constraint.
-    """
-
     from invest_storage import SqlAlchemyUnitOfWork
 
-    snapshot_date = date.today()
+    snapshot_date = date.fromisoformat(context.partition_key)
     engine = build_engine(get_settings().database_url)
     factory = session_factory(engine)
     try:
         with SqlAlchemyUnitOfWork(factory) as uow:
-            rows = uow.instrument_repository.list_active()
-            instrument_ids = [row.id for row in rows]
-            snapshot = create_input_snapshot(
-                uow_factory=lambda: SqlAlchemyUnitOfWork(factory),
-                snapshot_date=snapshot_date,
-                instrument_ids=instrument_ids,
+            instrument_ids = list(
+                uow.session.scalars(
+                    select(InstrumentRow.id)
+                    .where(
+                        InstrumentRow.instrument_type == InstrumentType.ETF.value
+                    )
+                    .order_by(InstrumentRow.id.asc())
+                ).all()
             )
+        snapshot = create_input_snapshot(
+            uow_factory=lambda: SqlAlchemyUnitOfWork(factory),
+            snapshot_date=snapshot_date,
+            instrument_ids=instrument_ids,
+        )
     finally:
         engine.dispose()
 
@@ -455,6 +455,7 @@ def etf_input_snapshot(context) -> dg.MaterializeResult:
         metadata={
             "snapshot_id": str(snapshot.id),
             "snapshot_date": snapshot.snapshot_date.isoformat(),
+            "partition_key": context.partition_key,
             "row_count": snapshot.row_count,
             "content_hash": snapshot.content_hash,
         }

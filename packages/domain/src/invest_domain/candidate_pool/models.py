@@ -158,11 +158,20 @@ class EligibilityCriteria:
     here as production constants; ``min_listing_days`` and the allowed
     exchanges are policy inputs that the user must confirm via O-5
     before they enter a versioned policy set.
+
+    ``min_volume`` / ``min_amount`` are the basic OHLCV thresholds
+    consumed by the PR-08 minimum candidate-pool calculator. The richer
+    liquidity rule (rolling-window median) is layered on top of these in
+    M4; here they default to ``Decimal("0")`` so the higher-level
+    liquidity filter is the only active gate when callers leave the
+    defaults in place.
     """
 
     min_listing_days: int = 0
     require_current_day_bar: bool = True
     exclude_suspended: bool = True
+    min_volume: Decimal = Decimal("0")
+    min_amount: Decimal = Decimal("0")
     allowed_exchanges: tuple[str, ...] = ("SSE", "SZSE")
 
     def __post_init__(self) -> None:
@@ -170,6 +179,12 @@ class EligibilityCriteria:
             raise ValueError(
                 f"EligibilityCriteria.min_listing_days must be >= 0, got {self.min_listing_days}"
             )
+        _require_non_negative_decimal(
+            self.min_volume, field_name="EligibilityCriteria.min_volume"
+        )
+        _require_non_negative_decimal(
+            self.min_amount, field_name="EligibilityCriteria.min_amount"
+        )
         if not self.allowed_exchanges:
             raise ValueError("EligibilityCriteria.allowed_exchanges must not be empty")
         for exchange in self.allowed_exchanges:
@@ -358,7 +373,9 @@ class CandidatePoolPolicy:
             "eligibility": {
                 "allowed_exchanges": list(self.eligibility.allowed_exchanges),
                 "exclude_suspended": self.eligibility.exclude_suspended,
+                "min_amount": self.eligibility.min_amount,
                 "min_listing_days": self.eligibility.min_listing_days,
+                "min_volume": self.eligibility.min_volume,
                 "require_current_day_bar": self.eligibility.require_current_day_bar,
             },
             "hash_schema_version": self.hash_schema_version,
@@ -679,3 +696,12 @@ def _require_aware_utc_or_none(value: datetime | None, field_name: str) -> None:
     if value is None:
         return
     _require_aware_utc(value, field_name)
+
+
+def _require_non_negative_decimal(value: Decimal, *, field_name: str) -> None:
+    if not isinstance(value, Decimal):
+        raise TypeError(f"{field_name} must be a Decimal, got {type(value).__name__}")
+    if not value.is_finite():
+        raise ValueError(f"{field_name} must be a finite Decimal, got {value!s}")
+    if value < 0:
+        raise ValueError(f"{field_name} must be >= 0, got {value!s}")
