@@ -11,10 +11,11 @@ Design constraints (see M1 increment 3 plan):
 - The UoW is a context manager: ``__enter__`` returns ``self``,
   ``__exit__`` commits on clean exit and rolls back on exception, then
   closes the session.
-- Repositories are exposed as cached properties: ``uow.instruments`` and
-  ``uow.provider_batches``. The same repository instance is reused for
-  the lifetime of the UoW so identity-based caching (e.g. SQLAlchemy's
-  identity map) works as expected.
+- Repositories are exposed as cached properties: ``uow.instruments``,
+  ``uow.provider_requests``, ``uow.provider_attempts``,
+  ``uow.provider_batches`` and ``uow.pipeline_runs``. The same repository
+  instance is reused for the lifetime of the UoW so identity-based
+  caching (e.g. SQLAlchemy's identity map) works as expected.
 - The protocol (``UnitOfWork``) keeps the application layer decoupled
   from SQLAlchemy; the SQLAlchemy implementation
   (:class:`SqlAlchemyUnitOfWork`) is the only adapter in M1.
@@ -31,7 +32,9 @@ from invest_storage.providers import SessionProvider
 from invest_storage.repositories import (
     SqlAlchemyInstrumentRepository,
     SqlAlchemyPipelineRunRepository,
+    SqlAlchemyProviderAttemptRepository,
     SqlAlchemyProviderBatchRepository,
+    SqlAlchemyProviderRequestRepository,
 )
 
 
@@ -52,12 +55,64 @@ class InstrumentRepositoryPort(Protocol):
 
 
 @runtime_checkable
+class ProviderRequestRepositoryPort(Protocol):
+    """Subset of the ProviderRequest repository surface the UoW exposes."""
+
+    def add(self, request): ...
+    def get_by_id(self, request_id): ...
+    def get_by_logical_key(
+        self, *, provider_key: str, dataset_key: str, request_key: str
+    ): ...
+    def get_or_create(self, request): ...
+    def mark_status(
+        self, request_id, *, status: str, completed_at=None
+    ): ...
+
+
+@runtime_checkable
+class ProviderAttemptRepositoryPort(Protocol):
+    """Subset of the ProviderAttempt repository surface the UoW exposes."""
+
+    def add(self, attempt): ...
+    def start(
+        self,
+        *,
+        provider_request_id,
+        attempt_no: int,
+        started_at,
+        provider_request_id_text=None,
+    ): ...
+    def mark_succeeded(
+        self,
+        attempt_id,
+        *,
+        finished_at,
+        response_payload_sha256: str,
+        response_payload_json=None,
+        response_payload_uri=None,
+        http_status=None,
+    ): ...
+    def mark_failed(
+        self,
+        attempt_id,
+        *,
+        finished_at,
+        error_stage: str,
+        error_code: str,
+        error_message=None,
+        http_status=None,
+    ): ...
+    def get_by_id(self, attempt_id): ...
+    def list_by_request(self, request_id, *, limit: int = 100, offset: int = 0): ...
+
+
+@runtime_checkable
 class ProviderBatchRepositoryPort(Protocol):
     """Subset of the ProviderBatch repository surface the UoW exposes."""
 
     def add(self, batch): ...
     def get_by_id(self, batch_id): ...
-    def get_by_request(self, *, provider_key: str, dataset_key: str, request_key: str): ...
+    def list_by_attempt(self, attempt_id, *, limit: int = 10, offset: int = 0): ...
     def list_by_provider_dataset(
         self, *, provider_key: str, dataset_key: str, limit: int = 100, offset: int = 0
     ): ...
@@ -86,6 +141,8 @@ class UnitOfWork(Protocol):
     """
 
     instruments: InstrumentRepositoryPort
+    provider_requests: ProviderRequestRepositoryPort
+    provider_attempts: ProviderAttemptRepositoryPort
     provider_batches: ProviderBatchRepositoryPort
     pipeline_runs: PipelineRunRepositoryPort
 
@@ -120,6 +177,8 @@ class SqlAlchemyUnitOfWork:
         self._session_factory = session_factory
         self._session: Session | None = None
         self._instruments: SqlAlchemyInstrumentRepository | None = None
+        self._provider_requests: SqlAlchemyProviderRequestRepository | None = None
+        self._provider_attempts: SqlAlchemyProviderAttemptRepository | None = None
         self._provider_batches: SqlAlchemyProviderBatchRepository | None = None
         self._pipeline_runs: SqlAlchemyPipelineRunRepository | None = None
         self._closed = True
@@ -139,6 +198,18 @@ class SqlAlchemyUnitOfWork:
         if self._instruments is None:
             self._instruments = SqlAlchemyInstrumentRepository(self.session)
         return self._instruments
+
+    @property
+    def provider_requests(self) -> SqlAlchemyProviderRequestRepository:
+        if self._provider_requests is None:
+            self._provider_requests = SqlAlchemyProviderRequestRepository(self.session)
+        return self._provider_requests
+
+    @property
+    def provider_attempts(self) -> SqlAlchemyProviderAttemptRepository:
+        if self._provider_attempts is None:
+            self._provider_attempts = SqlAlchemyProviderAttemptRepository(self.session)
+        return self._provider_attempts
 
     @property
     def provider_batches(self) -> SqlAlchemyProviderBatchRepository:
@@ -186,6 +257,8 @@ class SqlAlchemyUnitOfWork:
                 self._session.close()
                 self._session = None
             self._instruments = None
+            self._provider_requests = None
+            self._provider_attempts = None
             self._provider_batches = None
             self._pipeline_runs = None
             self._user_committed = False
@@ -199,7 +272,9 @@ class SqlAlchemyUnitOfWork:
 __all__ = [
     "InstrumentRepositoryPort",
     "PipelineRunRepositoryPort",
+    "ProviderAttemptRepositoryPort",
     "ProviderBatchRepositoryPort",
+    "ProviderRequestRepositoryPort",
     "SqlAlchemyUnitOfWork",
     "UnitOfWork",
 ]

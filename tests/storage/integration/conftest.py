@@ -23,7 +23,7 @@ from sqlalchemy.orm import Session
 
 @pytest.fixture(scope="session", autouse=True)
 def _create_schemas_and_tables(engine: Engine) -> Iterator[None]:
-    """Create ``core`` / ``raw`` / ``app`` schemas and ORM tables once.
+    """Create ``raw`` / ``core`` / ``ops`` / ``app`` schemas and ORM tables once.
 
     Autouse within this conftest only - mock tests in the parent
     directory never instantiate the ``engine`` fixture and therefore
@@ -33,6 +33,7 @@ def _create_schemas_and_tables(engine: Engine) -> Iterator[None]:
     with engine.begin() as connection:
         connection.execute(text("CREATE SCHEMA IF NOT EXISTS core"))
         connection.execute(text("CREATE SCHEMA IF NOT EXISTS raw"))
+        connection.execute(text("CREATE SCHEMA IF NOT EXISTS ops"))
         connection.execute(text("CREATE SCHEMA IF NOT EXISTS app"))
     Base.metadata.create_all(engine)
     yield
@@ -51,7 +52,7 @@ def _truncate_between_tests(engine: Engine) -> Iterator[None]:
 
     tables = [
         f'"{schema}"."{table.name}"'
-        for schema in ("raw", "core", "app")
+        for schema in ("raw", "core", "ops", "app")
         for table in reversed(Base.metadata.sorted_tables)
         if table.schema == schema
     ]
@@ -105,3 +106,21 @@ def batch_repository(db_session: Session):
     from invest_storage import SqlAlchemyProviderBatchRepository
 
     return SqlAlchemyProviderBatchRepository(db_session)
+
+
+@pytest.fixture()
+def request_repository(db_session: Session):
+    """Yield a fresh :class:`SqlAlchemyProviderRequestRepository` per test."""
+
+    from invest_storage import SqlAlchemyProviderRequestRepository
+
+    return SqlAlchemyProviderRequestRepository(db_session)
+
+
+@pytest.fixture()
+def attempt_repository(db_session: Session):
+    """Yield a fresh :class:`SqlAlchemyProviderAttemptRepository` per test."""
+
+    from invest_storage import SqlAlchemyProviderAttemptRepository
+
+    return SqlAlchemyProviderAttemptRepository(db_session)

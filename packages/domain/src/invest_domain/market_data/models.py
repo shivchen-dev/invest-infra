@@ -7,16 +7,25 @@ The models in this module are deliberately infrastructure-free:
 - All Decimal / date / datetime / UUID handling goes through
   :mod:`invest_domain.shared.canonical` so that ``DailyBar.row_hash`` is
   deterministic across processes, platforms and Python versions.
+
+The three-layer evidence model introduced by PR-02 separates the logical
+request (:class:`ProviderRequest`), a single network/SDK attempt
+(:class:`ProviderAttempt`) and the standardized data returned by a
+successful or partially-successful attempt (:class:`ProviderBatch`). A
+failed attempt leaves no ``ProviderBatch`` behind; the failure evidence
+lives on the :class:`ProviderAttempt` row. The domain never imports
+SQLAlchemy; it only describes the shape of the in-memory evidence that
+adapters and application services exchange.
 """
 
 from __future__ import annotations
 
 from collections.abc import Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date, datetime
 from decimal import Decimal
 from enum import StrEnum
-from typing import Generic, TypeVar
+from typing import Any, Generic, TypeVar
 from uuid import UUID
 
 from invest_domain.instruments.models import InstrumentId
@@ -30,11 +39,14 @@ T = TypeVar("T")
 
 
 class ProviderBatchStatus(StrEnum):
-    """Status of a Provider batch as reported by the Adapter.
+    """Status of a successful/partial Provider batch.
 
-    Mirrors the ADR-0003 ``raw.provider_batches.status`` vocabulary. The
-    domain does not enforce retries; it only records the outcome so the
-    application layer can decide what to do.
+    Per ADR-0003 §6.6 (PR-02), a failed attempt is recorded on
+    :class:`ProviderAttempt` and does not produce a :class:`ProviderBatch`
+    row. ``FAILED`` is kept as an enum member for migration compatibility
+    with pre-PR-02 callers, but constructing a
+    :class:`ProviderBatch` with ``status=FAILED`` raises ``ValueError``
+    because no batch row is ever persisted in that state.
     """
 
     SUCCEEDED = "succeeded"
@@ -42,43 +54,167 @@ class ProviderBatchStatus(StrEnum):
     FAILED = "failed"
 
 
-@dataclass(frozen=True, slots=True)
-class ProviderBatch(Generic[T]):
-    """A single Provider response bundle.
+class ProviderAttemptStatus(StrEnum):
+    """Lifecycle status of a single :class:`ProviderAttempt`.
 
-    The Adapter is responsible for filling every metadata field; the domain
-    treats the batch as immutable evidence. ``raw_payload_hash`` is the
-    hex SHA-256 of the original response bytes computed by the Adapter; the
-    domain does not have access to the response itself.
+    Mirrors the ``raw.provider_attempts.status`` vocabulary introduced by
+    PR-02. ``RUNNING`` is set when the attempt starts; ``SUCCEEDED`` /
+    ``FAILED`` are terminal transitions.
+    """
+
+    RUNNING = "running"
+    SUCCEEDED = "succeeded"
+    FAILED = "failed"
+
+
+class ProviderFailureStage(StrEnum):
+    """Where in the pipeline a failed :class:`ProviderAttempt` gave up.
+
+    Mirrors ``raw.provider_attempts.error_stage`` and the ADR-0003 §6.4
+    vocabulary. ``None`` is used by the domain to signal a successful or
+    still-running attempt.
+    """
+
+    CONFIGURATION = "configuration"
+    AUTHENTICATION = "authentication"
+    RATE_LIMIT = "rate_limit"
+    DNS = "dns"
+    CONNECT = "connect"
+    TLS = "tls"
+    TIMEOUT = "timeout"
+    HTTP = "http"
+    PROVIDER = "provider"
+    DECODE = "decode"
+    CONTRACT = "contract"
+    STORAGE = "storage"
+
+
+@dataclass(frozen=True, slots=True)
+class ProviderRequest:
+    """Logical Provider request, independent of any network attempt.
+
+    A :class:`ProviderRequest` is identified by the unique triplet
+    ``(provider_key, dataset_key, request_key)``; re-running the same
+    logical request MUST NOT create a duplicate ``raw.provider_requests``
+    row. ``params`` is the canonical, JSON-serializable parameter
+    payload the adapter will (re)use. ``created_at`` is timezone-aware
+    and represents the wall-clock instant the request was first issued.
     """
 
     provider_key: str
     dataset_key: str
-    requested_at: datetime
-    received_at: datetime
-    records: Sequence[T]
-    raw_payload_hash: str
-    status: ProviderBatchStatus
-    request_id: str | None = None
-    warnings: tuple[str, ...] = ()
+    request_key: str
+    params: dict[str, Any] = field(default_factory=dict)
+    created_at: datetime | None = None
 
     def __post_init__(self) -> None:
         if not self.provider_key.strip():
-            raise ValueError("ProviderBatch.provider_key must not be empty")
+            raise ValueError("ProviderRequest.provider_key must not be empty")
         if not self.dataset_key.strip():
-            raise ValueError("ProviderBatch.dataset_key must not be empty")
-        if self.requested_at.tzinfo is None:
-            raise ValueError("ProviderBatch.requested_at must be timezone-aware")
-        if self.received_at.tzinfo is None:
-            raise ValueError("ProviderBatch.received_at must be timezone-aware")
-        if self.received_at < self.requested_at:
-            raise ValueError("ProviderBatch.received_at must be on or after requested_at")
-        if not self.raw_payload_hash.strip():
-            raise ValueError("ProviderBatch.raw_payload_hash must not be empty")
+            raise ValueError("ProviderRequest.dataset_key must not be empty")
+        if not self.request_key.strip():
+            raise ValueError("ProviderRequest.request_key must not be empty")
+        if self.created_at is not None and self.created_at.tzinfo is None:
+            raise ValueError("ProviderRequest.created_at must be timezone-aware")
+
+
+@dataclass(frozen=True, slots=True)
+class ProviderAttempt:
+    """A single network or SDK attempt to satisfy a :class:`ProviderRequest`.
+
+    The same logical request may produce multiple attempts (retry, fail
+    over to a different transport, etc.); ``attempt_number`` is 1-based
+    and unique within the parent :class:`ProviderRequest`. The
+    ``error_*`` fields are populated when ``status`` is ``FAILED``;
+    ``duration_ms`` is ``None`` while the attempt is still running and
+    populated when ``finished_at`` is set. ``request_id`` is the UUID
+    of the parent :class:`ProviderRequest` row.
+    """
+
+    request_id: UUID
+    attempt_number: int
+    status: ProviderAttemptStatus
+    started_at: datetime
+    finished_at: datetime | None = None
+    duration_ms: int | None = None
+    error_stage: ProviderFailureStage | None = None
+    error_code: str | None = None
+    error_message: str | None = None
+
+    def __post_init__(self) -> None:
+        if self.attempt_number < 1:
+            raise ValueError(
+                f"ProviderAttempt.attempt_number must be >= 1, got {self.attempt_number}"
+            )
+        if not isinstance(self.request_id, UUID):
+            raise TypeError(
+                "ProviderAttempt.request_id must be a UUID instance "
+                f"(got {type(self.request_id).__name__})"
+            )
+        if self.started_at.tzinfo is None:
+            raise ValueError("ProviderAttempt.started_at must be timezone-aware")
+        if self.finished_at is not None:
+            if self.finished_at.tzinfo is None:
+                raise ValueError("ProviderAttempt.finished_at must be timezone-aware")
+            if self.finished_at < self.started_at:
+                raise ValueError(
+                    "ProviderAttempt.finished_at must be on or after started_at"
+                )
+        if self.duration_ms is not None and self.duration_ms < 0:
+            raise ValueError(
+                f"ProviderAttempt.duration_ms must be >= 0, got {self.duration_ms}"
+            )
+        if self.status is ProviderAttemptStatus.FAILED:
+            if self.error_stage is None:
+                raise ValueError(
+                    "ProviderAttempt.error_stage must be set when status is FAILED"
+                )
+            if not self.error_code or not self.error_code.strip():
+                raise ValueError(
+                    "ProviderAttempt.error_code must be a non-empty string when status is FAILED"
+                )
+        elif self.status is ProviderAttemptStatus.SUCCEEDED:
+            if self.finished_at is None:
+                raise ValueError(
+                    "ProviderAttempt.finished_at must be set when status is SUCCEEDED"
+                )
+
+
+@dataclass(frozen=True, slots=True)
+class ProviderBatch(Generic[T]):
+    """Standardized data produced by a successful/partial attempt.
+
+    Per ADR-0003 §6.6 (PR-02), a :class:`ProviderBatch` only exists for
+    ``SUCCEEDED`` / ``PARTIAL`` attempts; a ``FAILED`` attempt leaves no
+    batch behind. ``attempt_id`` is the UUID of the parent
+    :class:`ProviderAttempt` row. ``raw_payload_hash`` is the hex SHA-256
+    of the original response bytes computed by the Adapter; the domain
+    does not have access to the response itself.
+    """
+
+    attempt_id: UUID
+    records: Sequence[T]
+    raw_payload_hash: str
+    warnings: tuple[str, ...] = ()
+    status: ProviderBatchStatus = ProviderBatchStatus.SUCCEEDED
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.attempt_id, UUID):
+            raise TypeError(
+                "ProviderBatch.attempt_id must be a UUID instance "
+                f"(got {type(self.attempt_id).__name__})"
+            )
         if not isinstance(self.records, (list, tuple)):
             raise ValueError("ProviderBatch.records must be a Sequence")
+        if not self.raw_payload_hash.strip():
+            raise ValueError("ProviderBatch.raw_payload_hash must not be empty")
         if not isinstance(self.warnings, tuple):
             raise ValueError("ProviderBatch.warnings must be a tuple[str, ...]")
+        if self.status is ProviderBatchStatus.FAILED:
+            raise ValueError(
+                "ProviderBatch.status=FAILED is forbidden; a failed attempt "
+                "leaves no batch behind (record the failure on ProviderAttempt)"
+            )
 
 
 @dataclass(frozen=True, slots=True)
@@ -356,7 +492,11 @@ class DailyBar:
 __all__ = [
     "BarSource",
     "DailyBar",
+    "ProviderAttempt",
+    "ProviderAttemptStatus",
     "ProviderBatch",
     "ProviderBatchStatus",
+    "ProviderFailureStage",
+    "ProviderRequest",
     "bar_source_metadata_hash",
 ]

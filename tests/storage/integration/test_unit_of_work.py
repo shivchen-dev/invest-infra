@@ -9,11 +9,13 @@ transaction boundaries rather than leaking across tests.
 
 from __future__ import annotations
 
-from datetime import UTC
+from datetime import UTC, datetime
 
 import pytest
 from invest_storage import (
+    NewProviderAttempt,
     NewProviderBatch,
+    NewProviderRequest,
     SqlAlchemyUnitOfWork,
 )
 from invest_storage.models import InstrumentRow
@@ -139,43 +141,100 @@ def test_uow_commit_failure_rolls_back(uow_factory, session_factory_fixture) -> 
 
     The plan asserts that ``commit`` / ``rollback`` mirror the
     underlying ``Session`` behaviour. We force a failure by inserting
-    two provider batches with the same business key in the same UoW;
-    PostgreSQL rejects the second insert with ``UniqueViolationError``,
-    which propagates from ``commit()`` -> ``__exit__`` -> rollback.
+    two provider requests with the same logical key in the same UoW;
+    PostgreSQL rejects the second insert with ``UniqueViolationError``
+    on ``uq_provider_requests_logical_key``, which propagates from
+    ``commit()`` -> ``__exit__`` -> rollback.
     """
 
-    from datetime import datetime
-
-    base = NewProviderBatch(
+    base = NewProviderRequest(
         provider_key="akshare",
         dataset_key="etf_daily",
         request_key="dup-key",
-        requested_at=datetime(2026, 7, 30, 12, 0, tzinfo=UTC),
-        status="succeeded",
-        payload_sha256="a" * 64,
-        record_count=1,
+        status="pending",
+        request_params={"foo": "bar"},
     )
 
-    duplicate = NewProviderBatch(
+    duplicate = NewProviderRequest(
         provider_key="akshare",
         dataset_key="etf_daily",
         request_key="dup-key",
-        requested_at=datetime(2026, 7, 30, 12, 1, tzinfo=UTC),
-        status="succeeded",
-        payload_sha256="b" * 64,
-        record_count=2,
+        status="pending",
     )
 
     with pytest.raises(IntegrityError), uow_factory() as uow:
-        uow.provider_batches.add(base)
-        uow.provider_batches.add(duplicate)
+        uow.provider_requests.add(base)
+        uow.provider_requests.add(duplicate)
         uow.commit()
 
     with session_factory_fixture() as verify_session:
         count = verify_session.execute(
-            text("SELECT COUNT(*) FROM raw.provider_batches")
+            text("SELECT COUNT(*) FROM raw.provider_requests")
         ).scalar_one()
         assert count == 0
+
+
+def test_uow_three_layer_persistence_round_trip(
+    uow_factory, session_factory_fixture
+) -> None:
+    """Persisting request → attempt → batch leaves all three rows.
+
+    PR-02 introduced the three-layer evidence model; the UoW must
+    expose each repository as a property and the FK chain must round
+    trip end-to-end.
+    """
+
+    started = datetime(2026, 7, 30, 12, 0, tzinfo=UTC)
+    finished = datetime(2026, 7, 30, 12, 0, 5, tzinfo=UTC)
+
+    with uow_factory() as uow:
+        stored_request = uow.provider_requests.add(
+            NewProviderRequest(
+                provider_key="akshare",
+                dataset_key="etf_daily",
+                request_key="rt-1",
+                status="succeeded",
+                request_params={"foo": "bar"},
+            )
+        )
+        stored_attempt = uow.provider_attempts.add(
+            NewProviderAttempt(
+                provider_request_id=stored_request.id,
+                attempt_no=1,
+                started_at=started,
+                finished_at=finished,
+                status="succeeded",
+                response_payload_sha256="a" * 64,
+            )
+        )
+        stored_batch = uow.provider_batches.add(
+            NewProviderBatch(
+                provider_request_id=stored_request.id,
+                provider_attempt_id=stored_attempt.id,
+                provider_key="akshare",
+                dataset_key="etf_daily",
+                record_count=2,
+                payload_sha256="a" * 64,
+                status="succeeded",
+            )
+        )
+        uow.commit()
+
+    with session_factory_fixture() as verify_session:
+        row_count = verify_session.execute(
+            text(
+                "SELECT "
+                "(SELECT COUNT(*) FROM raw.provider_requests) AS requests, "
+                "(SELECT COUNT(*) FROM raw.provider_attempts) AS attempts, "
+                "(SELECT COUNT(*) FROM raw.provider_batches) AS batches"
+            )
+        ).mappings().one()
+        assert row_count["requests"] == 1
+        assert row_count["attempts"] == 1
+        assert row_count["batches"] == 1
+
+    assert stored_batch.provider_request_id == stored_request.id
+    assert stored_batch.provider_attempt_id == stored_attempt.id
 
 
 def test_uow_repositories_share_session(uow_factory) -> None:

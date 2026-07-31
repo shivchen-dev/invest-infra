@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from uuid import UUID, uuid4
 
@@ -13,8 +13,12 @@ from invest_domain.instruments.models import Instrument, InstrumentId, Instrumen
 from invest_domain.market_data.models import (
     BarSource,
     DailyBar,
+    ProviderAttempt,
+    ProviderAttemptStatus,
     ProviderBatch,
     ProviderBatchStatus,
+    ProviderFailureStage,
+    ProviderRequest,
     bar_source_metadata_hash,
 )
 from invest_domain.market_data.ports import (
@@ -488,16 +492,158 @@ class TestDailyBarInvariants:
             )
 
 
+class TestProviderRequest:
+    def test_request_is_constructed(self) -> None:
+        request = ProviderRequest(
+            provider_key="fixture_dev",
+            dataset_key="etf_daily_bars",
+            request_key="req-1",
+            params={"symbol": "510050"},
+            created_at=datetime(2026, 7, 30, 8, 0, 0, tzinfo=timezone.utc),
+        )
+        assert request.provider_key == "fixture_dev"
+        assert request.dataset_key == "etf_daily_bars"
+        assert request.request_key == "req-1"
+        assert request.params == {"symbol": "510050"}
+
+    def test_blank_provider_key_is_rejected(self) -> None:
+        with pytest.raises(ValueError):
+            ProviderRequest(
+                provider_key="",
+                dataset_key="etf_daily_bars",
+                request_key="req-1",
+            )
+
+    def test_blank_dataset_key_is_rejected(self) -> None:
+        with pytest.raises(ValueError):
+            ProviderRequest(
+                provider_key="fixture_dev",
+                dataset_key="",
+                request_key="req-1",
+            )
+
+    def test_blank_request_key_is_rejected(self) -> None:
+        with pytest.raises(ValueError):
+            ProviderRequest(
+                provider_key="fixture_dev",
+                dataset_key="etf_daily_bars",
+                request_key="",
+            )
+
+    def test_naive_created_at_is_rejected(self) -> None:
+        with pytest.raises(ValueError):
+            ProviderRequest(
+                provider_key="fixture_dev",
+                dataset_key="etf_daily_bars",
+                request_key="req-1",
+                created_at=datetime(2026, 7, 30, 8, 0, 0),
+            )
+
+
+class TestProviderAttempt:
+    def test_attempt_is_constructed_for_succeeded(self) -> None:
+        request_id = uuid4()
+        started = datetime(2026, 7, 30, 8, 0, 0, tzinfo=timezone.utc)
+        finished = datetime(2026, 7, 30, 8, 0, 5, tzinfo=timezone.utc)
+        attempt = ProviderAttempt(
+            request_id=request_id,
+            attempt_number=1,
+            status=ProviderAttemptStatus.SUCCEEDED,
+            started_at=started,
+            finished_at=finished,
+            duration_ms=5_000,
+        )
+        assert attempt.request_id == request_id
+        assert attempt.attempt_number == 1
+        assert attempt.status is ProviderAttemptStatus.SUCCEEDED
+        assert attempt.duration_ms == 5_000
+        assert attempt.error_stage is None
+
+    def test_failed_attempt_requires_error_stage_and_code(self) -> None:
+        request_id = uuid4()
+        started = datetime(2026, 7, 30, 8, 0, 0, tzinfo=timezone.utc)
+        finished = datetime(2026, 7, 30, 8, 0, 5, tzinfo=timezone.utc)
+        with pytest.raises(ValueError):
+            ProviderAttempt(
+                request_id=request_id,
+                attempt_number=1,
+                status=ProviderAttemptStatus.FAILED,
+                started_at=started,
+                finished_at=finished,
+                duration_ms=5_000,
+                error_stage=None,
+                error_code="TIMEOUT",
+                error_message="upstream timeout",
+            )
+        with pytest.raises(ValueError):
+            ProviderAttempt(
+                request_id=request_id,
+                attempt_number=1,
+                status=ProviderAttemptStatus.FAILED,
+                started_at=started,
+                finished_at=finished,
+                duration_ms=5_000,
+                error_stage=ProviderFailureStage.TIMEOUT,
+                error_code="",
+                error_message="upstream timeout",
+            )
+
+    def test_attempt_number_must_be_positive(self) -> None:
+        with pytest.raises(ValueError):
+            ProviderAttempt(
+                request_id=uuid4(),
+                attempt_number=0,
+                status=ProviderAttemptStatus.SUCCEEDED,
+                started_at=datetime(2026, 7, 30, 8, 0, 0, tzinfo=timezone.utc),
+                finished_at=datetime(2026, 7, 30, 8, 0, 5, tzinfo=timezone.utc),
+                duration_ms=5_000,
+            )
+
+    def test_naive_started_at_is_rejected(self) -> None:
+        with pytest.raises(ValueError):
+            ProviderAttempt(
+                request_id=uuid4(),
+                attempt_number=1,
+                status=ProviderAttemptStatus.SUCCEEDED,
+                started_at=datetime(2026, 7, 30, 8, 0, 0),
+                finished_at=datetime(2026, 7, 30, 8, 0, 5, tzinfo=timezone.utc),
+                duration_ms=5_000,
+            )
+
+    def test_finished_before_started_is_rejected(self) -> None:
+        started = datetime(2026, 7, 30, 8, 0, 5, tzinfo=timezone.utc)
+        finished = datetime(2026, 7, 30, 8, 0, 0, tzinfo=timezone.utc)
+        with pytest.raises(ValueError):
+            ProviderAttempt(
+                request_id=uuid4(),
+                attempt_number=1,
+                status=ProviderAttemptStatus.SUCCEEDED,
+                started_at=started,
+                finished_at=finished,
+                duration_ms=-5_000,
+            )
+
+    def test_negative_duration_is_rejected(self) -> None:
+        started = datetime(2026, 7, 30, 8, 0, 0, tzinfo=timezone.utc)
+        finished = started + timedelta(seconds=5)
+        with pytest.raises(ValueError):
+            ProviderAttempt(
+                request_id=uuid4(),
+                attempt_number=1,
+                status=ProviderAttemptStatus.SUCCEEDED,
+                started_at=started,
+                finished_at=finished,
+                duration_ms=-1,
+            )
+
+
 class TestProviderBatch:
     def test_batch_is_constructed(
         self, instrument_id: InstrumentId, bar_source: BarSource
     ) -> None:
         bar = _Builder(instrument_id, bar_source).normal()
         batch = ProviderBatch(
-            provider_key="fixture_dev",
-            dataset_key="etf_daily_bars",
-            requested_at=datetime(2026, 7, 30, 8, 0, 0, tzinfo=timezone.utc),
-            received_at=datetime(2026, 7, 30, 8, 0, 5, tzinfo=timezone.utc),
+            attempt_id=uuid4(),
             records=(bar,),
             raw_payload_hash="abc",
             status=ProviderBatchStatus.SUCCEEDED,
@@ -505,37 +651,28 @@ class TestProviderBatch:
         assert len(batch.records) == 1
         assert batch.status is ProviderBatchStatus.SUCCEEDED
 
-    def test_blank_provider_key_is_rejected(self) -> None:
+    def test_blank_raw_payload_hash_is_rejected(self) -> None:
         with pytest.raises(ValueError):
             ProviderBatch(
-                provider_key="",
-                dataset_key="etf_daily_bars",
-                requested_at=datetime(2026, 7, 30, 8, 0, 0, tzinfo=timezone.utc),
-                received_at=datetime(2026, 7, 30, 8, 0, 5, tzinfo=timezone.utc),
+                attempt_id=uuid4(),
                 records=(),
-                raw_payload_hash="abc",
+                raw_payload_hash="",
                 status=ProviderBatchStatus.SUCCEEDED,
             )
 
-    def test_naive_requested_at_is_rejected(self) -> None:
-        with pytest.raises(ValueError):
+    def test_failed_status_is_rejected(self) -> None:
+        with pytest.raises(ValueError, match="FAILED"):
             ProviderBatch(
-                provider_key="fixture_dev",
-                dataset_key="etf_daily_bars",
-                requested_at=datetime(2026, 7, 30, 8, 0, 0),  # naive
-                received_at=datetime(2026, 7, 30, 8, 0, 5, tzinfo=timezone.utc),
+                attempt_id=uuid4(),
                 records=(),
                 raw_payload_hash="abc",
-                status=ProviderBatchStatus.SUCCEEDED,
+                status=ProviderBatchStatus.FAILED,
             )
 
-    def test_received_before_requested_is_rejected(self) -> None:
-        with pytest.raises(ValueError):
+    def test_attempt_id_must_be_uuid(self) -> None:
+        with pytest.raises(TypeError):
             ProviderBatch(
-                provider_key="fixture_dev",
-                dataset_key="etf_daily_bars",
-                requested_at=datetime(2026, 7, 30, 8, 0, 5, tzinfo=timezone.utc),
-                received_at=datetime(2026, 7, 30, 8, 0, 0, tzinfo=timezone.utc),
+                attempt_id="not-a-uuid",  # type: ignore[arg-type]
                 records=(),
                 raw_payload_hash="abc",
                 status=ProviderBatchStatus.SUCCEEDED,
@@ -544,10 +681,7 @@ class TestProviderBatch:
     def test_warnings_must_be_tuple(self) -> None:
         with pytest.raises(ValueError):
             ProviderBatch(
-                provider_key="fixture_dev",
-                dataset_key="etf_daily_bars",
-                requested_at=datetime(2026, 7, 30, 8, 0, 0, tzinfo=timezone.utc),
-                received_at=datetime(2026, 7, 30, 8, 0, 5, tzinfo=timezone.utc),
+                attempt_id=uuid4(),
                 records=(),
                 raw_payload_hash="abc",
                 status=ProviderBatchStatus.SUCCEEDED,
@@ -566,32 +700,60 @@ class TestPorts:
 
             def fetch_instruments(
                 self, as_of: date
-            ) -> ProviderBatch[Instrument]:
-                return ProviderBatch(
+            ) -> tuple[ProviderRequest, ProviderAttempt, ProviderBatch[Instrument] | None]:
+                request_id = uuid4()
+                attempt_id = uuid4()
+                request = ProviderRequest(
                     provider_key=self.provider_key,
                     dataset_key="etf_instruments",
-                    requested_at=datetime(as_of.year, as_of.month, as_of.day, 8, 0, tzinfo=timezone.utc),
-                    received_at=datetime(as_of.year, as_of.month, as_of.day, 8, 1, tzinfo=timezone.utc),
+                    request_key=f"instruments-{as_of.isoformat()}",
+                    created_at=datetime(as_of.year, as_of.month, as_of.day, 8, 0, tzinfo=timezone.utc),
+                )
+                attempt = ProviderAttempt(
+                    request_id=request_id,
+                    attempt_number=1,
+                    status=ProviderAttemptStatus.SUCCEEDED,
+                    started_at=datetime(as_of.year, as_of.month, as_of.day, 8, 0, tzinfo=timezone.utc),
+                    finished_at=datetime(as_of.year, as_of.month, as_of.day, 8, 1, tzinfo=timezone.utc),
+                    duration_ms=60_000,
+                )
+                batch = ProviderBatch(
+                    attempt_id=attempt_id,
                     records=(),
                     raw_payload_hash="x",
                     status=ProviderBatchStatus.SUCCEEDED,
                 )
+                return request, attempt, batch
 
             def fetch_daily_bars(
                 self,
                 symbols: Sequence[str],
                 start_date: date,
                 end_date: date,
-            ) -> ProviderBatch[DailyBar]:
-                return ProviderBatch(
+            ) -> tuple[ProviderRequest, ProviderAttempt, ProviderBatch[DailyBar] | None]:
+                request_id = uuid4()
+                attempt_id = uuid4()
+                request = ProviderRequest(
                     provider_key=self.provider_key,
                     dataset_key="etf_daily_bars",
-                    requested_at=datetime(start_date.year, start_date.month, start_date.day, 8, 0, tzinfo=timezone.utc),
-                    received_at=datetime(start_date.year, start_date.month, start_date.day, 8, 1, tzinfo=timezone.utc),
+                    request_key=f"daily-bars-{start_date.isoformat()}-{end_date.isoformat()}",
+                    created_at=datetime(start_date.year, start_date.month, start_date.day, 8, 0, tzinfo=timezone.utc),
+                )
+                attempt = ProviderAttempt(
+                    request_id=request_id,
+                    attempt_number=1,
+                    status=ProviderAttemptStatus.SUCCEEDED,
+                    started_at=datetime(start_date.year, start_date.month, start_date.day, 8, 0, tzinfo=timezone.utc),
+                    finished_at=datetime(start_date.year, start_date.month, start_date.day, 8, 1, tzinfo=timezone.utc),
+                    duration_ms=60_000,
+                )
+                batch = ProviderBatch(
+                    attempt_id=attempt_id,
                     records=(),
                     raw_payload_hash="x",
                     status=ProviderBatchStatus.SUCCEEDED,
                 )
+                return request, attempt, batch
 
         dummy = _Dummy()
         assert isinstance(dummy, EtfMarketDataProvider)

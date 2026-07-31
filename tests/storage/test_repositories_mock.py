@@ -116,45 +116,29 @@ def _make_instrument_row(
 def _make_batch_row(
     *,
     row_id: UUID | None = None,
+    provider_request_id: UUID | None = None,
+    provider_attempt_id: UUID | None = None,
     provider_key: str = "tushare",
     dataset_key: str = "daily",
-    request_key: str = "req-001",
-    request_params: dict[str, Any] | None = None,
-    requested_at: datetime | None = None,
-    received_at: datetime | None = None,
-    provider_request_id: str | None = None,
-    status: str = "received",
-    record_count: int | None = 10,
-    raw_payload_json: Any | None = None,
-    raw_payload_uri: str | None = None,
-    payload_sha256: str | None = None,
-    error_code: str | None = None,
-    error_message: str | None = None,
+    record_count: int = 10,
+    payload_sha256: str | None = "a" * 64,
     warnings: list[Any] | None = None,
+    status: str = "succeeded",
     created_at: datetime | None = None,
-    updated_at: datetime | None = None,
 ) -> MagicMock:
-    """Build a mock that looks like a :class:`RawProviderBatchRow`."""
+    """Build a mock that looks like a PR-02 :class:`RawProviderBatchRow`."""
 
     row = MagicMock(spec=RawProviderBatchRow)
     row.id = row_id or uuid4()
+    row.provider_request_id = provider_request_id or uuid4()
+    row.provider_attempt_id = provider_attempt_id or uuid4()
     row.provider_key = provider_key
     row.dataset_key = dataset_key
-    row.request_key = request_key
-    row.request_params = request_params if request_params is not None else {}
-    row.requested_at = requested_at or datetime(2024, 1, 1, tzinfo=UTC)
-    row.received_at = received_at
-    row.provider_request_id = provider_request_id
-    row.status = status
     row.record_count = record_count
-    row.raw_payload_json = raw_payload_json
-    row.raw_payload_uri = raw_payload_uri
     row.payload_sha256 = payload_sha256
-    row.error_code = error_code
-    row.error_message = error_message
     row.warnings = warnings if warnings is not None else []
+    row.status = status
     row.created_at = created_at or datetime(2024, 1, 1, tzinfo=UTC)
-    row.updated_at = updated_at or datetime(2024, 1, 1, tzinfo=UTC)
     return row
 
 
@@ -356,7 +340,14 @@ class SqlAlchemyInstrumentRepositoryMockTests(unittest.TestCase):
 
 
 class SqlAlchemyProviderBatchRepositoryMockTests(unittest.TestCase):
-    """Mock-based tests for :class:`SqlAlchemyProviderBatchRepository`."""
+    """Mock-based tests for :class:`SqlAlchemyProviderBatchRepository`.
+
+    PR-02 reshaped ``raw.provider_batches``: rows now carry
+    ``provider_request_id`` and ``provider_attempt_id`` FKs plus a
+    required ``payload_sha256`` digest. These tests cover the new
+    surface (``add``, ``get_by_id``, ``list_by_attempt``,
+    ``list_by_provider_dataset``).
+    """
 
     def setUp(self) -> None:
         self._session = MagicMock(name="Session")
@@ -367,13 +358,17 @@ class SqlAlchemyProviderBatchRepositoryMockTests(unittest.TestCase):
     # ------------------------------------------------------------------
 
     def test_add_returns_stored_batch_after_session_add_and_flush(self) -> None:
+        request_id = uuid4()
+        attempt_id = uuid4()
         batch = NewProviderBatch(
+            provider_request_id=request_id,
+            provider_attempt_id=attempt_id,
             provider_key="tushare",
             dataset_key="daily",
-            request_key="req-001",
-            requested_at=datetime(2024, 1, 1, tzinfo=UTC),
-            status="requested",
-            request_params={"symbol": "510050"},
+            record_count=10,
+            payload_sha256="a" * 64,
+            status="succeeded",
+            warnings=["stale record skipped"],
         )
 
         result = self._repo.add(batch)
@@ -385,17 +380,21 @@ class SqlAlchemyProviderBatchRepositoryMockTests(unittest.TestCase):
         # the row argument passed to session.add carries the input fields
         added_row = self._session.add.call_args[0][0]
         self.assertIsInstance(added_row, RawProviderBatchRow)
+        self.assertEqual(added_row.provider_request_id, request_id)
+        self.assertEqual(added_row.provider_attempt_id, attempt_id)
         self.assertEqual(added_row.provider_key, "tushare")
         self.assertEqual(added_row.dataset_key, "daily")
-        self.assertEqual(added_row.request_key, "req-001")
-        self.assertEqual(added_row.status, "requested")
-        self.assertEqual(added_row.request_params, {"symbol": "510050"})
+        self.assertEqual(added_row.record_count, 10)
+        self.assertEqual(added_row.payload_sha256, "a" * 64)
+        self.assertEqual(added_row.status, "succeeded")
+        self.assertEqual(added_row.warnings, ["stale record skipped"])
         # StoredProviderBatch mirrors the row's fields
         self.assertEqual(result.provider_key, "tushare")
         self.assertEqual(result.dataset_key, "daily")
-        self.assertEqual(result.request_key, "req-001")
-        self.assertEqual(result.status, "requested")
-        self.assertEqual(result.request_params, {"symbol": "510050"})
+        self.assertEqual(result.record_count, 10)
+        self.assertEqual(result.payload_sha256, "a" * 64)
+        self.assertEqual(result.status, "succeeded")
+        self.assertEqual(result.warnings, ["stale record skipped"])
         self.assertIsInstance(result.id, UUID)
 
     # ------------------------------------------------------------------
@@ -415,7 +414,7 @@ class SqlAlchemyProviderBatchRepositoryMockTests(unittest.TestCase):
         self.assertEqual(result.id, row_id)
         self.assertEqual(result.provider_key, "tushare")
         self.assertEqual(result.record_count, 42)
-        self.assertEqual(result.status, "received")
+        self.assertEqual(result.status, "succeeded")
 
     def test_get_by_id_returns_none_for_unknown_id(self) -> None:
         missing = uuid4()
@@ -427,46 +426,24 @@ class SqlAlchemyProviderBatchRepositoryMockTests(unittest.TestCase):
         self.assertIsNone(result)
 
     # ------------------------------------------------------------------
-    # get_by_request
+    # list_by_attempt
     # ------------------------------------------------------------------
 
-    def test_get_by_request_returns_stored_batch_for_known_triplet(self) -> None:
-        row = _make_batch_row(
-            provider_key="tushare",
-            dataset_key="daily",
-            request_key="req-xyz",
-            record_count=7,
-        )
+    def test_list_by_attempt_returns_stored_batches(self) -> None:
+        attempt_id = uuid4()
+        first = _make_batch_row(provider_attempt_id=attempt_id, record_count=10)
+        second = _make_batch_row(provider_attempt_id=attempt_id, record_count=20)
         scalars_mock = self._session.scalars.return_value
-        scalars_mock.first.return_value = row
+        scalars_mock.all.return_value = [first, second]
 
-        result = self._repo.get_by_request(
-            provider_key="tushare",
-            dataset_key="daily",
-            request_key="req-xyz",
-        )
+        result = self._repo.list_by_attempt(attempt_id, limit=10, offset=0)
 
         self.assertEqual(self._session.scalars.call_count, 1)
-        scalars_mock.first.assert_called_once_with()
-        self.assertIsNotNone(result)
-        assert result is not None
-        self.assertEqual(result.provider_key, "tushare")
-        self.assertEqual(result.dataset_key, "daily")
-        self.assertEqual(result.request_key, "req-xyz")
-        self.assertEqual(result.record_count, 7)
-
-    def test_get_by_request_returns_none_for_unknown_triplet(self) -> None:
-        scalars_mock = self._session.scalars.return_value
-        scalars_mock.first.return_value = None
-
-        result = self._repo.get_by_request(
-            provider_key="tushare",
-            dataset_key="daily",
-            request_key="does-not-exist",
-        )
-
-        scalars_mock.first.assert_called_once_with()
-        self.assertIsNone(result)
+        scalars_mock.all.assert_called_once_with()
+        self.assertEqual(len(result), 2)
+        for item in result:
+            self.assertIsInstance(item, StoredProviderBatch)
+            self.assertEqual(item.provider_attempt_id, attempt_id)
 
 
 if __name__ == "__main__":

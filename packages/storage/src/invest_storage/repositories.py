@@ -1,27 +1,34 @@
 """Repository implementations for the M1 Storage layer.
 
 Each repository owns its ORM-to-domain mapping: callers always receive
-domain objects, never SQLAlchemy ORM rows. The repositories in this
-module cover the tables introduced by M1 increments 2, 3 and 5:
+domain objects, never SQLAlchemy ORM rows.
 
-- :class:`SqlAlchemyInstrumentRepository` persists the canonical
+PR-02 introduced the three-layer evidence model in
+``raw.provider_requests`` / ``raw.provider_attempts`` /
+``raw.provider_batches`` (see ADR-0003 §6). The repositories in this
+module cover:
+
+- :class:`SqlAlchemyInstrumentRepository` — canonical
   ``core.instruments`` rows. The partial unique index on
   ``(symbol, exchange) WHERE delist_date IS NULL`` is the natural
   business-key upsert target.
-- :class:`SqlAlchemyProviderBatchRepository` persists the raw evidence
-  rows in ``raw.provider_batches``. The unique constraint on
-  ``(provider_key, dataset_key, request_key)`` is enforced by the
-  database; a second insert with the same triplet raises ``IntegrityError``.
-- :class:`SqlAlchemyPipelineRunRepository` records one execution of a
-  pipeline job in ``ops.pipeline_runs``. Status transitions
-  (``start`` / ``mark_succeeded`` / ``mark_failed``) are owned by the
-  repository; lifecycle timestamps are filled in by the database.
+- :class:`SqlAlchemyProviderRequestRepository` — one row per logical
+  request, identified by ``(provider_key, dataset_key, request_key)``.
+  :meth:`get_or_create` is the idempotent entry point used by the
+  application service.
+- :class:`SqlAlchemyProviderAttemptRepository` — one row per
+  network/SDK attempt; carries lifecycle status and error metadata.
+  :meth:`start` opens an attempt, :meth:`mark_succeeded` /
+  :meth:`mark_failed` close it.
+- :class:`SqlAlchemyProviderBatchRepository` — one row per
+  successful/partial batch. Inserted only when the parent attempt
+  succeeded or partially succeeded.
+- :class:`SqlAlchemyPipelineRunRepository` — one row per execution of
+  a pipeline job in ``ops.pipeline_runs``.
 
-The :class:`StoredProviderBatch` dataclass is the domain-side handle for
-a persisted provider batch. It intentionally mirrors
-:class:`invest_storage.models.RawProviderBatchRow` but is free of
-SQLAlchemy machinery, so application / domain code can pass it around
-without importing the storage layer.
+Each domain-side dataclass is free of SQLAlchemy machinery, so
+application / domain code can pass them around without importing the
+storage layer.
 """
 
 from __future__ import annotations
@@ -45,61 +52,115 @@ from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 
-from invest_storage.models import InstrumentRow, PipelineRunRow, RawProviderBatchRow
+from invest_storage.models import (
+    InstrumentRow,
+    PipelineRunRow,
+    ProviderAttemptRow,
+    ProviderRequestRow,
+    RawProviderBatchRow,
+)
 
 
 @dataclass(frozen=True, slots=True)
-class StoredProviderBatch:
-    """Domain-side view of a persisted ``raw.provider_batches`` row.
-
-    Field semantics mirror :class:`RawProviderBatchRow` and the M1
-    increment 2 migration comments. The dataclass is frozen so it is safe
-    to share across threads and to use as a return value from repository
-    methods.
-    """
+class StoredProviderRequest:
+    """Domain-side view of a persisted ``raw.provider_requests`` row."""
 
     id: UUID
     provider_key: str
     dataset_key: str
     request_key: str
     request_params: dict[str, Any] = field(default_factory=dict)
-    requested_at: datetime | None = None
-    received_at: datetime | None = None
-    provider_request_id: str | None = None
-    status: str = "requested"
-    record_count: int | None = None
-    raw_payload_json: Any | None = None
-    raw_payload_uri: str | None = None
-    payload_sha256: str | None = None
+    requested_by_run_id: UUID | None = None
+    status: str = "pending"
+    created_at: datetime | None = None
+    completed_at: datetime | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class NewProviderRequest:
+    """Input shape for :meth:`SqlAlchemyProviderRequestRepository.add`."""
+
+    provider_key: str
+    dataset_key: str
+    request_key: str
+    status: str = "pending"
+    request_params: dict[str, Any] = field(default_factory=dict)
+    requested_by_run_id: UUID | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class StoredProviderAttempt:
+    """Domain-side view of a persisted ``raw.provider_attempts`` row."""
+
+    id: UUID
+    provider_request_id: UUID
+    attempt_no: int
+    provider_request_id_text: str | None = None
+    started_at: datetime | None = None
+    finished_at: datetime | None = None
+    status: str = "running"
+    http_status: int | None = None
+    error_stage: str | None = None
     error_code: str | None = None
     error_message: str | None = None
-    warnings: list[Any] = field(default_factory=list)
+    response_payload_sha256: str | None = None
+    response_payload_json: Any | None = None
+    response_payload_uri: str | None = None
     created_at: datetime | None = None
-    updated_at: datetime | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class NewProviderAttempt:
+    """Input shape for :meth:`SqlAlchemyProviderAttemptRepository.add`."""
+
+    provider_request_id: UUID
+    attempt_no: int
+    started_at: datetime
+    status: str = "running"
+    provider_request_id_text: str | None = None
+    finished_at: datetime | None = None
+    http_status: int | None = None
+    error_stage: str | None = None
+    error_code: str | None = None
+    error_message: str | None = None
+    response_payload_sha256: str | None = None
+    response_payload_json: Any | None = None
+    response_payload_uri: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class StoredProviderBatch:
+    """Domain-side view of a persisted ``raw.provider_batches`` row."""
+
+    id: UUID
+    provider_request_id: UUID
+    provider_attempt_id: UUID
+    provider_key: str
+    dataset_key: str
+    record_count: int
+    payload_sha256: str
+    warnings: list[Any] = field(default_factory=list)
+    status: str = "succeeded"
+    created_at: datetime | None = None
 
 
 @dataclass(frozen=True, slots=True)
 class NewProviderBatch:
     """Input shape for :meth:`SqlAlchemyProviderBatchRepository.add`.
 
-    The application layer constructs this dataclass (id, created_at and
-    updated_at are server-generated; the repository fills them in).
+    ``provider_request_id`` and ``provider_attempt_id`` are mandatory FKs
+    pointing to the parent request and attempt rows; the application
+    service persists them in order (request → attempt → batch) and
+    threads the assigned UUIDs through.
     """
 
+    provider_request_id: UUID
+    provider_attempt_id: UUID
     provider_key: str
     dataset_key: str
-    request_key: str
-    requested_at: datetime
-    status: str
-    request_params: dict[str, Any] = field(default_factory=dict)
-    received_at: datetime | None = None
-    provider_request_id: str | None = None
-    record_count: int | None = None
-    raw_payload_json: Any | None = None
-    raw_payload_uri: str | None = None
-    payload_sha256: str | None = None
-    error_code: str | None = None
-    error_message: str | None = None
+    record_count: int
+    payload_sha256: str
+    status: str = "succeeded"
     warnings: list[Any] = field(default_factory=list)
 
 
@@ -243,16 +304,258 @@ class SqlAlchemyInstrumentRepository:
         return len(values)
 
 
+class SqlAlchemyProviderRequestRepository:
+    """Read/write access to ``raw.provider_requests``.
+
+    A ``raw.provider_requests`` row is identified by the natural unique
+    key ``(provider_key, dataset_key, request_key)``; the database
+    enforces uniqueness. :meth:`get_or_create` is the idempotent entry
+    point used by the application service when a logical request is
+    re-issued: an existing row is returned untouched instead of raising
+    :class:`sqlalchemy.exc.IntegrityError`.
+    """
+
+    def __init__(self, session: Session) -> None:
+        self._session = session
+
+    def add(self, request: NewProviderRequest) -> StoredProviderRequest:
+        row = ProviderRequestRow(
+            id=uuid.uuid4(),
+            provider_key=request.provider_key,
+            dataset_key=request.dataset_key,
+            request_key=request.request_key,
+            request_params=dict(request.request_params),
+            requested_by_run_id=request.requested_by_run_id,
+            status=request.status,
+        )
+        self._session.add(row)
+        self._session.flush()
+        return _row_to_stored_request(row)
+
+    def get_by_id(self, request_id: UUID) -> StoredProviderRequest | None:
+        row = self._session.get(ProviderRequestRow, request_id)
+        return _row_to_stored_request(row) if row is not None else None
+
+    def get_by_logical_key(
+        self, *, provider_key: str, dataset_key: str, request_key: str
+    ) -> StoredProviderRequest | None:
+        stmt = (
+            select(ProviderRequestRow)
+            .where(
+                ProviderRequestRow.provider_key == provider_key,
+                ProviderRequestRow.dataset_key == dataset_key,
+                ProviderRequestRow.request_key == request_key,
+            )
+            .limit(1)
+        )
+        row = self._session.scalars(stmt).first()
+        return _row_to_stored_request(row) if row is not None else None
+
+    def get_or_create(self, request: NewProviderRequest) -> StoredProviderRequest:
+        existing = self.get_by_logical_key(
+            provider_key=request.provider_key,
+            dataset_key=request.dataset_key,
+            request_key=request.request_key,
+        )
+        if existing is not None:
+            return existing
+        try:
+            return self.add(request)
+        except Exception:
+            self._session.rollback()
+            existing = self.get_by_logical_key(
+                provider_key=request.provider_key,
+                dataset_key=request.dataset_key,
+                request_key=request.request_key,
+            )
+            if existing is not None:
+                return existing
+            raise
+
+    def mark_status(
+        self,
+        request_id: UUID,
+        *,
+        status: str,
+        completed_at: datetime | None = None,
+    ) -> StoredProviderRequest:
+        row = self._session.get(ProviderRequestRow, request_id)
+        if row is None:
+            raise LookupError(
+                f"ProviderRequest {request_id!s} not found; cannot update status"
+            )
+        row.status = status
+        if completed_at is not None:
+            row.completed_at = completed_at
+        self._session.flush()
+        return _row_to_stored_request(row)
+
+
+class SqlAlchemyProviderAttemptRepository:
+    """Read/write access to ``raw.provider_attempts``.
+
+    The repository owns the lifecycle transitions for an attempt:
+    :meth:`start` opens a new attempt in the ``running`` state,
+    :meth:`mark_succeeded` / :meth:`mark_failed` close it. The database
+    CHECK constraint ``ck_provider_attempts_succeeded_has_hash`` and
+    ``ck_provider_attempts_failed_has_error`` enforce the contract that
+    a successful attempt MUST carry a response SHA-256 and a failed
+    attempt MUST carry ``error_stage`` and ``error_code``; the
+    repository surfaces those violations via :class:`ValueError` /
+    :class:`sqlalchemy.exc.IntegrityError`.
+    """
+
+    def __init__(self, session: Session) -> None:
+        self._session = session
+
+    def add(self, attempt: NewProviderAttempt) -> StoredProviderAttempt:
+        row = ProviderAttemptRow(
+            id=uuid.uuid4(),
+            provider_request_id=attempt.provider_request_id,
+            attempt_no=attempt.attempt_no,
+            provider_request_id_text=attempt.provider_request_id_text,
+            started_at=attempt.started_at,
+            finished_at=attempt.finished_at,
+            status=attempt.status,
+            http_status=attempt.http_status,
+            error_stage=attempt.error_stage,
+            error_code=attempt.error_code,
+            error_message=attempt.error_message,
+            response_payload_sha256=attempt.response_payload_sha256,
+            response_payload_json=attempt.response_payload_json,
+            response_payload_uri=attempt.response_payload_uri,
+        )
+        self._session.add(row)
+        self._session.flush()
+        return _row_to_stored_attempt(row)
+
+    def start(
+        self,
+        *,
+        provider_request_id: UUID,
+        attempt_no: int,
+        started_at: datetime,
+        provider_request_id_text: str | None = None,
+    ) -> StoredProviderAttempt:
+        """Open a new ``running`` attempt for the given request.
+
+        Raises :class:`ValueError` if ``attempt_no < 1``; the database
+        ``UNIQUE(provider_request_id, attempt_no)`` constraint will
+        reject duplicate ``attempt_no`` values via
+        :class:`sqlalchemy.exc.IntegrityError`.
+        """
+
+        if attempt_no < 1:
+            raise ValueError(f"attempt_no must be >= 1, got {attempt_no}")
+        return self.add(
+            NewProviderAttempt(
+                provider_request_id=provider_request_id,
+                attempt_no=attempt_no,
+                started_at=started_at,
+                status="running",
+                provider_request_id_text=provider_request_id_text,
+            )
+        )
+
+    def mark_succeeded(
+        self,
+        attempt_id: UUID,
+        *,
+        finished_at: datetime,
+        response_payload_sha256: str,
+        response_payload_json: Any | None = None,
+        response_payload_uri: str | None = None,
+        http_status: int | None = None,
+    ) -> StoredProviderAttempt:
+        """Transition an attempt into the ``succeeded`` terminal state.
+
+        ``response_payload_sha256`` is required by the database CHECK
+        constraint. The repository raises :class:`ValueError` when the
+        hash is empty so a meaningless record is never persisted.
+        """
+
+        if not response_payload_sha256 or not response_payload_sha256.strip():
+            raise ValueError(
+                "mark_succeeded requires a non-empty response_payload_sha256"
+            )
+        row = self._session.get(ProviderAttemptRow, attempt_id)
+        if row is None:
+            raise LookupError(
+                f"ProviderAttempt {attempt_id!s} not found; cannot mark succeeded"
+            )
+        row.status = "succeeded"
+        row.finished_at = finished_at
+        row.response_payload_sha256 = response_payload_sha256
+        row.response_payload_json = response_payload_json
+        row.response_payload_uri = response_payload_uri
+        if http_status is not None:
+            row.http_status = http_status
+        self._session.flush()
+        return _row_to_stored_attempt(row)
+
+    def mark_failed(
+        self,
+        attempt_id: UUID,
+        *,
+        finished_at: datetime,
+        error_stage: str,
+        error_code: str,
+        error_message: str | None = None,
+        http_status: int | None = None,
+    ) -> StoredProviderAttempt:
+        """Transition an attempt into the ``failed`` terminal state.
+
+        ``error_stage`` and ``error_code`` are required by the database
+        CHECK constraint. The repository raises :class:`ValueError`
+        when either is empty so a meaningless record is never persisted.
+        """
+
+        if not error_stage or not error_stage.strip():
+            raise ValueError("mark_failed requires a non-empty error_stage")
+        if not error_code or not error_code.strip():
+            raise ValueError("mark_failed requires a non-empty error_code")
+        row = self._session.get(ProviderAttemptRow, attempt_id)
+        if row is None:
+            raise LookupError(
+                f"ProviderAttempt {attempt_id!s} not found; cannot mark failed"
+            )
+        row.status = "failed"
+        row.finished_at = finished_at
+        row.error_stage = error_stage
+        row.error_code = error_code
+        row.error_message = error_message
+        if http_status is not None:
+            row.http_status = http_status
+        self._session.flush()
+        return _row_to_stored_attempt(row)
+
+    def get_by_id(self, attempt_id: UUID) -> StoredProviderAttempt | None:
+        row = self._session.get(ProviderAttemptRow, attempt_id)
+        return _row_to_stored_attempt(row) if row is not None else None
+
+    def list_by_request(
+        self, request_id: UUID, *, limit: int = 100, offset: int = 0
+    ) -> Sequence[StoredProviderAttempt]:
+        rows = self._session.scalars(
+            select(ProviderAttemptRow)
+            .where(ProviderAttemptRow.provider_request_id == request_id)
+            .order_by(ProviderAttemptRow.attempt_no.asc())
+            .limit(limit)
+            .offset(offset)
+        ).all()
+        return [_row_to_stored_attempt(row) for row in rows]
+
+
 class SqlAlchemyProviderBatchRepository:
     """Read/write access to ``raw.provider_batches``.
 
-    The repository does not enforce the ``status`` value set itself - the
-    database CHECK constraint and the domain-side validation in the
-    application layer are responsible. A duplicate
-    ``(provider_key, dataset_key, request_key)`` insert raises
-    :class:`sqlalchemy.exc.IntegrityError` from :meth:`add`; callers
-    that want idempotency should call :meth:`get_by_request` first or
-    handle the error.
+    Only successful/partial attempts produce a batch row. The repository
+    does not enforce the ``status`` value set itself - the database
+    CHECK constraint ``ck_provider_batches_status_valid`` rejects
+    ``FAILED`` and any other out-of-vocabulary value. The FK constraints
+    on ``provider_request_id`` and ``provider_attempt_id`` reject
+    batches with missing parents via
+    :class:`sqlalchemy.exc.IntegrityError`.
     """
 
     def __init__(self, session: Session) -> None:
@@ -261,21 +564,14 @@ class SqlAlchemyProviderBatchRepository:
     def add(self, batch: NewProviderBatch) -> StoredProviderBatch:
         row = RawProviderBatchRow(
             id=uuid.uuid4(),
+            provider_request_id=batch.provider_request_id,
+            provider_attempt_id=batch.provider_attempt_id,
             provider_key=batch.provider_key,
             dataset_key=batch.dataset_key,
-            request_key=batch.request_key,
-            request_params=dict(batch.request_params),
-            requested_at=batch.requested_at,
-            received_at=batch.received_at,
-            provider_request_id=batch.provider_request_id,
-            status=batch.status,
             record_count=batch.record_count,
-            raw_payload_json=batch.raw_payload_json,
-            raw_payload_uri=batch.raw_payload_uri,
             payload_sha256=batch.payload_sha256,
-            error_code=batch.error_code,
-            error_message=batch.error_message,
             warnings=list(batch.warnings),
+            status=batch.status,
         )
         self._session.add(row)
         self._session.flush()
@@ -285,20 +581,17 @@ class SqlAlchemyProviderBatchRepository:
         row = self._session.get(RawProviderBatchRow, batch_id)
         return _row_to_stored_batch(row) if row is not None else None
 
-    def get_by_request(
-        self, *, provider_key: str, dataset_key: str, request_key: str
-    ) -> StoredProviderBatch | None:
-        stmt = (
+    def list_by_attempt(
+        self, attempt_id: UUID, *, limit: int = 10, offset: int = 0
+    ) -> Sequence[StoredProviderBatch]:
+        rows = self._session.scalars(
             select(RawProviderBatchRow)
-            .where(
-                RawProviderBatchRow.provider_key == provider_key,
-                RawProviderBatchRow.dataset_key == dataset_key,
-                RawProviderBatchRow.request_key == request_key,
-            )
-            .limit(1)
-        )
-        row = self._session.scalars(stmt).first()
-        return _row_to_stored_batch(row) if row is not None else None
+            .where(RawProviderBatchRow.provider_attempt_id == attempt_id)
+            .order_by(RawProviderBatchRow.created_at.desc())
+            .limit(limit)
+            .offset(offset)
+        ).all()
+        return [_row_to_stored_batch(row) for row in rows]
 
     def list_by_provider_dataset(
         self, *, provider_key: str, dataset_key: str, limit: int = 100, offset: int = 0
@@ -309,7 +602,7 @@ class SqlAlchemyProviderBatchRepository:
                 RawProviderBatchRow.provider_key == provider_key,
                 RawProviderBatchRow.dataset_key == dataset_key,
             )
-            .order_by(RawProviderBatchRow.requested_at.desc())
+            .order_by(RawProviderBatchRow.created_at.desc())
             .limit(limit)
             .offset(offset)
         ).all()
@@ -525,26 +818,52 @@ def _row_to_pipeline_run(row: PipelineRunRow) -> PipelineRun:
     )
 
 
-def _row_to_stored_batch(row: RawProviderBatchRow) -> StoredProviderBatch:
-    return StoredProviderBatch(
+def _row_to_stored_request(row: ProviderRequestRow) -> StoredProviderRequest:
+    return StoredProviderRequest(
         id=row.id,
         provider_key=row.provider_key,
         dataset_key=row.dataset_key,
         request_key=row.request_key,
         request_params=dict(row.request_params or {}),
-        requested_at=row.requested_at,
-        received_at=row.received_at,
-        provider_request_id=row.provider_request_id,
+        requested_by_run_id=row.requested_by_run_id,
         status=row.status,
-        record_count=row.record_count,
-        raw_payload_json=row.raw_payload_json,
-        raw_payload_uri=row.raw_payload_uri,
-        payload_sha256=row.payload_sha256,
+        created_at=row.created_at,
+        completed_at=row.completed_at,
+    )
+
+
+def _row_to_stored_attempt(row: ProviderAttemptRow) -> StoredProviderAttempt:
+    return StoredProviderAttempt(
+        id=row.id,
+        provider_request_id=row.provider_request_id,
+        attempt_no=row.attempt_no,
+        provider_request_id_text=row.provider_request_id_text,
+        started_at=row.started_at,
+        finished_at=row.finished_at,
+        status=row.status,
+        http_status=row.http_status,
+        error_stage=row.error_stage,
         error_code=row.error_code,
         error_message=row.error_message,
-        warnings=list(row.warnings or []),
+        response_payload_sha256=row.response_payload_sha256,
+        response_payload_json=row.response_payload_json,
+        response_payload_uri=row.response_payload_uri,
         created_at=row.created_at,
-        updated_at=row.updated_at,
+    )
+
+
+def _row_to_stored_batch(row: RawProviderBatchRow) -> StoredProviderBatch:
+    return StoredProviderBatch(
+        id=row.id,
+        provider_request_id=row.provider_request_id,
+        provider_attempt_id=row.provider_attempt_id,
+        provider_key=row.provider_key,
+        dataset_key=row.dataset_key,
+        record_count=row.record_count,
+        payload_sha256=row.payload_sha256,
+        warnings=list(row.warnings or []),
+        status=row.status,
+        created_at=row.created_at,
     )
 
 

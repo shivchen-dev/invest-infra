@@ -3,8 +3,12 @@
 from invest_domain.market_data.models import (
     BarSource,
     DailyBar,
+    ProviderAttempt,
+    ProviderAttemptStatus,
     ProviderBatch,
     ProviderBatchStatus,
+    ProviderFailureStage,
+    ProviderRequest,
     bar_source_metadata_hash,
 )
 from invest_domain.market_data.ports import (
@@ -22,9 +26,13 @@ __all__ = [
     "EtfMarketDataProvider",
     "Exchange",
     "InstrumentProvider",
+    "ProviderAttempt",
+    "ProviderAttemptStatus",
     "ProviderBatch",
     "ProviderBatchStatus",
     "ProviderDataContractError",
+    "ProviderFailureStage",
+    "ProviderRequest",
     "TradingStatus",
     "bar_source_metadata_hash",
 ]

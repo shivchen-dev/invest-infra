@@ -4,6 +4,15 @@ The Port definitions live in the domain layer per ADR-0003. Adapters that
 implement them must live in ``apps/pipeline`` and must not import this
 module — this keeps the dependency direction one-way (pipeline -> domain).
 
+PR-02 widens the contract from a single :class:`ProviderBatch` to the
+three-layer evidence model (:class:`ProviderRequest` / :class:`ProviderAttempt`
+/ :class:`ProviderBatch`). Adapters MUST return all three layers so the
+application service can persist ``raw.provider_requests``,
+``raw.provider_attempts`` and (on success / partial) ``raw.provider_batches``
+with consistent FK wiring. The :class:`ProviderBatch` is ``None`` when
+the attempt failed: failed attempts leave no batch row behind, the
+failure evidence lives on the attempt row only.
+
 :exc:`ProviderDataContractError` is a pure-domain exception that adapters
 must raise when a Provider response violates the ADR-0005 contract
 (unsupported adjustment, malformed field, non-ETF instrument in a daily-bar
@@ -20,7 +29,12 @@ from datetime import date
 from typing import Protocol, runtime_checkable
 
 from invest_domain.instruments.models import Instrument
-from invest_domain.market_data.models import DailyBar, ProviderBatch
+from invest_domain.market_data.models import (
+    DailyBar,
+    ProviderAttempt,
+    ProviderBatch,
+    ProviderRequest,
+)
 
 
 class ProviderDataContractError(ValueError):
@@ -59,14 +73,17 @@ class InstrumentProvider(Protocol):
 class EtfMarketDataProvider(Protocol):
     """Port for fetching standardized ETF master data and daily bars.
 
-    Mirrors plan §4.2 / ADR-0003. Implementations live in
-    ``apps/pipeline/src/invest_pipeline/adapters/<provider_key>/`` and must
-    not be referenced from ``packages/domain``. The Provider must:
+    Mirrors plan §4.2 / ADR-0003 (PR-02 three-layer model). Adapters
+    must:
 
-    - Identify itself via a non-empty ``provider_key`` (e.g. ``fixture_dev``,
-      ``cifang`` once O-1 is closed).
-    - Return a :class:`ProviderBatch` for every call so the application
-      service can persist ``raw.provider_batches`` evidence.
+    - Identify themselves via a non-empty ``provider_key`` (e.g.
+      ``fixture_dev``, ``cifang`` once O-1 is closed).
+    - Return a ``(ProviderRequest, ProviderAttempt, ProviderBatch[T] | None)``
+      triple for every call so the application service can persist
+      ``raw.provider_requests``, ``raw.provider_attempts`` and (on
+      success / partial) ``raw.provider_batches``. A ``None`` batch
+      signals a failed attempt; the failure evidence still lives on
+      the returned :class:`ProviderAttempt`.
     - Convert any internal SDK / HTTP exceptions into
       :exc:`ProviderDataContractError` before the batch leaves the Adapter
       layer; the domain never sees the underlying SDK / transport types.
@@ -75,11 +92,13 @@ class EtfMarketDataProvider(Protocol):
     @property
     def provider_key(self) -> str: ...
 
-    def fetch_instruments(self, as_of: date) -> ProviderBatch[Instrument]: ...
+    def fetch_instruments(
+        self, as_of: date
+    ) -> tuple[ProviderRequest, ProviderAttempt, ProviderBatch[Instrument] | None]: ...
 
     def fetch_daily_bars(
         self,
         symbols: Sequence[str],
         start_date: date,
         end_date: date,
-    ) -> ProviderBatch[DailyBar]: ...
+    ) -> tuple[ProviderRequest, ProviderAttempt, ProviderBatch[DailyBar] | None]: ...
