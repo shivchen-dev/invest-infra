@@ -1,6 +1,6 @@
 # ADR-0003：Provider 选型与 Adapter 边界
 
-- Status：Proposed（Adapter 边界已冻结；具体 Provider 待用户确认）
+- Status：Accepted（Adapter 边界已冻结；Provider 选型延后至业务确认）
 - Date：2026-07-30
 - Owners：M0 架构基线
 
