@@ -32,6 +32,7 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from invest_storage.providers import SessionProvider
 from invest_storage.repositories import (
+    InputSnapshotRepository,
     SqlAlchemyCandidatePoolItemRepository,
     SqlAlchemyCandidatePoolRunRepository,
     SqlAlchemyDailyBarRepository,
@@ -57,6 +58,13 @@ class InstrumentRepositoryPort(Protocol):
     def get_by_business_key(self, *, exchange: str, symbol: str): ...
     def list_active(self, *, limit: int = 100, offset: int = 0): ...
     def count_active(self) -> int: ...
+
+
+@runtime_checkable
+class InputSnapshotRepositoryPort(Protocol):
+    def add(self, snapshot): ...
+    def get_by_date_and_hash(self, snapshot_date, content_hash): ...
+    def list_by_date(self, snapshot_date): ...
 
 
 @runtime_checkable
@@ -196,6 +204,7 @@ class UnitOfWork(Protocol):
     """
 
     instruments: InstrumentRepositoryPort
+    input_snapshot_repository: InputSnapshotRepositoryPort
     provider_requests: ProviderRequestRepositoryPort
     provider_attempts: ProviderAttemptRepositoryPort
     provider_batches: ProviderBatchRepositoryPort
@@ -235,6 +244,7 @@ class SqlAlchemyUnitOfWork:
         self._session_factory = session_factory
         self._session: Session | None = None
         self._instruments: SqlAlchemyInstrumentRepository | None = None
+        self._input_snapshot_repository: InputSnapshotRepository | None = None
         self._provider_requests: SqlAlchemyProviderRequestRepository | None = None
         self._provider_attempts: SqlAlchemyProviderAttemptRepository | None = None
         self._provider_batches: SqlAlchemyProviderBatchRepository | None = None
@@ -259,6 +269,12 @@ class SqlAlchemyUnitOfWork:
         if self._instruments is None:
             self._instruments = SqlAlchemyInstrumentRepository(self.session)
         return self._instruments
+
+    @property
+    def input_snapshot_repository(self) -> InputSnapshotRepository:
+        if self._input_snapshot_repository is None:
+            self._input_snapshot_repository = InputSnapshotRepository(self.session)
+        return self._input_snapshot_repository
 
     @property
     def provider_requests(self) -> SqlAlchemyProviderRequestRepository:
@@ -336,6 +352,7 @@ class SqlAlchemyUnitOfWork:
                 self._session.close()
                 self._session = None
             self._instruments = None
+            self._input_snapshot_repository = None
             self._provider_requests = None
             self._provider_attempts = None
             self._provider_batches = None
@@ -355,6 +372,7 @@ __all__ = [
     "CandidatePoolItemRepositoryPort",
     "CandidatePoolRunRepositoryPort",
     "DailyBarRepositoryPort",
+    "InputSnapshotRepositoryPort",
     "InstrumentRepositoryPort",
     "PipelineRunRepositoryPort",
     "ProviderAttemptRepositoryPort",

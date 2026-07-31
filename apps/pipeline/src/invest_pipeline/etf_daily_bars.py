@@ -417,7 +417,6 @@ def _build_new_bars(
     repository only needs the standardized fields.
     """
 
-    from decimal import Decimal
 
     new_bars: list[NewDailyBar | DailyBar] = []
     for entry in sidecar:

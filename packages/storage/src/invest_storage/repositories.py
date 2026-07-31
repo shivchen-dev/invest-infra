@@ -62,6 +62,7 @@ from invest_domain.instruments import (
     InstrumentStatus,
     InstrumentType,
 )
+from invest_domain.input_snapshot import InputSnapshot
 from invest_domain.market_data.models import BarSource, DailyBar
 from invest_domain.market_data.values import Adjust, TradingStatus
 from invest_domain.pipeline import PipelineRun, PipelineRunStatus
@@ -69,12 +70,14 @@ from invest_domain.shared.canonical import CANONICAL_HASH_SCHEMA_VERSION
 from invest_domain.shared.values import Currency
 from sqlalchemy import func, select
 from sqlalchemy.dialects.postgresql import insert
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from invest_storage.models import (
     CandidatePoolItemRow,
     CandidatePoolRunRow,
     DailyBarRow,
+    InputSnapshotRow,
     InstrumentRow,
     PipelineRunRow,
     ProviderAttemptRow,
@@ -1041,6 +1044,82 @@ def _row_to_instrument(row: InstrumentRow) -> Instrument:
         provider_symbol_map=dict(row.provider_symbol_map or {}),
         valid_from=_as_date(row.valid_from),
         valid_to=_as_date(row.valid_to),
+    )
+
+
+class InputSnapshotRepository:
+    def __init__(self, session: Session) -> None:
+        self._session = session
+
+    def add(self, snapshot: InputSnapshot) -> InputSnapshot:
+        existing = self.get_by_date_and_hash(
+            snapshot.snapshot_date,
+            snapshot.content_hash,
+        )
+        if existing is not None:
+            return existing
+
+        row = InputSnapshotRow(
+            id=snapshot.id,
+            snapshot_date=snapshot.snapshot_date,
+            instrument_ids=[str(value) for value in snapshot.instrument_ids],
+            content_hash=snapshot.content_hash,
+            row_count=snapshot.row_count,
+            created_at=snapshot.created_at,
+        )
+        self._session.add(row)
+        try:
+            self._session.flush()
+        except IntegrityError:
+            self._session.rollback()
+            existing = self.get_by_date_and_hash(
+                snapshot.snapshot_date,
+                snapshot.content_hash,
+            )
+            if existing is not None:
+                return existing
+            raise
+        return _row_to_input_snapshot(row)
+
+    def get_by_date_and_hash(
+        self,
+        snapshot_date: date,
+        content_hash: str,
+    ) -> InputSnapshot | None:
+        stmt = (
+            select(InputSnapshotRow)
+            .where(
+                InputSnapshotRow.snapshot_date == snapshot_date,
+                InputSnapshotRow.content_hash == content_hash,
+            )
+            .limit(1)
+        )
+        row = self._session.scalars(stmt).first()
+        return _row_to_input_snapshot(row) if row is not None else None
+
+    def list_by_date(self, snapshot_date: date) -> list[InputSnapshot]:
+        rows = self._session.scalars(
+            select(InputSnapshotRow)
+            .where(InputSnapshotRow.snapshot_date == snapshot_date)
+            .order_by(
+                InputSnapshotRow.created_at.asc(),
+                InputSnapshotRow.id.asc(),
+            )
+        ).all()
+        return [_row_to_input_snapshot(row) for row in rows]
+
+
+def _row_to_input_snapshot(row: InputSnapshotRow) -> InputSnapshot:
+    return InputSnapshot(
+        id=row.id,
+        snapshot_date=row.snapshot_date,
+        instrument_ids=tuple(
+            value if isinstance(value, UUID) else UUID(str(value))
+            for value in row.instrument_ids
+        ),
+        content_hash=row.content_hash,
+        row_count=row.row_count,
+        created_at=row.created_at,
     )
 
 

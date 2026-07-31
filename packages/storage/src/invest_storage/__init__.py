@@ -4,6 +4,7 @@ from invest_storage.models import (
     CandidatePoolItemRow,
     CandidatePoolRunRow,
     DailyBarRow,
+    InputSnapshotRow,
     InstrumentRow,
     PipelineRunRow,
     ProviderAttemptRow,
@@ -16,6 +17,7 @@ from invest_storage.providers import (
     session_scope_from_provider,
 )
 from invest_storage.repositories import (
+    InputSnapshotRepository,
     NewDailyBar,
     NewProviderAttempt,
     NewProviderBatch,
@@ -36,6 +38,7 @@ from invest_storage.repositories import (
 from invest_storage.unit_of_work import (
     CandidatePoolItemRepositoryPort,
     CandidatePoolRunRepositoryPort,
+    InputSnapshotRepositoryPort,
     InstrumentRepositoryPort,
     PipelineRunRepositoryPort,
     ProviderAttemptRepositoryPort,
@@ -52,6 +55,9 @@ __all__ = [
     "CandidatePoolRunRepositoryPort",
     "CandidatePoolRunRow",
     "DailyBarRow",
+    "InputSnapshotRepository",
+    "InputSnapshotRepositoryPort",
+    "InputSnapshotRow",
     "InstrumentRepositoryPort",
     "InstrumentRow",
     "NewDailyBar",

@@ -671,3 +671,36 @@ class DailyBarRow(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
+
+
+class InputSnapshotRow(Base):
+    __tablename__ = "input_snapshots"
+    __table_args__ = (
+        UniqueConstraint(
+            "snapshot_date",
+            "content_hash",
+            name="uq_input_snapshots_date_hash",
+        ),
+        CheckConstraint(
+            "length(content_hash) = 64",
+            name="ck_input_snapshots_content_hash_len64",
+        ),
+        CheckConstraint(
+            "row_count >= 1",
+            name="ck_input_snapshots_row_count_positive",
+        ),
+        Index("ix_input_snapshots_snapshot_date", "snapshot_date"),
+        Index("ix_input_snapshots_content_hash", "content_hash"),
+        {"schema": "analytics"},
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    snapshot_date: Mapped[date] = mapped_column(Date, nullable=False)
+    instrument_ids: Mapped[list[str]] = mapped_column(JSONB, nullable=False)
+    content_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    row_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )

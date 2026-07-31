@@ -25,6 +25,11 @@ from invest_pipeline.etf_instruments import (
     upsert_etf_instruments,
     write_etf_instruments_raw,
 )
+from invest_pipeline.input_snapshot import create_input_snapshot
+
+_ETF_INPUT_SNAPSHOT_PARTITIONS = dg.DailyPartitionsDefinition(
+    start_date="2026-07-23"
+)
 
 
 @dg.asset(group_name="market_data", compute_kind="python")
@@ -402,5 +407,55 @@ def etf_daily_bars(
             "request_key": request_key,
             "start_date": start.isoformat(),
             "end_date": end.isoformat(),
+        }
+    )
+
+
+@dg.asset(
+    group_name="market_data",
+    compute_kind="python",
+    deps=[etf_instruments],
+)
+def etf_input_snapshot(context) -> dg.MaterializeResult:
+    """Capture the day's ETF universe as an :class:`InputSnapshot`.
+
+    Depends on :func:`etf_instruments` so the canonical ``core.instruments``
+    rows are available before the snapshot is built. The asset reads all
+    currently listed ETFs, computes a deterministic SHA-256 hash over
+    the sorted UUID set, and writes a single row into
+    ``analytics.input_snapshots``. Repeated runs with the same input set
+    produce the same ``content_hash`` and therefore are idempotent at the
+    storage layer via the ``uq_input_snapshots_date_hash`` constraint.
+    """
+
+    from invest_storage import SqlAlchemyUnitOfWork
+
+    snapshot_date = date.today()
+    engine = build_engine(get_settings().database_url)
+    factory = session_factory(engine)
+    try:
+        with SqlAlchemyUnitOfWork(factory) as uow:
+            rows = uow.instrument_repository.list_active()
+            instrument_ids = [row.id for row in rows]
+            snapshot = create_input_snapshot(
+                uow_factory=lambda: SqlAlchemyUnitOfWork(factory),
+                snapshot_date=snapshot_date,
+                instrument_ids=instrument_ids,
+            )
+    finally:
+        engine.dispose()
+
+    context.log.info(
+        "etf_input_snapshot: snapshot_date=%s row_count=%s content_hash=%s",
+        snapshot.snapshot_date.isoformat(),
+        snapshot.row_count,
+        snapshot.content_hash,
+    )
+    return dg.MaterializeResult(
+        metadata={
+            "snapshot_id": str(snapshot.id),
+            "snapshot_date": snapshot.snapshot_date.isoformat(),
+            "row_count": snapshot.row_count,
+            "content_hash": snapshot.content_hash,
         }
     )
