@@ -4,6 +4,8 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from invest_api.config import get_settings
+from invest_api.routers.candidate_pool import router as candidate_pool_router
+from invest_api.routers.etf import router as etf_router
 from invest_api.routes import router
 
 settings = get_settings()
@@ -16,3 +18,5 @@ app.add_middleware(
     allow_headers=["*"],
 )
 app.include_router(router)
+app.include_router(etf_router)
+app.include_router(candidate_pool_router)

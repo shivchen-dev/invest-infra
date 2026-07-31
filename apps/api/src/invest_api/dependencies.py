@@ -3,11 +3,11 @@ from __future__ import annotations
 from collections.abc import Iterator
 from functools import lru_cache
 
+from invest_storage.database import build_engine, session_factory
 from sqlalchemy import Engine
 from sqlalchemy.orm import Session, sessionmaker
 
 from invest_api.config import get_settings
-from invest_storage.database import build_engine, session_factory
 
 
 @lru_cache

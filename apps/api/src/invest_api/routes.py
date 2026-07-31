@@ -3,12 +3,13 @@ from __future__ import annotations
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Query
+from invest_storage.repositories import SqlAlchemyInstrumentRepository
 from sqlalchemy.orm import Session
 
 from invest_api.config import get_settings
 from invest_api.dependencies import get_db_session
-from invest_api.schemas import HealthResponse, InstrumentListResponse, InstrumentResponse
-from invest_storage.repositories import SqlAlchemyInstrumentRepository
+from invest_api.schemas import HealthResponse
+from invest_api.schemas.common import InstrumentListResponse, InstrumentResponse
 
 router = APIRouter()
 
