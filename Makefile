@@ -23,7 +23,7 @@ logs:
 	docker compose logs -f
 
 migrate:
-	cd apps/api && uv run alembic upgrade head
+	cd apps/migrations && uv run alembic upgrade head
 
 api-dev:
 	cd apps/api && uv run fastapi dev src/invest_api/main.py --host 0.0.0.0 --port 8000

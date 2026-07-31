@@ -80,14 +80,14 @@ jobs:
       - uses: astral-sh/setup-uv@v6
         with:
           python-version: "3.12"
-      - run: cd apps/api && uv sync
-      - run: cd apps/api && uv run alembic upgrade head
+      - run: cd apps/migrations && uv sync
+      - run: cd apps/migrations && uv run alembic upgrade head
         env:
           DATABASE_URL: postgresql+psycopg://invest:invest_dev_password@localhost:5432/invest
-      - run: cd apps/api && uv run alembic downgrade base
+      - run: cd apps/migrations && uv run alembic downgrade base
         env:
           DATABASE_URL: postgresql+psycopg://invest:invest_dev_password@localhost:5432/invest
-      - run: cd apps/api && uv run alembic upgrade head
+      - run: cd apps/migrations && uv run alembic upgrade head
         env:
           DATABASE_URL: postgresql+psycopg://invest:invest_dev_password@localhost:5432/invest
 

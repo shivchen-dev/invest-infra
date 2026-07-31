@@ -1,4 +1,4 @@
-"""initial v2 schemas and tables
+"""v2 baseline schemas and tables
 
 Revision ID: 20260731_0001
 Revises:
@@ -8,8 +8,8 @@ Greenfield baseline migration for invest-infra V2.
 Creates the four frozen schemas (raw/core/analytics/ops) and the
 minimum tables required for the first vertical slice:
 
-- core.instruments
 - raw.provider_batches
+- core.instruments
 - ops.pipeline_runs
 
 No legacy compatibility, no shadow renames, no data backfill.
