@@ -1,10 +1,8 @@
 from __future__ import annotations
 
 import unittest
-from datetime import date
 
 from invest_pipeline.adapters import FixtureDevInstrumentProvider
-from invest_pipeline.adapters.errors import ProviderError
 
 
 class FixtureDevInstrumentProviderTest(unittest.TestCase):
@@ -38,7 +36,7 @@ class FixtureDevInstrumentProviderTest(unittest.TestCase):
         first = provider.list_instruments()
         second = provider.list_instruments()
         self.assertEqual(len(first), len(second))
-        for a, b in zip(first, second):
+        for a, b in zip(first, second, strict=True):
             self.assertEqual(a.symbol, b.symbol)
             self.assertEqual(a.exchange, b.exchange)
 

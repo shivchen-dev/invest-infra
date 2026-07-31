@@ -1,0 +1,134 @@
+[
+  {
+    "symbol": "510300",
+    "name": "沪深300ETF",
+    "exchange": "SSE",
+    "instrument_type": "ETF",
+    "currency": "CNY",
+    "list_date": "2012-05-28",
+    "status": "active",
+    "underlying_index": "CSI 300",
+    "category": "broad_market"
+  },
+  {
+    "symbol": "510500",
+    "name": "中证500ETF",
+    "exchange": "SSE",
+    "instrument_type": "ETF",
+    "currency": "CNY",
+    "list_date": "2013-03-15",
+    "status": "active",
+    "underlying_index": "CSI 500",
+    "category": "broad_market"
+  },
+  {
+    "symbol": "159915",
+    "name": "创业板ETF",
+    "exchange": "SZSE",
+    "instrument_type": "ETF",
+    "currency": "CNY",
+    "list_date": "2011-09-20",
+    "status": "active",
+    "underlying_index": "ChiNext Index",
+    "category": "broad_market"
+  },
+  {
+    "symbol": "510050",
+    "name": "上证50ETF",
+    "exchange": "SSE",
+    "instrument_type": "ETF",
+    "currency": "CNY",
+    "list_date": "2005-02-23",
+    "status": "active",
+    "underlying_index": "SSE 50 Index",
+    "category": "broad_market"
+  },
+  {
+    "symbol": "510330",
+    "name": "沪深300ETF基金",
+    "exchange": "SSE",
+    "instrument_type": "ETF",
+    "currency": "CNY",
+    "list_date": "2012-12-25",
+    "status": "active",
+    "underlying_index": "CSI 300",
+    "category": "broad_market"
+  },
+  {
+    "symbol": "159901",
+    "name": "深证100ETF",
+    "exchange": "SZSE",
+    "instrument_type": "ETF",
+    "currency": "CNY",
+    "list_date": "2006-04-24",
+    "status": "active",
+    "underlying_index": "SZSE 100 Index",
+    "category": "broad_market"
+  },
+  {
+    "symbol": "510180",
+    "name": "上证180ETF",
+    "exchange": "SSE",
+    "instrument_type": "ETF",
+    "currency": "CNY",
+    "list_date": "2006-05-18",
+    "status": "active",
+    "underlying_index": "SSE 180 Index",
+    "category": "broad_market"
+  },
+  {
+    "symbol": "510880",
+    "name": "红利ETF",
+    "exchange": "SSE",
+    "instrument_type": "ETF",
+    "currency": "CNY",
+    "list_date": "2007-01-18",
+    "status": "active",
+    "underlying_index": "SSE Dividend Index",
+    "category": "dividend"
+  },
+  {
+    "symbol": "159905",
+    "name": "深红利ETF",
+    "exchange": "SZSE",
+    "instrument_type": "ETF",
+    "currency": "CNY",
+    "list_date": "2010-11-24",
+    "status": "active",
+    "underlying_index": "SZSE Dividend Index",
+    "category": "dividend"
+  },
+  {
+    "symbol": "512880",
+    "name": "证券ETF",
+    "exchange": "SSE",
+    "instrument_type": "ETF",
+    "currency": "CNY",
+    "list_date": "2016-07-08",
+    "status": "active",
+    "underlying_index": "Securities Index",
+    "category": "sector"
+  },
+  {
+    "symbol": "512000",
+    "name": "券商ETF",
+    "exchange": "SSE",
+    "instrument_type": "ETF",
+    "currency": "CNY",
+    "list_date": "2016-07-08",
+    "status": "active",
+    "underlying_index": "Securities Index",
+    "category": "sector"
+  },
+  {
+    "symbol": "518880",
+    "name": "黄金ETF",
+    "exchange": "SSE",
+    "instrument_type": "ETF",
+    "currency": "CNY",
+    "list_date": "2013-07-18",
+    "status": "active",
+    "underlying_index": "Gold Spot Price",
+    "category": "commodity"
+  }
+]

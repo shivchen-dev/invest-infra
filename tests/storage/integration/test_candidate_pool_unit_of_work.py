@@ -17,7 +17,7 @@ from invest_domain.candidate_pool.models import (
     CandidatePoolRun,
     CandidatePoolStatus,
 )
-from invest_domain.instruments import InstrumentId
+from invest_domain.instruments import Instrument, InstrumentId, InstrumentType
 from invest_storage import (
     SqlAlchemyCandidatePoolItemRepository,
     SqlAlchemyCandidatePoolRunRepository,
@@ -71,29 +71,31 @@ def test_uow_candidate_pool_repositories_share_session(uow_factory) -> None:
 
 
 def test_uow_candidate_pool_round_trip_persists(
-    uow_factory, session_factory_fixture, db_session: Session
+    uow_factory, session_factory_fixture
 ) -> None:
     """Writing through the UoW persists the run + items end-to-end."""
 
-    run = _new_calculated_run()
-    db_session.execute(
-        text(
-            "INSERT INTO core.instruments (id, symbol, exchange, name, "
-            "instrument_type, currency, status, is_active, created_at, "
-            "updated_at) VALUES (gen_random_uuid(), '510050', 'SSE', 'SSE 50 ETF', "
-            "'ETF', 'CNY', 'active', true, now(), now())"
-        )
-    )
-    db_session.flush()
-    instrument_id = InstrumentId(
-        db_session.execute(
-            text("SELECT id FROM core.instruments WHERE symbol = '510050'")
-        ).scalar_one()
+    instrument = Instrument(
+        symbol="510050",
+        name="SSE 50 ETF",
+        exchange="SSE",
+        instrument_type=InstrumentType.ETF,
+        is_active=True,
     )
 
+    with uow_factory() as uow:
+        uow.instruments.upsert_many([instrument])
+        uow.commit()
+
+    with session_factory_fixture() as lookup_session:
+        instrument_uuid = lookup_session.execute(
+            text("SELECT id FROM core.instruments WHERE symbol = '510050'")
+        ).scalar_one()
+
+    run = _new_calculated_run()
     items = (
         CandidatePoolItem(
-            instrument_id=instrument_id,
+            instrument_id=InstrumentId(instrument_uuid),
             included=True,
             rank=1,
             total_score=Decimal("0.5"),
