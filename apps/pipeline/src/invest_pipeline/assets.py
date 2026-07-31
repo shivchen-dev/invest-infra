@@ -1,20 +1,21 @@
 from __future__ import annotations
 
-from collections.abc import Iterator
+from datetime import date
 
 import dagster as dg
 from sqlalchemy.orm import Session
 
+from invest_pipeline.adapters import FixtureDevInstrumentProvider
 from invest_pipeline.config import get_settings
-from invest_pipeline.providers import MockInstrumentProvider
 from invest_storage.database import build_engine, session_factory
 from invest_storage.repositories import SqlAlchemyInstrumentRepository
 
 
 @dg.asset(group_name="market_data", compute_kind="python")
-def seed_instruments(context: dg.AssetExecutionContext) -> dg.MaterializeResult:
-    provider = MockInstrumentProvider()
-    instruments = provider.list_instruments()
+def seed_instruments(context) -> dg.MaterializeResult:
+    provider = FixtureDevInstrumentProvider()
+    batch = provider.fetch_instruments(date.today())
+    instruments = batch.records
 
     engine = build_engine(get_settings().database_url)
     factory = session_factory(engine)
@@ -31,4 +32,4 @@ def seed_instruments(context: dg.AssetExecutionContext) -> dg.MaterializeResult:
         engine.dispose()
 
     context.log.info("Upserted %s instruments", count)
-    return dg.MaterializeResult(metadata={"row_count": count, "provider": "mock"})
+    return dg.MaterializeResult(metadata={"row_count": count, "provider": batch.provider_key})

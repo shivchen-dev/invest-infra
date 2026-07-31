@@ -2,7 +2,7 @@
 name = "invest-storage"
 version = "0.1.0"
 description = "SQLAlchemy storage implementation for invest-infra-v2"
-requires-python = ">=3.12,<3.15"
+requires-python = ">=3.12,<3.13"
 dependencies = [
   "invest-domain",
   "sqlalchemy>=2.0.51,<2.1",

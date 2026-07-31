@@ -145,19 +145,28 @@ class PipelineRunRow(Base):
     __tablename__ = "pipeline_runs"
     __table_args__ = (
         CheckConstraint(
-            "status IN ('pending', 'running', 'succeeded', 'failed')",
+            "status IN ('queued', 'running', 'succeeded', 'failed', 'partial', 'cancelled')",
             name="ck_pipeline_runs_status_valid",
         ),
-        {"schema": "app"},
+        Index("ix_pipeline_runs_job_key", "job_key"),
+        Index("ix_pipeline_runs_status", "status"),
+        Index("ix_pipeline_runs_dagster_run_id", "dagster_run_id"),
+        {"schema": "ops"},
     )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    job_name: Mapped[str] = mapped_column(String(120), nullable=False, index=True)
-    status: Mapped[str] = mapped_column(String(24), nullable=False, index=True)
-    algorithm_version: Mapped[str] = mapped_column(String(80), nullable=False)
-    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
-    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-    error_message: Mapped[str | None] = mapped_column(Text)
+    dagster_run_id: Mapped[str | None] = mapped_column(Text, nullable=True)
+    job_key: Mapped[str] = mapped_column(String(120), nullable=False)
+    partition_key: Mapped[str | None] = mapped_column(Text, nullable=True)
+    trigger_type: Mapped[str] = mapped_column(String(24), nullable=False)
+    status: Mapped[str] = mapped_column(String(24), nullable=False)
+    algorithm_version: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    config_snapshot: Mapped[dict[str, Any]] = mapped_column(
+        JSONB, nullable=False, server_default=text("'{}'::jsonb"), default=dict
+    )
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    error_summary: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )

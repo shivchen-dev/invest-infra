@@ -6,18 +6,20 @@ a pipeline job. The domain model is deliberately infrastructure-free
 layer can construct and pass around :class:`PipelineRun` values without
 importing the storage layer.
 
-Lifecycle states follow the four-value vocabulary agreed for the
-``app.pipeline_runs`` table:
+Lifecycle states follow the six-value vocabulary agreed for the
+``ops.pipeline_runs`` table:
 
-- ``pending``    - the row exists but the job has not started yet.
+- ``queued``     - the row exists but the job has not started yet.
 - ``running``    - the job is in flight.
 - ``succeeded``  - the job finished without error.
 - ``failed``     - the job finished with an error captured in
-                   :attr:`PipelineRun.error_message`.
+                   :attr:`PipelineRun.error_summary`.
+- ``partial``    - the job finished with partial success.
+- ``cancelled``  - the job was cancelled before completion.
 
 The status vocabulary is enforced by a database ``CHECK`` constraint
-defined in migration ``20260730_0004``; the domain mirrors the same
-four values so construction-time validation rejects any unknown state.
+defined in migration ``20260731_0001``; the domain mirrors the same
+six values so construction-time validation rejects any unknown state.
 """
 
 from __future__ import annotations
@@ -29,27 +31,29 @@ from typing import Any
 from uuid import UUID
 
 _PIPELINE_RUN_STATUS_VALUES: tuple[str, ...] = (
-    "pending",
+    "queued",
     "running",
     "succeeded",
     "failed",
+    "partial",
+    "cancelled",
 )
 
 
 class PipelineRunStatus(StrEnum):
     """Lifecycle states for a :class:`PipelineRun`.
 
-    Mirrors the ``app.pipeline_runs.status`` vocabulary. The domain
+    Mirrors the ``ops.pipeline_runs.status`` vocabulary. The domain
     only models the state values; the legal transitions are owned by
-    the application layer (the storage Repository treats ``start``
-    as the transition into ``RUNNING`` and ``mark_succeeded`` /
-    ``mark_failed`` as the transitions into the terminal states).
+    the application layer.
     """
 
-    PENDING = "pending"
+    QUEUED = "queued"
     RUNNING = "running"
     SUCCEEDED = "succeeded"
     FAILED = "failed"
+    PARTIAL = "partial"
+    CANCELLED = "cancelled"
 
 
 def _ensure_aware(value: datetime, *, field_name: str) -> datetime:
@@ -74,36 +78,40 @@ class PipelineRun:
 
     Construction-time invariants:
 
-    - ``job_name`` and ``algorithm_version`` are non-empty strings.
-    - ``status`` is one of the four :class:`PipelineRunStatus` values;
+    - ``job_key`` is a non-empty string.
+    - ``trigger_type`` is a non-empty string.
+    - ``status`` is one of the six :class:`PipelineRunStatus` values;
       passing an unknown string is a hard error.
-    - ``started_at`` is required and must be timezone-aware.
-    - ``finished_at`` and ``error_message`` are optional but mutually
-      constrained: a terminal ``SUCCEEDED`` or ``FAILED`` state carries
-      ``finished_at``; only ``FAILED`` carries a non-empty
-      ``error_message``.
+    - ``queued`` status allows ``started_at=None``.
+    - ``running`` status must have ``started_at``.
+    - Terminal states (``succeeded``/``failed``/``partial``/``cancelled``)
+      must have ``finished_at``.
+    - Non-failed states must not carry ``error_summary``.
+    - ``algorithm_version`` is optional for ingestion tasks.
     - ``created_at`` / ``updated_at`` are server-generated timestamps;
       they default to ``None`` on construction and are filled in by the
       storage layer when the row is persisted.
     """
 
-    job_name: str
-    algorithm_version: str
-    status: PipelineRunStatus | str = PipelineRunStatus.PENDING
+    job_key: str
+    trigger_type: str
+    status: PipelineRunStatus | str = PipelineRunStatus.QUEUED
+    dagster_run_id: str | None = None
+    partition_key: str | None = None
+    algorithm_version: str | None = None
+    config_snapshot: dict[str, Any] | None = None
     started_at: datetime | None = None
     finished_at: datetime | None = None
-    error_message: str | None = None
+    error_summary: str | None = None
     id: UUID | None = None
     created_at: datetime | None = None
     updated_at: datetime | None = None
 
     def __post_init__(self) -> None:
-        if not isinstance(self.job_name, str) or not self.job_name.strip():
-            raise ValueError("PipelineRun.job_name must be a non-empty string")
-        if not isinstance(self.algorithm_version, str) or not self.algorithm_version.strip():
-            raise ValueError(
-                "PipelineRun.algorithm_version must be a non-empty string"
-            )
+        if not isinstance(self.job_key, str) or not self.job_key.strip():
+            raise ValueError("PipelineRun.job_key must be a non-empty string")
+        if not isinstance(self.trigger_type, str) or not self.trigger_type.strip():
+            raise ValueError("PipelineRun.trigger_type must be a non-empty string")
         status_value = self._status_string(self.status)
         if status_value not in _PIPELINE_RUN_STATUS_VALUES:
             raise ValueError(
@@ -123,12 +131,32 @@ class PipelineRun:
             _ensure_aware(self.created_at, field_name="created_at")
         if self.updated_at is not None:
             _ensure_aware(self.updated_at, field_name="updated_at")
+
+        # Status-specific validation
+        if status_value == PipelineRunStatus.QUEUED.value:
+            if self.started_at is not None:
+                raise ValueError("PipelineRun with status='queued' must not have started_at")
+        elif status_value == PipelineRunStatus.RUNNING.value:
+            if self.started_at is None:
+                raise ValueError("PipelineRun with status='running' must have started_at")
+        elif status_value in (
+            PipelineRunStatus.SUCCEEDED.value,
+            PipelineRunStatus.FAILED.value,
+            PipelineRunStatus.PARTIAL.value,
+            PipelineRunStatus.CANCELLED.value,
+        ):
+            if self.finished_at is None:
+                raise ValueError(
+                    f"PipelineRun with status='{status_value}' must have finished_at"
+                )
+
+        # Error summary only for failed/partial
         if (
-            self.error_message is not None
-            and status_value != PipelineRunStatus.FAILED.value
+            self.error_summary is not None
+            and status_value not in (PipelineRunStatus.FAILED.value, PipelineRunStatus.PARTIAL.value)
         ):
             raise ValueError(
-                "PipelineRun.error_message is only valid when status='failed'"
+                "PipelineRun.error_summary is only valid when status='failed' or 'partial'"
             )
 
     @staticmethod
@@ -151,10 +179,12 @@ class PipelineRun:
 
     @property
     def is_terminal(self) -> bool:
-        """Return ``True`` for the two terminal states."""
+        """Return ``True`` for the terminal states."""
         return self.status_value in (
             PipelineRunStatus.SUCCEEDED.value,
             PipelineRunStatus.FAILED.value,
+            PipelineRunStatus.PARTIAL.value,
+            PipelineRunStatus.CANCELLED.value,
         )
 
 

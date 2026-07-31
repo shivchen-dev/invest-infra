@@ -13,7 +13,7 @@ module cover the tables introduced by M1 increments 2, 3 and 5:
   ``(provider_key, dataset_key, request_key)`` is enforced by the
   database; a second insert with the same triplet raises ``IntegrityError``.
 - :class:`SqlAlchemyPipelineRunRepository` records one execution of a
-  pipeline job in ``app.pipeline_runs``. Status transitions
+  pipeline job in ``ops.pipeline_runs``. Status transitions
   (``start`` / ``mark_succeeded`` / ``mark_failed``) are owned by the
   repository; lifecycle timestamps are filled in by the database.
 
@@ -357,7 +357,7 @@ def _row_to_instrument(row: InstrumentRow) -> Instrument:
 
 
 class SqlAlchemyPipelineRunRepository:
-    """Read/write access to ``app.pipeline_runs``.
+    """Read/write access to ``ops.pipeline_runs``.
 
     The repository never commits: it only mutates the session, and the
     surrounding :class:`invest_storage.unit_of_work.SqlAlchemyUnitOfWork`
@@ -382,9 +382,9 @@ class SqlAlchemyPipelineRunRepository:
         """Insert a new ``pipeline_runs`` row in the ``running`` state.
 
         The input ``run`` is taken as the canonical payload for
-        ``job_name``, ``algorithm_version`` and ``started_at``;
+        ``job_key``, ``trigger_type``, ``algorithm_version`` and ``started_at``;
         ``status`` is overwritten with ``"running"`` and a fresh UUID is
-        generated in Python. ``error_message`` is reset to ``None`` so
+        generated in Python. ``error_summary`` is reset to ``None`` so
         a re-used domain value cannot leak a stale failure message into
         a brand-new run.
 
@@ -395,12 +395,16 @@ class SqlAlchemyPipelineRunRepository:
 
         row = PipelineRunRow(
             id=uuid.uuid4(),
-            job_name=run.job_name,
+            dagster_run_id=run.dagster_run_id,
+            job_key=run.job_key,
+            partition_key=run.partition_key,
+            trigger_type=run.trigger_type,
             algorithm_version=run.algorithm_version,
+            config_snapshot=run.config_snapshot or {},
             status=self._START_STATUS,
             started_at=run.started_at,
             finished_at=None,
-            error_message=None,
+            error_summary=None,
         )
         self._session.add(row)
         self._session.flush()
@@ -411,7 +415,7 @@ class SqlAlchemyPipelineRunRepository:
     ) -> PipelineRun:
         """Transition a run into the ``succeeded`` terminal state.
 
-        Updates ``status='succeeded'`` and ``finished_at``; ``error_message``
+        Updates ``status='succeeded'`` and ``finished_at``; ``error_summary``
         is reset to ``None`` so a previous transient failure is not
         carried forward.
         """
@@ -423,7 +427,7 @@ class SqlAlchemyPipelineRunRepository:
             )
         row.status = PipelineRunStatus.SUCCEEDED.value
         row.finished_at = finished_at
-        row.error_message = None
+        row.error_summary = None
         self._session.flush()
         return _row_to_pipeline_run(row)
 
@@ -432,7 +436,7 @@ class SqlAlchemyPipelineRunRepository:
     ) -> PipelineRun:
         """Transition a run into the ``failed`` terminal state.
 
-        Updates ``status='failed'``, ``finished_at`` and ``error_message``.
+        Updates ``status='failed'``, ``finished_at`` and ``error_summary``.
         Raises :class:`ValueError` when ``error`` is empty so the
         repository never writes a meaningless failure record.
         """
@@ -449,7 +453,7 @@ class SqlAlchemyPipelineRunRepository:
             )
         row.status = PipelineRunStatus.FAILED.value
         row.finished_at = finished_at
-        row.error_message = error
+        row.error_summary = error
         self._session.flush()
         return _row_to_pipeline_run(row)
 
@@ -506,12 +510,16 @@ class SqlAlchemyPipelineRunRepository:
 def _row_to_pipeline_run(row: PipelineRunRow) -> PipelineRun:
     return PipelineRun(
         id=row.id,
-        job_name=row.job_name,
+        dagster_run_id=row.dagster_run_id,
+        job_key=row.job_key,
+        partition_key=row.partition_key,
+        trigger_type=row.trigger_type,
         algorithm_version=row.algorithm_version,
+        config_snapshot=dict(row.config_snapshot or {}),
         status=row.status,
         started_at=row.started_at,
         finished_at=row.finished_at,
-        error_message=row.error_message,
+        error_summary=row.error_summary,
         created_at=row.created_at,
         updated_at=row.updated_at,
     )

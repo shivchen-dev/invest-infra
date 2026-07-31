@@ -2,7 +2,7 @@
 name = "invest-pipeline"
 version = "0.1.0"
 description = "Dagster data pipeline for invest-infra-v2"
-requires-python = ">=3.12,<3.15"
+requires-python = ">=3.12,<3.13"
 dependencies = [
   "invest-domain",
   "invest-storage",
