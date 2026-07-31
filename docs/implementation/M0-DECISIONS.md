@@ -51,7 +51,7 @@ candidate_pool_runs.status: calculated -> validated -> published (终态)
 - 交易所以 `SSE`/`SZSE` 为唯一允许值；任何新 exchange 必须先修订 ADR-0004。
 - `adjustment` 在生产代码和已发布行中只能出现 `none`；任何出现 `qfq/hfq` 的代码路径必须显式标 `not_production`。
 - 候选池状态、snapshot revision、Provider batch 三类证据可相互索引，但不互相替代。
-- `raw/core/analytics/ops` 四 schema 是事实基线；`app.pipeline_runs` 仍是骨架遗留，需在 M1 迁移中升级为 `ops.pipeline_runs`，并禁止新逻辑写入 `app` schema。
+- `raw/core/analytics/ops` 四 schema 是事实基线；`ops.pipeline_runs` 已升级完成（原 `app.pipeline_runs` 已废弃），禁止新逻辑写入 `app` schema。
 
 ## 4. 未决事项（需用户确认）
 
@@ -72,15 +72,14 @@ candidate_pool_runs.status: calculated -> validated -> published (终态)
 
 - A1：当前示例阈值仅做架构验证用，不进入生产参数集。
 - A2：M1 起 `core.instruments` 主键改为 UUID 不会影响下游，因为 domain 仍以 `Instrument` 实体（稳定 ID）为概念主键。
-- A3：M1 起将现有 `app.pipeline_runs` 迁移/升级为 `ops.pipeline_runs`；在迁移完成前，旧表继续只读，并允许在同一 Alembic 链内被替换。
+- A3：M1 已将 `app.pipeline_runs` 迁移/升级为 `ops.pipeline_runs`；迁移完成后禁止再写入 `app` schema。
 - A4：候选池业务唯一性在并发插入时由 PostgreSQL `ON CONFLICT` 唯一约束保护；事务级 advisory lock 用于避免无意义的失败/重试。
 - A5：日常发布的 publication pointer 替换采用 `INSERT ... ON CONFLICT DO UPDATE` 原子事务；旧 `published` run 保留并标记 `superseded_at`，历史结果仍可查询。
 
 ## 6. 影响范围（按 module）
 
 - `apps/pipeline`
-  - 新增 `adapters/<provider_key>/`、状态机服务、snapshot/quality/calculate/publish 编排 asset。
-  - 现有 `MockInstrumentProvider` 退化为只用于 dev/test 的 fixture；不允许在 production 资产路径下默认启用。
+  - 新增 `adapters/fixture_dev/`（确定性 fixture，仅 dev/test）；不允许在 production 资产路径下默认启用。Phase 1 运行时仅保留 `fixture_dev`，真实 Provider 待 O-1 确认后接入。
 - `apps/api`
   - 新增候选池、freshness、pipeline runs、运维触发接口；只读 publication pointer；不持有 Provider 凭据。
 - `apps/web`
@@ -100,7 +99,7 @@ candidate_pool_runs.status: calculated -> validated -> published (终态)
 ## 7. 后续编码代理前置条件
 
 1. 必须已通过用户确认 O-1；否则禁止引入 Provider SDK。
-2. 必须已有冻结的 M1 迁移方案（schema 拆 `raw/core/analytics/ops`，并升级 `app.pipeline_runs`）。
+2. 必须已有冻结的 M1 迁移方案（schema 拆 `raw/core/analytics/ops`，并升级 `app.pipeline_runs` 为 `ops.pipeline_runs`）。**状态：已完成**（commit 77a156c）。
 3. 必须先有版本化日历与 instrument 主数据；禁止用 Provider 数据替代日历。
 4. Provider contract 必须先以 fixture 编写并通过契约测试，再接入真实 HTTP。
 5. 候选池算法不得引用计划文档中的示例数字作为生产参数；阈值必须来自用户确认的版本化参数集。
@@ -110,7 +109,7 @@ candidate_pool_runs.status: calculated -> validated -> published (终态)
 
 - 不得修改 `docs/plan/invest-infra-v2-etf-vertical-slice-plan.md` 作为 M0 决策依据；本文件为基线。
 - 不得宣称已选定或接入真实 Provider。
-- 不得把 `app.pipeline_runs` 当作已完成运行审计。
+- 不得把 `app.pipeline_runs` 当作已完成运行审计（已废弃，请使用 `ops.pipeline_runs`）。
 - 不得让 Adapter 提交数据库事务或写 `raw.provider_batches`。
 - 不得把 `qfq/hfq` 行作为生产数据。
 - 不得在 M0 文档阶段安装依赖、运行迁移、提交或发布。

@@ -5,7 +5,7 @@ on:
   pull_request:
 
 jobs:
-  architecture-and-domain:
+  architecture:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -13,19 +13,85 @@ jobs:
         with:
           python-version: "3.12"
       - run: python scripts/check_architecture.py
-      - run: PYTHONPATH=packages/domain/src:packages/storage/src python -m unittest discover -s tests -v
 
-  api:
+  domain-tests:
     runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: PYTHONPATH=packages/domain/src python -m pytest packages/domain/tests -q
+
+  storage-unit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install sqlalchemy psycopg[binary] pytest
+      - run: PYTHONPATH=packages/domain/src:packages/storage/src:tests python -m pytest tests/storage --ignore=tests/storage/integration -q
+
+  storage-integration:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: invest
+          POSTGRES_USER: invest
+          POSTGRES_PASSWORD: invest_dev_password
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install sqlalchemy psycopg2-binary pytest testcontainers
+      - run: PYTHONPATH=packages/domain/src:packages/storage/src:tests python -m pytest tests/storage/integration -q
+        env:
+          DATABASE_URL: postgresql+psycopg://invest:invest_dev_password@localhost:5432/invest
+
+  migrations:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: invest
+          POSTGRES_USER: invest
+          POSTGRES_PASSWORD: invest_dev_password
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v6
         with:
           python-version: "3.12"
       - run: cd apps/api && uv sync
-      - run: cd apps/api && uv run ruff check src
+      - run: cd apps/api && uv run alembic upgrade head
+        env:
+          DATABASE_URL: postgresql+psycopg://invest:invest_dev_password@localhost:5432/invest
+      - run: cd apps/api && uv run alembic downgrade base
+        env:
+          DATABASE_URL: postgresql+psycopg://invest:invest_dev_password@localhost:5432/invest
+      - run: cd apps/api && uv run alembic upgrade head
+        env:
+          DATABASE_URL: postgresql+psycopg://invest:invest_dev_password@localhost:5432/invest
 
-  pipeline:
+  pipeline-tests:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -33,4 +99,53 @@ jobs:
         with:
           python-version: "3.12"
       - run: cd apps/pipeline && uv sync
-      - run: cd apps/pipeline && uv run ruff check src
+      - run: cd apps/pipeline && uv run ruff check src tests
+      - run: cd apps/pipeline && uv run pytest -q
+
+  pipeline-import-smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.12"
+      - run: cd apps/pipeline && uv sync
+      - run: cd apps/pipeline && uv run python -c "from invest_pipeline.definitions import defs; print(defs)"
+
+  api-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.12"
+      - run: cd apps/api && uv sync
+      - run: cd apps/api && uv run ruff check src tests
+      - run: cd apps/api && uv run pytest -q
+
+  api-openapi-smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.12"
+      - run: cd apps/api && uv sync
+      - run: cd apps/api && uv run python -c "from invest_api.main import app; print('API import OK')"
+
+  web-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "pnpm"
+          cache-dependency-path: apps/web/pnpm-lock.yaml
+      - run: cd apps/web && pnpm install --frozen-lockfile
+      - run: cd apps/web && pnpm typecheck
+      - run: cd apps/web && pnpm test --run
+      - run: cd apps/web && pnpm build

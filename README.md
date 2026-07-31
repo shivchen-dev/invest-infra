@@ -30,7 +30,7 @@ infra/
 ## 首个垂直切片
 
 ```text
-Mock Provider
+Fixture Provider (fixture_dev)
     ↓
 Dagster seed_instruments asset
     ↓
