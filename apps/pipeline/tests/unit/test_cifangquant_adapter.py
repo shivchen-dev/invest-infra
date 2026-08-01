@@ -1,10 +1,15 @@
-"""Unit tests for the Phase 1 CifangQuant placeholder adapter (ADR-0011).
+"""Unit tests for the Phase 1 CifangQuant adapter (ADR-0011).
 
-The tests deliberately cover only what the first bounded increment is
-supposed to guarantee: settings defaults, the ``adjustment=none`` lock,
-API-key redaction, the ``provider_key`` and the
-``ProviderAdapterNotImplementedError`` failure mode. No network call,
-no PostgreSQL, no real token.
+The settings-level contract tests below are inherited from the
+Phase 1 first increment (placeholder) and remain the canonical
+guarantees on the configuration object: defaults, the
+``adjustment=none`` lock, API-key redaction and the
+``provider_key``. The adapter-level tests now reflect the
+Phase 1 second increment: the real httpx-backed adapter is wired
+through the existing three-layer evidence model, but the default
+``enabled=False`` gate keeps CI / local dev from ever reaching the
+network. The dedicated MockTransport / fake-clock tests live in
+``test_cifangquant_client.py`` and ``test_cifangquant_mapping.py``.
 
 The package import path (``invest_pipeline.adapters.cifang``) is the
 public surface frozen by ADR-0011 §1; the tests intentionally import
@@ -17,7 +22,7 @@ from __future__ import annotations
 import unittest
 from datetime import date
 
-from invest_pipeline.adapters import ProviderAdapterNotImplementedError
+from invest_pipeline.adapters import RealProviderRequiresExplicitEnablementError
 from invest_pipeline.adapters.cifang import (
     CifangQuantInstrumentProvider,
     CifangSettings,
@@ -79,50 +84,51 @@ class CifangSettingsTest(unittest.TestCase):
 
 
 class CifangQuantAdapterTest(unittest.TestCase):
-    """Placeholder shape, provider key and failure contract."""
+    """Provider key, default-disabled gate, and dependency-injection surface."""
 
     def test_provider_key_is_cifangquant(self) -> None:
         provider = CifangQuantInstrumentProvider()
         self.assertEqual(provider.provider_key, "cifangquant")
 
-    def test_fetch_instruments_raises_not_implemented_with_adr_pointer(
+    def test_fetch_instruments_raises_when_disabled_with_adr_pointer(
         self,
     ) -> None:
+        # With the default ``enabled=False`` the real adapter must
+        # raise the typed "needs explicit enablement" error and the
+        # message must still point operators at ADR-0011 so the O-1 /
+        # O-3 / O-4 blockers remain visible.
         provider = CifangQuantInstrumentProvider()
-        with self.assertRaises(ProviderAdapterNotImplementedError) as ctx:
+        with self.assertRaises(RealProviderRequiresExplicitEnablementError) as ctx:
             provider.fetch_instruments(date(2026, 7, 31))
-        message = str(ctx.exception)
-        # The exception is the canonical ``ProviderError`` subclass; it
-        # must carry the ``cifangquant`` provider_key so the application
-        # service can attribute the failure correctly.
-        self.assertEqual(ctx.exception.provider_key, "cifangquant")
-        # The message must point operators at ADR-0011 so they can find
-        # the unresolved O-1 / O-3 / O-4 blockers.
-        self.assertIn("ADR-0011", message)
+        self.assertIn("ADR-0011", str(ctx.exception))
+        self.assertIn("cifangquant", str(ctx.exception))
 
-    def test_fetch_daily_bars_raises_not_implemented_with_adr_pointer(
+    def test_fetch_daily_bars_raises_when_disabled_with_adr_pointer(
         self,
     ) -> None:
         provider = CifangQuantInstrumentProvider()
-        with self.assertRaises(ProviderAdapterNotImplementedError) as ctx:
+        with self.assertRaises(RealProviderRequiresExplicitEnablementError) as ctx:
             provider.fetch_daily_bars(
                 symbols=["510300", "510500"],
                 start_date=date(2026, 7, 23),
                 end_date=date(2026, 7, 30),
             )
-        self.assertEqual(ctx.exception.provider_key, "cifangquant")
         self.assertIn("ADR-0011", str(ctx.exception))
 
-    def test_adapter_accepts_settings_but_does_not_call_network(self) -> None:
-        # ``settings`` is accepted for symmetry with the future
-        # second-increment injection point; the placeholder must not
-        # touch the network or perform any I/O.
+    def test_adapter_accepts_settings_but_does_not_expose_them(self) -> None:
+        # ``settings`` is accepted for the dependency-injection seam;
+        # the adapter must not surface the settings object through a
+        # public attribute (operator code uses ``redacted_dict`` instead).
         settings = CifangSettings()
         provider = CifangQuantInstrumentProvider(settings)
         self.assertEqual(provider.provider_key, "cifangquant")
-        # The settings object is held by reference (kept private) but
-        # the placeholder does not surface it through public API.
         self.assertFalse(hasattr(provider, "settings"))
+
+    def test_adapter_provider_key_is_string(self) -> None:
+        # Sanity: the Port protocol types ``provider_key`` as ``str``.
+        self.assertIsInstance(
+            CifangQuantInstrumentProvider().provider_key, str
+        )
 
 
 if __name__ == "__main__":

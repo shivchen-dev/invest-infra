@@ -231,6 +231,93 @@ class TestDailyBarInvariants:
         b = _Builder(instrument_id, bar_source).normal(prev_close="3.10")
         assert a.row_hash != b.row_hash
 
+    # ---- ADR-0005 §3 / ADR-0011 §2: prev_close is nullable ----
+
+    def test_normal_bar_accepts_none_prev_close(
+        self, instrument_id: InstrumentId, bar_source: BarSource
+    ) -> None:
+        """ADR-0005 §3 declares ``prev_close: Decimal | null`` and ADR-0011 §2
+        notes the Provider response may omit it; the mapper must be able to
+        forward ``None`` without the domain fabricating a previous close.
+        """
+        bar = DailyBar.build(
+            instrument_id=instrument_id,
+            trade_date=date(2026, 7, 30),
+            open=Decimal("3.10"),
+            high=Decimal("3.18"),
+            low=Decimal("3.08"),
+            close=Decimal("3.15"),
+            prev_close=None,
+            volume=Decimal("1000"),
+            amount=Decimal("3150000"),
+            adjustment=Adjust.NONE,
+            trading_status=TradingStatus.NORMAL,
+            source=bar_source,
+            revision=1,
+        )
+        assert bar.prev_close is None
+        assert bar.row_hash is not None
+        assert len(bar.row_hash) == 64
+
+    def test_normal_bar_accepts_none_amount(
+        self, instrument_id: InstrumentId, bar_source: BarSource
+    ) -> None:
+        """ADR-0005 §3 declares ``amount: Decimal | null``; same nullable
+        guarantee as ``prev_close``."""
+        bar = DailyBar.build(
+            instrument_id=instrument_id,
+            trade_date=date(2026, 7, 30),
+            open=Decimal("3.10"),
+            high=Decimal("3.18"),
+            low=Decimal("3.08"),
+            close=Decimal("3.15"),
+            prev_close=Decimal("3.09"),
+            volume=Decimal("1000"),
+            amount=None,
+            adjustment=Adjust.NONE,
+            trading_status=TradingStatus.NORMAL,
+            source=bar_source,
+            revision=1,
+        )
+        assert bar.amount is None
+        assert bar.row_hash is not None
+
+    def test_present_prev_close_must_be_positive(
+        self, instrument_id: InstrumentId, bar_source: BarSource
+    ) -> None:
+        """A present-but-non-positive prev_close must still be rejected;
+        the ``None`` allowance must not loosen the price-strictly-positive
+        invariant when the Provider actually supplied a value."""
+        with pytest.raises(ValueError, match="prev_close"):
+            _Builder(instrument_id, bar_source).normal(prev_close="0")
+        with pytest.raises(ValueError, match="prev_close"):
+            _Builder(instrument_id, bar_source).normal(prev_close="-1")
+
+    def test_prev_close_none_changes_row_hash(
+        self, instrument_id: InstrumentId, bar_source: BarSource
+    ) -> None:
+        """Sanity: prev_close participates in the content hash so that
+        a previously-supplied value and a missing value produce distinct
+        digests (the same business content cannot look identical with
+        and without a previous close)."""
+        with_prev = _Builder(instrument_id, bar_source).normal(prev_close="3.09")
+        without_prev = DailyBar.build(
+            instrument_id=instrument_id,
+            trade_date=date(2026, 7, 30),
+            open=Decimal("3.10"),
+            high=Decimal("3.18"),
+            low=Decimal("3.08"),
+            close=Decimal("3.15"),
+            prev_close=None,
+            volume=Decimal("1000"),
+            amount=Decimal("3150000"),
+            adjustment=Adjust.NONE,
+            trading_status=TradingStatus.NORMAL,
+            source=bar_source,
+            revision=1,
+        )
+        assert with_prev.row_hash != without_prev.row_hash
+
     def test_different_volume_different_hash(
         self, instrument_id: InstrumentId, bar_source: BarSource
     ) -> None:

@@ -35,7 +35,26 @@ class ProviderBadResponseError(ProviderError):
 
 
 class ProviderDataContractError(ProviderError):
-    """Required fields missing or invalid; the batch must be rejected."""
+    """Required fields missing or invalid; the batch must be rejected.
+
+    Carries a machine-readable ``code`` plus a human-readable ``message``
+    so the application layer can route alerts without re-parsing free
+    text. The signature mirrors the domain
+    :exc:`invest_domain.market_data.ports.ProviderDataContractError` so
+    adapter and domain layers share the same canonical contract.
+    """
+
+    def __init__(
+        self,
+        code: str,
+        message: str,
+        *,
+        provider_key: str | None = None,
+    ) -> None:
+        combined = f"[{code}] {message}" if code else message
+        super().__init__(provider_key or "cifangquant", combined)
+        self.code = code
+        self.message = message
 
 
 class ProviderPermanentError(ProviderError):

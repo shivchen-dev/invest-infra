@@ -272,6 +272,33 @@ def _require_positive_decimal(value: Decimal, *, field_name: str) -> Decimal:
     return value
 
 
+def _require_positive_decimal_or_none(
+    value: Decimal | None, *, field_name: str
+) -> Decimal | None:
+    """Accept ``None`` or a strictly-positive finite ``Decimal``.
+
+    Used for ``prev_close`` per ADR-0005 §3 (``prev_close: Decimal | null``)
+    and ADR-0011 §2 (Provider responses may omit ``prev_close``). The
+    strict ``> 0`` lower bound is preserved for the present-but-finite
+    case so a zero or negative price is still rejected; missing values
+    pass through unchanged so the mapper never has to fabricate a
+    previous close. ``SUSPENDED`` rows use the all-or-nothing validation
+    in :meth:`_validate_suspended_ohlcv` and never reach this helper.
+    """
+
+    if value is None:
+        return None
+    if not isinstance(value, Decimal):
+        raise TypeError(
+            f"DailyBar.{field_name} must be a Decimal or None, got {type(value).__name__}"
+        )
+    if not value.is_finite():
+        raise ValueError(f"DailyBar.{field_name} must be a finite Decimal")
+    if value <= 0:
+        raise ValueError(f"DailyBar.{field_name} must be > 0, got {value!s}")
+    return value
+
+
 def _require_non_negative_decimal_or_none(
     value: Decimal | None, *, field_name: str
 ) -> Decimal | None:
@@ -401,7 +428,7 @@ class DailyBar:
         h = _require_positive_decimal(self.high, field_name="high")
         l = _require_positive_decimal(self.low, field_name="low")
         c = _require_positive_decimal(self.close, field_name="close")
-        _require_positive_decimal(self.prev_close, field_name="prev_close")
+        _require_positive_decimal_or_none(self.prev_close, field_name="prev_close")
         if h < max(o, c, l):
             raise ValueError(
                 f"high {h!s} must be >= max(open, close, low) = {max(o, c, l)!s}"
