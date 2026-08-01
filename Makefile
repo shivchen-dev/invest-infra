@@ -1,15 +1,18 @@
 SHELL := /bin/bash
 
-.PHONY: help up down logs api-dev pipeline-dev web-dev migrate test lint arch-check lock test-domain test-storage test-pipeline test-api
+.PHONY: help up down logs api-dev pipeline-dev web-dev migrate test lint arch-check lock test-domain test-storage test-storage-integration test-migrations test-pipeline test-api test-web
 
 help:
 	@echo "make up              启动 PostgreSQL、API、Web、Dagster"
 	@echo "make migrate         执行数据库迁移"
-	@echo "make test            运行全部 Python 测试（与 CI 一致）"
+	@echo "make test            运行全部测试（与 CI 一致）"
 	@echo "make test-domain     运行 Domain 层测试"
 	@echo "make test-storage    运行 Storage 层单元测试"
+	@echo "make test-storage-integration 运行 Storage 层集成测试"
+	@echo "make test-migrations 运行数据库迁移往返测试"
 	@echo "make test-pipeline   运行 Pipeline 应用测试"
 	@echo "make test-api        运行 API 应用测试"
+	@echo "make test-web        运行 Web 类型检查、测试和构建"
 	@echo "make arch-check      检查依赖边界"
 	@echo "make lock            为各 Python 应用生成锁文件"
 
@@ -41,7 +44,7 @@ lock:
 	cd apps/pipeline && uv lock
 
 # 与 CI 一致的完整测试套件
-test: arch-check test-domain test-storage test-pipeline test-api
+test: arch-check test-domain test-storage test-storage-integration test-migrations test-pipeline test-api test-web
 	@echo "All tests passed"
 
 test-domain:
@@ -50,6 +53,16 @@ test-domain:
 test-storage:
 	cd packages/storage && uv sync
 	PYTHONPATH=packages/domain/src:packages/storage/src:tests packages/storage/.venv/bin/python -m pytest tests/storage --ignore=tests/storage/integration -q
+
+test-storage-integration:
+	pip install sqlalchemy psycopg2-binary pytest testcontainers
+	DATABASE_URL=postgresql+psycopg://invest:invest_dev_password@localhost:5432/invest PYTHONPATH=packages/domain/src:packages/storage/src:tests python -m pytest tests/storage/integration -q
+
+test-migrations:
+	cd apps/migrations && uv sync
+	cd apps/migrations && DATABASE_URL=postgresql+psycopg://invest:invest_dev_password@localhost:5432/invest uv run alembic upgrade head
+	cd apps/migrations && DATABASE_URL=postgresql+psycopg://invest:invest_dev_password@localhost:5432/invest uv run alembic downgrade base
+	cd apps/migrations && DATABASE_URL=postgresql+psycopg://invest:invest_dev_password@localhost:5432/invest uv run alembic upgrade head
 
 test-pipeline:
 	cd apps/pipeline && uv sync
@@ -62,6 +75,12 @@ test-api:
 	cd apps/api && uv run ruff check src tests
 	cd apps/api && uv run pytest -q
 	cd apps/api && uv run python -c "from invest_api.main import app; print('API import OK')"
+
+test-web:
+	cd apps/web && pnpm install --frozen-lockfile
+	cd apps/web && pnpm typecheck
+	cd apps/web && pnpm test --run
+	cd apps/web && pnpm build
 
 lint:
 	cd apps/api && uv run ruff check src tests

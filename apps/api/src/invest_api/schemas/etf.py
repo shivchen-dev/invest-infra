@@ -10,9 +10,13 @@ from __future__ import annotations
 
 from datetime import date, datetime
 from decimal import Decimal
+from typing import TYPE_CHECKING, Self
 from uuid import UUID
 
 from pydantic import BaseModel, Field
+
+if TYPE_CHECKING:
+    from invest_domain.instruments import Instrument
 
 
 class InstrumentResponse(BaseModel):
@@ -30,6 +34,27 @@ class InstrumentResponse(BaseModel):
     delist_date: date | None = None
     underlying_index: str | None = None
     category: str | None = None
+
+    @classmethod
+    def from_instrument(cls, instrument: Instrument) -> Self:
+        return cls(
+            id=(
+                instrument.instrument_id.value
+                if instrument.instrument_id is not None
+                else UUID(int=0)
+            ),
+            symbol=instrument.symbol,
+            name=instrument.name,
+            exchange=instrument.exchange,
+            instrument_type=instrument.instrument_type.value,
+            currency=instrument.currency.value,
+            status=instrument.status.value,
+            is_active=instrument.is_active,
+            list_date=instrument.list_date,
+            delist_date=instrument.delist_date,
+            underlying_index=instrument.underlying_index,
+            category=instrument.category,
+        )
 
 
 class InstrumentListResponse(BaseModel):

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
 from datetime import date, datetime, timezone
 from decimal import Decimal
 from uuid import UUID, uuid4
@@ -27,8 +26,7 @@ from invest_domain.candidate_pool.models import (
     ScoreWeights,
     SelectionCriteria,
 )
-from invest_domain.candidate_pool.ports import CandidatePoolCalculator
-from invest_domain.instruments.models import Instrument, InstrumentId, InstrumentType
+from invest_domain.instruments.models import InstrumentId
 
 
 def _default_policy() -> CandidatePoolPolicy:
@@ -482,31 +480,3 @@ class TestResultAndItem:
                 passed=True,
                 threshold=1,  # type: ignore[arg-type]
             )
-
-
-class TestProtocol:
-    def test_calculator_protocol_is_runtime_checkable(self) -> None:
-        from invest_domain.market_data.models import DailyBar
-
-        class _Calc(CandidatePoolCalculator):
-            def build_candidate_pool(
-                self,
-                instruments: Sequence[Instrument],
-                histories: Mapping[InstrumentId, Sequence[DailyBar]],
-                policy: CandidatePoolPolicy,
-                context: CalculationContext,
-            ) -> CandidatePoolResult:
-                return CandidatePoolResult(
-                    policy=policy,
-                    context=context,
-                    items=(),
-                    summary=CandidatePoolSummary(
-                        input_count=0,
-                        included_count=0,
-                        excluded_count=0,
-                        rule_error_count=0,
-                        rule_warn_count=0,
-                    ),
-                )
-
-        assert isinstance(_Calc(), CandidatePoolCalculator)

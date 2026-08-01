@@ -524,7 +524,7 @@ class CandidatePoolSummary:
 
 @dataclass(frozen=True, slots=True)
 class CandidatePoolResult:
-    """The output contract of :class:`CandidatePoolCalculator.build_candidate_pool`.
+    """The output contract of the candidate-pool calculator.
 
     Carries every per-instrument item plus an aggregate summary. The
     calculator does not need to enforce rank uniqueness or sort order;

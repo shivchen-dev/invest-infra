@@ -11,13 +11,14 @@ Two transactions make up the slice:
 - :func:`write_etf_daily_bars_raw` calls the Provider, persists the
   PR-02 three-layer evidence bundle to ``raw.provider_requests`` /
   ``raw.provider_attempts`` / ``raw.provider_batches``, and returns a
-  :class:`RawEtlResult` carrying the assigned UUIDs. The standardized
-  daily-bar records are serialised into a JSONB sidecar on the
-  attempt's ``response_payload_json`` (the same wire pattern
-  :mod:`invest_pipeline.etf_instruments` uses for ETF master data).
-  Failed attempts persist the request + attempt only; no batch row is
-  created (per ``ck_provider_attempts_failed_has_error`` and the
-  domain rule that a failed attempt must not yield a
+  :class:`RawEtlResult` (re-exported from
+  :mod:`invest_pipeline.etf_instruments`) carrying the assigned UUIDs.
+  The standardized daily-bar records are serialised into a JSONB
+  sidecar on the attempt's ``response_payload_json`` (the same wire
+  pattern :mod:`invest_pipeline.etf_instruments` uses for ETF master
+  data). Failed attempts persist the request + attempt only; no batch
+  row is created (per ``ck_provider_attempts_failed_has_error`` and
+  the domain rule that a failed attempt must not yield a
   :class:`ProviderBatch`).
 - :func:`upsert_etf_daily_bars` re-opens a fresh UoW, locates the
   latest successful attempt for the (provider, dataset, request_key)
@@ -62,25 +63,18 @@ from invest_pipeline.adapters.fixture_dev.adapter import (
     deserialize_daily_bars,
     serialize_daily_bars,
 )
+from invest_pipeline.etf_instruments import (
+    RawEtlResult,
+    UnitOfWorkFactory,
+    _coerce_session_factory,
+)
 
-
-@dataclass(frozen=True, slots=True)
-class RawEtlResult:
-    """Return shape of :func:`write_etf_daily_bars_raw`.
-
-    Carries the storage-assigned UUIDs plus the terminal status of the
-    attempt so the asset metadata can surface whether the batch was
-    actually persisted or the attempt failed before producing one.
-    Mirrors :class:`invest_pipeline.etf_instruments.RawEtlResult` so
-    the two vertical slices can be processed uniformly by Dagster.
-    """
-
-    request_id: UUID
-    attempt_id: UUID
-    batch_id: UUID | None
-    request_status: str
-    attempt_status: str
-    record_count: int
+__all__ = [
+    "RawEtlResult",
+    "UpsertSummary",
+    "upsert_etf_daily_bars",
+    "write_etf_daily_bars_raw",
+]
 
 
 @dataclass(frozen=True, slots=True)
@@ -108,7 +102,11 @@ class _ProviderPort(Protocol):
 
     Mirrors the subset of :class:`FixtureDevInstrumentProvider` the
     service depends on so a stub provider can be injected in unit
-    tests.
+    tests. Retained as a slice-specific Protocol — the
+    ``fetch_daily_bars`` signature (symbols + date range) differs
+    semantically from :mod:`invest_pipeline.etf_instruments`'s
+    ``fetch_instruments`` (as_of date), so a generic shared base would
+    buy nothing.
     """
 
     @property
@@ -120,24 +118,6 @@ class _ProviderPort(Protocol):
         start_date: date,
         end_date: date,
     ) -> tuple[Any, Any, Any]: ...
-
-
-UnitOfWorkFactory = Any
-
-
-def _coerce_session_factory(
-    session_factory: SessionProvider | sessionmaker[Any],
-) -> sessionmaker[Any]:
-    """Return a ``sessionmaker`` regardless of the caller-supplied shape.
-
-    Mirrors :func:`invest_pipeline.etf_instruments._coerce_session_factory`:
-    the public API accepts either a :class:`SessionProvider` callable
-    or a SQLAlchemy ``sessionmaker``; both are accepted by
-    :class:`SqlAlchemyUnitOfWork`, but the type checker is happier when
-    we narrow to a single shape.
-    """
-
-    return session_factory  # type: ignore[return-value]
 
 
 def _now() -> datetime:
@@ -483,11 +463,3 @@ def _maybe_decimal(value: Any) -> Any:
     if value is None or value == "":
         return None
     return Decimal(value)
-
-
-__all__ = [
-    "RawEtlResult",
-    "UpsertSummary",
-    "upsert_etf_daily_bars",
-    "write_etf_daily_bars_raw",
-]

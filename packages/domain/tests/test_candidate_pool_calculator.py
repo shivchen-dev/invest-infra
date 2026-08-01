@@ -48,7 +48,6 @@ from invest_domain.candidate_pool.models import (
     ScoreWeights,
     SelectionCriteria,
 )
-from invest_domain.candidate_pool.ports import CandidatePoolCalculator
 from invest_domain.instruments.models import InstrumentId
 from invest_domain.input_snapshot.models import InputSnapshot
 from invest_domain.market_data.models import BarSource, DailyBar
@@ -193,15 +192,6 @@ class TestProtocolConformance:
         self, calculator: DefaultMinimumCandidatePoolCalculator
     ) -> None:
         assert isinstance(calculator, MinimumCandidatePoolCalculator)
-
-    def test_existing_protocol_is_separate(
-        self, calculator: DefaultMinimumCandidatePoolCalculator
-    ) -> None:
-        # The PR-08 minimum Protocol deliberately differs from the M4
-        # ``CandidatePoolCalculator`` Protocol (which takes histories
-        # and a separate context). Confirm the runtime-checkable check
-        # honours that boundary.
-        assert not isinstance(calculator, CandidatePoolCalculator)
 
 
 class TestHappyPath:

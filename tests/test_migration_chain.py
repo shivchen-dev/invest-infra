@@ -5,10 +5,22 @@ import unittest
 from pathlib import Path
 
 
+_NOT_LITERAL = object()
+
+
+def _try_literal_eval(node: ast.AST) -> object:
+    try:
+        return ast.literal_eval(node)
+    except (SyntaxError, TypeError, ValueError):
+        return _NOT_LITERAL
+
+
 class MigrationChainTest(unittest.TestCase):
     def test_initial_migration_chain(self) -> None:
         repository_root = Path(__file__).resolve().parents[1]
-        versions_directory = repository_root / "apps" / "api" / "migrations" / "versions"
+        versions_directory = (
+            repository_root / "apps" / "migrations" / "migrations" / "versions"
+        )
         revision_files = sorted(versions_directory.glob("*.py"))
 
         self.assertGreaterEqual(
@@ -26,15 +38,20 @@ class MigrationChainTest(unittest.TestCase):
             assignments: dict[str, object] = {}
             for node in tree.body:
                 if isinstance(node, ast.Assign):
+                    literal_value = _try_literal_eval(node.value)
+                    if literal_value is _NOT_LITERAL:
+                        continue
                     for target in node.targets:
                         if isinstance(target, ast.Name):
-                            assignments[target.id] = ast.literal_eval(node.value)
+                            assignments[target.id] = literal_value
                 elif (
                     isinstance(node, ast.AnnAssign)
                     and isinstance(node.target, ast.Name)
                     and node.value is not None
                 ):
-                    assignments[node.target.id] = ast.literal_eval(node.value)
+                    literal_value = _try_literal_eval(node.value)
+                    if literal_value is not _NOT_LITERAL:
+                        assignments[node.target.id] = literal_value
 
             self.assertIn(
                 "revision",
@@ -66,25 +83,25 @@ class MigrationChainTest(unittest.TestCase):
         )
 
         self.assertIn(
-            "20260730_0001",
+            "20260731_0001",
             all_revision_ids,
-            "the initial revision '20260730_0001' must exist in the migration chain",
+            "the initial revision '20260731_0001' must exist in the migration chain",
         )
 
         initial_files = [
             revision_file
             for revision_file, (revision, _) in revisions.items()
-            if revision == "20260730_0001"
+            if revision == "20260731_0001"
         ]
         self.assertEqual(
             len(initial_files),
             1,
-            f"expected exactly one revision file declaring revision='20260730_0001', found {len(initial_files)}: {initial_files}",
+            f"expected exactly one revision file declaring revision='20260731_0001', found {len(initial_files)}: {initial_files}",
         )
         initial_revision_file = initial_files[0]
         self.assertIsNone(
             revisions[initial_revision_file][1],
-            f"{initial_revision_file} (revision '20260730_0001') must set down_revision to None",
+            f"{initial_revision_file} (revision '20260731_0001') must set down_revision to None",
         )
 
         initial_source = initial_revision_file.read_text(encoding="utf-8")
@@ -120,18 +137,23 @@ class MigrationChainTest(unittest.TestCase):
                 if table_literal is not None:
                     create_table_names.append(table_literal)
 
-        self.assertTrue(
-            any("CREATE SCHEMA" in sql and "CORE" in sql for sql in execute_sql_statements),
-            f"{initial_revision_file} upgrade() must call op.execute() with a statement that creates the 'core' schema",
-        )
-        self.assertTrue(
-            any("CREATE SCHEMA" in sql and "APP" in sql for sql in execute_sql_statements),
-            f"{initial_revision_file} upgrade() must call op.execute() with a statement that creates the 'app' schema",
-        )
+        for schema in ("raw", "core", "analytics", "ops"):
+            self.assertTrue(
+                any(
+                    "CREATE SCHEMA" in sql and schema.upper() in sql
+                    for sql in execute_sql_statements
+                ),
+                f"{initial_revision_file} upgrade() must call op.execute() with a statement that creates the {schema!r} schema",
+            )
         self.assertIn(
             "instruments",
             create_table_names,
             f"{initial_revision_file} upgrade() must call op.create_table() with an 'instruments' table name",
+        )
+        self.assertIn(
+            "provider_batches",
+            create_table_names,
+            f"{initial_revision_file} upgrade() must call op.create_table() with a 'provider_batches' table name",
         )
         self.assertIn(
             "pipeline_runs",

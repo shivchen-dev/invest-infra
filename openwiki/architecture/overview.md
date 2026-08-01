@@ -1,0 +1,137 @@
+---
+type: Concept
+title: Architecture overview
+description: Modular-monolith topology, layered rules, four PostgreSQL schemas and ADR index for invest-infra (including ADR-0011 CifangQuant Phase 1 placeholder). Explains why the codebase stays inside independent Python packages and how the layers interact.
+resource: /openwiki/architecture/overview.md
+tags: [architecture, layering, schemas, adr, cifang]
+---
+
+# Architecture overview
+
+`invest-infra` is a **modular monolith** that draws a hard line between
+domain logic, persistence, ingest pipelines and read APIs. Each layer
+runs in its own Python project (with its own `pyproject.toml` and
+`uv.lock`) so a change to one layer cannot silently leak into another.
+
+## 1. Topology
+
+```
+React Web ──HTTP/OpenAPI──> FastAPI API ──SQL──> PostgreSQL
+                                      ↑
+Dagster Pipeline ───────────────SQL───┘
+```
+
+The API and the Pipeline share `packages/domain` and `packages/storage`
+inside one runtime image only when the developer chooses to; in CI each
+project builds and tests independently. Production splits them: see the
+[deployment notes](../testing-and-ops/overview.md#deployment-and-runtime).
+
+Key invariants:
+
+- **Python continues to own financial-data and computation work**, but
+  the API and the pipeline do not share dependencies
+  ([README §设计目标](../README.md)).
+- **Modular monolith first.** No microservices, Kafka, Redis or
+  Kubernetes are introduced in v2 (ADR-0001).
+- **PostgreSQL is the only persistence layer in v2** (ADR-0002).
+- **Data sources are isolated through the Provider interface.** Domain
+  and storage never import a Provider SDK (ADR-0003).
+- **Every calculation records `run_id`, algorithm version and data
+  timestamp** so any output is reproducible from raw batches.
+- **The front-end only touches data via the OpenAPI surface** — it does
+  not call Provider SDKs or write to the database.
+
+## 2. Layers
+
+Per [`/docs/ARCHITECTURE.md`](../docs/ARCHITECTURE.md):
+
+### Domain (`packages/domain`)
+
+Only entities, value objects, enums and ports. **MUST NOT** import
+FastAPI, SQLAlchemy, Dagster or any Provider SDK. The package stays
+deterministic — no clock reads, no `os.environ`, no I/O. See
+[Domain overview](../domain/overview.md).
+
+### Application
+
+Use-case orchestration lives in
+`apps/pipeline/src/invest_pipeline/*_service.py` and the FastAPI
+routers. Application code calls **ports**, never concrete SDKs, and the
+SQLAlchemy `UnitOfWork` mediates every transaction.
+
+### Infrastructure
+
+- `packages/storage/src/invest_storage/{models,repositories,unit_of_work,database}.py`
+  — SQLAlchemy 2 ORM, repositories and the `UnitOfWork`.
+- `apps/pipeline/src/invest_pipeline/adapters/<provider_key>/` — Provider
+  adapters. Each adapter is the only place a vendor SDK (or fixture in
+  the case of `fixture_dev`) is allowed. See [Adapter boundary](#adapter-boundary).
+- `apps/pipeline/src/invest_pipeline/{etf_*,input_snapshot}.py` — ETL
+  service modules that the Dagster assets wrap. See
+  [Pipeline overview](../pipeline/overview.md).
+
+### Entrypoints
+
+- `apps/api/src/invest_api/{main,routers}.py` — FastAPI. Validates inputs,
+  calls repositories through the storage `UnitOfWork`, translates results
+  to Pydantic shapes. See [API overview](../api/overview.md).
+- `apps/pipeline/src/invest_pipeline/{assets,definitions}.py` — Dagster
+  `@dg.asset`s and the `dg.Definitions` registration. See
+  [Pipeline overview](../pipeline/overview.md).
+- `apps/migrations/migrations/versions/*.py` — Alembic migrations. See
+  [Migrations overview](../migrations/overview.md).
+
+## 3. The four PostgreSQL schemas
+
+| Schema | Owner | Purpose |
+|--------|-------|---------|
+| `raw` | Pipeline | Provider evidence — `provider_requests`, `provider_attempts`, `provider_batches`. |
+| `core` | Pipeline + API | Normalised business objects — `core.instruments`, `core.daily_bars`, `core.latest_daily_bars` view. |
+| `analytics` | Pipeline + API | Reusable inputs and computed results — `analytics.input_snapshots`, `analytics.candidate_pool_runs`, `analytics.candidate_pool_items`. |
+| `ops` | Pipeline | Pipeline-level audit — `ops.pipeline_runs` (replaces the retired `app.pipeline_runs`). |
+
+The legacy `app` schema is forbidden in production paths; the
+checker rejects `schema="app"` literals.
+
+## 4. Adapter boundary
+
+ADR-0003 (accepted via PR-04) fixes the rule for **every** Provider
+adapter:
+
+- Adapter code lives in `apps/pipeline/src/invest_pipeline/adapters/<provider_key>/`.
+- An adapter does **not** receive a SQLAlchemy `Session`, does **not**
+  commit transactions and does **not** insert into `raw.provider_batches`.
+- The pipeline-side application service, not the adapter, owns the
+  three-layer evidence write inside a single `UnitOfWork`.
+- **Two** adapter packages ship today: `fixture_dev` (deterministic
+  fixture data, the only adapter with real data — see
+  [Pipeline overview §4](../pipeline/overview.md#fixture_dev-adapter))
+  and `cifang` (a placeholder that locks the Port shape and raises
+  `ProviderAdapterNotImplementedError` until ADR-0011 §4 unblocks Phase 1
+  second increment — see [Pipeline overview §5](../pipeline/overview.md#cifang-adapter-placeholder-adr-0011-phase-1-first-increment)).
+
+The boundary is enforced two ways: the
+[`scripts/check_architecture.py`](../scripts/check_architecture.py)
+import-graph scan and a Testcontainers-backed integration suite.
+
+## 5. Architecture decision records
+
+All eleven ADRs are in [`/docs/adr/`](../docs/adr/):
+
+- [ADR-0001 — Greenfield modular monolith](../docs/adr/0001-greenfield-modular-monolith.md)
+- [ADR-0002 — Postgres-first](../docs/adr/0002-postgres-first.md)
+- [ADR-0003 — Provider selection and adapter boundary](../docs/adr/0003-provider-selection-and-adapter-boundary.md) *(accepted in PR-04)*
+- [ADR-0004 — ETF market calendar / timezone / range](../docs/adr/0004-etf-market-calendar-timezone-range.md) (SSE / SZSE, Asia/Shanghai, versioned calendar)
+- [ADR-0005 — Daily-bar adjustment contract](../docs/adr/0005-daily-bar-adjustment-contract.md) (`adjustment='none'` only)
+- [ADR-0006 — Daily-bar revision / latest policy](../docs/adr/0006-daily-bar-revision-latest-policy.md) (revision semantics + the `core.latest_daily_bars` view)
+- [ADR-0007 — Input snapshot binding hash](../docs/adr/0007-input-snapshot-binding-hash.md) (SHA-256 over sorted UUID bytes)
+- [ADR-0008 — Candidate pool state machine](../docs/adr/0008-candidate-pool-state-machine.md) (`calculated → validated → published|rejected`)
+- [ADR-0009 — Python core dependency baseline](../docs/adr/0009-python-core-dependency-baseline.md) (3.12.x, `<3.13`)
+- [ADR-0010 — Production deployment / secrets / backup recovery](../docs/adr/0010-production-deployment-secrets-backup-recovery.md)
+- [ADR-0011 — CifangQuant primary ETF provider (Phase 1 first increment)](../docs/adr/0011-cifangquant-primary-etf-provider.md) (Status: Proposed; placeholder adapter only, real I/O gated on O-1 / O-3 / O-4)
+
+The underlying planning documents live in
+[`/docs/plan/`](../docs/plan/invest-infra-v2-etf-vertical-slice-plan.md)
+and
+[`/docs/implementation/`](../docs/implementation/M0-DECISIONS.md)
+(M0 brief, decisions, acceptance).

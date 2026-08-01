@@ -8,7 +8,6 @@ and Provider-SDK-free (see M0-CODING-BRIEF Phase 1-B / scripts/check_architectur
 
 from invest_domain.candidate_pool import (
     CalculationContext,
-    CandidatePoolCalculator,
     CandidatePoolItem,
     CandidatePoolPolicy,
     CandidatePoolResult,
@@ -63,7 +62,6 @@ __all__ = [
     "BarSource",
     "CANONICAL_HASH_SCHEMA_VERSION",
     "CalculationContext",
-    "CandidatePoolCalculator",
     "CandidatePoolItem",
     "CandidatePoolPolicy",
     "CandidatePoolResult",

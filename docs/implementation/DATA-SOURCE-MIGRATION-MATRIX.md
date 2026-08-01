@@ -62,7 +62,7 @@ ADR/PR + 用户确认（O-1）为准。
 | AkShare | `research_only` 或 `secondary`（仅在 O-1 用户明确确认授权与限频规则后升级为 `secondary`） | 聚合库、上游稳定性与生产 SLA 不可证明；已观察到限流/阻断风险 |
 | CifangQuant | `secondary`（仅在 O-1 用户完成合同/再分发/限频确认后才可启用，绝不直接沿用旧 `qfq` 默认） | 归档观察到 ETF 主数据、历史日 K 与默认端点；旧实现默认 `qfq` 与 M0 ADR-0005 冲突，必须先确定 `none` 语义接口 |
 | RssCast | `out_of_scope_for_etf` / 仅作为研究/指数片段（不视为 ETF 日行情 Provider） | 归档覆盖股票/指数 MCP；不得伪造 ETF 日行情能力 |
-| quicktiny MCP | `research_only` / 仅报告与市场快照（不视为 ETF 日行情 Provider） | 归档用途即报告/快照，不属于 ETF 日线 Provider |
+| quicktiny MCP | `research_only` / 仅报告与市场快照（不视为 ETF 日行情 Provider） | 归档用途即报告/快照，不属于 ETF 日线 Provider；该决策已通过 `invest_pipeline.provider_catalog.QUICKTINY_MCP` 在代码目录中显式声明，`enabled_by_default=False`，能力集仅含 `research` 与 `market_snapshot`，显式排除 `ETF_DAILY_BARS` / `ETF_MASTER_DATA` 等任何 ETF 行情能力 |
 | `fixture_dev`（v2 自带、本仓库内置） | `primary`（仅用于 dev/test；M0-CODING-BRIEF 明确禁止 production 路径默认启用） | 内置可重放、无凭据、不发起任何网络请求 |
 
 不预设“已选 primary”的 Provider；M0 阶段任何标注为 `primary` 的 Provider
@@ -128,7 +128,11 @@ response 或数据库 row。
 ### 5.1 可迁移（适配边界、配置契约、目录抽象）
 
 - `akshare`、`cifang`、`rsscast`、`quicktiny_mcp` 四个 Provider Key 与能力
-  声明（见 `apps/pipeline/src/invest_pipeline/providers/capabilities.py`）。
+  声明（Quicktiny MCP 的 `research_only` 声明已落地为代码目录，承载于
+  `apps/pipeline/src/invest_pipeline/provider_catalog.py` 与对应单元测试
+  `apps/pipeline/tests/unit/test_provider_catalog.py`；其余 Provider 的能
+  力声明待对应 Adapter 落地后再补齐，避免在没有占位实现的源码里声称
+  能力）。
 - 配置驱动的 Provider Registry/Factory、`fixture_dev` 与每个归档源对应
   的 redacted config 模板。
 - `ProviderAuthenticationError` / `ProviderRateLimitError` 等错误分类
@@ -166,7 +170,9 @@ response 或数据库 row。
   `providers/akshare/README.md` 与本矩阵的 §2/§3。
 - 禁止把 Cifang 默认 `qfq` 直接沿用；M0 已冻结首期 `adjustment=none`。
 - 禁止 RssCast 或 quicktiny_mcp 在能力声明中声称支持 `ETF_DAILY_BARS`；
-  测试必须直接断言它们**没有**该能力。
+  测试必须直接断言它们**没有**该能力。Quicktiny MCP 的代码级声明已通
+  过 `apps/pipeline/tests/unit/test_provider_catalog.py` 直接断言
+  `ProviderCapability.ETF_DAILY_BARS` 不在能力集中。
 - 禁止把 Plan 文档示例阈值（流动性金额、波动率、上市天数等）当作生产
   参数；M0-DECISIONS §4 O-5 仍未决。
 - 禁止宣告“Provider 已选定/已接入生产 SLA”；O-1 仍阻塞。

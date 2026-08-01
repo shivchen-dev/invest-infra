@@ -19,7 +19,25 @@ def health() -> HealthResponse:
     return HealthResponse(status="ok", service=get_settings().app_name)
 
 
-@router.get("/v1/instruments", response_model=InstrumentListResponse, tags=["instruments"])
+@router.get(
+    "/v1/instruments",
+    response_model=InstrumentListResponse,
+    response_model_exclude={
+        "total": True,
+        "items": {
+            "__all__": {
+                "id",
+                "currency",
+                "status",
+                "list_date",
+                "delist_date",
+                "underlying_index",
+                "category",
+            }
+        },
+    },
+    tags=["instruments"],
+)
 def list_instruments(
     session: Annotated[Session, Depends(get_db_session)],
     limit: Annotated[int, Query(ge=1, le=500)] = 100,
@@ -28,16 +46,8 @@ def list_instruments(
     repository = SqlAlchemyInstrumentRepository(session)
     instruments = repository.list_active(limit=limit, offset=offset)
     return InstrumentListResponse(
-        items=[
-            InstrumentResponse(
-                symbol=item.symbol,
-                name=item.name,
-                exchange=item.exchange,
-                instrument_type=item.instrument_type.value,
-                is_active=item.is_active,
-            )
-            for item in instruments
-        ],
+        items=[InstrumentResponse.from_instrument(item) for item in instruments],
+        total=len(instruments),
         limit=limit,
         offset=offset,
     )

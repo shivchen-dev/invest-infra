@@ -22,12 +22,62 @@ from typing import TYPE_CHECKING
 from unittest.mock import MagicMock
 from uuid import uuid4
 
+import pytest
+from invest_api import routes as legacy_routes
+from invest_api.schemas import (
+    InstrumentListResponse,
+    InstrumentResponse,
+    LegacyInstrumentListResponse,
+    LegacyInstrumentResponse,
+)
+from invest_api.schemas.common import (
+    InstrumentListResponse as CommonInstrumentListResponse,
+)
+from invest_api.schemas.common import InstrumentResponse as CommonInstrumentResponse
 from invest_domain.instruments import InstrumentStatus
 
 from tests.conftest import make_daily_bar, make_instrument
 
 if TYPE_CHECKING:
     from fastapi.testclient import TestClient
+
+
+def test_legacy_instruments_preserves_sparse_response(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repository = MagicMock(name="LegacyInstrumentRepository")
+    repository.list_active.return_value = [make_instrument()]
+    monkeypatch.setattr(
+        legacy_routes, "SqlAlchemyInstrumentRepository", lambda session: repository
+    )
+
+    response = client.get("/v1/instruments")
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "items": [
+            {
+                "symbol": "510050",
+                "name": "SSE 50 ETF",
+                "exchange": "SSE",
+                "instrument_type": "ETF",
+                "is_active": True,
+            }
+        ],
+        "limit": 100,
+        "offset": 0,
+    }
+    repository.list_active.assert_called_once_with(limit=100, offset=0)
+
+
+def test_instrument_schema_exports_share_one_definition() -> None:
+    assert CommonInstrumentResponse is InstrumentResponse
+    assert LegacyInstrumentResponse is InstrumentResponse
+    assert CommonInstrumentListResponse is InstrumentListResponse
+    assert LegacyInstrumentListResponse is InstrumentListResponse
+
+
 # GET /api/v1/etf/instruments
 # ---------------------------------------------------------------------------
 
@@ -51,6 +101,20 @@ def test_list_etf_instruments_returns_active_set(
     assert body["limit"] == 100
     assert body["offset"] == 0
     assert [item["symbol"] for item in body["items"]] == ["510050", "159915"]
+    assert set(body["items"][0]) == {
+        "id",
+        "symbol",
+        "name",
+        "exchange",
+        "instrument_type",
+        "currency",
+        "status",
+        "is_active",
+        "list_date",
+        "delist_date",
+        "underlying_index",
+        "category",
+    }
     instrument_repo.list_active.assert_called_once_with(limit=1000, offset=0)
 
 
@@ -265,6 +329,8 @@ def test_list_etf_daily_bars_pagination(
 
 
 __all__ = [
+    "test_instrument_schema_exports_share_one_definition",
+    "test_legacy_instruments_preserves_sparse_response",
     "test_list_etf_instruments_filters_by_exchange",
     "test_list_etf_instruments_filters_by_status",
     "test_list_etf_instruments_pagination",

@@ -53,23 +53,7 @@ def list_etf_instruments(
     ]
     total = len(filtered)
     page = filtered[offset : offset + limit]
-    items = [
-        InstrumentResponse(
-            id=item.instrument_id.value if item.instrument_id is not None else UUID(int=0),
-            symbol=item.symbol,
-            name=item.name,
-            exchange=item.exchange,
-            instrument_type=item.instrument_type.value,
-            currency=item.currency.value,
-            status=item.status.value,
-            is_active=item.is_active,
-            list_date=item.list_date,
-            delist_date=item.delist_date,
-            underlying_index=item.underlying_index,
-            category=item.category,
-        )
-        for item in page
-    ]
+    items = [InstrumentResponse.from_instrument(item) for item in page]
     return InstrumentListResponse(items=items, total=total, limit=limit, offset=offset)
 
 

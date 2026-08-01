@@ -25,11 +25,9 @@ Included items are ranked by ``close * volume`` descending, with the
 underlying :class:`UUID` bytes as the deterministic tiebreaker so equal
 turnovers never produce rank collisions.
 
-The M4 calculator will conform to the full
-:class:`invest_domain.candidate_pool.ports.CandidatePoolCalculator`
-Protocol with scored rules; the present Protocol signature intentionally
-differs because the minimum algorithm does not yet consume the rolling
-histories the M4 contract requires.
+The minimum algorithm intentionally uses a smaller signature than the
+planned M4 contract because it does not yet consume the rolling
+histories a fully-scored calculator will require.
 """
 
 from __future__ import annotations
@@ -59,9 +57,7 @@ if TYPE_CHECKING:
 class MinimumCandidatePoolCalculator(Protocol):
     """Port for the PR-08 minimum candidate-pool calculator.
 
-    The signature deliberately differs from the M4
-    :class:`invest_domain.candidate_pool.ports.CandidatePoolCalculator`:
-    the minimum algorithm does not need scored rule results, rolling
+    The minimum algorithm does not need scored rule results, rolling
     histories or a separate :class:`CalculationContext` argument. The
     :class:`CalculationContext` is derived from the
     :class:`InputSnapshot` so the call site stays minimal.

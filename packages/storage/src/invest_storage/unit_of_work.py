@@ -30,7 +30,6 @@ from typing import Protocol, runtime_checkable
 
 from sqlalchemy.orm import Session, sessionmaker
 
-from invest_storage.providers import SessionProvider
 from invest_storage.repositories import (
     InputSnapshotRepository,
     SqlAlchemyCandidatePoolItemRepository,
@@ -191,6 +190,20 @@ class DailyBarRepositoryPort(Protocol):
     def list_by_instrument_and_range(
         self, *, instrument_id, start_date, end_date, adjustment
     ): ...
+
+
+@runtime_checkable
+class SessionProvider(Protocol):
+    """Anything that can hand out a SQLAlchemy ``Session``.
+
+    The default implementation is the ``sessionmaker`` returned by
+    :func:`invest_storage.database.session_factory`. The protocol lets
+    the UnitOfWork be constructed against a fake provider in unit tests
+    of the UoW itself, without spinning up a real database.
+    """
+
+    def __call__(self) -> Session:
+        ...
 
 
 @runtime_checkable
@@ -378,6 +391,7 @@ __all__ = [
     "ProviderAttemptRepositoryPort",
     "ProviderBatchRepositoryPort",
     "ProviderRequestRepositoryPort",
+    "SessionProvider",
     "SqlAlchemyUnitOfWork",
     "UnitOfWork",
 ]
