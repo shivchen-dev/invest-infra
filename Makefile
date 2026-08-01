@@ -1,6 +1,6 @@
 SHELL := /bin/bash
 
-.PHONY: help up down logs api-dev pipeline-dev web-dev migrate test lint arch-check lock test-domain test-storage test-storage-integration test-migrations test-pipeline test-api test-web
+.PHONY: help up down logs api-dev pipeline-dev web-dev migrate test lint arch-check lock test-domain test-storage test-storage-integration test-migrations test-pipeline test-api test-web provider-smoke
 
 help:
 	@echo "make up              启动 PostgreSQL、API、Web、Dagster"
@@ -15,6 +15,7 @@ help:
 	@echo "make test-web        运行 Web 类型检查、测试和构建"
 	@echo "make arch-check      检查依赖边界"
 	@echo "make lock            为各 Python 应用生成锁文件"
+	@echo "make provider-smoke  对 CifangQuant 真实 API 做受限 smoke（opt-in）"
 
 up:
 	docker compose up --build
@@ -88,3 +89,22 @@ lint:
 
 arch-check:
 	python scripts/check_architecture.py
+
+# 受限的 CifangQuant smoke（ADR-0011 Phase 1）。
+#
+# 三重 opt-in：INVEST_PIPELINE_CIFANG_ENABLED=true + --confirm-network 标志 +
+# INVEST_PIPELINE_CIFANG_API_KEY 环境变量。目标不会在命令行回显 API key，
+# 调用者必须通过环境变量注入令牌。
+#
+# 用法示例：
+#   export INVEST_PIPELINE_CIFANG_ENABLED=true
+#   export INVEST_PIPELINE_CIFANG_API_KEY=...            # 不会回显
+#   make provider-smoke \
+#       SMOKE_SYMBOLS=510300,510500 \
+#       SMOKE_TRADE_DATE=2026-07-30 \
+#       SMOKE_CONFIRM_NETWORK=1
+provider-smoke:
+	cd apps/pipeline && uv run python -m invest_pipeline.cifang_smoke \
+		--symbols '$(SMOKE_SYMBOLS)' \
+		--trade-date '$(SMOKE_TRADE_DATE)' \
+		$(if $(SMOKE_CONFIRM_NETWORK),--confirm-network)

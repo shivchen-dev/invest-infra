@@ -96,3 +96,40 @@ The adapter deliberately keeps ``enabled=False`` and
 `docs/implementation/DATA-SOURCE-MIGRATION-MATRIX.md` §5.3) is **not**
 exposed anywhere in this package; any future change that loosens
 ``adjustment`` must come with a new ADR.
+
+## Smoke command (opt-in)
+
+The repo ships a CLI wrapper for an explicit, network-hitting smoke
+against the official CifangQuant API. It is **safe by default**: the
+real HTTP client is only constructed when **both** the settings
+opt-in (``INVEST_PIPELINE_CIFANG_ENABLED=true``) and the
+``--confirm-network`` CLI flag are present. The API key is read only
+from the ``INVEST_PIPELINE_CIFANG_API_KEY`` environment variable and is
+never accepted as a CLI argument and never printed.
+
+```bash
+export INVEST_PIPELINE_CIFANG_ENABLED=true
+export INVEST_PIPELINE_CIFANG_API_KEY=...      # never echoed by `make`
+make provider-smoke \
+    SMOKE_SYMBOLS=510300,510500 \
+    SMOKE_TRADE_DATE=2026-07-30 \
+    SMOKE_CONFIRM_NETWORK=1
+```
+
+The command runs only the two adapter calls needed for a minimal
+smoke (`fetch_instruments(as_of=trade_date)` and
+`fetch_daily_bars(symbols, start_date=trade_date, end_date=trade_date)`),
+prints a single redacted JSON summary to stdout, and exits non-zero on
+any failure. Data is never persisted. The same command is also
+available directly:
+
+```bash
+cd apps/pipeline && uv run python -m invest_pipeline.cifang_smoke \
+    --symbols 510300,510500 \
+    --trade-date 2026-07-30 \
+    --confirm-network
+```
+
+Both invocations require the same three opt-in levers; if any of them
+is missing the command exits non-zero with a concise message and never
+reaches the network.
