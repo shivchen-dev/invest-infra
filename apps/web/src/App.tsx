@@ -1,4 +1,5 @@
 import { AppShell } from "./components/AppShell";
+import { CandidatePoolPage } from "./pages/CandidatePoolPage";
 import { DashboardPage } from "./pages/DashboardPage";
 import { PlaceholderPage } from "./pages/PlaceholderPage";
 import { Router } from "./router";
@@ -7,12 +8,7 @@ const ROUTES = [
   { path: "/dashboard", element: <DashboardPage /> },
   {
     path: "/candidate-pool",
-    element: (
-      <PlaceholderPage
-        title="候选池"
-        description="入选 / 排除 / 全部 Tab、过滤与行展开将随 Web PR-04 一同上线。"
-      />
-    ),
+    element: <CandidatePoolPage />,
   },
   {
     path: "/etf/:instrumentId",
