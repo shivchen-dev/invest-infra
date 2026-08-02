@@ -153,7 +153,14 @@ class EtfAssetsRuntimeWiringTest(unittest.TestCase):
             captured.append(settings)
             raise RuntimeError("STOP_AFTER_BUILD_PROVIDER")
 
+        # Every production asset in the daily slice is partitioned;
+        # the asset bodies read ``context.partition_key`` (a real
+        # ISO-8601 string) before ``build_provider`` is called, so a
+        # bare ``MagicMock`` would fail with ``TypeError`` at the
+        # ``date.fromisoformat`` call. The value below matches the
+        # well-known partition used by the existing asset tests.
         context = MagicMock()
+        context.partition_key = "2026-07-31"
         fn = _underlying_callable(asset_name)
         with (
             patch(

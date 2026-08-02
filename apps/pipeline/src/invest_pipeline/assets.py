@@ -133,7 +133,11 @@ def seed_instruments(context) -> dg.MaterializeResult:
     )
 
 
-@dg.asset(group_name="market_data", compute_kind="python")
+@dg.asset(
+    group_name="market_data",
+    compute_kind="python",
+    partitions_def=_ETF_INPUT_SNAPSHOT_PARTITIONS,
+)
 def etf_instruments_raw(context) -> dg.MaterializeResult:
     """Persist the PR-02 three-layer evidence bundle for ETF master data.
 
@@ -141,12 +145,21 @@ def etf_instruments_raw(context) -> dg.MaterializeResult:
     batch triple to :func:`invest_pipeline.etf_instruments.write_etf_instruments_raw`,
     and surfaces the storage-assigned UUIDs through Dagster metadata.
 
+    The business date comes from ``context.partition_key`` only (no
+    ``date.today()`` fallback) so a back-fill run for a historical
+    partition cannot silently re-target today's data. The partition
+    definition is shared with :func:`etf_daily_bars_raw`,
+    :func:`etf_daily_bars`, :func:`etf_input_snapshot` and
+    :func:`personal_candidate_pool` so all five daily assets consume
+    the same trade date for any given partition.
+
     A failed attempt persists the request + attempt only — no batch row
     is created. The downstream :func:`etf_instruments` asset inspects
     the persisted state to decide whether to upsert standardized
     records or skip with a note.
     """
 
+    as_of = date.fromisoformat(context.partition_key)
     provider = build_provider(get_settings())
     engine = build_engine(get_settings().database_url)
     factory = session_factory(engine)
@@ -156,20 +169,22 @@ def etf_instruments_raw(context) -> dg.MaterializeResult:
         result = write_etf_instruments_raw(
             provider,
             factory,
-            as_of=date.today(),
+            as_of=as_of,
             unit_of_work_factory=SqlAlchemyUnitOfWork,
         )
     finally:
         engine.dispose()
 
     context.log.info(
-        "etf_instruments_raw: provider=%s request=%s attempt=%s batch=%s status=%s records=%s",
+        "etf_instruments_raw: provider=%s request=%s attempt=%s batch=%s "
+        "status=%s records=%s as_of=%s",
         provider.provider_key,
         result.request_id,
         result.attempt_id,
         result.batch_id,
         result.request_status,
         result.record_count,
+        as_of.isoformat(),
     )
     return dg.MaterializeResult(
         metadata={
@@ -180,6 +195,8 @@ def etf_instruments_raw(context) -> dg.MaterializeResult:
             "request_status": result.request_status,
             "attempt_status": result.attempt_status,
             "record_count": result.record_count,
+            "as_of": as_of.isoformat(),
+            "partition_key": context.partition_key,
         }
     )
 
@@ -188,6 +205,7 @@ def etf_instruments_raw(context) -> dg.MaterializeResult:
     group_name="market_data",
     compute_kind="python",
     deps=[etf_instruments_raw],
+    partitions_def=_ETF_INPUT_SNAPSHOT_PARTITIONS,
 )
 def etf_instruments(context) -> dg.MaterializeResult:
     """Upsert standardized ETF instruments into ``core.instruments``.
@@ -200,13 +218,22 @@ def etf_instruments(context) -> dg.MaterializeResult:
     on the partial unique business key
     ``(symbol, exchange) WHERE delist_date IS NULL``.
 
+    The business date comes from ``context.partition_key`` only (no
+    ``date.today()`` fallback) so a back-fill run for a historical
+    partition cannot silently re-target today's data. The partition
+    definition is shared with :func:`etf_instruments_raw` and the rest
+    of the daily slice so the upstream request lookup
+    ``(provider_key, dataset_key, request_key=instruments-{as_of})``
+    always resolves the attempt the partitioned raw write just
+    persisted.
+
     If the upstream attempt failed the asset surfaces a
     :class:`MaterializeResult` with ``row_count=0`` and a
     ``skipped`` note rather than raising, so a contract-test failure
     does not cascade into a noisy Dagster retry loop.
     """
 
-    as_of = date.today()
+    as_of = date.fromisoformat(context.partition_key)
     selected_provider_key = build_provider(get_settings()).provider_key
     engine = build_engine(get_settings().database_url)
     factory = session_factory(engine)
@@ -231,6 +258,7 @@ def etf_instruments(context) -> dg.MaterializeResult:
                     "skipped": True,
                     "reason": "upstream attempt failed or missing",
                     "as_of": as_of.isoformat(),
+                    "partition_key": context.partition_key,
                 }
             )
         count = upsert_etf_instruments(
@@ -251,6 +279,7 @@ def etf_instruments(context) -> dg.MaterializeResult:
         metadata={
             "row_count": count,
             "as_of": as_of.isoformat(),
+            "partition_key": context.partition_key,
             "skipped": False,
         }
     )
