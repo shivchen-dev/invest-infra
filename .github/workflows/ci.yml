@@ -21,6 +21,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+      - run: pip install pytest
       - run: PYTHONPATH=packages/domain/src python -m pytest packages/domain/tests -q
 
   storage-unit:
@@ -30,7 +31,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - run: pip install sqlalchemy psycopg[binary] pytest
+      - run: pip install sqlalchemy "psycopg[binary]" pytest
       - run: PYTHONPATH=packages/domain/src:packages/storage/src:tests python -m pytest tests/storage --ignore=tests/storage/integration -q
 
   storage-integration:
@@ -54,7 +55,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - run: pip install sqlalchemy psycopg2-binary pytest testcontainers
+      - run: pip install sqlalchemy "psycopg[binary]" pytest testcontainers
       - run: PYTHONPATH=packages/domain/src:packages/storage/src:tests python -m pytest tests/storage/integration -q
         env:
           DATABASE_URL: postgresql+psycopg://invest:invest_dev_password@localhost:5432/invest
