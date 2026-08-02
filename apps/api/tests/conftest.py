@@ -21,6 +21,7 @@ from invest_api.dependencies import get_db_session
 from invest_api.main import app
 from invest_api.routers import candidate_pool as candidate_pool_router
 from invest_api.routers import etf as etf_router
+from invest_api.routers import pipeline_runs as pipeline_runs_router
 from invest_domain.candidate_pool.models import (
     CandidatePoolItem,
     CandidatePoolRun,
@@ -36,6 +37,7 @@ from invest_domain.instruments import (
     InstrumentStatus,
     InstrumentType,
 )
+from invest_domain.pipeline import PipelineRun, PipelineRunStatus
 from invest_domain.shared.values import Currency
 from invest_storage.repositories import StoredDailyBar
 
@@ -114,6 +116,19 @@ def input_snapshot_repo(monkeypatch: pytest.MonkeyPatch) -> MagicMock:
     mock = MagicMock(name="InputSnapshotRepository")
     monkeypatch.setattr(
         candidate_pool_router, "InputSnapshotRepository", lambda session: mock
+    )
+    return mock
+
+
+@pytest.fixture()
+def pipeline_run_repo(monkeypatch: pytest.MonkeyPatch) -> MagicMock:
+    """Patch ``SqlAlchemyPipelineRunRepository`` in the pipeline-runs router."""
+
+    mock = MagicMock(name="PipelineRunRepository")
+    monkeypatch.setattr(
+        pipeline_runs_router,
+        "SqlAlchemyPipelineRunRepository",
+        lambda session: mock,
     )
     return mock
 
@@ -295,6 +310,47 @@ def make_pool_item(
     )
 
 
+def make_pipeline_run(
+    *,
+    job_key: str = "personal_etf_daily_job",
+    trigger_type: str = "scheduled",
+    status: PipelineRunStatus = PipelineRunStatus.SUCCEEDED,
+    partition_key: str | None = "2026-07-31",
+    started_at: datetime | None = None,
+    finished_at: datetime | None = None,
+    error_summary: str | None = None,
+    run_id: UUID | None = None,
+) -> PipelineRun:
+    """Build a :class:`PipelineRun` for the ``pipeline-runs`` endpoints."""
+
+    started = started_at
+    if started is None and status is not PipelineRunStatus.QUEUED:
+        started = datetime(2026, 7, 31, 9, tzinfo=UTC)
+    finished = finished_at
+    if finished is None and status in (
+        PipelineRunStatus.SUCCEEDED,
+        PipelineRunStatus.FAILED,
+        PipelineRunStatus.PARTIAL,
+        PipelineRunStatus.CANCELLED,
+    ):
+        finished = datetime(2026, 7, 31, 10, tzinfo=UTC)
+    if status is PipelineRunStatus.FAILED and error_summary is None:
+        error_summary = "personal daily job failed in fixtures"
+    return PipelineRun(
+        id=run_id or uuid4(),
+        dagster_run_id=None,
+        job_key=job_key,
+        partition_key=partition_key,
+        trigger_type=trigger_type,
+        algorithm_version="v1.0",
+        config_snapshot={},
+        status=status,
+        started_at=started,
+        finished_at=finished,
+        error_summary=error_summary,
+    )
+
+
 __all__ = [
     "candidate_pool_item_repo",
     "candidate_pool_run_repo",
@@ -306,6 +362,8 @@ __all__ = [
     "make_daily_bar",
     "make_input_snapshot",
     "make_instrument",
+    "make_pipeline_run",
     "make_pool_item",
     "mock_session",
+    "pipeline_run_repo",
 ]
