@@ -68,6 +68,22 @@ cd apps/migrations && uv run alembic upgrade head
 
 在 Dagster 页面 materialize `seed_instruments`，再刷新 Web 页面。
 
+Web 数据工作台提供以下只读页面：
+
+- `/dashboard`：数据新鲜度、候选池摘要和最新运行；
+- `/candidate-pool`：入选/排除候选、筛选、排除原因和变化；
+- `/etf/:instrumentId`：ETF 主数据、日行情和收盘价趋势；
+- `/operations`：Pipeline Run 历史、数据新鲜度和只读重跑提示。
+
+本地前端检查：
+
+```bash
+cd apps/web
+npm exec --offline --yes --package=typescript@5.9.3 -- tsc -b
+```
+
+`apps/web` 不提供写操作，也不会从浏览器触发 Pipeline。
+
 ## 本地开发
 
 推荐安装 `uv`、Node.js 和 pnpm：

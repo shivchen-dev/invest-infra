@@ -208,11 +208,31 @@ pipeline-run, candidate-pool diff, and data-freshness endpoints described in
 the [API overview](api/overview.md), and use the replay/backfill procedures in
 [Testing & operations](testing-and-ops/overview.md#7-operational-runbooks-and-validation).
 
-## 7. Backlog
+## 7. Web data workbench
 
-- **Web pages for candidate pool and pipeline runs.** The FastAPI surface
-  exposes them but `apps/web/` only consumes the legacy `/v1/instruments`
-  shape; no `CandidatePoolPage.tsx` exists yet.
+`apps/web/` is now a read-only React workbench backed by the `/api/v1`
+surface. The main routes are:
+
+- `/dashboard` — freshness, candidate summary, diff and latest run;
+- `/candidate-pool` — included/excluded/all tabs, filters, exclusion reasons
+  and expandable rule details;
+- `/etf/:instrumentId` — instrument metadata, 30/60/120-day daily bars and a
+  lightweight SVG close-price chart;
+- `/operations` — freshness, latest/history Pipeline Runs and a non-executing
+  replay command hint.
+
+The browser has no write controls and does not trigger Pipeline runs. The
+Web typecheck can be run with:
+
+```bash
+cd apps/web
+npm exec --offline --yes --package=typescript@5.9.3 -- tsc -b
+```
+
+The remaining Web follow-up is a minimal executable unit-test setup; the
+current environment does not have the Vitest package installed.
+
+## 8. Backlog
 - **Real Provider selection (O-1 in M0-DECISIONS §4).** `cifangquant`
   is wired end-to-end behind the three opt-ins and the smoke CLI;
   [ADR-0011](../docs/adr/0011-cifangquant-primary-etf-provider.md)
