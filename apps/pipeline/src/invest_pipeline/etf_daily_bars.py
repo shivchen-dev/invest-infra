@@ -106,6 +106,12 @@ class _ProviderPort(Protocol):
     semantically from :mod:`invest_pipeline.etf_instruments`'s
     ``fetch_instruments`` (as_of date), so a generic shared base would
     buy nothing.
+
+    :meth:`symbol_for_instrument_id` is the reverse lookup the
+    service uses to recover the provider-native symbol from the
+    placeholder ``InstrumentId`` carried on every returned
+    :class:`DailyBar`; the sidecar stores the symbol, not the
+    placeholder UUID.
     """
 
     @property
@@ -117,6 +123,8 @@ class _ProviderPort(Protocol):
         start_date: date,
         end_date: date,
     ) -> tuple[Any, Any, Any]: ...
+
+    def symbol_for_instrument_id(self, instrument_id: Any) -> str | None: ...
 
 
 def _now() -> datetime:
@@ -211,60 +219,22 @@ def write_etf_daily_bars_raw(
                 record_count=0,
             )
 
-        response_payload_json: str | None = None
-        if batch is not None:
-            sidecar_records = [
-                {
-                    "symbol": bar.source.provider_key,
-                    "trade_date": bar.trade_date.isoformat(),
-                    "open": format(bar.open, "f") if bar.open is not None else None,
-                    "high": format(bar.high, "f") if bar.high is not None else None,
-                    "low": format(bar.low, "f") if bar.low is not None else None,
-                    "close": format(bar.close, "f") if bar.close is not None else None,
-                    "prev_close": (
-                        format(bar.prev_close, "f")
-                        if bar.prev_close is not None
-                        else None
-                    ),
-                    "volume": (
-                        format(bar.volume, "f")
-                        if bar.volume is not None
-                        else None
-                    ),
-                    "amount": (
-                        format(bar.amount, "f")
-                        if bar.amount is not None
-                        else None
-                    ),
-                    "trading_status": bar.trading_status.value,
-                }
-                for bar in batch.records
-            ]
-            response_payload_json = serialize_daily_bars(
-                sidecar_records,
-                source_batch_id=batch.attempt_id,
-                observed_at=batch.records[0].source.observed_at
-                if batch.records
-                else finished_at,
-            )
-
         stored_attempt = uow.provider_attempts.add(
             NewProviderAttempt(
                 provider_request_id=stored_request.id,
                 attempt_no=attempt.attempt_number,
                 started_at=attempt.started_at,
                 finished_at=finished_at,
-                status="succeeded",
-                response_payload_sha256=batch.raw_payload_hash
-                if batch is not None
-                else "0" * 64,
-                response_payload_json=response_payload_json,
+                status="running",
+                response_payload_sha256=None,
+                response_payload_json=None,
             )
         )
 
         stored_batch_id: UUID | None = None
         record_count = 0
         request_status = "succeeded"
+        response_payload_json: str | None = None
         if batch is not None:
             stored_batch = uow.provider_batches.add(
                 NewProviderBatch(
@@ -280,8 +250,28 @@ def write_etf_daily_bars_raw(
             )
             stored_batch_id = stored_batch.id
             record_count = len(batch.records)
+            sidecar_records = [
+                _build_sidecar_record(bar, request.provider_key, provider)
+                for bar in batch.records
+            ]
+            response_payload_json = serialize_daily_bars(
+                sidecar_records,
+                source_batch_id=stored_batch.id,
+                observed_at=batch.records[0].source.observed_at
+                if batch.records
+                else finished_at,
+            )
         else:
             request_status = "partial"
+
+        uow.provider_attempts.mark_succeeded(
+            stored_attempt.id,
+            finished_at=finished_at,
+            response_payload_sha256=batch.raw_payload_hash
+            if batch is not None
+            else "0" * 64,
+            response_payload_json=response_payload_json,
+        )
 
         uow.provider_requests.mark_status(
             stored_request.id,
@@ -452,6 +442,58 @@ def _exchange_for_symbol(symbol: str) -> str:
         f"cannot infer exchange for symbol {symbol!r}: fixture_dev only "
         "covers A-share SSE / SZSE ETFs"
     )
+
+
+def _build_sidecar_record(
+    bar: Any,
+    provider_key: str,
+    provider: _ProviderPort,
+) -> dict[str, Any]:
+    """Build one sidecar record for a fetched ``DailyBar``.
+
+    Resolves the bar's provider-native symbol via the provider's
+    reverse lookup so the sidecar stores ``"510300"`` rather than the
+    audit-only ``BarSource.provider_key`` (``"fixture_dev"`` /
+    ``"cifangquant"``). Raises :class:`LookupError` if the provider
+    cannot resolve the bar's ``instrument_id``; a stale placeholder
+    UUID indicates a leak between provider instances and the
+    application service surfaces it as a hard error rather than
+    silently writing the audit field as the symbol.
+    """
+
+    symbol = provider.symbol_for_instrument_id(bar.instrument_id)
+    if symbol is None:
+        raise LookupError(
+            f"{provider_key} could not resolve instrument_id "
+            f"{bar.instrument_id!s} to a symbol for trade_date "
+            f"{bar.trade_date.isoformat()}; the placeholder UUID was "
+            "not generated by this provider instance — refusing to "
+            "persist an audit-only value as the sidecar symbol"
+        )
+    return {
+        "symbol": symbol,
+        "trade_date": bar.trade_date.isoformat(),
+        "open": format(bar.open, "f") if bar.open is not None else None,
+        "high": format(bar.high, "f") if bar.high is not None else None,
+        "low": format(bar.low, "f") if bar.low is not None else None,
+        "close": format(bar.close, "f") if bar.close is not None else None,
+        "prev_close": (
+            format(bar.prev_close, "f")
+            if bar.prev_close is not None
+            else None
+        ),
+        "volume": (
+            format(bar.volume, "f")
+            if bar.volume is not None
+            else None
+        ),
+        "amount": (
+            format(bar.amount, "f")
+            if bar.amount is not None
+            else None
+        ),
+        "trading_status": bar.trading_status.value,
+    }
 
 
 def _maybe_decimal(value: Any) -> Any:

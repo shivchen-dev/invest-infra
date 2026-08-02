@@ -121,6 +121,50 @@
     "category": "sector"
   },
   {
+    "symbol": "588000",
+    "name": "科创50ETF",
+    "exchange": "SSE",
+    "instrument_type": "ETF",
+    "currency": "CNY",
+    "list_date": "2020-11-16",
+    "status": "active",
+    "underlying_index": "STAR 50 Index",
+    "category": "technology"
+  },
+  {
+    "symbol": "588080",
+    "name": "科创板50ETF",
+    "exchange": "SSE",
+    "instrument_type": "ETF",
+    "currency": "CNY",
+    "list_date": "2020-11-16",
+    "status": "active",
+    "underlying_index": "STAR 50 Index",
+    "category": "technology"
+  },
+  {
+    "symbol": "513050",
+    "name": "中概互联网ETF",
+    "exchange": "SSE",
+    "instrument_type": "ETF",
+    "currency": "CNY",
+    "list_date": "2017-01-18",
+    "status": "active",
+    "underlying_index": "China Internet Index",
+    "category": "overseas"
+  },
+  {
+    "symbol": "513100",
+    "name": "纳斯达克ETF",
+    "exchange": "SSE",
+    "instrument_type": "ETF",
+    "currency": "CNY",
+    "list_date": "2013-04-25",
+    "status": "active",
+    "underlying_index": "NASDAQ-100 Index",
+    "category": "overseas"
+  },
+  {
     "symbol": "518880",
     "name": "黄金ETF",
     "exchange": "SSE",
