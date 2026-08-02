@@ -1,7 +1,7 @@
 ---
 type: Concept
 title: Testing & operations
-description: CI jobs (architecture, domain, storage unit/integration, migrations, pipeline, api, web), the AST-based architecture and migration-chain gates, mock vs integration split, compose stack, and the scheduled OpenWiki refresh.
+description: CI jobs (architecture, domain, storage unit/integration, migrations, pipeline, API, personal-daily PostgreSQL e2e, and web), the AST-based architecture and migration-chain gates, mock vs integration tests, compose runtime, and the Cifang/replay/shadow-run operating procedures.
 resource: /openwiki/testing-and-ops/overview.md
 tags: [ci, testing, alembic, compose, openwiki]
 ---
@@ -11,7 +11,8 @@ tags: [ci, testing, alembic, compose, openwiki]
 This page collects the cross-cutting test and ops machinery:
 GitHub Actions jobs, the AST-based architecture and migration-chain
 gates, the mock-vs-integration split, the local `docker compose`
-stack, and the scheduled OpenWiki refresh.
+stack, current personal-pipeline runbooks and validation templates, and the
+scheduled OpenWiki refresh.
 
 ## 1. CI jobs (`.github/workflows/ci.yml`)
 
@@ -24,12 +25,18 @@ The CI workflow is fan-out by domain so failures are easy to triage:
 | `storage-unit` | `pip install sqlalchemy psycopg[binary] pytest`, then `pytest tests/storage --ignore=tests/storage/integration -q` against the mock repositories. |
 | `storage-integration` | Spins up a `postgres:16` service, `pip install`s `testcontainers`, runs `pytest tests/storage/integration -q` with `DATABASE_URL` pointed at the container. |
 | `migrations` | `astral-sh/setup-uv@v6`, `cd apps/migrations && uv sync`, then `upgrade head → downgrade base → upgrade head` round-trip. |
-| `pipeline-tests` | `uv sync` + `ruff check` + `pytest -q` + import check against `invest_pipeline.definitions.defs`. |
-| `api-tests` | `uv sync` + `ruff check` + `pytest -q` + import check against `invest_api.main.app`. |
-| `web` (see file directly) | `pnpm install --frozen-lockfile` + `typecheck` + `test --run` + `build`; the current Web package still needs its lockfile and test script checked in before this job can pass. |
+| `pipeline-tests` | `uv sync` + `ruff check` + `pytest -q` for `apps/pipeline`. |
+| `pipeline-import-smoke` | Imports `invest_pipeline.definitions.defs` after `uv sync`. |
+| `api-tests` | `uv sync` + `ruff check` + `pytest -q` for `apps/api`. |
+| `api-openapi-smoke` | Imports `invest_api.main.app` after `uv sync`. |
+| `personal-daily-e2e` | Runs `tests/e2e/test_personal_daily_pipeline_postgres.py -q` against a PostgreSQL 16 service after syncing migrations, pipeline and API environments. |
+| `web-check` | `pnpm install` + `pnpm typecheck` + `pnpm build` in `apps/web`; this workflow job does not run the local `pnpm test --run` command. |
 
-The job name overrides in the `Makefile` (`make test` etc.) mirror
-those jobs so local runs reproduce CI exactly.
+The job name overrides in the `Makefile` (`make test` etc.) cover the
+main test slices, but the workflow also has separate import-smoke and
+personal-daily-e2e jobs. The workflow's `web-check` job is intentionally
+lighter than the local `test-web` target: CI currently type-checks and
+builds, while the Make target also runs the web test command.
 
 ### Migration-chain AST gate
 
@@ -55,7 +62,7 @@ strings dynamically.
 [`/scripts/check_architecture.py`](../../scripts/check_architecture.py)
 is a single-file scanner using the Python `ast` module. It enforces
 the rules listed in
-[Architecture overview §5](../../architecture/overview.md#5-architecture-decision-records):
+[Architecture overview §5](../architecture/overview.md#5-architecture-decision-records):
 
 1. Imports — every layer has a hard-coded `set` of forbidden top-level
    package names; any matching import is reported as a violation.
@@ -91,18 +98,23 @@ fixtures in [`conftest.py`](../../apps/api/tests/conftest.py) provide:
 - `client` — a `TestClient(app)` whose `get_db_session` dependency
   yields a `MagicMock` `Session`.
 - `instrument_repo`, `daily_bar_repo`, `candidate_pool_run_repo`,
-  `candidate_pool_item_repo`, `input_snapshot_repo` — each one is a
-  `MagicMock` patched into the per-router module via `monkeypatch.setattr`.
+  `candidate_pool_item_repo`, `input_snapshot_repo`, and
+  `pipeline_run_repo` — each one a `MagicMock` patched into the
+  per-router module via `monkeypatch.setattr`.
 - Builders: `make_instrument`, `make_daily_bar`, `make_input_snapshot`,
-  `make_candidate_pool_run`, `make_pool_item` — keep the response-shape
-  and invalid-input tests terse.
+  `make_candidate_pool_run`, `make_pool_item`, and `make_pipeline_run` —
+  keep the response-shape and invalid-input tests terse.
 
-`test_etf_endpoints.py` and `test_candidate_pool_endpoints.py` cover:
+`test_etf_endpoints.py`, `test_candidate_pool_endpoints.py`,
+`test_pipeline_run_endpoints.py`, and `test_data_freshness_endpoints.py`
+cover:
 
-- happy paths,
-- filter parameters (`exchange`, `status`, `limit`, `offset`),
-- input validation (inverted date range, missing instrument, 422 on
-  invalid `limit` / `offset`),
+- happy paths and candidate-pool added/retained/removed diffs;
+- filter parameters (`exchange`, `status`, `limit`, `offset`);
+- input validation (inverted date range, malformed UUID/date, missing
+  instrument or run);
+- personal-job scoping for pipeline runs and all five data-freshness
+  statuses, including sanitized SQLAlchemy failures;
 - schema-level re-export identities
   (`LegacyInstrumentResponse is InstrumentResponse`, …).
 
@@ -152,6 +164,14 @@ the asset-level integration paths against fixture data:
   tests also pin best-effort `ops.pipeline_runs` lifecycle recording,
   token-scrubbed failure summaries, and the rule that audit-write
   failures do not change the job's output or exit code.
+- `test_daily_preflight.py` covers the ordered run/skip/fail guard
+  decisions and the default-off schedule flag; the schedule remains
+  manually exercised rather than reaching a real provider in CI.
+- [`tests/e2e/test_personal_daily_pipeline_postgres.py`](../../tests/e2e/test_personal_daily_pipeline_postgres.py)
+  runs the fixture provider through migrations, raw evidence, core data,
+  snapshot and published candidate-pool tables against PostgreSQL 16. It
+  reruns the same trade date to verify no duplicate daily-bar revisions or
+  natural-key candidate-pool runs, and checks the latest candidate-pool API.
 
 ## 6. Deployment and runtime
 
@@ -191,7 +211,31 @@ The CI job `migrations` is the migration counterpart for production:
 specifies a separate migration job that runs `alembic upgrade head`
 before the API comes up.
 
-## 7. The OpenWiki autoupdate
+## 7. Operational runbooks and validation
+
+The checked-in operational contract is now split between the personal
+pipeline implementation and four focused documents:
+
+- [`docs/runbooks/cifang-auth-failure.md`](../../docs/runbooks/cifang-auth-failure.md)
+  prescribes redacted diagnostics and recovery for CifangQuant 401/403
+  failures; credentials remain environment-injected and must never appear
+  in logs, API responses or commits.
+- [`docs/runbooks/reprocess-trade-date.md`](../../docs/runbooks/reprocess-trade-date.md)
+  makes `make reprocess-date TRADE_DATE=YYYY-MM-DD` the canonical single-date
+  replay, with `make personal-backfill START_DATE=... END_DATE=...` for an
+  inclusive range of at most 90 natural days. Backfill skips weekends and
+  stops at the first failed weekday.
+- [`docs/validation/stage1-real-cifang-acceptance.md`](../../docs/validation/stage1-real-cifang-acceptance.md)
+  is a redacted real-network acceptance template; it keeps ADR-0011
+  `Proposed` and records no key, hash, header or raw response.
+- [`docs/validation/stage2-shadow-run-log.md`](../../docs/validation/stage2-shadow-run-log.md)
+  is the 10-trading-day manual shadow log. During this closed period,
+  `INVEST_PIPELINE_AUTO_SCHEDULE_ENABLED=false`, operators use the manual
+  run/replay commands, and graduation requires at least 10 consecutive
+  trading days, at least 90% success, replayable failures, no duplicate
+  publications or same-content revisions, and no credential leaks.
+
+## 8. The OpenWiki autoupdate
 
 [`.github/workflows/openwiki-update.yml`](../../.github/workflows/openwiki-update.yml)
 runs daily at `0 8 * * *` (and on `workflow_dispatch`). It:

@@ -1,7 +1,7 @@
 ---
 type: Concept
 title: API overview
-description: FastAPI routers, Pydantic response shapes and the read-only endpoint surface added by PR-09 (GET /api/v1/etf/*, GET /api/v1/candidate-pool/latest) plus the legacy /v1/instruments endpoint.
+description: FastAPI routers, Pydantic response shapes and the read-only endpoint surface for ETF data, candidate-pool results and diffs, personal pipeline-run status, and data freshness, including the legacy /v1/instruments endpoint.
 resource: /openwiki/api/overview.md
 tags: [api, fastapi, routers, pydantic, etf, candidate-pool]
 ---
@@ -17,8 +17,8 @@ backtesting libraries and no Notebook dependency** — see
 
 The application entry-point is
 [`invest_api.main.app`](../../apps/api/src/invest_api/main.py); it
-mounts the legacy router and the two PR-09 routers and configures
-CORS via `Settings.cors_origins`.
+mounts the legacy, ETF, candidate-pool, pipeline-run and data-freshness
+routers and configures CORS via `Settings.cors_origins`.
 
 ## 1. Modules
 
@@ -30,12 +30,16 @@ apps/api/src/invest_api/
 ├── config.py              # pydantic-settings Settings
 ├── routers/
 │   ├── etf.py             # PR-09 read-only ETF endpoints
-│   └── candidate_pool.py  # PR-09 read-only candidate pool endpoint
+│   ├── candidate_pool.py  # candidate-pool latest + diff endpoints
+│   ├── pipeline_runs.py   # personal daily pipeline-run status
+│   └── data_freshness.py  # personal daily data-freshness summary
 └── schemas/
-    ├── __init__.py        # re-exports ETF + candidate pool shapes
+    ├── __init__.py        # re-exports all public response shapes
     ├── common.py          # legacy HealthResponse + re-exports
     ├── etf.py             # InstrumentResponse / DailyBarResponse + paginated lists
-    └── candidate_pool.py  # CandidatePoolLatestResponse + per-item shapes
+    ├── candidate_pool.py  # latest, item and diff shapes
+    ├── pipeline_runs.py   # PipelineRunResponse
+    └── data_freshness.py  # DataFreshnessResponse + status vocabulary
 ```
 
 `apps/api/tests/` holds mock-based contract tests for every router
@@ -50,6 +54,11 @@ apps/api/src/invest_api/
 | `GET /api/v1/etf/instruments` | `routers/etf.py` | Active ETF instruments with optional `exchange` and `status` filters, paginated with `limit/offset`. |
 | `GET /api/v1/etf/daily-bars` | `routers/etf.py` | Daily-bars range query — collapses to the latest revision per `trade_date` (ADR-0006 §6). |
 | `GET /api/v1/candidate-pool/latest` | `routers/candidate_pool.py` | The most recently `published` candidate-pool run plus its `InputSnapshot.content_hash`. |
+| `GET /api/v1/candidate-pool/latest/diff` | `routers/candidate_pool.py` | Added, retained and removed instrument IDs for the latest published run versus the most recent earlier published run. |
+| `GET /api/v1/candidate-pool/{run_id}/diff` | `routers/candidate_pool.py` | The same set diff for a specified published run; missing or non-published runs return 404. |
+| `GET /api/v1/pipeline-runs/latest` | `routers/pipeline_runs.py` | Most recent run scoped to the `personal_etf_daily_job` job key. |
+| `GET /api/v1/pipeline-runs/{run_id}` | `routers/pipeline_runs.py` | One personal daily pipeline run; missing or other-job IDs return 404. |
+| `GET /api/v1/data-freshness` | `routers/data_freshness.py` | Counts and status summary for the expected trade date, defaulting to the latest weekday. |
 
 All endpoints accept the `get_db_session` FastAPI dependency; tests
 override it with a `MagicMock` `Session` and patch the relevant
@@ -87,6 +96,27 @@ override it with a `MagicMock` `Session` and patch the relevant
   `content_hash`, `items`) — the response envelope for the
   `/api/v1/candidate-pool/latest` endpoint; `row_count` is the
   input-snapshot row count mirrored from `input_row_count`.
+- `CandidatePoolDiffResponse` (`trade_date`, optional
+  `previous_trade_date`, `added`, `retained`, `removed`) represents set
+  differences between published candidate-pool runs. With no predecessor,
+  every current instrument is `added`.
+
+### `schemas/pipeline_runs.py`
+
+`PipelineRunResponse` exposes the public subset of an `ops.pipeline_runs`
+row: `id`, `job_key`, `partition_key`, `trigger_type`, `status`, optional
+`started_at` / `finished_at`, and `error_summary`. `error_code` is part of
+the contract but remains `None` until the storage layer persists a separate
+structured code. The router only returns the hard-coded
+`personal_etf_daily_job` scope.
+
+### `schemas/data_freshness.py`
+
+`DataFreshnessResponse` reports `as_of`, the latest published trade date,
+`universe_count`, `daily_bar_count`, non-negative `missing_count`,
+`candidate_count`, optional snapshot/run IDs and pipeline status, plus the
+`DataFreshnessStatus` literal: `fresh`, `partial`, `stale`, `missing`, or
+`failed`.
 
 ### `schemas/common.py`
 
@@ -98,12 +128,12 @@ working.
 
 ### `schemas/__init__.py`
 
-Re-exports the ETF and candidate-pool shapes **and** the legacy
+Re-exports the ETF, candidate-pool, pipeline-run and data-freshness shapes **and** the legacy
 `InstrumentResponse` / `InstrumentListResponse` aliases as
 `LegacyInstrumentResponse` / `LegacyInstrumentListResponse` so
 pre-PR-09 callers can import the legacy names directly
 (`from invest_api.schemas import LegacyInstrumentResponse,
-DailyBarResponse, CandidatePoolLatestResponse`). The aliases point at
+DailyBarResponse, CandidatePoolLatestResponse, PipelineRunResponse`). The aliases point at
 the same Pydantic classes that [`schemas/common.py`](#schemascommonpy)
 re-exports from `schemas/etf.py`, so the public surface is one
 definition with two names. Test code uses this surface
@@ -144,6 +174,49 @@ definition with two names. Test code uses this surface
   violation).
 - Returns `CandidatePoolLatestResponse(snapshot_date, row_count,
   content_hash, items)`.
+
+### `GET /api/v1/candidate-pool/latest/diff`
+
+- No query string. Resolves the latest `PUBLISHED` run and compares its
+  instrument-ID set with the most recent earlier published run.
+- Returns sorted `added`, `retained`, and `removed` UUID lists plus
+  `trade_date` and optional `previous_trade_date`.
+- Returns 404 when no published run exists. If there is no predecessor, the
+  response is 200 with every current instrument in `added` and the other two
+  lists empty. The predecessor search is bounded to the latest 100 published
+  runs.
+
+### `GET /api/v1/candidate-pool/{run_id}/diff`
+
+- `run_id` is a UUID path parameter. A missing or non-`PUBLISHED` run returns
+  404, while malformed UUID input is rejected by FastAPI with 422.
+- Otherwise it uses the same set-diff contract and predecessor bound as
+  `/latest/diff`; the endpoint is read-only.
+
+### `GET /api/v1/pipeline-runs/latest` and `/{run_id}`
+
+- Both routes are hard-coded to `job_key="personal_etf_daily_job"`.
+- `/latest` scans the 100 most recent stored runs and returns the first
+  matching job; `/` returns the matching UUID only. Missing runs and UUIDs
+  belonging to another job are intentionally indistinguishable 404s; malformed
+  UUIDs are 422.
+- `PipelineRunResponse.error_code` is currently always `null`; the storage
+  layer persists the human-readable `error_summary` but not a separate code.
+
+### `GET /api/v1/data-freshness`
+
+- Optional `expected_trade_date` is an ISO date; when omitted, the handler
+  snaps the local `date.today()` back to Friday on weekends. The response
+  combines active-universe, daily-bar, published-candidate, input-snapshot and
+  personal-job audit counts/IDs.
+- `status` precedence is `failed` (failed pipeline and no publication for the
+  expected date), `missing` (no publication ever), `stale` (latest publication
+  before expected), `partial` (expected publication but fewer bars than active
+  instruments), then `fresh` (expected publication and complete bar coverage).
+  A failed pipeline is therefore not surfaced as `failed` when an expected-date
+  publication already exists.
+- SQLAlchemy errors become a sanitized 500 response with detail
+  `Data freshness query failed`; database/driver details are not exposed.
 
 ## 5. Configuration
 

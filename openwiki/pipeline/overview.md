@@ -1,7 +1,7 @@
 ---
 type: Concept
 title: Pipeline overview
-description: Dagster assets, ETL service modules, the fixture_dev and cifang adapter boundaries, the declarative provider_catalog, and how the etf_* / etf_input_snapshot assets wire the three-layer Provider evidence model into the raw / core / analytics PostgreSQL schemas.
+description: Dagster assets, the guarded personal daily schedule and preflight, ETL service modules, the fixture_dev and cifang adapter boundaries, the declarative provider_catalog, and replay/backfill operations wired into the raw / core / analytics / ops PostgreSQL schemas.
 resource: /openwiki/pipeline/overview.md
 tags: [pipeline, dagster, adapters, etl, fixture_dev, cifang, provider-catalog]
 ---
@@ -28,6 +28,8 @@ apps/pipeline/src/invest_pipeline/
 ├── __init__.py
 ├── assets.py              # @dg.asset definitions (seed_instruments + etf_* + personal_*)
 ├── definitions.py         # dg.Definitions + personal_etf_daily_job
+├── schedules.py           # guarded Asia/Shanghai personal daily schedule
+├── daily_preflight.py     # pure run/skip/fail decision gate
 ├── config.py              # pydantic-settings Settings (universe + policy paths)
 ├── provider_catalog.py    # declarative provider role / capability registry
 ├── provider_factory.py    # build_provider() — runtime fixture_dev / cifangquant selection
@@ -92,13 +94,37 @@ dg.Definitions(
         personal_candidate_pool,   # partition-aligned candidate pool asset
     ],
     jobs=[personal_etf_daily_job],
+    schedules=[personal_etf_daily_schedule],
 )
 ```
 
+The registered [`personal_etf_daily_schedule`](../../apps/pipeline/src/invest_pipeline/schedules.py)
+triggers the same partitioned job only after its preflight gate passes.
 `make pipeline-dev` runs `dagster dev -m invest_pipeline.definitions`,
 and `make test-pipeline` runs `ruff check` + `pytest` + an import
 check. `make personal-daily-run` is the manual one-command driver for
 `personal_etf_daily_job` (see [Personal CLIs](#11-personal-clis)).
+
+### Guarded schedule and preflight
+
+[`daily_preflight.py`](../../apps/pipeline/src/invest_pipeline/daily_preflight.py)
+is an infrastructure-free decision gate. In order, it fails future dates,
+unknown providers and unavailable personal-universe data; skips weekends,
+already-published dates, already-running dates, and (when a caller supplies
+one) data that is not ready; and otherwise returns `run / ready`. Loader and
+data-check exceptions become the stable failure reasons
+`personal_universe_unavailable` and `data_check_failed`.
+
+[`schedules.py`](../../apps/pipeline/src/invest_pipeline/schedules.py)
+registers `personal_etf_daily_schedule` for
+`personal_etf_daily_job` at `10 16 * * 1-5` in `Asia/Shanghai`. It is
+`STOPPED` unless `INVEST_PIPELINE_AUTO_SCHEDULE_ENABLED=true` exactly
+(case-insensitive after trimming). A ready tick emits the stable
+`run_key=personal-etf-daily:{YYYY-MM-DD}`, the matching partition key, and
+`trade_date` / `trigger_type=schedule` tags. A skip returns a Dagster
+`SkipReason`; a failed preflight raises a runtime error. The schedule checks
+both an existing published candidate-pool run and a running
+`ops.pipeline_runs` row, providing two layers of single-run protection.
 
 ## 3. Asset graph
 
@@ -171,6 +197,13 @@ materializable as a single job.
   `load_candidate_pool_policy` and delegates to
   `candidate_pool_service.calculate_and_publish_candidate_pool`
   (see [Candidate pool service](#10-candidate-pool-service)).
+
+All six production assets in this job share the same `DailyPartitionsDefinition`
+starting at `2026-07-23`. The master-data assets derive `as_of` only from
+`context.partition_key` rather than `date.today()`, and the daily-bars assets
+reject explicit date arguments that do not match the partition. This keeps
+historical backfills on the requested trade date; `seed_instruments` remains
+the intentionally unpartitioned fixture-only path.
 
 ## 4. `fixture_dev` adapter
 
@@ -462,6 +495,17 @@ Two CLIs land alongside the personal pipeline:
   best-effort: database errors produce a warning but never replace the
   job's summary or exit code, and recorded failure summaries scrub the
   configured provider token.
+
+For operations, [`make reprocess-date`](../../Makefile) is the canonical
+single-date replay alias; it requires `TRADE_DATE` and delegates to the same
+manual CLI, so it preserves the pipeline's idempotency behavior. The
+`personal-backfill` target loops through an inclusive date range in
+chronological order, validates a maximum of 90 natural days, skips weekends,
+and aborts on the first failed weekday. Its shell-side date validation uses
+GNU `date -d`, so macOS operators need an equivalent GNU date implementation.
+The authentication and replay procedures are maintained in
+[`docs/runbooks/cifang-auth-failure.md`](../../docs/runbooks/cifang-auth-failure.md)
+and [`docs/runbooks/reprocess-trade-date.md`](../../docs/runbooks/reprocess-trade-date.md).
 
 ## 12. Provider factory
 

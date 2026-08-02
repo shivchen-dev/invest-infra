@@ -6,4 +6,4 @@ description: "Files and subdirectories in Testing And Ops."
 
 # Files
 
-- [Testing & operations](overview.md) - CI jobs (architecture, domain, storage unit/integration, migrations, pipeline, api, web), the AST-based architecture and migration-chain gates, mock vs integration split, compose stack, and the scheduled OpenWiki refresh.
+- [Testing & operations](overview.md) - CI jobs (architecture, domain, storage unit/integration, migrations, pipeline, API, personal-daily PostgreSQL e2e, and web), the AST-based architecture and migration-chain gates, mock vs integration tests, compose runtime, and the Cifang/replay/shadow-run operating procedures.

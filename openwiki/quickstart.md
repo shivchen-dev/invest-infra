@@ -1,7 +1,7 @@
 ---
 type: Reference
 title: OpenWiki Quickstart
-description: Entry point for the invest-infra OpenWiki knowledge base. Describes the modular-monolith layout, links every major concept page, and summarizes how to run, migrate, test, and inspect the codebase (including the personal daily pipeline and the opt-in CifangQuant smoke).
+description: Entry point for the invest-infra OpenWiki knowledge base. Describes the modular-monolith layout, links every major concept page, and summarizes local startup, migrations, personal daily scheduling and replay/backfill operations, testing, and opt-in CifangQuant validation.
 resource: /openwiki/quickstart.md
 tags: [quickstart, navigation, invest-infra]
 ---
@@ -57,14 +57,16 @@ Read these pages in order:
    calculator and the state machine that governs one calculation.
 5. [Storage overview](storage/overview.md) — repositories, the
    `UnitOfWork` and the three-layer Provider evidence model.
-6. [API overview](api/overview.md) — FastAPI routers (legacy + PR-09 ETF
-   + PR-09 candidate pool), Pydantic response shapes.
-7. [Pipeline overview](pipeline/overview.md) — Dagster `Definitions`,
-   the `etf_*` assets, adapter boundaries, and the declarative provider
-   catalog.
+6. [API overview](api/overview.md) — FastAPI routers (legacy + ETF +
+   candidate-pool latest/diff + pipeline-run status + data freshness),
+   Pydantic response shapes.
+7. [Pipeline overview](pipeline/overview.md) — Dagster `Definitions`, the
+   `etf_*` assets, adapter boundaries, the declarative provider catalog,
+   guarded personal scheduling, and replay/backfill operations.
 8. [Testing & operations](testing-and-ops/overview.md) — CI jobs, the
-   migration-chain AST gate, mock vs integration tests,
-   `compose.yaml`, the OpenWiki auto-update workflow.
+   migration-chain AST gate, mock vs integration tests, the PostgreSQL e2e,
+   compose runtime, replay/runbook controls, and the OpenWiki auto-update
+   workflow.
 
 ## 3. Running locally
 
@@ -112,7 +114,13 @@ The full list is in [`/Makefile`](../Makefile); the canonical ones are:
 - `make personal-daily-run` — manual `personal_etf_daily_job` driver
   (`TRADE_DATE=...`); fixture mode needs no opt-in, real-network mode
   needs `INVEST_PIPELINE_PROVIDER_KEY=cifangquant` +
-  `INVEST_PIPELINE_CIFANG_ENABLED=true` + `CONFIRM_NETWORK=1`.
+  `INVEST_PIPELINE_CIFANG_ENABLED=true` + `CONFIRM_NETWORK=1` and an
+  injected `INVEST_PIPELINE_CIFANG_API_KEY`.
+- `make reprocess-date TRADE_DATE=YYYY-MM-DD` — canonical single-date
+  replay; it delegates to `personal-daily-run` and requires `TRADE_DATE`.
+- `make personal-backfill START_DATE=YYYY-MM-DD END_DATE=YYYY-MM-DD` —
+  chronological weekday-only replay for an inclusive range of at most 90
+  natural days; weekends are skipped and the first failed weekday aborts.
 - `make lock` — regenerate `uv.lock` for every Python project.
 
 ## 5. Layer rules (at a glance)
@@ -191,6 +199,15 @@ the new surfaces. The `provider_catalog.py` declarative registry is
 unchanged (only `QUICKTINY_MCP` is registered today, `cifangquant`
 is exercised through the runtime factory rather than the catalog).
 
+Stage 2 aligns all six job assets to the same daily partition, registers a
+weekday `16:10 Asia/Shanghai` schedule, and adds preflight checks for future
+or weekend dates, provider/universe configuration, and duplicate published
+or running work. Automatic scheduling remains default-off unless
+`INVEST_PIPELINE_AUTO_SCHEDULE_ENABLED=true`. Operators inspect the new
+pipeline-run, candidate-pool diff, and data-freshness endpoints described in
+the [API overview](api/overview.md), and use the replay/backfill procedures in
+[Testing & operations](testing-and-ops/overview.md#7-operational-runbooks-and-validation).
+
 ## 7. Backlog
 
 - **Web pages for candidate pool and pipeline runs.** The FastAPI surface
@@ -204,7 +221,9 @@ is exercised through the runtime factory rather than the catalog).
   rolling-window liquidity and price-quality rules, and risk scoring;
   only the PR-08 minimum calculator (no-data / suspended / invalid_price
   / low_volume / low_amount) exists today.
-- **Operational runbooks (`docs/runbooks/...`).** M0-CODING-BRIEF
-  Phase 1-F lists five runbooks (provider-auth-failure,
-  daily-bars-missing, reprocess-partition, reject-candidate-pool,
-  database-restore); they are not yet checked in.
+- **Remaining operational runbooks.** The checked-in
+  [`cifang-auth-failure.md`](../docs/runbooks/cifang-auth-failure.md) and
+  [`reprocess-trade-date.md`](../docs/runbooks/reprocess-trade-date.md)
+  cover authentication recovery and single-date replay; the M0-CODING-BRIEF
+  still calls for `daily-bars-missing`, `reject-candidate-pool`, and
+  `database-restore` runbooks, which are not yet checked in.
