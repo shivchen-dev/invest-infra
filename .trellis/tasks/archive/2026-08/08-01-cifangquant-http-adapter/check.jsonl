@@ -1,5 +1,0 @@
-{"file":".trellis/spec/backend/quality-guidelines.md","reason":"Review changed pipeline code against project quality rules."}
-{"file":".trellis/spec/backend/error-handling.md","reason":"Check retry and classified failure behavior."}
-{"file":".trellis/spec/backend/logging-guidelines.md","reason":"Check that credentials cannot leak through logs or errors."}
-{"file":"docs/adr/0011-cifangquant-primary-etf-provider.md","reason":"Verify implementation remains within ADR-0011 blockers and API facts."}
-{"file":"docs/plan/invest-infra-v2-phase1-data-ingestion-plan.md","reason":"Verify the increment satisfies the Phase 1 provider checkpoint."}

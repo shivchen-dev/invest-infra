@@ -1,5 +1,0 @@
-{"file":".trellis/spec/backend/quality-guidelines.md","reason":"Pipeline implementation and verification rules."}
-{"file":".trellis/spec/backend/error-handling.md","reason":"Provider error and failure-path conventions."}
-{"file":".trellis/spec/backend/logging-guidelines.md","reason":"Secret and structured logging constraints."}
-{"file":"docs/adr/0011-cifangquant-primary-etf-provider.md","reason":"Cifang API, field, auth, and disabled-default contract."}
-{"file":"packages/domain/src/invest_domain/market_data/ports.py","reason":"Existing evidence tuple port and domain error contract."}

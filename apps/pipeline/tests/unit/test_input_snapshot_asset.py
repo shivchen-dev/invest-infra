@@ -8,13 +8,14 @@ from uuid import UUID
 import dagster as dg
 import invest_storage
 from invest_domain.input_snapshot import InputSnapshot
+from invest_domain.instruments import Instrument, InstrumentId, InstrumentType
 from invest_pipeline import assets
+from invest_pipeline.personal_universe import PersonalUniverse, ResolvedPersonalUniverse
 
 
 class _FakeUnitOfWork:
-    def __init__(self, instrument_ids: list[UUID]) -> None:
+    def __init__(self) -> None:
         self.session = MagicMock()
-        self.session.scalars.return_value.all.return_value = instrument_ids
 
     def __enter__(self) -> _FakeUnitOfWork:
         return self
@@ -23,26 +24,41 @@ class _FakeUnitOfWork:
         return None
 
 
-def test_etf_input_snapshot_uses_partition_date_and_all_etf_ids(
+def _instrument(symbol: str, instrument_id: UUID, exchange: str) -> Instrument:
+    return Instrument(
+        symbol=symbol,
+        name=f"{symbol} ETF",
+        exchange=exchange,
+        instrument_type=InstrumentType.ETF,
+        instrument_id=InstrumentId(instrument_id),
+    )
+
+
+def test_etf_input_snapshot_uses_partition_date_and_resolved_personal_ids(
     monkeypatch,
 ) -> None:
-    etf_ids = [
+    ids = [
         UUID("ffffffff-ffff-ffff-ffff-ffffffffffff"),
         UUID("00000000-0000-0000-0000-000000000001"),
     ]
-    uow = _FakeUnitOfWork(etf_ids)
+    uow = _FakeUnitOfWork()
     engine = MagicMock()
+    universe = PersonalUniverse(version=1, symbols=("510300", "510500"), content_hash="a" * 64)
+    resolved = ResolvedPersonalUniverse(
+        instruments=(
+            _instrument("510300", ids[0], "SSE"),
+            _instrument("510500", ids[1], "SZSE"),
+        )
+    )
     captured: dict[str, Any] = {}
 
     monkeypatch.setattr(assets, "build_engine", lambda _url: engine)
     monkeypatch.setattr(assets, "session_factory", lambda _engine: MagicMock())
     monkeypatch.setattr(invest_storage, "SqlAlchemyUnitOfWork", lambda _factory: uow)
+    monkeypatch.setattr(assets, "load_personal_universe", lambda _path: universe)
+    monkeypatch.setattr(assets, "resolve_personal_universe", lambda _u, _lookup: resolved)
 
-    def _create(
-        uow_factory,
-        snapshot_date: date,
-        instrument_ids: list[UUID],
-    ) -> InputSnapshot:
+    def _create(uow_factory, snapshot_date: date, instrument_ids: list[UUID]) -> InputSnapshot:
         captured["uow_factory"] = uow_factory
         captured["snapshot_date"] = snapshot_date
         captured["instrument_ids"] = instrument_ids
@@ -54,21 +70,16 @@ def test_etf_input_snapshot_uses_partition_date_and_all_etf_ids(
         )
 
     monkeypatch.setattr(assets, "create_input_snapshot", _create)
-    context = dg.build_asset_context(partition_key="2026-07-31")
-
-    result = assets.etf_input_snapshot.op.compute_fn.decorated_fn(context)
+    result = assets.etf_input_snapshot.op.compute_fn.decorated_fn(
+        dg.build_asset_context(partition_key="2026-07-31")
+    )
 
     assert captured["snapshot_date"] == date(2026, 7, 31)
-    assert captured["instrument_ids"] == etf_ids
+    assert captured["instrument_ids"] == ids
     assert callable(captured["uow_factory"])
-    uow.session.scalars.assert_called_once()
-    statement = uow.session.scalars.call_args.args[0]
-    sql = str(statement)
-    assert "core.instruments" in sql
-    assert "instrument_type" in sql
-    assert "is_active" not in sql
     assert result.metadata["partition_key"] == "2026-07-31"
     assert result.metadata["row_count"] == 2
+    assert result.metadata["universe_size"] == 2
     engine.dispose.assert_called_once_with()
 
 

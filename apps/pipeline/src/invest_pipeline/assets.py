@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+from collections.abc import Sequence
 from datetime import date
+from pathlib import Path
+from typing import Any
 
 import dagster as dg
-from invest_domain.instruments import InstrumentType
+from invest_domain.instruments import Instrument
 from invest_storage.database import build_engine, session_factory
 from invest_storage.models import InstrumentRow
 from invest_storage.repositories import (
@@ -14,11 +17,17 @@ from invest_storage.repositories import (
     SqlAlchemyProviderAttemptRepository,
     SqlAlchemyProviderBatchRepository,
     SqlAlchemyProviderRequestRepository,
+    _row_to_instrument,
 )
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from invest_pipeline.adapters import FixtureDevInstrumentProvider
+from invest_pipeline.candidate_pool_service import (
+    CandidatePoolSnapshotNotFoundError,
+    calculate_and_publish_candidate_pool,
+    load_candidate_pool_policy,
+)
 from invest_pipeline.config import get_settings
 from invest_pipeline.etf_daily_bars import (
     upsert_etf_daily_bars,
@@ -29,10 +38,23 @@ from invest_pipeline.etf_instruments import (
     write_etf_instruments_raw,
 )
 from invest_pipeline.input_snapshot import create_input_snapshot
+from invest_pipeline.personal_universe import (
+    load_personal_universe,
+    resolve_personal_universe,
+)
 from invest_pipeline.provider_factory import build_provider
 
 _ETF_INPUT_SNAPSHOT_PARTITIONS = dg.DailyPartitionsDefinition(
     start_date="2026-07-23"
+)
+
+# ``assets.py`` lives four levels below the repository root:
+# parents[0]=invest_pipeline, [1]=src, [2]=pipeline, [3]=apps,
+# [4]=invest-infra. The personal universe YAML ships at the repo root.
+_PERSONAL_UNIVERSE_PATH = (
+    Path(__file__).resolve().parents[4]
+    / "config"
+    / "personal-universe.yaml"
 )
 
 
@@ -252,6 +274,7 @@ _DEFAULT_DAILY_BARS_END = date(2026, 7, 30)
     group_name="market_data",
     compute_kind="python",
     deps=[etf_instruments_raw],
+    partitions_def=_ETF_INPUT_SNAPSHOT_PARTITIONS,
 )
 def etf_daily_bars_raw(
     context,
@@ -261,9 +284,11 @@ def etf_daily_bars_raw(
 ) -> dg.MaterializeResult:
     """Persist the PR-02 three-layer evidence bundle for ETF daily bars.
 
-    Calls the ``fixture_dev`` adapter for the configured universe
-    (the 12 SSE / SZSE ETFs) over ``[start_date, end_date]``, hands
-    the request / attempt / batch triple to
+    Calls the configured Provider for the personal ETF universe
+    (the symbols declared in ``config/personal-universe.yaml``) over
+    the one-day window ``[trade_date, trade_date]`` where
+    ``trade_date`` is the Dagster partition key, hands the request /
+    attempt / batch triple to
     :func:`invest_pipeline.etf_daily_bars.write_etf_daily_bars_raw`,
     and surfaces the storage-assigned UUIDs through Dagster metadata.
 
@@ -273,12 +298,23 @@ def etf_daily_bars_raw(
     ``symbol -> core.instruments.id`` via the partial unique business
     key). A failed attempt persists the request + attempt only — no
     batch row is created.
+
+    The partition definition is shared with :func:`etf_input_snapshot`
+    and :func:`personal_candidate_pool` so the trade date the Provider
+    is asked for is always the snapshot's partition date, and
+    ``personal_candidate_pool`` has a partition-aligned input.
     """
 
     provider = build_provider(get_settings())
-    start = start_date or _DEFAULT_DAILY_BARS_START
-    end = end_date or _DEFAULT_DAILY_BARS_END
-    symbols = [item.symbol for item in provider.list_instruments()]
+    trade_date = date.fromisoformat(context.partition_key)
+    if (start_date is not None and start_date != trade_date) or (
+        end_date is not None and end_date != trade_date
+    ):
+        raise ValueError("daily-bars date arguments must match the partition date")
+    start = trade_date
+    end = trade_date
+    universe = load_personal_universe(_PERSONAL_UNIVERSE_PATH)
+    symbols = list(universe.symbols)
 
     engine = build_engine(get_settings().database_url)
     factory = session_factory(engine)
@@ -319,6 +355,7 @@ def etf_daily_bars_raw(
             "record_count": result.record_count,
             "start_date": start.isoformat(),
             "end_date": end.isoformat(),
+            "partition_key": context.partition_key,
             "symbol_count": len(symbols),
         }
     )
@@ -328,6 +365,7 @@ def etf_daily_bars_raw(
     group_name="market_data",
     compute_kind="python",
     deps=[etf_daily_bars_raw],
+    partitions_def=_ETF_INPUT_SNAPSHOT_PARTITIONS,
 )
 def etf_daily_bars(
     context,
@@ -352,12 +390,23 @@ def etf_daily_bars(
     :class:`MaterializeResult` with ``inserted=0`` and a ``skipped``
     note rather than raising, mirroring the etf_instruments asset's
     "no retry loop on contract failure" stance.
+
+    The partition definition is shared with :func:`etf_input_snapshot`
+    and :func:`personal_candidate_pool` so the trade date the
+    downstream Candidate Pool asset consumes is always the snapshot
+    partition date.
     """
 
     provider = build_provider(get_settings())
-    start = start_date or _DEFAULT_DAILY_BARS_START
-    end = end_date or _DEFAULT_DAILY_BARS_END
-    symbols = [item.symbol for item in provider.list_instruments()]
+    trade_date = date.fromisoformat(context.partition_key)
+    if (start_date is not None and start_date != trade_date) or (
+        end_date is not None and end_date != trade_date
+    ):
+        raise ValueError("daily-bars date arguments must match the partition date")
+    start = trade_date
+    end = trade_date
+    universe = load_personal_universe(_PERSONAL_UNIVERSE_PATH)
+    symbols = list(universe.symbols)
     request_key = (
         f"daily-bars-{start.isoformat()}-{end.isoformat()}-"
         f"{'-'.join(symbols)}"
@@ -415,6 +464,7 @@ def etf_daily_bars(
             "request_key": request_key,
             "start_date": start.isoformat(),
             "end_date": end.isoformat(),
+            "partition_key": context.partition_key,
         }
     )
 
@@ -426,35 +476,67 @@ def etf_daily_bars(
     partitions_def=_ETF_INPUT_SNAPSHOT_PARTITIONS,
 )
 def etf_input_snapshot(context) -> dg.MaterializeResult:
+    """Build the personal-universe-aligned :class:`InputSnapshot` for the partition.
+
+    Loads ``config/personal-universe.yaml`` via
+    :func:`invest_pipeline.personal_universe.load_personal_universe`,
+    resolves each configured symbol against exactly one ETF
+    :class:`Instrument` in ``core.instruments`` via
+    :func:`invest_pipeline.personal_universe.resolve_personal_universe`,
+    and persists the resulting ``instrument_ids`` as the
+    :class:`InputSnapshot` for the partition date. The resolver
+    guarantees:
+
+    * each symbol maps to **exactly one** active ETF on SSE / SZSE;
+    * missing, invalid (non-ETF / non-SSE / non-SZSE) and ambiguous
+      (multiple valid candidates) symbols raise a
+      :class:`PersonalUniverseError` subclass so a stale personal
+      universe file is surfaced loudly rather than silently
+      producing a partial snapshot;
+    * the snapshot ``row_count`` equals ``len(universe.symbols)`` so
+      the downstream :func:`personal_candidate_pool` asset receives
+      exactly the personal universe it expects.
+
+    Business trade date comes from ``context.partition_key`` only;
+    a back-fill run for a historical partition cannot silently
+    re-target today's data.
+    """
+
     from invest_storage import SqlAlchemyUnitOfWork
 
     snapshot_date = date.fromisoformat(context.partition_key)
+    universe = load_personal_universe(_PERSONAL_UNIVERSE_PATH)
+
     engine = build_engine(get_settings().database_url)
     factory = session_factory(engine)
     try:
-        with SqlAlchemyUnitOfWork(factory) as uow:
-            instrument_ids = list(
-                uow.session.scalars(
-                    select(InstrumentRow.id)
-                    .where(
-                        InstrumentRow.instrument_type == InstrumentType.ETF.value
-                    )
-                    .order_by(InstrumentRow.id.asc())
+        def _uow_factory() -> Any:
+            return SqlAlchemyUnitOfWork(factory)
+
+        with _uow_factory() as uow:
+            def _lookup(symbol: str) -> Sequence[Instrument]:
+                rows = uow.session.scalars(
+                    select(InstrumentRow).where(InstrumentRow.symbol == symbol)
                 ).all()
-            )
+                return [_row_to_instrument(row) for row in rows]
+
+            resolved = resolve_personal_universe(universe, _lookup)
+
         snapshot = create_input_snapshot(
-            uow_factory=lambda: SqlAlchemyUnitOfWork(factory),
+            uow_factory=_uow_factory,
             snapshot_date=snapshot_date,
-            instrument_ids=instrument_ids,
+            instrument_ids=list(resolved.instrument_ids),
         )
     finally:
         engine.dispose()
 
     context.log.info(
-        "etf_input_snapshot: snapshot_date=%s row_count=%s content_hash=%s",
+        "etf_input_snapshot: snapshot_date=%s row_count=%s content_hash=%s "
+        "universe_size=%s",
         snapshot.snapshot_date.isoformat(),
         snapshot.row_count,
         snapshot.content_hash,
+        len(universe.symbols),
     )
     return dg.MaterializeResult(
         metadata={
@@ -463,5 +545,107 @@ def etf_input_snapshot(context) -> dg.MaterializeResult:
             "partition_key": context.partition_key,
             "row_count": snapshot.row_count,
             "content_hash": snapshot.content_hash,
+            "universe_size": len(universe.symbols),
+        }
+    )
+
+
+# Reuse the upstream daily partition definition so the partition dates /
+# range are guaranteed to align with the etf_input_snapshot asset.
+_PERSONAL_CANDIDATE_POOL_PARTITIONS = _ETF_INPUT_SNAPSHOT_PARTITIONS
+
+# ``assets.py`` lives four levels below the repository root:
+# parents[0]=invest_pipeline, [1]=src, [2]=pipeline, [3]=apps,
+# [4]=invest-infra. The policy YAML ships at the repo root.
+_PERSONAL_CANDIDATE_POOL_POLICY_PATH = (
+    Path(__file__).resolve().parents[4]
+    / "config"
+    / "candidate-pool-personal.yaml"
+)
+
+
+@dg.asset(
+    group_name="candidate_pool",
+    compute_kind="python",
+    deps=[etf_input_snapshot, etf_daily_bars],
+    partitions_def=_PERSONAL_CANDIDATE_POOL_PARTITIONS,
+)
+def personal_candidate_pool(context) -> dg.MaterializeResult:
+    """Run the personal Candidate Pool service for the partition trade date.
+
+    PR-3 slice 2: a Dagster-only wrapper around the existing
+    :func:`invest_pipeline.candidate_pool_service.calculate_and_publish_candidate_pool`
+    service. The asset:
+
+    * Reads ``context.partition_key`` as the trade date (no
+      ``date.today()`` fallback) so a back-fill run for a historical
+      partition cannot silently re-target today's data.
+    * Resolves the persisted :class:`InputSnapshot` for that date via
+      :meth:`InputSnapshotRepository.list_by_date`; raises
+      :class:`CandidatePoolSnapshotNotFoundError` when no snapshot row
+      exists so the upstream ``etf_input_snapshot`` asset can be
+      re-materialised before retrying.
+    * Loads ``config/candidate-pool-personal.yaml`` through
+      :func:`load_candidate_pool_policy` and delegates the calculator +
+      persistence + state-machine transitions to the service.
+    * Surfaces ``run_id``, ``trade_date``, ``status``, ``input_count``,
+      ``included_count`` and ``item_count`` through Dagster metadata.
+
+    Depends on :func:`etf_input_snapshot` so the snapshot row exists by
+    the time this asset runs and on :func:`etf_daily_bars` so the daily
+    bars the calculator consumes are already persisted for the
+    partition date.
+    """
+
+    trade_date = date.fromisoformat(context.partition_key)
+    policy = load_candidate_pool_policy(_PERSONAL_CANDIDATE_POOL_POLICY_PATH)
+
+    engine = build_engine(get_settings().database_url)
+    factory = session_factory(engine)
+    try:
+        from invest_storage import SqlAlchemyUnitOfWork
+
+        def _uow_factory() -> Any:
+            return SqlAlchemyUnitOfWork(factory)
+
+        with _uow_factory() as lookup_uow:
+            snapshots = lookup_uow.input_snapshot_repository.list_by_date(
+                trade_date
+            )
+        if not snapshots:
+            raise CandidatePoolSnapshotNotFoundError(
+                f"no InputSnapshot persisted for trade_date="
+                f"{trade_date.isoformat()}; re-materialise etf_input_snapshot "
+                "for this partition before retrying personal_candidate_pool"
+            )
+        snapshot_id = snapshots[-1].id
+
+        result = calculate_and_publish_candidate_pool(
+            uow_factory=_uow_factory,
+            trade_date=trade_date,
+            snapshot_id=snapshot_id,
+            policy=policy,
+        )
+    finally:
+        engine.dispose()
+
+    context.log.info(
+        "personal_candidate_pool: trade_date=%s snapshot_id=%s status=%s "
+        "run_id=%s included=%s/%s",
+        result.run.trade_date.isoformat(),
+        result.run.input_snapshot_id,
+        result.run.status.value,
+        result.run.id,
+        result.run.included_count,
+        result.run.input_row_count,
+    )
+    return dg.MaterializeResult(
+        metadata={
+            "run_id": str(result.run.id),
+            "trade_date": result.run.trade_date.isoformat(),
+            "status": result.run.status.value,
+            "input_count": result.run.input_row_count,
+            "included_count": result.run.included_count,
+            "item_count": len(result.result.items),
         }
     )

@@ -8,6 +8,7 @@ from invest_pipeline.assets import (
     etf_input_snapshot,
     etf_instruments,
     etf_instruments_raw,
+    personal_candidate_pool,
     seed_instruments,
 )
 
@@ -19,5 +20,6 @@ defs = dg.Definitions(
         etf_input_snapshot,
         etf_daily_bars_raw,
         etf_daily_bars,
+        personal_candidate_pool,
     ]
 )

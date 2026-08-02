@@ -1,0 +1,11 @@
+algorithm:
+  key: minimum_v1
+  version: 1
+  parameter_set_key: personal_default_v1
+
+eligibility:
+  min_volume: 100000
+  min_amount: 10000000
+
+selection:
+  max_candidates: 50
