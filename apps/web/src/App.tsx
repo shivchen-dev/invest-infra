@@ -2,6 +2,7 @@ import { AppShell } from "./components/AppShell";
 import { CandidatePoolPage } from "./pages/CandidatePoolPage";
 import { DashboardPage } from "./pages/DashboardPage";
 import { EtfDetailPage } from "./pages/EtfDetailPage";
+import { OperationsPage } from "./pages/OperationsPage";
 import { PlaceholderPage } from "./pages/PlaceholderPage";
 import { Router } from "./router";
 
@@ -17,12 +18,7 @@ const ROUTES = [
   },
   {
     path: "/operations",
-    element: (
-      <PlaceholderPage
-        title="Operations"
-        description="Pipeline Run 历史与 runbook 提示将随 Web PR-05 落地。"
-      />
-    ),
+    element: <OperationsPage />,
   },
 ];
 
