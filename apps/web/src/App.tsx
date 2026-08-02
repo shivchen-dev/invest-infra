@@ -1,51 +1,50 @@
-import { useQuery } from "@tanstack/react-query";
-import { fetchInstruments } from "./api";
+import { AppShell } from "./components/AppShell";
+import { DashboardPage } from "./pages/DashboardPage";
+import { PlaceholderPage } from "./pages/PlaceholderPage";
+import { Router } from "./router";
+
+const ROUTES = [
+  { path: "/dashboard", element: <DashboardPage /> },
+  {
+    path: "/candidate-pool",
+    element: (
+      <PlaceholderPage
+        title="候选池"
+        description="入选 / 排除 / 全部 Tab、过滤与行展开将随 Web PR-04 一同上线。"
+      />
+    ),
+  },
+  {
+    path: "/etf/:instrumentId",
+    element: (
+      <PlaceholderPage
+        title="ETF 详情"
+        description="主数据、日行情表与 SVG 走势图将随 Web PR-05 落地。"
+      />
+    ),
+  },
+  {
+    path: "/operations",
+    element: (
+      <PlaceholderPage
+        title="Operations"
+        description="Pipeline Run 历史与 runbook 提示将随 Web PR-05 落地。"
+      />
+    ),
+  },
+];
+
+const NOT_FOUND = (
+  <PlaceholderPage
+    title="页面不存在"
+    description="请通过左侧导航选择目标页面。"
+  />
+);
 
 export function App() {
-  const query = useQuery({
-    queryKey: ["instruments"],
-    queryFn: fetchInstruments,
-  });
-
   return (
-    <main className="shell">
-      <header>
-        <p className="eyebrow">INVEST INFRA V2</p>
-        <h1>投研数据工作台</h1>
-        <p className="subtitle">首个垂直切片：Provider → PostgreSQL → FastAPI → React</p>
-      </header>
-
-      <section className="panel">
-        <div className="panelHeader">
-          <h2>标的主数据</h2>
-          <span>{query.data?.items.length ?? 0} 条</span>
-        </div>
-
-        {query.isPending && <p>正在读取数据……</p>}
-        {query.isError && <p className="error">{query.error.message}</p>}
-        {query.data && (
-          <table>
-            <thead>
-              <tr>
-                <th>代码</th>
-                <th>名称</th>
-                <th>交易所</th>
-                <th>类型</th>
-              </tr>
-            </thead>
-            <tbody>
-              {query.data.items.map((item) => (
-                <tr key={item.symbol}>
-                  <td>{item.symbol}</td>
-                  <td>{item.name}</td>
-                  <td>{item.exchange}</td>
-                  <td>{item.instrument_type}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        )}
-      </section>
-    </main>
+    <AppShell>
+      <Router routes={ROUTES} fallback={NOT_FOUND} />
+    </AppShell>
   );
 }
