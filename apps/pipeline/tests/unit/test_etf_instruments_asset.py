@@ -22,8 +22,13 @@ three contracts the spec calls out:
 
 from __future__ import annotations
 
+import ast
+import inspect
+import json
 import unittest
 from datetime import UTC, date, datetime
+from hashlib import sha256
+from pathlib import Path
 from types import TracebackType
 from typing import Any
 from unittest.mock import MagicMock
@@ -33,6 +38,10 @@ from invest_domain.instruments import (
     Instrument,
     InstrumentStatus,
     InstrumentType,
+)
+from invest_domain.market_data.models import (
+    ProviderAttemptStatus,
+    ProviderBatchStatus,
 )
 from invest_pipeline.adapters.fixture_dev.adapter import (
     FixtureDevInstrumentProvider,
@@ -345,7 +354,7 @@ class EtfInstrumentsRawAssetTest(unittest.TestCase):
 
         request_row = request_rows[0]
         self.assertEqual(request_row.provider_key, "fixture_dev")
-        self.assertEqual(request_row.dataset_key, "instruments")
+        self.assertEqual(request_row.dataset_key, "etf_instruments")
         self.assertEqual(
             request_row.request_key, f"instruments-{self._as_of.isoformat()}"
         )
@@ -368,7 +377,7 @@ class EtfInstrumentsRawAssetTest(unittest.TestCase):
         self.assertEqual(batch_row.provider_request_id, request_row.id)
         self.assertEqual(batch_row.provider_attempt_id, attempt_row.id)
         self.assertEqual(batch_row.provider_key, "fixture_dev")
-        self.assertEqual(batch_row.dataset_key, "instruments")
+        self.assertEqual(batch_row.dataset_key, "etf_instruments")
         self.assertEqual(
             batch_row.record_count, len(self._provider.list_instruments())
         )
@@ -513,7 +522,7 @@ class EtfInstrumentsAssetTest(unittest.TestCase):
         self._stored_request = StoredProviderRequest(
             id=self._stored_request_id,
             provider_key="fixture_dev",
-            dataset_key="instruments",
+            dataset_key="etf_instruments",
             request_key=f"instruments-{self._as_of.isoformat()}",
             request_params={"as_of": self._as_of.isoformat()},
             status="succeeded",
@@ -613,6 +622,384 @@ class EtfInstrumentsAssetTest(unittest.TestCase):
                 as_of=self._as_of,
                 unit_of_work_factory=failure_factory,
             )
+
+
+class EtfInstrumentsFormalDatasetKeyRegressionTest(unittest.TestCase):
+    """Regression: ``etf_instruments`` must look up by the formal ``"etf_instruments"`` key.
+
+    Before this fix :func:`invest_pipeline.etf_instruments.upsert_etf_instruments`
+    and the downstream ``etf_instruments`` Dagster asset defaulted to
+    ``dataset_key="instruments"`` while the CifangQuant adapter (and
+    every future real provider) stamps the persisted request with the
+    formal ``"etf_instruments"`` key. The mismatch caused the formal
+    CifangQuant path to silently skip every ``core.instruments``
+    upsert — the candidate-pool downstream of it kept reading the
+    stale fixture rows instead of the 862-row real master data.
+
+    The tests below pin the unified formal key end-to-end:
+
+    * :func:`upsert_etf_instruments`' default ``dataset_key`` is
+      ``"etf_instruments"`` (no caller has to pass it explicitly).
+    * A CifangQuant-shaped provider round-trip
+      (``write_etf_instruments_raw`` → ``upsert_etf_instruments``)
+      flows through the same logical key the asset's
+      ``provider_requests.get_by_logical_key`` lookup uses.
+    * The :func:`invest_pipeline.assets.etf_instruments` source body
+      no longer hard-codes ``dataset_key="instruments"`` — the AST
+      check guards against the legacy string sneaking back in.
+    """
+
+    def test_default_dataset_key_is_formal_etf_instruments(self) -> None:
+        import inspect
+
+        default = inspect.signature(upsert_etf_instruments).parameters[
+            "dataset_key"
+        ].default
+        self.assertEqual(default, "etf_instruments")
+
+    def test_upsert_lookup_uses_formal_etf_instruments_for_cifangquant(self) -> None:
+        """A CifangQuant run must be found by the formal ``"etf_instruments"`` key.
+
+        The fake ``request_lookup`` callback is parameterised by the
+        caller-supplied kwargs so we can prove the service asks for
+        ``dataset_key="etf_instruments"`` (and not the legacy
+        ``"instruments"`` string). Returning the persisted request
+        only when the lookup uses the formal key is what closes the
+        production bug.
+        """
+
+        captured: dict[str, Any] = {}
+        provider_key = "cifangquant"
+        request_key = f"instruments-{self._as_of().isoformat()}"
+        stored_attempt = StoredProviderAttempt(
+            id=uuid4(),
+            provider_request_id=uuid4(),
+            attempt_no=1,
+            started_at=datetime(2026, 7, 31, 8, 0, 0, tzinfo=UTC),
+            finished_at=datetime(2026, 7, 31, 8, 0, 1, tzinfo=UTC),
+            status="succeeded",
+            response_payload_sha256="abc",
+            response_payload_json=self._records_payload(),
+        )
+
+        def _lookup(**kwargs: Any) -> StoredProviderRequest | None:
+            captured["provider_key"] = kwargs.get("provider_key")
+            captured["dataset_key"] = kwargs.get("dataset_key")
+            captured["request_key"] = kwargs.get("request_key")
+            if (
+                kwargs.get("provider_key") == provider_key
+                and kwargs.get("dataset_key") == "etf_instruments"
+                and kwargs.get("request_key") == request_key
+            ):
+                return StoredProviderRequest(
+                    id=uuid4(),
+                    provider_key=provider_key,
+                    dataset_key="etf_instruments",
+                    request_key=request_key,
+                    request_params={"as_of": self._as_of().isoformat()},
+                    status="succeeded",
+                )
+            return None
+
+        session = _build_session()
+        factory = _make_session_factory(session)
+        upsert_calls: list[list[Instrument]] = []
+        uow_factory = _build_uow_factory(
+            session,
+            request_lookup=_lookup,
+            attempt_list=_make_attempt_list([stored_attempt]),
+            upsert_records=upsert_calls,
+        )
+
+        count = upsert_etf_instruments(
+            factory,
+            as_of=self._as_of(),
+            provider_key=provider_key,
+            unit_of_work_factory=uow_factory,
+        )
+
+        self.assertEqual(captured["dataset_key"], "etf_instruments")
+        self.assertEqual(captured["provider_key"], provider_key)
+        self.assertEqual(captured["request_key"], request_key)
+        self.assertEqual(count, len(self._provider().list_instruments()))
+        self.assertEqual(len(upsert_calls), 1)
+        symbols = [item.symbol for item in upsert_calls[0]]
+        self.assertIn("510300", symbols)
+
+    def test_upsert_misses_legacy_instruments_key_for_cifangquant(self) -> None:
+        """Pin: a stale ``dataset_key="instruments"`` lookup MUST NOT find the request.
+
+        The production bug surfaced because the asset looked up the
+        request with the legacy ``"instruments"`` key while real
+        providers stamp ``"etf_instruments"``. This test guards the
+        inverse: even if a future refactor regresses the asset to
+        ``"instruments"``, the fake's ``request_lookup`` will return
+        ``None`` (mimicking the real DB) and the upsert raises
+        :class:`LookupError` rather than silently upserting zero rows.
+        """
+
+        provider_key = "cifangquant"
+        request_key = f"instruments-{self._as_of().isoformat()}"
+
+        def _lookup(**kwargs: Any) -> StoredProviderRequest | None:
+            if kwargs.get("dataset_key") != "etf_instruments":
+                return None
+            return StoredProviderRequest(
+                id=uuid4(),
+                provider_key=provider_key,
+                dataset_key="etf_instruments",
+                request_key=request_key,
+                request_params={"as_of": self._as_of().isoformat()},
+                status="succeeded",
+            )
+
+        session = _build_session()
+        factory = _make_session_factory(session)
+        uow_factory = _build_uow_factory(
+            session,
+            request_lookup=_lookup,
+            attempt_list=_make_attempt_list([]),
+            upsert_records=[],
+        )
+
+        with self.assertRaises(LookupError):
+            upsert_etf_instruments(
+                factory,
+                as_of=self._as_of(),
+                provider_key=provider_key,
+                dataset_key="instruments",
+                unit_of_work_factory=uow_factory,
+            )
+
+    def test_cifangquant_shaped_provider_round_trip_into_core_instruments(
+        self,
+    ) -> None:
+        """End-to-end: a CifangQuant-shaped provider produces core.instruments upserts.
+
+        The stub provider mirrors
+        :class:`invest_pipeline.adapters.cifang.adapter.CifangQuantInstrumentProvider`
+        by stamping ``dataset_key="etf_instruments"`` and
+        ``provider_key="cifangquant"``. The test runs
+        :func:`write_etf_instruments_raw` against the fake UoW and then
+        :func:`upsert_etf_instruments` with no caller-supplied
+        ``dataset_key`` — the service's default
+        ``dataset_key="etf_instruments"`` must find the persisted
+        request and forward the records into
+        :meth:`SqlAlchemyInstrumentRepository.upsert_many`.
+        """
+
+        provider = _CifangQuantShapedProvider(
+            instruments=tuple(self._provider().list_instruments())
+        )
+        session = _build_session()
+        factory = _make_session_factory(session)
+
+        raw_result = write_etf_instruments_raw(
+            provider,
+            factory,
+            as_of=self._as_of(),
+            unit_of_work_factory=_build_uow_factory(
+                session,
+                request_lookup=lambda **_: None,
+                attempt_list=_make_attempt_list([]),
+                upsert_records=[],
+            ),
+        )
+        self.assertEqual(raw_result.request_status, "succeeded")
+        self.assertEqual(raw_result.attempt_status, "succeeded")
+        self.assertEqual(
+            raw_result.record_count,
+            len(self._provider().list_instruments()),
+        )
+
+        # The persisted request must carry the formal key the asset
+        # looks up downstream.
+        request_rows = [
+            row
+            for row in session.added_rows
+            if isinstance(row, ProviderRequestRow)
+        ]
+        self.assertEqual(len(request_rows), 1)
+        persisted = request_rows[0]
+        self.assertEqual(persisted.provider_key, "cifangquant")
+        self.assertEqual(persisted.dataset_key, "etf_instruments")
+
+        upsert_calls: list[list[Instrument]] = []
+        uow_factory = _build_uow_factory(
+            session,
+            request_lookup=_lookup_matching_persisted(session),
+            attempt_list=_attempt_list_for_persisted(session),
+            upsert_records=upsert_calls,
+        )
+
+        count = upsert_etf_instruments(
+            factory,
+            as_of=self._as_of(),
+            provider_key="cifangquant",
+            unit_of_work_factory=uow_factory,
+        )
+
+        self.assertEqual(count, len(self._provider().list_instruments()))
+        self.assertEqual(len(upsert_calls), 1)
+        self.assertEqual(
+            sorted(item.symbol for item in upsert_calls[0]),
+            sorted(item.symbol for item in self._provider().list_instruments()),
+        )
+
+    def test_etf_instruments_asset_body_uses_formal_etf_instruments(self) -> None:
+        """Source-level guard: the asset must not hard-code the legacy ``"instruments"`` key.
+
+        Without this check a future refactor could quietly reintroduce
+        the bug by changing the asset body back to
+        ``dataset_key="instruments"``. Both the formal string must be
+        present (so the lookup uses it) and the legacy string must be
+        absent from the lookup kwargs.
+        """
+
+        from invest_pipeline import assets
+
+        src_path = Path(inspect.getsourcefile(assets) or "").resolve()
+        source_text = src_path.read_text(encoding="utf-8")
+        tree = ast.parse(source_text)
+        body_segment = ""
+        for node in tree.body:
+            if isinstance(node, ast.FunctionDef) and node.name == "etf_instruments":
+                body_segment = ast.get_source_segment(source_text, node) or ""
+                break
+        self.assertTrue(body_segment, "etf_instruments asset source must be parseable")
+        self.assertIn('dataset_key="etf_instruments"', body_segment)
+        self.assertNotIn('dataset_key="instruments"', body_segment)
+
+    # -- helpers --------------------------------------------------------
+
+    def _as_of(self) -> date:
+        return date(2026, 7, 31)
+
+    def _provider(self) -> FixtureDevInstrumentProvider:
+        return FixtureDevInstrumentProvider()
+
+    def _records_payload(self) -> str:
+        return _serialize_records(tuple(self._provider().list_instruments()))
+
+
+def _lookup_matching_persisted(
+    session: MagicMock,
+) -> Any:
+    """Return a ``request_lookup`` callback that matches the just-persisted row.
+
+    Walks ``session.added_rows`` to find the unique
+    :class:`ProviderRequestRow` the raw write produced and returns a
+    :class:`StoredProviderRequest` projection. The callback only
+    matches when the caller passes the same logical
+    ``(provider_key, dataset_key, request_key)`` so a future refactor
+    that passes a wrong key surfaces as a :class:`LookupError`.
+    """
+
+    def _factory(**kwargs: Any) -> StoredProviderRequest | None:
+        for row in session.added_rows:
+            if not isinstance(row, ProviderRequestRow):
+                continue
+            if (
+                row.provider_key == kwargs.get("provider_key")
+                and row.dataset_key == kwargs.get("dataset_key")
+                and row.request_key == kwargs.get("request_key")
+            ):
+                return StoredProviderRequest(
+                    id=row.id,
+                    provider_key=row.provider_key,
+                    dataset_key=row.dataset_key,
+                    request_key=row.request_key,
+                    request_params=dict(row.request_params or {}),
+                    requested_by_run_id=row.requested_by_run_id,
+                    status=row.status,
+                )
+        return None
+
+    return _factory
+
+
+def _attempt_list_for_persisted(session: MagicMock) -> Any:
+    """Return an ``attempt_list`` callback that surfaces the persisted attempt."""
+
+    def _factory(
+        request_id: UUID, *, limit: int = 100, offset: int = 0
+    ) -> list[StoredProviderAttempt]:
+        matched = sorted(
+            (
+                row
+                for row in session.added_rows
+                if isinstance(row, ProviderAttemptRow)
+                and row.provider_request_id == request_id
+            ),
+            key=lambda row: row.attempt_no,
+        )
+        return [
+            StoredProviderAttempt(
+                id=row.id,
+                provider_request_id=row.provider_request_id,
+                attempt_no=row.attempt_no,
+                started_at=row.started_at,
+                finished_at=row.finished_at,
+                status=row.status,
+                error_stage=row.error_stage,
+                error_code=row.error_code,
+                error_message=row.error_message,
+                response_payload_sha256=row.response_payload_sha256,
+                response_payload_json=row.response_payload_json,
+            )
+            for row in matched[offset : offset + limit]
+        ]
+
+    return _factory
+
+
+class _CifangQuantShapedProvider:
+    """Minimal CifangQuant-shaped stub for end-to-end round-trip testing.
+
+    Mirrors :class:`invest_pipeline.adapters.cifang.adapter.CifangQuantInstrumentProvider`'s
+    evidence-tuple shape but stamps ``provider_key="cifangquant"`` /
+    ``dataset_key="etf_instruments"`` so the test exercises the formal
+    ``raw.*`` key without booting the real provider (which is gated on
+    :class:`CifangSettings.enabled`).
+    """
+
+    def __init__(self, *, instruments: tuple[Instrument, ...]) -> None:
+        self._instruments = instruments
+        self._raw_payload_hash = sha256(
+            json.dumps([i.symbol for i in instruments]).encode("utf-8")
+        ).hexdigest()
+
+    @property
+    def provider_key(self) -> str:
+        return "cifangquant"
+
+    def fetch_instruments(
+        self, as_of: date
+    ) -> tuple[Any, Any, Any]:
+        started_at = datetime(2026, 7, 31, 8, 0, 0, tzinfo=UTC)
+        finished_at = datetime(2026, 7, 31, 8, 0, 1, tzinfo=UTC)
+        attempt_id = uuid4()
+        request = MagicMock(name="ProviderRequest")
+        request.provider_key = "cifangquant"
+        request.dataset_key = "etf_instruments"
+        request.request_key = f"instruments-{as_of.isoformat()}"
+        request.params = {"as_of": as_of.isoformat()}
+        request.created_at = started_at
+        attempt = MagicMock(name="ProviderAttempt")
+        attempt.attempt_number = 1
+        attempt.status = ProviderAttemptStatus.SUCCEEDED
+        attempt.started_at = started_at
+        attempt.finished_at = finished_at
+        attempt.error_stage = None
+        attempt.error_code = None
+        attempt.error_message = None
+        batch = MagicMock(name="ProviderBatch")
+        batch.attempt_id = attempt_id
+        batch.records = self._instruments
+        batch.raw_payload_hash = self._raw_payload_hash
+        batch.status = ProviderBatchStatus.SUCCEEDED
+        batch.warnings = ()
+        return request, attempt, batch
 
 
 if __name__ == "__main__":

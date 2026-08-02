@@ -88,7 +88,7 @@ class FixtureDevEtfInstrumentsTest(unittest.TestCase):
 
         # --- ProviderRequest ---
         self.assertEqual(request.provider_key, "fixture_dev")
-        self.assertEqual(request.dataset_key, "instruments")
+        self.assertEqual(request.dataset_key, "etf_instruments")
         self.assertEqual(request.request_key, f"instruments-{as_of.isoformat()}")
         self.assertEqual(request.params, {"as_of": as_of.isoformat()})
         self.assertIsInstance(request.created_at, datetime)

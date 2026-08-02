@@ -276,6 +276,7 @@ def write_etf_daily_bars_raw(
                 observed_at=batch.records[0].source.observed_at
                 if batch.records
                 else finished_at,
+                provider_key=request.provider_key,
             )
         else:
             request_status = "partial"
@@ -322,13 +323,22 @@ def upsert_etf_daily_bars(
     applies the ADR-0006 §3 revision rules: identical business
     content is a no-op, content change increments the revision.
 
+    "Latest" is resolved client-side by the maximum ``finished_at``
+    across the persisted ``succeeded`` attempts (with ``attempt_no``
+    as a deterministic tiebreaker) — the storage layer's
+    ``attempt_no ASC`` ordering plus a naive ``next(...)`` would
+    otherwise pick the OLDEST succeeded attempt, which silently
+    surfaces a stale ``fixture_dev`` sidecar when an old baseline
+    attempt co-exists with a fresh ``cifangquant`` run for the same
+    logical request. ``LookupError`` is raised if no successful
+    attempt is found for the given logical key so a stale downstream
+    trigger is surfaced loudly rather than silently producing zero
+    rows.
+
     ``request_key`` is required when the underlying request_key shape
     is not the conventional
     ``daily-bars-{start}-{end}-{symbols}``; callers that know the
-    logical key should pass it explicitly. ``LookupError`` is raised
-    if no successful attempt is found for the given logical key so a
-    stale downstream trigger is surfaced loudly rather than silently
-    producing zero rows.
+    logical key should pass it explicitly.
     """
 
     if not request_key:
@@ -351,18 +361,41 @@ def upsert_etf_daily_bars(
                 f"({provider_key!r}, {dataset_key!r}, {request_key!r}); "
                 "run etf_daily_bars_raw first"
             )
+        # Fetch a slice large enough to cover a busy logical request
+        # with many reruns (the raw writer allocates ``attempt_no`` as
+        # ``max(existing) + 1`` for every run, so a frequently
+        # re-collected request can accumulate dozens of attempts).
+        # ``SqlAlchemyProviderAttemptRepository.list_by_request`` orders
+        # by ``attempt_no ASC`` per the project's convention, so a
+        # small ``limit`` would silently truncate the newest attempts
+        # and a ``next(...)`` over the result would pick the oldest
+        # succeeded attempt — wrong whenever an old ``fixture_dev``
+        # baseline attempt co-exists with a fresh ``cifangquant`` run
+        # for the same request. The slice is walked client-side below
+        # for the latest succeeded attempt so the freshest persisted
+        # attempt wins regardless of storage ordering.
         attempts = uow.provider_attempts.list_by_request(
-            stored_request.id, limit=10
+            stored_request.id, limit=1000
         )
-        succeeded_attempt = next(
-            (a for a in attempts if a.status == "succeeded"), None
-        )
-        if succeeded_attempt is None:
+        succeeded_attempts = [a for a in attempts if a.status == "succeeded"]
+        if not succeeded_attempts:
             raise LookupError(
                 f"no succeeded provider_attempts row for request "
                 f"{stored_request.id}; etf_daily_bars_raw must have "
                 "persisted a successful attempt first"
             )
+        # ``attempt_no`` is monotonically allocated by the raw writer
+        # (``max(existing) + 1`` on every run), so the maximum is the
+        # freshest persisted attempt. ``finished_at`` is consulted as a
+        # tiebreaker so two runs sharing an ``attempt_no`` slot still
+        # surface the most recently completed attempt; ``attempt_no``
+        # remains the primary key so a downstream scheduling anomaly
+        # that leaves an older ``finished_at`` cannot regress the
+        # selection to a stale sidecar.
+        succeeded_attempt = max(
+            succeeded_attempts,
+            key=lambda a: (a.finished_at, a.attempt_no),
+        )
 
         sidecar = deserialize_daily_bars(succeeded_attempt.response_payload_json)
         if not sidecar:

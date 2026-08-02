@@ -242,6 +242,68 @@ class FixtureDevDailyBarsSidecarTest(unittest.TestCase):
         self.assertEqual(entry["source_provider"], "fixture_dev")
         self.assertEqual(entry["observed_at"], self._observed().isoformat())
 
+    def test_sidecar_defaults_source_provider_to_fixture_dev(self) -> None:
+        """Backwards-compat: callers that omit ``provider_key`` stay on "fixture_dev"."""
+
+        records = [
+            {
+                "symbol": "510300",
+                "trade_date": "2026-07-23",
+                "open": "3.835",
+                "high": "3.845",
+                "low": "3.817",
+                "close": "3.827",
+                "prev_close": "3.878",
+                "volume": "11750000",
+                "amount": "44967250.00",
+                "trading_status": "normal",
+            }
+        ]
+        payload = serialize_daily_bars(
+            records,
+            source_batch_id=__import__("uuid").uuid4(),
+            observed_at=self._observed(),
+        )
+        parsed = json.loads(payload)
+        self.assertEqual(
+            {entry["source_provider"] for entry in parsed["records"]},
+            {"fixture_dev"},
+        )
+
+    def test_sidecar_records_passed_provider_key_for_cifangquant_runs(self) -> None:
+        """Regression: a real provider must surface its provider_key in the sidecar.
+
+        The etf_daily_bars service feeds ``request.provider_key`` into
+        :func:`serialize_daily_bars` so the sidecar's ``source_provider``
+        reflects the real provider (e.g. ``"cifangquant"``). The hard-coded
+        default would have leaked ``fixture_dev`` into the audit column,
+        silently breaking downstream services that key off it.
+        """
+
+        records = [
+            {
+                "symbol": "510300",
+                "trade_date": "2026-07-23",
+                "open": "3.835",
+                "high": "3.845",
+                "low": "3.817",
+                "close": "3.827",
+                "prev_close": "3.878",
+                "volume": "11750000",
+                "amount": "44967250.00",
+                "trading_status": "normal",
+            }
+        ]
+        payload = serialize_daily_bars(
+            records,
+            source_batch_id=__import__("uuid").uuid4(),
+            observed_at=self._observed(),
+            provider_key="cifangquant",
+        )
+        round_tripped = deserialize_daily_bars(payload)
+        self.assertEqual(len(round_tripped), 1)
+        self.assertEqual(round_tripped[0]["source_provider"], "cifangquant")
+
     def test_sidecar_has_schema_version(self) -> None:
         records = [
             {

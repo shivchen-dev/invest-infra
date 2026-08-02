@@ -283,16 +283,25 @@ def upsert_etf_instruments(
     *,
     as_of: date,
     provider_key: str = "fixture_dev",
-    dataset_key: str = "instruments",
+    dataset_key: str = "etf_instruments",
     unit_of_work_factory: UnitOfWorkFactory = SqlAlchemyUnitOfWork,
 ) -> int:
     """Upsert standardized ETF instruments into ``core.instruments``.
 
     The function locates the latest successful attempt for
-    ``(provider_key, dataset_key, request_key=instruments-{as_of})``,
-    deserializes the records from the attempt's
-    ``response_payload_json`` sidecar, and delegates to
+    ``(provider_key, dataset_key="etf_instruments",
+    request_key=instruments-{as_of})``, deserializes the records from
+    the attempt's ``response_payload_json`` sidecar, and delegates to
     :meth:`SqlAlchemyInstrumentRepository.upsert_many`.
+
+    ``dataset_key="etf_instruments"`` is the formal ``raw.*`` key the
+    ETF instrument providers (fixture_dev, cifangquant, ...) must
+    stamp on the persisted request. Sharing a single key across
+    providers keeps the upstream :func:`etf_instruments_raw` write
+    path and this downstream upsert path aligned on one logical
+    dataset so real CifangQuant runs (e.g. the 862 master-data rows
+    on the formal API) flow into ``core.instruments`` instead of
+    silently being skipped by a stale ``"instruments"`` lookup.
 
     Returns the number of instruments passed to the repository (which
     is the number of standardized records the batch carried). Raises

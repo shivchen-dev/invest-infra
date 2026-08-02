@@ -216,7 +216,7 @@ def etf_instruments(context) -> dg.MaterializeResult:
         with SqlAlchemyUnitOfWork(factory) as uow:
             stored_request = uow.provider_requests.get_by_logical_key(
                 provider_key=selected_provider_key,
-                dataset_key="instruments",
+                dataset_key="etf_instruments",
                 request_key=f"instruments-{as_of.isoformat()}",
             )
         if stored_request is None or stored_request.status == "failed":

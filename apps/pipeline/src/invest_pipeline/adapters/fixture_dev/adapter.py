@@ -235,13 +235,17 @@ def _daily_bars_record_to_raw(
     *,
     source_batch_id: Any,
     observed_at: datetime,
+    provider_key: str = "fixture_dev",
 ) -> dict[str, Any]:
     """Build the raw dict shape the ``core.daily_bars`` sidecar persists.
 
     The sidecar carries the original ``symbol`` (not the placeholder
     ``instrument_id``) so the application service can re-resolve the
     real ``core.instruments.id`` via ``(symbol, exchange)`` at upsert
-    time.
+    time. ``provider_key`` stamps the ``source_provider`` audit field
+    so the sidecar reflects the real provider
+    (``"fixture_dev"`` / ``"cifangquant"``) instead of always
+    defaulting to the fixture identifier.
     """
 
     return {
@@ -255,7 +259,7 @@ def _daily_bars_record_to_raw(
         "volume": record["volume"],
         "amount": record["amount"],
         "trading_status": record["trading_status"],
-        "source_provider": "fixture_dev",
+        "source_provider": provider_key,
         "source_batch_id": str(source_batch_id),
         "observed_at": observed_at.isoformat(),
     }
@@ -266,6 +270,7 @@ def serialize_daily_bars(
     *,
     source_batch_id: Any,
     observed_at: datetime,
+    provider_key: str = "fixture_dev",
 ) -> str:
     """Build the JSONB sidecar that carries standardized bars through ``raw.*``.
 
@@ -277,6 +282,14 @@ def serialize_daily_bars(
     real ``core.instruments.id`` per ``symbol`` and constructs the
     final :class:`invest_domain.market_data.models.DailyBar` for the
     repository.
+
+    ``provider_key`` is the audit field the sidecar's
+    ``source_provider`` records against ``core.daily_bars``. The
+    default keeps existing callers (fixture_dev-only smoke paths)
+    source-compatible; the application service passes
+    ``request.provider_key`` so real CifangQuant runs store
+    ``"cifangquant"`` instead of leaking the fixture identifier into
+    the audit column.
     """
 
     payload = {
@@ -286,6 +299,7 @@ def serialize_daily_bars(
                 record,
                 source_batch_id=source_batch_id,
                 observed_at=observed_at,
+                provider_key=provider_key,
             )
             for record in records
         ],
@@ -447,7 +461,7 @@ class FixtureDevInstrumentProvider:
 
         request = ProviderRequest(
             provider_key=self.provider_key,
-            dataset_key="instruments",
+            dataset_key="etf_instruments",
             request_key=f"instruments-{as_of.isoformat()}",
             params={"as_of": as_of.isoformat()},
             created_at=started,
@@ -478,7 +492,7 @@ class FixtureDevInstrumentProvider:
 
         request = ProviderRequest(
             provider_key=self.provider_key,
-            dataset_key="instruments",
+            dataset_key="etf_instruments",
             request_key=f"instruments-{as_of.isoformat()}",
             params={"as_of": as_of.isoformat()},
             created_at=started,
