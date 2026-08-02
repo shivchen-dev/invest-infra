@@ -59,7 +59,6 @@ from invest_storage.unit_of_work import SessionProvider, SqlAlchemyUnitOfWork
 from sqlalchemy.orm import sessionmaker
 
 from invest_pipeline.adapters.fixture_dev.adapter import (
-    FixtureDevInstrumentProvider,
     deserialize_daily_bars,
     serialize_daily_bars,
 )
@@ -302,7 +301,7 @@ def write_etf_daily_bars_raw(
 def upsert_etf_daily_bars(
     session_factory: SessionProvider | sessionmaker[Any],
     *,
-    provider_key: str = FixtureDevInstrumentProvider().provider_key,
+    provider_key: str = "fixture_dev",
     dataset_key: str = "etf_daily_bars",
     request_key: str | None = None,
     unit_of_work_factory: UnitOfWorkFactory = SqlAlchemyUnitOfWork,

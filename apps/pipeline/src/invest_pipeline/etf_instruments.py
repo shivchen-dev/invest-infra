@@ -49,10 +49,7 @@ from invest_storage import (
 from invest_storage.unit_of_work import SessionProvider, SqlAlchemyUnitOfWork
 from sqlalchemy.orm import sessionmaker
 
-from invest_pipeline.adapters.fixture_dev.adapter import (
-    FixtureDevInstrumentProvider,
-    deserialize_records,
-)
+from invest_pipeline.adapters.fixture_dev.adapter import deserialize_records
 
 _RAW_RECORDS_SCHEMA_VERSION = 1
 
@@ -269,7 +266,7 @@ def upsert_etf_instruments(
     session_factory: SessionProvider | sessionmaker[Any],
     *,
     as_of: date,
-    provider_key: str = FixtureDevInstrumentProvider().provider_key,
+    provider_key: str = "fixture_dev",
     dataset_key: str = "instruments",
     unit_of_work_factory: UnitOfWorkFactory = SqlAlchemyUnitOfWork,
 ) -> int:

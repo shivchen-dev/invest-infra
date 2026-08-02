@@ -1,0 +1,20 @@
+version: 1
+
+groups:
+  broad_market:
+    - "510300"
+    - "510500"
+    - "159915"
+
+  technology:
+    - "588000"
+    - "588080"
+
+  overseas:
+    - "513050"
+    - "513100"
+
+enabled_groups:
+  - broad_market
+  - technology
+  - overseas

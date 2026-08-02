@@ -29,6 +29,7 @@ from invest_pipeline.etf_instruments import (
     write_etf_instruments_raw,
 )
 from invest_pipeline.input_snapshot import create_input_snapshot
+from invest_pipeline.provider_factory import build_provider
 
 _ETF_INPUT_SNAPSHOT_PARTITIONS = dg.DailyPartitionsDefinition(
     start_date="2026-07-23"
@@ -134,7 +135,7 @@ def etf_instruments_raw(context) -> dg.MaterializeResult:
     records or skip with a note.
     """
 
-    provider = FixtureDevInstrumentProvider()
+    provider = build_provider(get_settings())
     engine = build_engine(get_settings().database_url)
     factory = session_factory(engine)
     try:
@@ -194,6 +195,7 @@ def etf_instruments(context) -> dg.MaterializeResult:
     """
 
     as_of = date.today()
+    selected_provider_key = build_provider(get_settings()).provider_key
     engine = build_engine(get_settings().database_url)
     factory = session_factory(engine)
     try:
@@ -201,7 +203,7 @@ def etf_instruments(context) -> dg.MaterializeResult:
 
         with SqlAlchemyUnitOfWork(factory) as uow:
             stored_request = uow.provider_requests.get_by_logical_key(
-                provider_key="fixture_dev",
+                provider_key=selected_provider_key,
                 dataset_key="instruments",
                 request_key=f"instruments-{as_of.isoformat()}",
             )
@@ -220,7 +222,10 @@ def etf_instruments(context) -> dg.MaterializeResult:
                 }
             )
         count = upsert_etf_instruments(
-            factory, as_of=as_of, unit_of_work_factory=SqlAlchemyUnitOfWork
+            factory,
+            as_of=as_of,
+            provider_key=selected_provider_key,
+            unit_of_work_factory=SqlAlchemyUnitOfWork,
         )
     finally:
         engine.dispose()
@@ -270,7 +275,7 @@ def etf_daily_bars_raw(
     batch row is created.
     """
 
-    provider = FixtureDevInstrumentProvider()
+    provider = build_provider(get_settings())
     start = start_date or _DEFAULT_DAILY_BARS_START
     end = end_date or _DEFAULT_DAILY_BARS_END
     symbols = [item.symbol for item in provider.list_instruments()]
@@ -349,7 +354,7 @@ def etf_daily_bars(
     "no retry loop on contract failure" stance.
     """
 
-    provider = FixtureDevInstrumentProvider()
+    provider = build_provider(get_settings())
     start = start_date or _DEFAULT_DAILY_BARS_START
     end = end_date or _DEFAULT_DAILY_BARS_END
     symbols = [item.symbol for item in provider.list_instruments()]
