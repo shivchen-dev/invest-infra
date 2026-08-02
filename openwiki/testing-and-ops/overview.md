@@ -113,15 +113,45 @@ the asset-level integration paths against fixture data:
 
 - `test_etf_instruments_asset.py` exercises the `etf_instruments`
   asset and the underlying `write_etf_instruments_raw` /
-  `upsert_etf_instruments` services.
-- `test_etf_instruments_asset.py` / `test_fixture_dev_daily_bars.py`
-  cover the daily-bars split.
+  `upsert_etf_instruments` services. Its provider round-trip regression
+  pins `etf_instruments` as the shared formal dataset key, preventing
+  real-provider requests from being skipped by a legacy lookup.
+- `test_etf_daily_bars_service.py` exercises
+  `write_etf_daily_bars_raw` / `upsert_etf_daily_bars`, provider-aware
+  `source_provider` sidecars, latest-successful-attempt selection, and
+  the rerun-idempotency contract (re-using the logical request via
+  `SqlAlchemyProviderRequestRepository.get_or_create`).
 - `test_fixture_dev_*` files pin the contract between
   `FixtureDevInstrumentProvider` and the storage layer.
 - `test_input_snapshot_asset.py` and `test_input_snapshot.py` exercise
   `create_input_snapshot`, the daily-partitioning semantics and the
   hash determinism.
 - `test_fixture_dev_adapter.py` covers the adapter error taxonomy.
+- `test_cifangquant_*` files cover the CifangQuant adapter across
+  the full evidence-tuple surface: client (`test_cifangquant_client.py`),
+  field mapper (`test_cifangquant_mapping.py`), adapter wiring
+  (`test_cifangquant_adapter.py`, `test_cifangquant_adapter_e2e.py`)
+  and the opt-in smoke CLI (`test_cifangquant_smoke.py`). The suite
+  injects `httpx.MockTransport` and a fake clock so CI never reaches
+  the network.
+- `test_personal_universe.py` and `test_personal_universe_fixture_coverage.py`
+  cover `load_personal_universe` / `resolve_personal_universe` and
+  pin the YAML ↔ fixture_dev ETF overlap.
+- `test_candidate_pool_asset.py` / `test_candidate_pool_service.py`
+  exercise `personal_candidate_pool` and the underlying
+  `candidate_pool_service.calculate_and_publish_candidate_pool`.
+- `test_etf_assets_provider_wiring.py` and
+  `test_provider_factory_runtime.py` pin `build_provider()`'s three
+  branches (fixture_dev / cifangquant / unknown) and the
+  `INVEST_PIPELINE_PROVIDER_KEY` env wiring.
+- `test_personal_daily_cli.py`, `test_personal_etf_daily_job.py` and
+  `test_runtime_config_paths.py` cover the manual driver, the
+  `personal_etf_daily_job` selection and the
+  `INVEST_PIPELINE_PERSONAL_UNIVERSE_PATH` /
+  `INVEST_PIPELINE_CANDIDATE_POOL_POLICY_PATH` env overrides. The CLI
+  tests also pin best-effort `ops.pipeline_runs` lifecycle recording,
+  token-scrubbed failure summaries, and the rule that audit-write
+  failures do not change the job's output or exit code.
 
 ## 6. Deployment and runtime
 
@@ -139,6 +169,22 @@ the asset-level integration paths against fixture data:
 
 `make up` (or `docker compose up --build`) starts the full stack and
 prints the OpenAPI / Vite / Dagster URLs from the README.
+
+Outside `docker compose`, two opt-in local CLIs run the personal
+pipeline against the host environment without booting the stack:
+
+- `make provider-smoke` invokes
+  [`apps/pipeline/src/invest_pipeline/cifang_smoke.py`](../../apps/pipeline/src/invest_pipeline/cifang_smoke.py)
+  for an explicit `--trade-date` and symbol list. It needs
+  `INVEST_PIPELINE_CIFANG_ENABLED=true` plus a non-empty
+  `INVEST_PIPELINE_CIFANG_API_KEY` plus `SMOKE_CONFIRM_NETWORK=1`
+  before it touches the network.
+- `make personal-daily-run TRADE_DATE=...` invokes
+  [`personal_daily_cli.py`](../../apps/pipeline/src/invest_pipeline/personal_daily_cli.py)
+  for the manual `personal_etf_daily_job` driver. Fixture mode
+  (`INVEST_PIPELINE_PROVIDER_KEY=fixture_dev`) needs no opt-in; real
+  CifangQuant runs require the three env opt-ins plus
+  `CONFIRM_NETWORK=1`.
 
 The CI job `migrations` is the migration counterpart for production:
 [ADR-0010](../../docs/adr/0010-production-deployment-secrets-backup-recovery.md)

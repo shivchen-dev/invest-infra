@@ -81,8 +81,9 @@ Examples:
   `list_by_provider_dataset`.
 - `SqlAlchemyPipelineRunRepository`: `start`, `mark_succeeded`,
   `mark_failed`, `get_by_id`, `list_recent`, `count_by_status`.
-- `SqlAlchemyCandidatePoolRunRepository`: `add`, `transition_status`,
-  `list_by_status`, `list_by_trade_date`.
+- `SqlAlchemyCandidatePoolRunRepository`: `add`, `get_by_id`,
+  `get_by_natural_key`, `transition_status`, `list_by_status`,
+  `list_by_trade_date`.
 - `SqlAlchemyCandidatePoolItemRepository`: `bulk_add`, `list_by_run_id`.
 - `SqlAlchemyDailyBarRepository`: `upsert_many`, `get_latest`,
   `get_exact`, `list_by_instrument_and_range`.

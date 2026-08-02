@@ -1,7 +1,7 @@
 ---
 type: Reference
 title: OpenWiki Quickstart
-description: Entry point for the invest-infra OpenWiki knowledge base. Describes the modular-monolith layout, links every major concept page, and summarizes how to run, migrate, test, and inspect the codebase.
+description: Entry point for the invest-infra OpenWiki knowledge base. Describes the modular-monolith layout, links every major concept page, and summarizes how to run, migrate, test, and inspect the codebase (including the personal daily pipeline and the opt-in CifangQuant smoke).
 resource: /openwiki/quickstart.md
 tags: [quickstart, navigation, invest-infra]
 ---
@@ -106,6 +106,13 @@ The full list is in [`/Makefile`](../Makefile); the canonical ones are:
   `test-api`, `test-web`).
 - `make arch-check` — AST-based boundary check
   (`scripts/check_architecture.py`).
+- `make provider-smoke` — opt-in real-network CifangQuant smoke
+  (`SMOKE_SYMBOLS=...`, `SMOKE_TRADE_DATE=...`,
+  `SMOKE_CONFIRM_NETWORK=1`).
+- `make personal-daily-run` — manual `personal_etf_daily_job` driver
+  (`TRADE_DATE=...`); fixture mode needs no opt-in, real-network mode
+  needs `INVEST_PIPELINE_PROVIDER_KEY=cifangquant` +
+  `INVEST_PIPELINE_CIFANG_ENABLED=true` + `CONFIRM_NETWORK=1`.
 - `make lock` — regenerate `uv.lock` for every Python project.
 
 ## 5. Layer rules (at a glance)
@@ -155,28 +162,44 @@ Working-copy additions after PR-09 refine the response schemas (a single
 and ETF list responses) and inline `SessionProvider` into the storage
 Unit of Work.
 
-Phase 1 first increment (ADR-0011, Status: Proposed) ships a placeholder
-CifangQuant adapter at
-[`apps/pipeline/src/invest_pipeline/adapters/cifang/`](apps/pipeline/src/invest_pipeline/adapters/cifang/)
-and a declarative `provider_catalog.py` that records provider role /
-capability metadata for V2. `QUICKTINY_MCP` is registered as
-research-only (`research` + `market_snapshot`), with no ETF-ingestion
-runtime; Cifang remains a disabled placeholder adapter.
-The M4 `CandidatePoolCalculator` Protocol was removed from
-`invest_domain.candidate_pool.ports`; the [provider catalog](pipeline/overview.md#provider-catalog)
-and the [cifang placeholder](pipeline/overview.md#cifang-adapter-placeholder-adr-0011-phase-1-first-increment)
-sections describe the new surfaces.
+ADR-0011 (Status: Proposed) CifangQuant adapter is shipped in two
+stacked increments. The first increment freezes `CifangSettings`
+(redacted `api_key`, locked `adjustment='none'`, `enabled=False`
+default) and the `EtfMarketDataProvider` port shape. The second
+increment adds the real `httpx` client, the `/api/fund/list` /
+`api/fund/hist_em` field mappers, the 50-symbol chunking rule, and
+the evidence-tuple adapter; the network is still gated on
+`CifangSettings.enabled=True` plus three opt-ins for the smoke CLI.
+The runtime selection lives in
+`provider_factory.build_provider()` (the `invest_pipeline` assets now
+resolve the provider through the factory instead of constructing
+`FixtureDevInstrumentProvider` directly).
+
+Stage 1 lands the personal daily pipeline:
+[`personal_universe.py`](apps/pipeline/src/invest_pipeline/personal_universe.py)
+loads `config/personal-universe.yaml`, `candidate_pool_service.py`
+loads `config/candidate-pool-personal.yaml`, and the new
+`personal_etf_daily_job` Dagster job + `personal_candidate_pool`
+asset run the whole
+`etf_instruments_raw → etf_daily_bars → etf_input_snapshot →
+personal_candidate_pool` chain for one trade date. `make
+personal-daily-run` is the manual CLI driver; the Section 9
+("Personal universe & config"), Section 10 ("Candidate pool
+service"), Section 11 ("Personal CLIs") and Section 12 ("Provider
+factory") of the [pipeline overview](pipeline/overview.md) describe
+the new surfaces. The `provider_catalog.py` declarative registry is
+unchanged (only `QUICKTINY_MCP` is registered today, `cifangquant`
+is exercised through the runtime factory rather than the catalog).
 
 ## 7. Backlog
 
 - **Web pages for candidate pool and pipeline runs.** The FastAPI surface
   exposes them but `apps/web/` only consumes the legacy `/v1/instruments`
   shape; no `CandidatePoolPage.tsx` exists yet.
-- **Real Provider selection (O-1 in M0-DECISIONS §4).** `fixture_dev`
-  is the only adapter with real data; the `cifang` placeholder
-  ([ADR-0011](../docs/adr/0011-cifangquant-primary-etf-provider.md))
-  locks the Port shape but raises `ProviderAdapterNotImplementedError`
-  until O-1 / O-3 / O-4 are closed.
+- **Real Provider selection (O-1 in M0-DECISIONS §4).** `cifangquant`
+  is wired end-to-end behind the three opt-ins and the smoke CLI;
+  [ADR-0011](../docs/adr/0011-cifangquant-primary-etf-provider.md)
+  remains Proposed until O-1 / O-3 / O-4 are closed.
 - **M4 candidate-pool algorithm.** ADR-0008 calls for scored rules,
   rolling-window liquidity and price-quality rules, and risk scoring;
   only the PR-08 minimum calculator (no-data / suspended / invalid_price

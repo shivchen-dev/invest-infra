@@ -1,7 +1,7 @@
 ---
 type: Concept
 title: Architecture overview
-description: Modular-monolith topology, layered rules, four PostgreSQL schemas and ADR index for invest-infra (including ADR-0011 CifangQuant Phase 1 placeholder). Explains why the codebase stays inside independent Python packages and how the layers interact.
+description: Modular-monolith topology, layered rules, four PostgreSQL schemas and ADR index for invest-infra (including ADR-0011 CifangQuant Phase 1 first + second increments). Explains why the codebase stays inside independent Python packages and how the layers interact.
 resource: /openwiki/architecture/overview.md
 tags: [architecture, layering, schemas, adr, cifang]
 ---
@@ -104,11 +104,14 @@ adapter:
 - The pipeline-side application service, not the adapter, owns the
   three-layer evidence write inside a single `UnitOfWork`.
 - **Two** adapter packages ship today: `fixture_dev` (deterministic
-  fixture data, the only adapter with real data — see
-  [Pipeline overview §4](../pipeline/overview.md#fixture_dev-adapter))
-  and `cifang` (a placeholder that locks the Port shape and raises
-  `ProviderAdapterNotImplementedError` until ADR-0011 §4 unblocks Phase 1
-  second increment — see [Pipeline overview §5](../pipeline/overview.md#cifang-adapter-placeholder-adr-0011-phase-1-first-increment)).
+  fixture data — see [Pipeline overview §4](../pipeline/overview.md#4-fixture_dev-adapter))
+  and `cifang` (a fully wired httpx-backed adapter that is
+  disabled by default — both `fetch_*` methods raise
+  `RealProviderRequiresExplicitEnablementError` until
+  `CifangSettings.enabled=True`; real calls additionally require a
+  non-empty `INVEST_PIPELINE_CIFANG_API_KEY` and the explicit
+  `--confirm-network` CLI gate — see
+  [Pipeline overview §5](../pipeline/overview.md#5-cifang-adapter-adr-0011-phase-1-first--second-increments)).
 
 The boundary is enforced two ways: the
 [`scripts/check_architecture.py`](../scripts/check_architecture.py)
@@ -128,10 +131,15 @@ All eleven ADRs are in [`/docs/adr/`](../docs/adr/):
 - [ADR-0008 — Candidate pool state machine](../docs/adr/0008-candidate-pool-state-machine.md) (`calculated → validated → published|rejected`)
 - [ADR-0009 — Python core dependency baseline](../docs/adr/0009-python-core-dependency-baseline.md) (3.12.x, `<3.13`)
 - [ADR-0010 — Production deployment / secrets / backup recovery](../docs/adr/0010-production-deployment-secrets-backup-recovery.md)
-- [ADR-0011 — CifangQuant primary ETF provider (Phase 1 first increment)](../docs/adr/0011-cifangquant-primary-etf-provider.md) (Status: Proposed; placeholder adapter only, real I/O gated on O-1 / O-3 / O-4)
+- [ADR-0011 — CifangQuant primary ETF provider (Phase 1 first + second increments)](../docs/adr/0011-cifangquant-primary-etf-provider.md) (Status: Proposed; the adapter is wired but disabled by default and remains gated on O-1 / O-3 / O-4 for production use)
 
-The underlying planning documents live in
-[`/docs/plan/`](../docs/plan/invest-infra-v2-etf-vertical-slice-plan.md)
+The underlying planning documents live under
+[`/docs/plan/`](../docs/plan/) — Stage 1's
+[`invest-infra-v2-stage1-execution-plan.md`](../docs/plan/invest-infra-v2-stage1-execution-plan.md)
 and
+[`invest-infra-v2-personal-mvp-matrix-plan.md`](../docs/plan/invest-infra-v2-personal-mvp-matrix-plan.md)
+plus
 [`/docs/implementation/`](../docs/implementation/M0-DECISIONS.md)
-(M0 brief, decisions, acceptance).
+(M0 brief, decisions, acceptance). The pre-Stage-1 ETF vertical-slice
+and Phase 1 data-ingestion plans are archived under
+[`docs/archive/2026-08-02-stage1/`](../docs/archive/2026-08-02-stage1/).
