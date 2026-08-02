@@ -1,6 +1,6 @@
 SHELL := /bin/bash
 
-.PHONY: help up down logs api-dev pipeline-dev web-dev migrate test lint arch-check lock test-domain test-storage test-storage-integration test-migrations test-pipeline test-api test-web provider-smoke
+.PHONY: help up down logs api-dev pipeline-dev web-dev migrate test lint arch-check lock test-domain test-storage test-storage-integration test-migrations test-pipeline test-api test-web provider-smoke personal-daily-run
 
 help:
 	@echo "make up              启动 PostgreSQL、API、Web、Dagster"
@@ -16,6 +16,7 @@ help:
 	@echo "make arch-check      检查依赖边界"
 	@echo "make lock            为各 Python 应用生成锁文件"
 	@echo "make provider-smoke  对 CifangQuant 真实 API 做受限 smoke（opt-in）"
+	@echo "make personal-daily-run  手动运行 personal_etf_daily_job（PR-4）"
 
 up:
 	docker compose up --build
@@ -108,3 +109,31 @@ provider-smoke:
 		--symbols '$(SMOKE_SYMBOLS)' \
 		--trade-date '$(SMOKE_TRADE_DATE)' \
 		$(if $(SMOKE_CONFIRM_NETWORK),--confirm-network)
+
+# 手动执行 personal_etf_daily_job（Stage 1 PR-4）。
+#
+# 真实网络运行需要三重 opt-in：INVEST_PIPELINE_PROVIDER_KEY=cifangquant +
+# INVEST_PIPELINE_CIFANG_ENABLED=true + CONFIRM_NETWORK=1。Fixture/开发
+# 模式（INVEST_PIPELINE_PROVIDER_KEY=fixture_dev）不需要 confirm-network。
+#
+# 可选参数 UNIVERSE / POLICY 映射到
+# INVEST_PIPELINE_PERSONAL_UNIVERSE_PATH /
+# INVEST_PIPELINE_CANDIDATE_POOL_POLICY_PATH，并在 Dagster definitions
+# 导入之前注入，因此单条命令就能切换个人池 / 策略文件。
+#
+# 用法示例（fixture 个人日常运行）：
+#   make personal-daily-run TRADE_DATE=2026-07-30
+#
+# 用法示例（CifangQuant 真实 API 验收）：
+#   export INVEST_PIPELINE_PROVIDER_KEY=cifangquant
+#   export INVEST_PIPELINE_CIFANG_ENABLED=true
+#   export INVEST_PIPELINE_CIFANG_API_KEY=***           # 不会回显
+#   make personal-daily-run \
+#       TRADE_DATE=2026-07-31 \
+#       CONFIRM_NETWORK=1
+personal-daily-run:
+	cd apps/pipeline && uv run python -m invest_pipeline.personal_daily_cli \
+		--trade-date '$(TRADE_DATE)' \
+		$(if $(UNIVERSE),--universe '$(UNIVERSE)') \
+		$(if $(POLICY),--policy '$(POLICY)') \
+		$(if $(CONFIRM_NETWORK),--confirm-network)

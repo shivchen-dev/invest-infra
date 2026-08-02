@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from datetime import date
-from pathlib import Path
 from typing import Any
 
 import dagster as dg
@@ -46,15 +45,6 @@ from invest_pipeline.provider_factory import build_provider
 
 _ETF_INPUT_SNAPSHOT_PARTITIONS = dg.DailyPartitionsDefinition(
     start_date="2026-07-23"
-)
-
-# ``assets.py`` lives four levels below the repository root:
-# parents[0]=invest_pipeline, [1]=src, [2]=pipeline, [3]=apps,
-# [4]=invest-infra. The personal universe YAML ships at the repo root.
-_PERSONAL_UNIVERSE_PATH = (
-    Path(__file__).resolve().parents[4]
-    / "config"
-    / "personal-universe.yaml"
 )
 
 
@@ -306,6 +296,7 @@ def etf_daily_bars_raw(
     """
 
     provider = build_provider(get_settings())
+    settings = get_settings()
     trade_date = date.fromisoformat(context.partition_key)
     if (start_date is not None and start_date != trade_date) or (
         end_date is not None and end_date != trade_date
@@ -313,7 +304,7 @@ def etf_daily_bars_raw(
         raise ValueError("daily-bars date arguments must match the partition date")
     start = trade_date
     end = trade_date
-    universe = load_personal_universe(_PERSONAL_UNIVERSE_PATH)
+    universe = load_personal_universe(settings.personal_universe_path)
     symbols = list(universe.symbols)
 
     engine = build_engine(get_settings().database_url)
@@ -398,6 +389,7 @@ def etf_daily_bars(
     """
 
     provider = build_provider(get_settings())
+    settings = get_settings()
     trade_date = date.fromisoformat(context.partition_key)
     if (start_date is not None and start_date != trade_date) or (
         end_date is not None and end_date != trade_date
@@ -405,7 +397,7 @@ def etf_daily_bars(
         raise ValueError("daily-bars date arguments must match the partition date")
     start = trade_date
     end = trade_date
-    universe = load_personal_universe(_PERSONAL_UNIVERSE_PATH)
+    universe = load_personal_universe(settings.personal_universe_path)
     symbols = list(universe.symbols)
     request_key = (
         f"daily-bars-{start.isoformat()}-{end.isoformat()}-"
@@ -505,9 +497,10 @@ def etf_input_snapshot(context) -> dg.MaterializeResult:
     from invest_storage import SqlAlchemyUnitOfWork
 
     snapshot_date = date.fromisoformat(context.partition_key)
-    universe = load_personal_universe(_PERSONAL_UNIVERSE_PATH)
+    settings = get_settings()
+    universe = load_personal_universe(settings.personal_universe_path)
 
-    engine = build_engine(get_settings().database_url)
+    engine = build_engine(settings.database_url)
     factory = session_factory(engine)
     try:
         def _uow_factory() -> Any:
@@ -554,15 +547,6 @@ def etf_input_snapshot(context) -> dg.MaterializeResult:
 # range are guaranteed to align with the etf_input_snapshot asset.
 _PERSONAL_CANDIDATE_POOL_PARTITIONS = _ETF_INPUT_SNAPSHOT_PARTITIONS
 
-# ``assets.py`` lives four levels below the repository root:
-# parents[0]=invest_pipeline, [1]=src, [2]=pipeline, [3]=apps,
-# [4]=invest-infra. The policy YAML ships at the repo root.
-_PERSONAL_CANDIDATE_POOL_POLICY_PATH = (
-    Path(__file__).resolve().parents[4]
-    / "config"
-    / "candidate-pool-personal.yaml"
-)
-
 
 @dg.asset(
     group_name="candidate_pool",
@@ -598,9 +582,10 @@ def personal_candidate_pool(context) -> dg.MaterializeResult:
     """
 
     trade_date = date.fromisoformat(context.partition_key)
-    policy = load_candidate_pool_policy(_PERSONAL_CANDIDATE_POOL_POLICY_PATH)
+    settings = get_settings()
+    policy = load_candidate_pool_policy(settings.candidate_pool_policy_path)
 
-    engine = build_engine(get_settings().database_url)
+    engine = build_engine(settings.database_url)
     factory = session_factory(engine)
     try:
         from invest_storage import SqlAlchemyUnitOfWork
