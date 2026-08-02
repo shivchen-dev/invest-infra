@@ -912,3 +912,167 @@ code.inlineCode {
   .candidateFilterSearch { grid-column: 1 / -1; }
   .candidateDetailGrid { grid-template-columns: 1fr; }
 }
+
+/* --- ETF Detail Page --- */
+.etfDetailPage { padding: 16px 4px 32px; }
+
+.etfDetailSubtitle {
+  margin-left: 8px;
+  color: var(--color-text-muted);
+  font-weight: 500;
+  font-size: 18px;
+}
+
+.etfDetailMetadata { gap: 16px 22px; }
+
+.etfDetailRangeRow {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px;
+  margin-bottom: 16px;
+  background: var(--color-surface-soft);
+  border: 1px solid var(--color-border);
+  border-radius: 999px;
+}
+.etfDetailRangeButton {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  color: var(--color-text-muted);
+  font-size: 13px;
+  font-weight: 600;
+  padding: 6px 14px;
+  border-radius: 999px;
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+.etfDetailRangeButton:hover { color: var(--color-text); }
+.etfDetailRangeButton:focus-visible {
+  outline: 2px solid #6ea2ff;
+  outline-offset: 2px;
+}
+.etfDetailRangeButtonActive {
+  background: var(--color-content);
+  color: var(--color-text);
+  box-shadow: 0 1px 2px rgba(34, 50, 84, 0.08);
+}
+
+.etfDetailLatestGrid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+  margin-bottom: 18px;
+}
+.etfDetailLatestCard {
+  border: 1px solid var(--color-border);
+  border-radius: 12px;
+  padding: 14px 16px;
+  background: var(--color-surface-soft);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+.etfDetailLatestLabel {
+  margin: 0;
+  font-size: 11px;
+  color: var(--color-text-muted);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  font-weight: 600;
+}
+.etfDetailLatestValue {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--color-text);
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  font-variant-numeric: tabular-nums;
+  word-break: break-word;
+}
+.etfDetailLatestSuffix {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--color-text-muted);
+}
+.etfDetailLatestCard-success {
+  border-color: var(--color-success-border);
+  background: #f3faf6;
+}
+.etfDetailLatestCard-success .etfDetailLatestValue { color: var(--color-success-text); }
+.etfDetailLatestCard-danger {
+  border-color: var(--color-danger-border);
+  background: #fdf2f0;
+}
+.etfDetailLatestCard-danger .etfDetailLatestValue { color: var(--color-danger-text); }
+.etfDetailLatestCard-warning {
+  border-color: var(--color-warning-border);
+  background: #fdf6e7;
+}
+
+.etfDetailChangeCell-success { color: var(--color-success-text); font-weight: 600; }
+.etfDetailChangeCell-danger { color: var(--color-danger-text); font-weight: 600; }
+.etfDetailChangeCell-neutral { color: var(--color-text-muted); }
+
+.etfDetailBarsTable { white-space: nowrap; }
+.etfDetailBarsFooter {
+  margin: 10px 4px 0;
+  font-size: 12px;
+  color: var(--color-text-muted);
+}
+
+.etfDetailChart {
+  margin: 0;
+  padding: 14px 16px;
+  border: 1px solid var(--color-border);
+  border-radius: 12px;
+  background: var(--color-surface-soft);
+}
+.etfDetailChartSvg {
+  width: 100%;
+  height: auto;
+  display: block;
+}
+.etfDetailChartGrid line {
+  stroke: var(--color-border);
+  stroke-dasharray: 2 4;
+  stroke-width: 1;
+}
+.etfDetailChartLine {
+  fill: none;
+  stroke: #4a7ad6;
+  stroke-width: 1.8;
+  stroke-linejoin: round;
+  stroke-linecap: round;
+}
+.etfDetailChartArea {
+  fill: rgba(110, 162, 255, 0.18);
+  stroke: none;
+}
+.etfDetailChartPoint {
+  fill: #4a7ad6;
+  stroke: var(--color-content);
+  stroke-width: 1;
+}
+.etfDetailChartAxis text {
+  font-size: 11px;
+  fill: var(--color-text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+@media (max-width: 1024px) {
+  .etfDetailLatestGrid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+@media (max-width: 720px) {
+  .etfDetailLatestGrid { grid-template-columns: 1fr 1fr; }
+  .etfDetailRangeRow { align-self: flex-start; flex-wrap: wrap; }
+  .etfDetailSubtitle { display: block; margin-left: 0; font-size: 14px; }
+}
+
+@media (max-width: 480px) {
+  .etfDetailLatestGrid { grid-template-columns: 1fr; }
+}

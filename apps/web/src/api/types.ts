@@ -115,3 +115,28 @@ export interface InstrumentListResponse {
   limit: number;
   offset: number;
 }
+
+export interface DailyBarResponse {
+  instrument_id: string;
+  trade_date: string;
+  open: string | null;
+  high: string | null;
+  low: string | null;
+  close: string | null;
+  prev_close: string | null;
+  volume: string | null;
+  amount: string | null;
+  adjustment: string | null;
+  trading_status: string | null;
+  source_provider: string | null;
+  source_batch_id: string | null;
+  observed_at: string | null;
+  revision: number | null;
+}
+
+export interface DailyBarListResponse {
+  items: DailyBarResponse[];
+  total: number;
+  limit: number;
+  offset: number;
+}

@@ -1,6 +1,7 @@
 import { AppShell } from "./components/AppShell";
 import { CandidatePoolPage } from "./pages/CandidatePoolPage";
 import { DashboardPage } from "./pages/DashboardPage";
+import { EtfDetailPage } from "./pages/EtfDetailPage";
 import { PlaceholderPage } from "./pages/PlaceholderPage";
 import { Router } from "./router";
 
@@ -12,12 +13,7 @@ const ROUTES = [
   },
   {
     path: "/etf/:instrumentId",
-    element: (
-      <PlaceholderPage
-        title="ETF 详情"
-        description="主数据、日行情表与 SVG 走势图将随 Web PR-05 落地。"
-      />
-    ),
+    element: <EtfDetailPage />,
   },
   {
     path: "/operations",
