@@ -11,6 +11,7 @@ from invest_pipeline.assets import (
     personal_candidate_pool,
     seed_instruments,
 )
+from invest_pipeline.schedules import personal_etf_daily_schedule
 
 personal_etf_daily_job = dg.define_asset_job(
     name="personal_etf_daily_job",
@@ -35,4 +36,5 @@ defs = dg.Definitions(
         personal_candidate_pool,
     ],
     jobs=[personal_etf_daily_job],
+    schedules=[personal_etf_daily_schedule],
 )
