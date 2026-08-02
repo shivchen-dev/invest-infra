@@ -12,7 +12,7 @@ network, no httpx. The tests cover:
 from __future__ import annotations
 
 import unittest
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from uuid import uuid4
 
 from invest_domain.instruments.models import Instrument, InstrumentId, InstrumentType
@@ -137,6 +137,84 @@ class MapFundListTest(unittest.TestCase):
         with self.assertRaises(ProviderDataContractError):
             map_fund_list(_make_response({"data": []}))
 
+    def test_envelope_success_unwraps_data(self) -> None:
+        payload = {
+            "code": 0,
+            "message": "ok",
+            "data": [
+                {
+                    "symbol": "510300",
+                    "name": "华泰柏瑞沪深300ETF",
+                    "exchange": "SH",
+                    "instrument_type": "ETF",
+                    "list_date": "2012-05-04",
+                },
+            ],
+        }
+        result = map_fund_list(_make_response(payload))
+        self.assertEqual(len(result.instruments), 1)
+        instrument = result.instruments[0]
+        assert isinstance(instrument, Instrument)
+        self.assertEqual(instrument.symbol, "510300")
+        self.assertEqual(instrument.exchange, "SSE")
+        self.assertEqual(result.warnings, ())
+
+    def test_envelope_real_cifang_shape_normalises_rows(self) -> None:
+        payload = {
+            "code": 0,
+            "message": "ok",
+            "data": [
+                {
+                    "fund_code": "510300",
+                    "fund_name": "华泰柏瑞沪深300ETF",
+                    "fund_market": "SH",
+                    "fund_type": "ETF",
+                    "establish_date": "2012-05-04",
+                },
+                {
+                    "fund_code": "600000",
+                    "fund_name": "浦发银行",
+                    "fund_market": "SH",
+                    "fund_type": "STOCK",
+                    "establish_date": "1999-11-10",
+                },
+            ],
+        }
+        result = map_fund_list(_make_response(payload))
+        self.assertEqual(len(result.instruments), 1)
+        instrument = result.instruments[0]
+        assert isinstance(instrument, Instrument)
+        self.assertEqual(instrument.symbol, "510300")
+        self.assertEqual(instrument.name, "华泰柏瑞沪深300ETF")
+        self.assertEqual(instrument.exchange, "SSE")
+        self.assertEqual(instrument.list_date, date(2012, 5, 4))
+        self.assertEqual(instrument.instrument_type, InstrumentType.ETF)
+        self.assertTrue(
+            any("600000" in w for w in result.warnings),
+            f"expected non-ETF warning for 600000, got {result.warnings!r}",
+        )
+
+    def test_envelope_nonzero_code_raises_without_leaking_data(self) -> None:
+        sensitive_message = "internal provider detail"
+        sensitive_row = {
+            "symbol": "510300",
+            "name": "SECRET",
+            "exchange": "SH",
+            "instrument_type": "ETF",
+        }
+        payload = {
+            "code": 500,
+            "message": sensitive_message,
+            "data": [sensitive_row],
+        }
+        with self.assertRaises(ProviderDataContractError) as ctx:
+            map_fund_list(_make_response(payload))
+        self.assertEqual(ctx.exception.code, "MALFORMED_LIST_ENVELOPE")
+        rendered = str(ctx.exception)
+        self.assertNotIn(sensitive_message, rendered)
+        self.assertNotIn("SECRET", rendered)
+        self.assertNotIn("510300", rendered)
+
 
 # ----------------------------------------------------------------------
 # Daily-bars mapping
@@ -194,6 +272,92 @@ class MapFundHistEmTest(unittest.TestCase):
         self.assertEqual(bar.open, _D("3.10"))
         self.assertEqual(bar.prev_close, _D("3.09"))
         self.assertEqual(bar.amount, _D("3150000"))
+
+    def test_maps_real_envelope_grouped_array_rows(self) -> None:
+        payload = {
+            "code": 0,
+            "message": "ok",
+            "data": {
+                "510300": [
+                    ["2026-07-30", "3.10", "3.15", "3.18", "3.08", "1.94", "1000"]
+                ],
+                "159919": [
+                    ["2026-07-30", 4.2, 4.25, 4.3, 4.1, 1.2, 2000]
+                ],
+            },
+        }
+        calls, resolver = resolver_calls_for_test()
+        result = map_fund_hist_em(
+            _make_response(payload),
+            chunk_index=1,
+            chunk_count=1,
+            source_batch_id=uuid4(),
+            observed_at=_observed_at(),
+            instrument_id_resolver=resolver,
+        )
+        self.assertEqual(len(result.bars), 2)
+        self.assertEqual(calls, [("510300", "SSE"), ("159919", "SZSE")])
+        first = result.bars[0]
+        self.assertEqual(first.trade_date, date(2026, 7, 30))
+        self.assertEqual(first.open, _D("3.10"))
+        self.assertEqual(first.close, _D("3.15"))
+        self.assertEqual(first.high, _D("3.18"))
+        self.assertEqual(first.low, _D("3.08"))
+        self.assertEqual(first.volume, _D("1000"))
+        self.assertIsNone(first.prev_close)
+        self.assertIsNone(first.amount)
+        self.assertEqual(result.warnings, ())
+
+    def test_real_envelope_nonzero_code_raises(self) -> None:
+        payload = {"code": 403, "message": "provider detail", "data": {}}
+        with self.assertRaises(ProviderDataContractError) as ctx:
+            map_fund_hist_em(
+                _make_response(payload),
+                chunk_index=1,
+                chunk_count=1,
+                source_batch_id=uuid4(),
+                observed_at=_observed_at(),
+                instrument_id_resolver=_resolver(),
+            )
+        self.assertEqual(ctx.exception.code, "MALFORMED_HIST_ENVELOPE")
+        self.assertNotIn("provider detail", str(ctx.exception))
+
+    def test_real_envelope_invalid_data_shape_raises(self) -> None:
+        payload = {"code": 0, "message": "ok", "data": [self._row()]}
+        with self.assertRaises(ProviderDataContractError) as ctx:
+            map_fund_hist_em(
+                _make_response(payload),
+                chunk_index=1,
+                chunk_count=1,
+                source_batch_id=uuid4(),
+                observed_at=_observed_at(),
+                instrument_id_resolver=_resolver(),
+            )
+        self.assertEqual(ctx.exception.code, "MALFORMED_HIST_ENVELOPE")
+
+    def test_real_envelope_invalid_array_rows_are_skipped(self) -> None:
+        payload = {
+            "code": 0,
+            "message": "ok",
+            "data": {
+                "510300": [
+                    "not-an-array",
+                    ["2026-07-30", "3.10"],
+                    ["2026-07-30", "3.10", "3.15", "3.18", "3.08", "1", "1000"],
+                ]
+            },
+        }
+        result = map_fund_hist_em(
+            _make_response(payload),
+            chunk_index=1,
+            chunk_count=1,
+            source_batch_id=uuid4(),
+            observed_at=_observed_at(),
+            instrument_id_resolver=_resolver(),
+        )
+        self.assertEqual(len(result.bars), 1)
+        self.assertEqual(len(result.warnings), 2)
+        self.assertTrue(all("skipped" in warning for warning in result.warnings))
 
     def test_maps_sh_to_sse_and_sz_to_szse(self) -> None:
         rows = [

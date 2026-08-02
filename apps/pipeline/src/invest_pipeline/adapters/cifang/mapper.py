@@ -72,25 +72,33 @@ def map_fund_list(
 ) -> CifangMappingResult:
     """Translate a ``/api/fund/list`` payload into domain instruments.
 
-    The Provider returns a JSON array of objects whose field names are
-    documented in ADR-0011 §2; this helper applies the SSE / SZSE
-    allow-list, the ETF filter and rejects anything that does not fit.
-    Non-ETF rows are silently skipped with a warning so a future
-    Provider broadening (e.g. adding LOFs) does not fail the whole
-    batch.
+    The Provider wraps a successful response in an envelope dict
+    ``{code: 0, message: ..., data: [...]}`` whose ``data`` is a JSON
+    array of objects (field names documented in ADR-0011 §2). For
+    backwards compatibility the top-level list form is also accepted.
+    This helper applies the SSE / SZSE allow-list, the ETF filter and
+    rejects anything that does not fit. Non-ETF rows are silently
+    skipped with a warning so a future Provider broadening (e.g. adding
+    LOFs) does not fail the whole batch.
     """
 
     payload = response.raw_payload
-    if not isinstance(payload, list):
+    if isinstance(payload, list):
+        rows = payload
+    elif isinstance(payload, dict):
+        rows = _unwrap_fund_list_envelope(payload)
+    else:
         raise ProviderDataContractError(
             "MALFORMED_LIST_PAYLOAD",
-            "Cifang /api/fund/list must return a JSON array",
+            "Cifang /api/fund/list must return a JSON array or envelope",
             provider_key=_PROVIDER_KEY,
         )
 
-    instruments: list[Instrument] = []
     warnings: list[str] = []
-    for index, entry in enumerate(payload):
+    rows = _normalize_real_cifang_rows(rows, warnings=warnings)
+
+    instruments: list[Instrument] = []
+    for index, entry in enumerate(rows):
         if not isinstance(entry, dict):
             raise ProviderDataContractError(
                 "MALFORMED_LIST_ROW",
@@ -193,9 +201,13 @@ def map_fund_hist_em(
 ) -> CifangDailyBarsMappingResult:
     """Translate a ``/api/fund/hist_em`` chunk into domain :class:`DailyBar` rows.
 
-    The chunk's response is a JSON object whose ``data`` key is a list
-    of records (dict- or list-shaped depending on the official schema).
-    This mapper handles the documented dict-shaped row in ADR-0011 §2:
+    The fixture response is a JSON object whose ``data`` key is a list
+    of dict records. The real Provider response is an envelope whose
+    ``data`` object groups seven-field arrays by symbol:
+
+        ``{symbol: [[trade_date, open, close, high, low, pct_change, volume]]}``
+
+    Both shapes are normalised to the existing dict-row contract:
 
         ``{symbol, exchange, trade_date, open, close, high, low,
         volume, amount, prev_close}``
@@ -220,27 +232,37 @@ def map_fund_hist_em(
             "Cifang /api/fund/hist_em must return a JSON object",
             provider_key=_PROVIDER_KEY,
         )
-    adjust = payload.get("adjust")
-    if adjust not in _ADJUST_ALLOWED:
-        raise ProviderDataContractError(
-            "NON_NONE_ADJUSTMENT",
-            f"Cifang /api/fund/hist_em returned adjust={adjust!r}; "
-            f"only 'none' is accepted in Phase 1 (ADR-0005 §3)",
-            provider_key=_PROVIDER_KEY,
+
+    warnings: list[str] = []
+    if "code" in payload or isinstance(payload.get("data"), dict):
+        raw_rows = _normalize_fund_hist_envelope(
+            payload,
+            chunk_index=chunk_index,
+            chunk_count=chunk_count,
+            warnings=warnings,
         )
-    raw_rows = payload.get("data")
-    if raw_rows is None:
-        raise ProviderDataContractError(
-            "MISSING_DATA_KEY",
-            "Cifang /api/fund/hist_em payload has no 'data' array",
-            provider_key=_PROVIDER_KEY,
-        )
-    if not isinstance(raw_rows, list):
-        raise ProviderDataContractError(
-            "MALFORMED_HIST_ROWS",
-            "Cifang /api/fund/hist_em 'data' must be a list",
-            provider_key=_PROVIDER_KEY,
-        )
+    else:
+        adjust = payload.get("adjust")
+        if adjust not in _ADJUST_ALLOWED:
+            raise ProviderDataContractError(
+                "NON_NONE_ADJUSTMENT",
+                f"Cifang /api/fund/hist_em returned adjust={adjust!r}; "
+                f"only 'none' is accepted in Phase 1 (ADR-0005 §3)",
+                provider_key=_PROVIDER_KEY,
+            )
+        raw_rows = payload.get("data")
+        if raw_rows is None:
+            raise ProviderDataContractError(
+                "MISSING_DATA_KEY",
+                "Cifang /api/fund/hist_em payload has no 'data' array",
+                provider_key=_PROVIDER_KEY,
+            )
+        if not isinstance(raw_rows, list):
+            raise ProviderDataContractError(
+                "MALFORMED_HIST_ROWS",
+                "Cifang /api/fund/hist_em 'data' must be a list",
+                provider_key=_PROVIDER_KEY,
+            )
 
     bar_source = BarSource(
         provider_key=_PROVIDER_KEY,
@@ -248,7 +270,6 @@ def map_fund_hist_em(
         observed_at=observed_at,
     )
     bars: list[DailyBar] = []
-    warnings: list[str] = []
     for index, entry in enumerate(raw_rows):
         if not isinstance(entry, dict):
             warnings.append(
@@ -302,6 +323,179 @@ def map_fund_hist_em(
 # ----------------------------------------------------------------------
 # Row-level helpers
 # ----------------------------------------------------------------------
+
+
+def _unwrap_fund_list_envelope(payload: dict[str, Any]) -> list[Any]:
+    """Extract the ``data`` list from a Cifang fund-list envelope.
+
+    The real Cifang response wraps the row list in
+    ``{code: 0, message: ..., data: [...]}``. This helper enforces the
+    contract: ``code`` must be present and equal to ``0``; ``data``
+    must be present and a list. Any deviation raises
+    :class:`ProviderDataContractError` without leaking the envelope's
+    ``data`` rows or ``message`` text (which may carry provider
+    internals).
+    """
+
+    if "code" not in payload:
+        raise ProviderDataContractError(
+            "MALFORMED_LIST_ENVELOPE",
+            "Cifang /api/fund/list envelope has no 'code' field",
+            provider_key=_PROVIDER_KEY,
+        )
+    code = payload.get("code")
+    if code != 0:
+        raise ProviderDataContractError(
+            "MALFORMED_LIST_ENVELOPE",
+            f"Cifang /api/fund/list envelope code={code!r} is not 0",
+            provider_key=_PROVIDER_KEY,
+        )
+    if "data" not in payload:
+        raise ProviderDataContractError(
+            "MALFORMED_LIST_ENVELOPE",
+            "Cifang /api/fund/list envelope has no 'data' array",
+            provider_key=_PROVIDER_KEY,
+        )
+    data = payload.get("data")
+    if not isinstance(data, list):
+        raise ProviderDataContractError(
+            "MALFORMED_LIST_ENVELOPE",
+            "Cifang /api/fund/list envelope 'data' must be a list",
+            provider_key=_PROVIDER_KEY,
+        )
+    return data
+
+
+def _normalize_real_cifang_rows(
+    rows: list[Any],
+    *,
+    warnings: list[str],
+) -> list[Any]:
+    """Map real Cifang response rows into the normalised fixture shape.
+
+    Real Cifang ``/api/fund/list`` rows carry the upstream field names
+    ``fund_code`` / ``fund_name`` / ``fund_market`` / ``fund_type`` /
+    ``establish_date`` (ADR-0011 §2). The rest of the pipeline — and
+    every fixture row currently in use — works in
+    ``symbol`` / ``name`` / ``exchange`` / ``instrument_type`` /
+    ``list_date`` form. This helper bridges the two so the downstream
+    loop only ever sees the normalised shape.
+
+    Rows are recognised as real Cifang by the presence of ``fund_code``;
+    already-normalised rows (and any non-dict entries) are passed
+    through unchanged so existing fixture-driven callers keep working.
+
+    Rows whose ``fund_name`` does not end with ``"ETF"`` are filtered
+    here with a warning — the ETF scope is the ADR-0004 §2 contract and
+    we do not want real Cifang broadening (e.g. LOFs) to silently leak
+    into the instrument table.
+    """
+
+    normalised: list[Any] = []
+    for index, entry in enumerate(rows):
+        if not isinstance(entry, dict):
+            normalised.append(entry)
+            continue
+        if "fund_code" not in entry:
+            normalised.append(entry)
+            continue
+        fund_code = entry.get("fund_code")
+        fund_name = entry.get("fund_name")
+        if not isinstance(fund_name, str) or not fund_name.strip().endswith("ETF"):
+            warnings.append(
+                f"row {index} ({fund_code!r}) fund_name={fund_name!r} "
+                "does not end with 'ETF'; skipped (ADR-0004 §2)"
+            )
+            continue
+        normalised.append(
+            {
+                "symbol": fund_code,
+                "name": fund_name,
+                "exchange": entry.get("fund_market"),
+                "instrument_type": "ETF",
+                "list_date": entry.get("establish_date"),
+            }
+        )
+    return normalised
+
+
+def _normalize_fund_hist_envelope(
+    payload: dict[str, Any],
+    *,
+    chunk_index: int,
+    chunk_count: int,
+    warnings: list[str],
+) -> list[dict[str, Any]]:
+    if "code" not in payload or payload.get("code") != 0:
+        code = payload.get("code")
+        raise ProviderDataContractError(
+            "MALFORMED_HIST_ENVELOPE",
+            f"Cifang /api/fund/hist_em envelope code={code!r} is not 0",
+            provider_key=_PROVIDER_KEY,
+        )
+    data = payload.get("data")
+    if not isinstance(data, dict):
+        raise ProviderDataContractError(
+            "MALFORMED_HIST_ENVELOPE",
+            "Cifang /api/fund/hist_em envelope 'data' must be an object",
+            provider_key=_PROVIDER_KEY,
+        )
+
+    rows: list[dict[str, Any]] = []
+    for symbol, symbol_rows in data.items():
+        if not isinstance(symbol, str) or not symbol.strip():
+            raise ProviderDataContractError(
+                "MALFORMED_HIST_ROWS",
+                "Cifang /api/fund/hist_em data contains an invalid symbol key",
+                provider_key=_PROVIDER_KEY,
+            )
+        if not isinstance(symbol_rows, list):
+            raise ProviderDataContractError(
+                "MALFORMED_HIST_ROWS",
+                f"Cifang /api/fund/hist_em rows for symbol {symbol!r} "
+                "must be a list",
+                provider_key=_PROVIDER_KEY,
+            )
+        exchange = _exchange_for_fund_symbol(symbol)
+        for row_index, row in enumerate(symbol_rows):
+            if (
+                not isinstance(row, list)
+                or len(row) != 7
+                or not isinstance(row[0], str)
+                or not row[0].strip()
+            ):
+                warnings.append(
+                    f"chunk {chunk_index}/{chunk_count} symbol {symbol!r} "
+                    f"row {row_index} is not a valid seven-field array; skipped"
+                )
+                continue
+            rows.append(
+                {
+                    "symbol": symbol,
+                    "exchange": exchange,
+                    "trade_date": row[0],
+                    "open": row[1],
+                    "close": row[2],
+                    "high": row[3],
+                    "low": row[4],
+                    "volume": row[6],
+                    "prev_close": None,
+                    "amount": None,
+                }
+            )
+    return rows
+
+
+def _exchange_for_fund_symbol(symbol: str) -> str:
+    if symbol.startswith(("5", "6")):
+        return "SSE"
+    if symbol.startswith(("1", "2")):
+        return "SZSE"
+    raise ProviderDataContractError(
+        "UNSUPPORTED_EXCHANGE",
+        f"cannot infer SSE / SZSE exchange from fund symbol {symbol!r}",
+        provider_key=_PROVIDER_KEY,
+    )
 
 
 class _SkippedRow(ValueError):
