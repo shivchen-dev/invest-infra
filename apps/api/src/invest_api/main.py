@@ -5,6 +5,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from invest_api.config import get_settings
 from invest_api.routers.candidate_pool import router as candidate_pool_router
+from invest_api.routers.data_freshness import router as data_freshness_router
 from invest_api.routers.etf import router as etf_router
 from invest_api.routers.pipeline_runs import router as pipeline_runs_router
 from invest_api.routes import router
@@ -22,3 +23,4 @@ app.include_router(router)
 app.include_router(etf_router)
 app.include_router(candidate_pool_router)
 app.include_router(pipeline_runs_router)
+app.include_router(data_freshness_router)

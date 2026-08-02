@@ -24,6 +24,7 @@ from invest_api.schemas.common import (
 from invest_api.schemas.common import (
     InstrumentResponse as LegacyInstrumentResponse,
 )
+from invest_api.schemas.data_freshness import DataFreshnessResponse, DataFreshnessStatus
 from invest_api.schemas.etf import (
     DailyBarListResponse,
     DailyBarResponse,
@@ -37,6 +38,8 @@ __all__ = [
     "CandidatePoolLatestResponse",
     "DailyBarListResponse",
     "DailyBarResponse",
+    "DataFreshnessResponse",
+    "DataFreshnessStatus",
     "ExclusionReasonResponse",
     "HealthResponse",
     "InstrumentListResponse",
