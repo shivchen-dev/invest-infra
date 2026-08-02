@@ -1,8 +1,13 @@
 """Read-only candidate-pool endpoints.
 
 The router exposes ``/api/v1/candidate-pool/latest`` together with the
-PR-04 diff endpoints that compare the set of ``instrument_id`` values
-in one published run against the most recent earlier published run.
+diff endpoints that compare the set of ``included=True`` instruments in
+one published run against the most recent earlier published run. PR-01
+of
+``docs/plan/invest-infra-v2-next-stage-web-workbench-plan.md`` tightens
+the diff to only consider included items, enriches the latest response
+with run-level metadata, and joins Instrument display fields server
+side so the Web never needs a follow-up ``/etf/instruments`` request.
 All endpoints are read-only and use the storage repositories' read-side
 surface; no write path is exposed here.
 """
@@ -21,11 +26,13 @@ from invest_storage import InputSnapshotRepository
 from invest_storage.repositories import (
     SqlAlchemyCandidatePoolItemRepository,
     SqlAlchemyCandidatePoolRunRepository,
+    SqlAlchemyInstrumentRepository,
 )
 from sqlalchemy.orm import Session
 
 from invest_api.dependencies import get_db_session
 from invest_api.schemas.candidate_pool import (
+    CandidatePoolDiffEntry,
     CandidatePoolDiffResponse,
     CandidatePoolItemResponse,
     CandidatePoolLatestResponse,
@@ -34,6 +41,92 @@ from invest_api.schemas.candidate_pool import (
 )
 
 router = APIRouter(prefix="/api/v1/candidate-pool", tags=["candidate-pool"])
+
+
+def _included_instrument_ids(
+    items,  # noqa: ANN001 - parameter typed through repository contract below
+) -> set[UUID]:
+    """Return the set of raw UUID ``instrument_id`` values for included items only.
+
+    Excluded items (where ``included=False``) MUST NEVER participate in
+    the diff: they reflect the input pool membership, not candidate
+    pool membership, and would otherwise make "input pool unchanged"
+    surfaces look like "candidate pool retained everything".
+    """
+
+    return {item.instrument_id.value for item in items if item.included}
+
+
+def _build_diff_entries(
+    instrument_ids: set[UUID],
+    instruments_by_id: dict[UUID, object],
+) -> list[CandidatePoolDiffEntry]:
+    """Resolve display fields for ``instrument_ids`` and sort deterministically.
+
+    Order is ``symbol`` ascending with ``instrument_id`` as the
+    tiebreaker so the Web can rely on a stable payload. Instruments
+    that are missing from the lookup degrade to ``None`` display
+    fields rather than dropping the entry - the diff still records the
+    membership change.
+    """
+
+    entries: list[CandidatePoolDiffEntry] = []
+    for instrument_id in instrument_ids:
+        instrument = instruments_by_id.get(instrument_id)
+        entries.append(
+            CandidatePoolDiffEntry(
+                instrument_id=instrument_id,
+                symbol=getattr(instrument, "symbol", None),
+                name=getattr(instrument, "name", None),
+                exchange=getattr(instrument, "exchange", None),
+            )
+        )
+    entries.sort(
+        key=lambda entry: (
+            entry.symbol or "",
+            str(entry.instrument_id),
+        )
+    )
+    return entries
+
+
+def _build_item_responses(
+    items,  # noqa: ANN001
+    instruments_by_id: dict[UUID, object],
+) -> list[CandidatePoolItemResponse]:
+    """Translate :class:`CandidatePoolItem` rows into the API response shape."""
+
+    responses: list[CandidatePoolItemResponse] = []
+    for item in items:
+        instrument = instruments_by_id.get(item.instrument_id.value)
+        responses.append(
+            CandidatePoolItemResponse(
+                instrument_id=item.instrument_id.value,
+                included=item.included,
+                rank=item.rank,
+                total_score=item.total_score,
+                metrics={key: format(value, "f") for key, value in item.metrics.items()},
+                rule_results=[
+                    RuleOutcomeResponse(
+                        rule_key=outcome.rule_key,
+                        passed=outcome.passed,
+                        severity=outcome.severity.value,
+                        value=outcome.value,
+                        threshold=outcome.threshold,
+                        message=outcome.message,
+                    )
+                    for outcome in item.rule_results
+                ],
+                exclusion_reasons=[
+                    ExclusionReasonResponse(code=reason.code, message=reason.message)
+                    for reason in item.exclusion_reasons
+                ],
+                symbol=getattr(instrument, "symbol", None),
+                name=getattr(instrument, "name", None),
+                exchange=getattr(instrument, "exchange", None),
+            )
+        )
+    return responses
 
 
 @router.get("/latest", response_model=CandidatePoolLatestResponse)
@@ -70,60 +163,47 @@ def get_latest_candidate_pool(
 
     item_repository = SqlAlchemyCandidatePoolItemRepository(session)
     items = item_repository.list_by_run_id(latest_run.id)
-    response_items = [
-        CandidatePoolItemResponse(
-            instrument_id=item.instrument_id.value,
-            included=item.included,
-            rank=item.rank,
-            total_score=item.total_score,
-            metrics={key: format(value, "f") for key, value in item.metrics.items()},
-            rule_results=[
-                RuleOutcomeResponse(
-                    rule_key=outcome.rule_key,
-                    passed=outcome.passed,
-                    severity=outcome.severity.value,
-                    value=outcome.value,
-                    threshold=outcome.threshold,
-                    message=outcome.message,
-                )
-                for outcome in item.rule_results
-            ],
-            exclusion_reasons=[
-                ExclusionReasonResponse(code=reason.code, message=reason.message)
-                for reason in item.exclusion_reasons
-            ],
-        )
-        for item in items
-    ]
 
-    return CandidatePoolLatestResponse(
-        snapshot_date=latest_run.trade_date,
-        row_count=latest_run.input_row_count,
-        content_hash=matching_snapshot.content_hash,
-        items=response_items,
+    instrument_repository = SqlAlchemyInstrumentRepository(session)
+    instruments_by_id = instrument_repository.get_many_by_ids(
+        [item.instrument_id for item in items]
     )
 
+    response_items = _build_item_responses(items, instruments_by_id)
+    excluded_count = max(latest_run.input_row_count - latest_run.included_count, 0)
 
-def _instrument_id_set(
-    items,  # noqa: ANN001 - parameter typed through repository contract below
-) -> set[UUID]:
-    """Return the set of raw UUID ``instrument_id`` values from run items."""
-
-    return {item.instrument_id.value for item in items}
+    return CandidatePoolLatestResponse(
+        run_id=latest_run.id,
+        trade_date=latest_run.trade_date,
+        algorithm_key=latest_run.algorithm_key,
+        algorithm_version=latest_run.algorithm_version,
+        parameter_set_key=latest_run.parameter_set_key,
+        snapshot_id=latest_run.input_snapshot_id,
+        content_hash=matching_snapshot.content_hash,
+        row_count=latest_run.input_row_count,
+        included_count=latest_run.included_count,
+        excluded_count=excluded_count,
+        published_at=latest_run.published_at,
+        items=response_items,
+    )
 
 
 def _diff_against_previous_published_run(
     current_run: CandidatePoolRun,
     run_repository: SqlAlchemyCandidatePoolRunRepository,
     item_repository: SqlAlchemyCandidatePoolItemRepository,
+    instrument_repository: SqlAlchemyInstrumentRepository,
 ) -> CandidatePoolDiffResponse:
     """Compare ``current_run`` against the most recent earlier published run.
 
-    The lookup uses :meth:`list_by_status` (ordered by ``trade_date`` desc
-    then ``id`` asc) and picks the first published run whose
-    ``trade_date`` is strictly less than the current run's
-    ``trade_date``. When no earlier published run exists the response
-    reports every instrument in the current run as ``added`` and leaves
+    Only items with ``included=True`` participate in the diff so the
+    result reflects candidate-pool membership changes instead of input
+    pool membership changes. The lookup uses
+    :meth:`list_by_status` (ordered by ``trade_date`` desc then ``id``
+    asc) and picks the first published run whose ``trade_date`` is
+    strictly less than the current run's ``trade_date``. When no
+    earlier published run exists the response reports every included
+    instrument in the current run as ``added`` and leaves
     ``retained`` / ``removed`` empty.
     """
 
@@ -136,30 +216,34 @@ def _diff_against_previous_published_run(
     )
 
     current_items = item_repository.list_by_run_id(current_run.id)
-    current_ids = _instrument_id_set(current_items)
+    current_ids = _included_instrument_ids(current_items)
 
     if previous_run is None:
+        instruments_by_id = instrument_repository.get_many_by_ids(current_ids)
         return CandidatePoolDiffResponse(
             trade_date=current_run.trade_date,
             previous_trade_date=None,
-            added=sorted(current_ids),
+            added=_build_diff_entries(current_ids, instruments_by_id),
             retained=[],
             removed=[],
         )
 
     previous_items = item_repository.list_by_run_id(previous_run.id)
-    previous_ids = _instrument_id_set(previous_items)
+    previous_ids = _included_instrument_ids(previous_items)
 
-    added = current_ids - previous_ids
-    removed = previous_ids - current_ids
-    retained = current_ids & previous_ids
+    added_ids = current_ids - previous_ids
+    removed_ids = previous_ids - current_ids
+    retained_ids = current_ids & previous_ids
+
+    instrument_ids = added_ids | removed_ids | retained_ids
+    instruments_by_id = instrument_repository.get_many_by_ids(instrument_ids)
 
     return CandidatePoolDiffResponse(
         trade_date=current_run.trade_date,
         previous_trade_date=previous_run.trade_date,
-        added=sorted(added),
-        retained=sorted(retained),
-        removed=sorted(removed),
+        added=_build_diff_entries(added_ids, instruments_by_id),
+        retained=_build_diff_entries(retained_ids, instruments_by_id),
+        removed=_build_diff_entries(removed_ids, instruments_by_id),
     )
 
 
@@ -180,8 +264,9 @@ def get_latest_candidate_pool_diff(
         )
     current_run = published[0]
     item_repository = SqlAlchemyCandidatePoolItemRepository(session)
+    instrument_repository = SqlAlchemyInstrumentRepository(session)
     return _diff_against_previous_published_run(
-        current_run, run_repository, item_repository
+        current_run, run_repository, item_repository, instrument_repository
     )
 
 
@@ -205,8 +290,9 @@ def get_candidate_pool_diff(
             detail=f"published candidate pool run {run_id} not found",
         )
     item_repository = SqlAlchemyCandidatePoolItemRepository(session)
+    instrument_repository = SqlAlchemyInstrumentRepository(session)
     return _diff_against_previous_published_run(
-        current_run, run_repository, item_repository
+        current_run, run_repository, item_repository, instrument_repository
     )
 
 

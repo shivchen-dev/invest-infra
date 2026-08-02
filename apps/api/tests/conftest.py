@@ -121,6 +121,20 @@ def input_snapshot_repo(monkeypatch: pytest.MonkeyPatch) -> MagicMock:
 
 
 @pytest.fixture()
+def candidate_pool_instrument_repo(monkeypatch: pytest.MonkeyPatch) -> MagicMock:
+    """Patch ``SqlAlchemyInstrumentRepository`` in the candidate-pool router."""
+
+    mock = MagicMock(name="CandidatePoolInstrumentRepository")
+    mock.get_many_by_ids.return_value = {}
+    monkeypatch.setattr(
+        candidate_pool_router,
+        "SqlAlchemyInstrumentRepository",
+        lambda session: mock,
+    )
+    return mock
+
+
+@pytest.fixture()
 def pipeline_run_repo(monkeypatch: pytest.MonkeyPatch) -> MagicMock:
     """Patch ``SqlAlchemyPipelineRunRepository`` in the pipeline-runs router."""
 
@@ -352,6 +366,7 @@ def make_pipeline_run(
 
 
 __all__ = [
+    "candidate_pool_instrument_repo",
     "candidate_pool_item_repo",
     "candidate_pool_run_repo",
     "client",

@@ -295,6 +295,37 @@ class SqlAlchemyInstrumentRepository:
         row = self._session.get(InstrumentRow, raw_id)
         return _row_to_instrument(row) if row is not None else None
 
+    def get_many_by_ids(
+        self, instrument_ids: Sequence[UUID | InstrumentId]
+    ) -> dict[UUID, Instrument]:
+        """Bulk lookup instruments by ``instrument_id``.
+
+        Returns a dict keyed by the raw ``UUID`` containing only the rows
+        that were found; ``instrument_ids`` that are missing from
+        ``core.instruments`` are silently omitted so the caller can
+        degrade to ``None`` display fields instead of failing the whole
+        read path. An empty ``instrument_ids`` yields an empty dict so
+        the common "no items" path stays branch-free.
+        """
+
+        if not instrument_ids:
+            return {}
+        normalised: dict[UUID, None] = {}
+        for value in instrument_ids:
+            if isinstance(value, InstrumentId):
+                normalised[value.value] = None
+            elif isinstance(value, UUID):
+                normalised[value] = None
+            else:
+                raise TypeError(
+                    "get_many_by_ids expects UUID or InstrumentId, "
+                    f"got {type(value).__name__}"
+                )
+        rows = self._session.scalars(
+            select(InstrumentRow).where(InstrumentRow.id.in_(normalised.keys()))
+        ).all()
+        return {row.id: _row_to_instrument(row) for row in rows}
+
     def get_by_business_key(
         self, *, exchange: str, symbol: str
     ) -> Instrument | None:

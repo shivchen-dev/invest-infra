@@ -86,7 +86,8 @@ make test
 - 不在第一阶段引入 Redis、MinIO、消息队列和微服务。
 - 不把 Notebook 或 `vectorbt[full]` 装进 API 镜像。
 
-详细决策见 `docs/ARCHITECTURE.md` 和 `docs/REWRITE_PLAN.md`。
+详细决策见 `docs/ARCHITECTURE.md`、`docs/plan/invest-infra-v2-stage2-automation-stability-plan-no-matrix.md` 和
+`docs/plan/invest-infra-v2-next-stage-web-workbench-plan.md`。
 
 ## 骨架验证状态
 
