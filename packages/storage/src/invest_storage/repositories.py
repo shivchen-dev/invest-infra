@@ -1287,6 +1287,36 @@ class SqlAlchemyPipelineRunRepository:
         rows = self._session.scalars(stmt).all()
         return [_row_to_pipeline_run(row) for row in rows]
 
+    def list_by_job_key(
+        self, job_key: str, *, limit: int = 50, offset: int = 0
+    ) -> list[PipelineRun]:
+        """Return one job's runs ordered by ``started_at`` descending."""
+
+        if limit < 0:
+            raise ValueError(f"limit must be >= 0, got {limit}")
+        if offset < 0:
+            raise ValueError(f"offset must be >= 0, got {offset}")
+        stmt = (
+            select(PipelineRunRow)
+            .where(PipelineRunRow.job_key == job_key)
+            .order_by(
+                PipelineRunRow.started_at.desc(),
+                PipelineRunRow.id.asc(),
+            )
+            .limit(limit)
+            .offset(offset)
+        )
+        rows = self._session.scalars(stmt).all()
+        return [_row_to_pipeline_run(row) for row in rows]
+
+    def count_by_job_key(self, job_key: str) -> int:
+        """Return the number of runs for ``job_key``."""
+
+        stmt = select(func.count(PipelineRunRow.id)).where(
+            PipelineRunRow.job_key == job_key
+        )
+        return int(self._session.scalar(stmt) or 0)
+
     def count_by_status(self, status: str) -> int:
         """Return the number of runs in the given ``status``.
 

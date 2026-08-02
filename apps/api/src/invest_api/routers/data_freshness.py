@@ -4,11 +4,26 @@ Returns a coarse, single-shot health summary of the personal-ETF daily
 pipeline for ``expected_trade_date`` (defaulting to the latest weekday)
 so the front-end can show a single banner without fanning out to five
 separate endpoints. The handler issues raw ``text()`` queries against
-the existing tables (``core.instruments``,
+the existing tables (``analytics.input_snapshots``,
 ``analytics.candidate_pool_runs``, ``analytics.candidate_pool_items``,
-``core.daily_bars``, ``analytics.input_snapshots``,
-``ops.pipeline_runs``) and reduces the results to one of five statuses
-defined in :class:`DataFreshnessResponse`.
+``core.daily_bars``, ``ops.pipeline_runs``) and reduces the results to
+one of five statuses defined in :class:`DataFreshnessResponse`.
+
+PR-02 tightens the personal-universe accounting so the handler never
+blends market-wide ETFs into the personal pool:
+
+- ``universe_count`` is sourced from the input snapshot
+  (``analytics.input_snapshots.row_count``) for the expected date when
+  one exists; if no snapshot exists for the expected date the handler
+  falls back to ``input_row_count`` of the most recently
+  ``published`` ``analytics.candidate_pool_runs`` row; with no
+  published row either the universe is ``0``.
+- ``daily_bar_count`` and ``missing_count`` are scoped to the input
+  snapshot's ``instrument_ids`` when available so a half-empty market
+  day does not inflate the personal missing-count. The fallback path
+  uses the published run's ``analytics.candidate_pool_items`` membership
+  so the count still reflects the personal universe rather than every
+  ETF in ``core.daily_bars``.
 
 The five statuses are mutually exclusive and evaluated in this order:
 
@@ -19,7 +34,8 @@ The five statuses are mutually exclusive and evaluated in this order:
 3. ``stale``   - the latest published candidate-pool run is for a
    trade_date strictly before ``expected_trade_date``.
 4. ``partial`` - the latest published candidate-pool run matches
-   ``expected_trade_date`` but ``daily_bar_count < universe_count``.
+   ``expected_trade_date`` and ``daily_bar_count < universe_count``
+   (only meaningful when a snapshot scoped the universe).
 5. ``fresh``   - the latest published candidate-pool run matches
    ``expected_trade_date`` and ``daily_bar_count >= universe_count``.
 
@@ -32,7 +48,7 @@ strings or driver internals) never leaks to the client.
 from __future__ import annotations
 
 from datetime import UTC, date, datetime, timedelta
-from typing import Annotated
+from typing import Annotated, Any
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -83,6 +99,135 @@ def _compute_status(
     return "fresh"
 
 
+def _snapshot_row(
+    session: Session, expected: date
+) -> tuple[UUID, list[str], int] | None:
+    """Return ``(id, instrument_ids, row_count)`` for the expected date.
+
+    The most recently created snapshot wins; when ``created_at`` ties,
+    the larger ``id`` wins deterministically so a same-day rerun never
+    returns a stale row. The handler ignores snapshots for other trade
+    dates so the personal universe never leaks across days.
+    """
+
+    row = session.execute(
+        text(
+            """
+            SELECT id, instrument_ids, row_count
+            FROM analytics.input_snapshots
+            WHERE snapshot_date = :trade_date
+            ORDER BY created_at DESC, id DESC
+            LIMIT 1
+            """
+        ),
+        {"trade_date": expected},
+    ).first()
+    if row is None:
+        return None
+    raw_ids = row[1]
+    instrument_ids: list[str] = (
+        list(raw_ids) if isinstance(raw_ids, (list, tuple)) else []
+    )
+    return row[0], instrument_ids, int(row[2])
+
+
+def _published_row(session: Session) -> tuple[Any, ...] | None:
+    """Return the latest ``published`` candidate-pool run row.
+
+    ``analytics.candidate_pool_runs`` is ordered by ``trade_date``
+    descending and then ``created_at`` descending so a later same-day
+    rerun supersedes the earlier one; the handler ignores rows that
+    have not been published yet.
+    """
+
+    return session.execute(
+        text(
+            """
+            SELECT id, trade_date, input_row_count
+            FROM analytics.candidate_pool_runs
+            WHERE status = 'published'
+            ORDER BY trade_date DESC, created_at DESC
+            LIMIT 1
+            """
+        )
+    ).first()
+
+
+def _candidate_count(session: Session, run_id: UUID) -> int:
+    """Return the number of ``included = true`` items for ``run_id``."""
+
+    return int(
+        session.execute(
+            text(
+                """
+                SELECT count(*) FROM analytics.candidate_pool_items
+                WHERE run_id = :run_id AND included = true
+                """
+            ),
+            {"run_id": run_id},
+        ).scalar_one()
+    )
+
+
+def _daily_bar_count_snapshot(
+    session: Session, expected: date, instrument_ids: list[str]
+) -> int:
+    """Return the distinct ``daily_bars.instrument_id`` count.
+
+    Scoped to ``instrument_ids`` (the personal snapshot's membership)
+    so the count reflects only the personal pool rather than every ETF
+    present in ``core.daily_bars``. ``instrument_id`` is a ``uuid`` and
+    ``analytics.input_snapshots.instrument_ids`` is a JSONB array of
+    strings, so the array is cast to ``uuid[]`` before the ``ANY``
+    comparison to keep PostgreSQL happy.
+    """
+
+    if not instrument_ids:
+        return 0
+    return int(
+        session.execute(
+            text(
+                """
+                SELECT count(DISTINCT instrument_id) FROM core.daily_bars
+                WHERE trade_date = :trade_date
+                  AND instrument_id = ANY(CAST(:ids AS uuid[]))
+                """
+            ),
+            {"trade_date": expected, "ids": instrument_ids},
+        ).scalar_one()
+    )
+
+
+def _daily_bar_count_published(
+    session: Session, expected: date, run_id: UUID
+) -> int:
+    """Return distinct daily bars for the published run's personal pool.
+
+    The membership comes from ``analytics.candidate_pool_items`` for the
+    most recently published run so the count remains scoped to the
+    personal universe even when no same-day snapshot exists. The
+    ``IN`` sub-select avoids depending on the snapshot's JSONB shape.
+    """
+
+    return int(
+        session.execute(
+            text(
+                """
+                SELECT count(DISTINCT db.instrument_id)
+                FROM core.daily_bars db
+                WHERE db.trade_date = :trade_date
+                  AND db.instrument_id IN (
+                      SELECT instrument_id
+                      FROM analytics.candidate_pool_items
+                      WHERE run_id = :run_id
+                  )
+                """
+            ),
+            {"trade_date": expected, "run_id": run_id},
+        ).scalar_one()
+    )
+
+
 @router.get("", response_model=DataFreshnessResponse)
 def get_data_freshness(
     session: Annotated[Session, Depends(get_db_session)],
@@ -94,64 +239,32 @@ def get_data_freshness(
     as_of = datetime.now(UTC)
 
     try:
-        universe_count = int(
-            session.execute(
-                text("SELECT count(*) FROM core.instruments WHERE is_active = true")
-            ).scalar_one()
-        )
-
-        published_row = session.execute(
-            text(
-                """
-                SELECT id, trade_date, input_snapshot_id
-                FROM analytics.candidate_pool_runs
-                WHERE status = 'published'
-                ORDER BY trade_date DESC, created_at DESC
-                LIMIT 1
-                """
-            )
-        ).first()
+        snapshot = _snapshot_row(session, expected)
+        published_row = _published_row(session)
 
         latest_published_date: date | None = None
         candidate_count = 0
+        universe_count = 0
+        snapshot_id: UUID | None = None
+
+        if snapshot is not None:
+            snapshot_id, snapshot_ids, universe_count = snapshot
+            daily_bar_count = _daily_bar_count_snapshot(
+                session, expected, snapshot_ids
+            )
+        elif published_row is not None:
+            universe_count = int(published_row[2])
+            daily_bar_count = _daily_bar_count_published(
+                session, expected, published_row[0]
+            )
+        else:
+            daily_bar_count = 0
+
         if published_row is not None:
             latest_published_date = published_row[1]
-            candidate_count = int(
-                session.execute(
-                    text(
-                        """
-                        SELECT count(*) FROM analytics.candidate_pool_items
-                        WHERE run_id = :run_id AND included = true
-                        """
-                    ),
-                    {"run_id": published_row[0]},
-                ).scalar_one()
-            )
+            candidate_count = _candidate_count(session, published_row[0])
 
-        daily_bar_count = int(
-            session.execute(
-                text(
-                    """
-                    SELECT count(DISTINCT instrument_id) FROM core.daily_bars
-                    WHERE trade_date = :trade_date
-                    """
-                ),
-                {"trade_date": expected},
-            ).scalar_one()
-        )
-
-        snapshot_row = session.execute(
-            text(
-                """
-                SELECT id FROM analytics.input_snapshots
-                WHERE snapshot_date = :trade_date
-                ORDER BY created_at DESC
-                LIMIT 1
-                """
-            ),
-            {"trade_date": expected},
-        ).first()
-        snapshot_id: UUID | None = snapshot_row[0] if snapshot_row is not None else None
+        missing_count = max(0, universe_count - daily_bar_count)
 
         pipeline_row = session.execute(
             text(
@@ -183,7 +296,7 @@ def get_data_freshness(
             latest_published_trade_date=latest_published_date,
             universe_count=universe_count,
             daily_bar_count=daily_bar_count,
-            missing_count=max(0, universe_count - daily_bar_count),
+            missing_count=missing_count,
             candidate_count=candidate_count,
             snapshot_id=snapshot_id,
             pipeline_run_id=pipeline_run_id,

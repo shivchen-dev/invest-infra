@@ -3,10 +3,12 @@
 The endpoints are exercised through ``fastapi.testclient.TestClient``
 with the storage-layer ``SqlAlchemyPipelineRunRepository`` patched to a
 ``MagicMock`` instance so the handlers can be driven without a live
-PostgreSQL connection. Both endpoints are scoped to
+PostgreSQL connection. All endpoints are scoped to
 ``job_key = "personal_etf_daily_job"``; the tests assert that a run
 belonging to a different ``job_key`` is treated as ``404`` so the
 front-end cannot mistake an unrelated job for the personal daily job.
+The PR-02 list endpoint also asserts that storage applies the personal job
+filter and pagination in SQL, and obtains the exact total from its job count.
 """
 
 from __future__ import annotations
@@ -24,6 +26,7 @@ if TYPE_CHECKING:
 
 
 LATEST_ENDPOINT = "/api/v1/pipeline-runs/latest"
+LIST_ENDPOINT = "/api/v1/pipeline-runs"
 
 
 class TestGetLatestPipelineRun:
@@ -196,3 +199,189 @@ class TestGetPipelineRunById:
         assert body["status"] == "queued"
         assert body["started_at"] is None
         assert body["finished_at"] is None
+
+
+class TestListPipelineRuns:
+    """Coverage for ``GET /api/v1/pipeline-runs`` (PR-02 history endpoint)."""
+
+    def test_returns_paginated_history_for_personal_job(
+        self,
+        client: TestClient,
+        pipeline_run_repo: MagicMock,
+        mock_session: MagicMock,
+    ) -> None:
+        personal_a = make_pipeline_run()
+        personal_b = make_pipeline_run()
+        pipeline_run_repo.list_by_job_key.return_value = [personal_a, personal_b]
+        pipeline_run_repo.count_by_job_key.return_value = 3
+
+        response = client.get(LIST_ENDPOINT, params={"limit": 2, "offset": 0})
+
+        assert response.status_code == 200
+        body = response.json()
+        assert body["total"] == 3
+        assert body["limit"] == 2
+        assert body["offset"] == 0
+        assert [item["id"] for item in body["items"]] == [
+            str(personal_a.id),
+            str(personal_b.id),
+        ]
+        assert body["items"][0]["job_key"] == "personal_etf_daily_job"
+        pipeline_run_repo.list_by_job_key.assert_called_once_with(
+            "personal_etf_daily_job", limit=2, offset=0
+        )
+        pipeline_run_repo.count_by_job_key.assert_called_once_with(
+            "personal_etf_daily_job"
+        )
+
+    def test_default_limit_is_20(
+        self,
+        client: TestClient,
+        pipeline_run_repo: MagicMock,
+        mock_session: MagicMock,
+    ) -> None:
+        pipeline_run_repo.list_by_job_key.return_value = []
+        pipeline_run_repo.count_by_job_key.return_value = 0
+
+        response = client.get(LIST_ENDPOINT)
+
+        assert response.status_code == 200
+        body = response.json()
+        assert body["limit"] == 20
+        assert body["offset"] == 0
+        assert body["total"] == 0
+        assert body["items"] == []
+
+    def test_filters_out_runs_belonging_to_other_jobs(
+        self,
+        client: TestClient,
+        pipeline_run_repo: MagicMock,
+        mock_session: MagicMock,
+    ) -> None:
+        personal_run = make_pipeline_run()
+        pipeline_run_repo.list_by_job_key.return_value = [personal_run]
+        pipeline_run_repo.count_by_job_key.return_value = 1
+
+        response = client.get(LIST_ENDPOINT)
+
+        assert response.status_code == 200
+        body = response.json()
+        assert body["total"] == 1
+        assert [item["id"] for item in body["items"]] == [str(personal_run.id)]
+        pipeline_run_repo.list_by_job_key.assert_called_once_with(
+            "personal_etf_daily_job", limit=20, offset=0
+        )
+
+    def test_total_uses_underlying_storage_count_not_in_memory_total(
+        self,
+        client: TestClient,
+        pipeline_run_repo: MagicMock,
+        mock_session: MagicMock,
+    ) -> None:
+        personal_runs = [make_pipeline_run() for _ in range(5)]
+        pipeline_run_repo.list_by_job_key.return_value = personal_runs
+        pipeline_run_repo.count_by_job_key.return_value = 42
+
+        response = client.get(LIST_ENDPOINT, params={"limit": 5, "offset": 0})
+
+        body = response.json()
+        assert body["total"] == 42
+        assert len(body["items"]) == 5
+
+    def test_offset_paginates_through_personal_history(
+        self,
+        client: TestClient,
+        pipeline_run_repo: MagicMock,
+        mock_session: MagicMock,
+    ) -> None:
+        personal_b = make_pipeline_run()
+        pipeline_run_repo.list_by_job_key.return_value = [personal_b]
+        pipeline_run_repo.count_by_job_key.return_value = 3
+
+        response = client.get(
+            LIST_ENDPOINT, params={"limit": 1, "offset": 1}
+        )
+
+        body = response.json()
+        assert body["limit"] == 1
+        assert body["offset"] == 1
+        assert body["total"] == 3
+        assert [item["id"] for item in body["items"]] == [str(personal_b.id)]
+        pipeline_run_repo.list_by_job_key.assert_called_once_with(
+            "personal_etf_daily_job", limit=1, offset=1
+        )
+
+    def test_offset_over_100_uses_sql_pagination(
+        self,
+        client: TestClient,
+        pipeline_run_repo: MagicMock,
+        mock_session: MagicMock,
+    ) -> None:
+        pipeline_run_repo.list_by_job_key.return_value = [make_pipeline_run()]
+        pipeline_run_repo.count_by_job_key.return_value = 126
+
+        response = client.get(
+            LIST_ENDPOINT, params={"limit": 1, "offset": 125}
+        )
+
+        body = response.json()
+        assert body["items"]
+        assert body["total"] == 126
+        assert body["limit"] == 1
+        assert body["offset"] == 125
+        pipeline_run_repo.list_by_job_key.assert_called_once_with(
+            "personal_etf_daily_job", limit=1, offset=125
+        )
+
+    @pytest.mark.parametrize("bad_limit", [0, -1, 101, 1000])
+    def test_returns_422_for_out_of_range_limit(
+        self,
+        client: TestClient,
+        pipeline_run_repo: MagicMock,
+        bad_limit: int,
+    ) -> None:
+        response = client.get(LIST_ENDPOINT, params={"limit": bad_limit})
+
+        assert response.status_code == 422
+        pipeline_run_repo.list_by_job_key.assert_not_called()
+
+    @pytest.mark.parametrize("bad_offset", [-1, -10])
+    def test_returns_422_for_negative_offset(
+        self,
+        client: TestClient,
+        pipeline_run_repo: MagicMock,
+        bad_offset: int,
+    ) -> None:
+        response = client.get(LIST_ENDPOINT, params={"offset": bad_offset})
+
+        assert response.status_code == 422
+        pipeline_run_repo.list_by_job_key.assert_not_called()
+
+    def test_returns_sanitized_500_on_sqlalchemy_error(
+        self,
+        client: TestClient,
+        pipeline_run_repo: MagicMock,
+        mock_session: MagicMock,
+    ) -> None:
+        from sqlalchemy.exc import OperationalError
+
+        pipeline_run_repo.list_by_job_key.side_effect = OperationalError(
+            "SELECT pipeline runs",
+            {},
+            Exception("connection string: postgres://user:secret@host/db"),
+        )
+
+        response = client.get(LIST_ENDPOINT)
+
+        assert response.status_code == 500
+        assert response.json() == {"detail": "Pipeline runs query failed"}
+        # Ensure the original driver message (and any embedded secret) never leaks.
+        assert "secret" not in response.text
+        assert "OperationalError" not in response.text
+
+
+__all__ = [
+    "TestGetLatestPipelineRun",
+    "TestGetPipelineRunById",
+    "TestListPipelineRuns",
+]

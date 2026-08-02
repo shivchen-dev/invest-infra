@@ -10,6 +10,13 @@ PR-03: the storage layer does not yet persist a separate error code for
 ``ops.pipeline_runs``; the structured error field lands in a later PR.
 ``error_summary`` continues to carry the human-readable failure
 description produced by :class:`SqlAlchemyPipelineRunRepository.mark_failed`.
+
+PR-02 adds :class:`PipelineRunListResponse` to expose the chronological
+history of the personal daily job through ``GET /api/v1/pipeline-runs``.
+The envelope mirrors the other paginated responses in the API
+(``items``, ``total``, ``limit``, ``offset``); ``total`` is the count of
+``personal_etf_daily_job`` runs regardless of the page bounds so the
+front-end can compute the full page count deterministically.
 """
 
 from __future__ import annotations
@@ -17,7 +24,7 @@ from __future__ import annotations
 from datetime import datetime
 from uuid import UUID
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class PipelineRunResponse(BaseModel):
@@ -40,4 +47,20 @@ class PipelineRunResponse(BaseModel):
     error_summary: str | None = None
 
 
-__all__ = ["PipelineRunResponse"]
+class PipelineRunListResponse(BaseModel):
+    """Paginated envelope for the ``GET /api/v1/pipeline-runs`` endpoint.
+
+    ``total`` counts every ``personal_etf_daily_job`` run (i.e. it is
+    computed independently of ``limit`` / ``offset``) so the UI can
+    render the page count without an extra round trip. ``items`` is
+    always ordered by ``started_at`` descending and then ``id``
+    ascending so successive pages are stable.
+    """
+
+    items: list[PipelineRunResponse]
+    total: int = Field(ge=0)
+    limit: int = Field(ge=1, le=100)
+    offset: int = Field(ge=0)
+
+
+__all__ = ["PipelineRunListResponse", "PipelineRunResponse"]

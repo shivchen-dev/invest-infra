@@ -2,17 +2,25 @@
 
 The endpoint runs raw ``text()`` queries through ``session.execute``,
 so the test fixtures don't need a repository mock - they drive
-``mock_session.execute`` directly. Each handler call issues a fixed
-sequence of execute calls, so the tests populate
-``mock_session.execute.side_effect`` with one ``MagicMock`` result per
-query in order:
+``mock_session.execute.side_effect`` directly. Each handler call issues
+a fixed sequence of execute calls, so the tests populate the side
+effect with one ``MagicMock`` result per query in order:
 
-    1. active core.instruments count           -> ``.scalar_one()``
-    2. latest published candidate-pool run    -> ``.first()`` (row or None)
-    3. candidate_pool_items count (if any)    -> ``.scalar_one()``
-    4. daily_bars distinct count               -> ``.scalar_one()``
-    5. input_snapshots row for expected date  -> ``.first()`` (row or None)
-    6. ops.pipeline_runs latest for partition -> ``.first()`` (row or None)
+    1. ``analytics.input_snapshots`` lookup for the expected date
+       -> ``.first()`` (row of ``(id, instrument_ids, row_count)`` or
+       ``None``)
+    2. ``analytics.candidate_pool_runs`` latest published row
+       -> ``.first()`` (row of ``(id, trade_date, input_row_count)`` or
+       ``None``)
+    3. ``analytics.candidate_pool_items`` count for the published run
+       (only when the published row is non-null) -> ``.scalar_one()``
+    4. ``core.daily_bars`` distinct count - the SQL depends on whether
+       a snapshot was found, so the same single result covers both
+       branches (snapshot path passes the membership list as an
+       ``uuid[]``; fallback path uses a correlated ``IN`` sub-select
+       against ``candidate_pool_items``) -> ``.scalar_one()``
+    5. ``ops.pipeline_runs`` latest for the partition -> ``.first()``
+       (row of ``(id, status)`` or ``None``)
 """
 
 from __future__ import annotations
@@ -49,18 +57,33 @@ def _row(values: tuple | None) -> MagicMock:
 
 def _build_results(
     *,
-    universe_count: int,
+    snapshot: tuple | None,
     published: tuple | None,
     candidate_count: int,
     daily_bar_count: int,
-    snapshot: tuple | None,
     pipeline: tuple | None,
 ) -> list[MagicMock]:
-    results: list[MagicMock] = [_scalar(universe_count), _row(published)]
+    """Build the ``session.execute.side_effect`` list for one handler call.
+
+    The handler always queries the snapshot, then the latest published
+    candidate-pool run, then (depending on which one resolved) a
+    daily-bar count and the included-item count, then the pipeline run.
+    The order below mirrors that sequence exactly so each call into
+    ``session.execute`` consumes the correct mock.
+
+    The snapshot tuple carries ``(id, instrument_ids, row_count)``;
+    ``instrument_ids`` is the JSON-shaped list passed straight back to
+    PostgreSQL through the ``uuid[]`` cast so tests can assert that the
+    snapshot's instruments scope the daily-bar lookup. The published
+    tuple carries ``(id, trade_date, input_row_count)`` to mirror the
+    fallback path.
+    """
+
+    results: list[MagicMock] = [_row(snapshot), _row(published)]
+    if snapshot is not None or published is not None:
+        results.append(_scalar(daily_bar_count))
     if published is not None:
         results.append(_scalar(candidate_count))
-    results.append(_scalar(daily_bar_count))
-    results.append(_row(snapshot))
     results.append(_row(pipeline))
     return results
 
@@ -73,16 +96,15 @@ class TestDataFreshnessStatus:
         client: TestClient,
         mock_session: MagicMock,
     ) -> None:
-        run_id = uuid4()
         snapshot_id = uuid4()
         pipeline_id = uuid4()
-        published = (run_id, EXPECTED, snapshot_id)
+        snapshot_ids = [str(uuid4()) for _ in range(120)]
+        published = (uuid4(), EXPECTED, 120)
         mock_session.execute.side_effect = _build_results(
-            universe_count=120,
+            snapshot=(snapshot_id, snapshot_ids, 120),
             published=published,
             candidate_count=120,
             daily_bar_count=120,
-            snapshot=(snapshot_id,),
             pipeline=(pipeline_id, "succeeded"),
         )
 
@@ -108,13 +130,13 @@ class TestDataFreshnessStatus:
     ) -> None:
         snapshot_id = uuid4()
         pipeline_id = uuid4()
-        published = (uuid4(), EXPECTED, snapshot_id)
+        snapshot_ids = [str(uuid4()) for _ in range(200)]
+        published = (uuid4(), EXPECTED, 150)
         mock_session.execute.side_effect = _build_results(
-            universe_count=200,
+            snapshot=(snapshot_id, snapshot_ids, 200),
             published=published,
             candidate_count=150,
             daily_bar_count=150,
-            snapshot=(snapshot_id,),
             pipeline=(pipeline_id, "succeeded"),
         )
 
@@ -136,13 +158,13 @@ class TestDataFreshnessStatus:
         stale_date = EXPECTED - timedelta(days=7)
         snapshot_id = uuid4()
         pipeline_id = uuid4()
-        published = (uuid4(), stale_date, snapshot_id)
+        snapshot_ids = [str(uuid4()) for _ in range(80)]
+        published = (uuid4(), stale_date, 80)
         mock_session.execute.side_effect = _build_results(
-            universe_count=80,
+            snapshot=(snapshot_id, snapshot_ids, 80),
             published=published,
             candidate_count=80,
             daily_bar_count=80,
-            snapshot=(snapshot_id,),
             pipeline=(pipeline_id, "succeeded"),
         )
 
@@ -162,11 +184,10 @@ class TestDataFreshnessStatus:
         mock_session: MagicMock,
     ) -> None:
         mock_session.execute.side_effect = _build_results(
-            universe_count=50,
+            snapshot=None,
             published=None,
             candidate_count=0,
             daily_bar_count=0,
-            snapshot=None,
             pipeline=None,
         )
 
@@ -176,9 +197,9 @@ class TestDataFreshnessStatus:
         body = response.json()
         assert body["status"] == "missing"
         assert body["latest_published_trade_date"] is None
-        assert body["universe_count"] == 50
+        assert body["universe_count"] == 0
         assert body["daily_bar_count"] == 0
-        assert body["missing_count"] == 50
+        assert body["missing_count"] == 0
         assert body["candidate_count"] == 0
         assert body["snapshot_id"] is None
         assert body["pipeline_run_id"] is None
@@ -192,13 +213,13 @@ class TestDataFreshnessStatus:
         stale_date = EXPECTED - timedelta(days=1)
         snapshot_id = uuid4()
         pipeline_id = uuid4()
-        published = (uuid4(), stale_date, snapshot_id)
+        snapshot_ids = [str(uuid4()) for _ in range(100)]
+        published = (uuid4(), stale_date, 100)
         mock_session.execute.side_effect = _build_results(
-            universe_count=100,
+            snapshot=(snapshot_id, snapshot_ids, 100),
             published=published,
             candidate_count=100,
             daily_bar_count=0,
-            snapshot=None,
             pipeline=(pipeline_id, "failed"),
         )
 
@@ -211,6 +232,239 @@ class TestDataFreshnessStatus:
         assert body["pipeline_status"] == "failed"
         assert body["pipeline_run_id"] == str(pipeline_id)
         assert body["missing_count"] == 100
+
+
+class TestDataFreshnessSnapshotUniverse:
+    """Coverage for the snapshot-driven universe accounting (PR-02)."""
+
+    def test_universe_count_uses_snapshot_row_count(
+        self,
+        client: TestClient,
+        mock_session: MagicMock,
+    ) -> None:
+        snapshot_id = uuid4()
+        snapshot_ids = [str(uuid4()) for _ in range(35)]
+        published = (uuid4(), EXPECTED, 35)
+        mock_session.execute.side_effect = _build_results(
+            snapshot=(snapshot_id, snapshot_ids, 35),
+            published=published,
+            candidate_count=35,
+            daily_bar_count=35,
+            pipeline=(uuid4(), "succeeded"),
+        )
+
+        response = client.get(
+            ENDPOINT, params={"expected_trade_date": EXPECTED.isoformat()}
+        )
+
+        assert response.status_code == 200
+        body = response.json()
+        assert body["universe_count"] == 35
+        assert body["snapshot_id"] == str(snapshot_id)
+
+    def test_snapshot_tie_breaker_prefers_latest_id(
+        self,
+        client: TestClient,
+        mock_session: MagicMock,
+    ) -> None:
+        snapshot_id = uuid4()
+        mock_session.execute.side_effect = _build_results(
+            snapshot=(snapshot_id, [str(uuid4())], 1),
+            published=(uuid4(), EXPECTED, 1),
+            candidate_count=1,
+            daily_bar_count=1,
+            pipeline=(uuid4(), "succeeded"),
+        )
+
+        response = client.get(
+            ENDPOINT, params={"expected_trade_date": EXPECTED.isoformat()}
+        )
+
+        assert response.status_code == 200
+        snapshot_query = str(mock_session.execute.call_args_list[0].args[0])
+        assert "ORDER BY created_at DESC, id DESC" in snapshot_query
+
+    def test_daily_bar_query_is_scoped_to_snapshot_instrument_ids(
+        self,
+        client: TestClient,
+        mock_session: MagicMock,
+    ) -> None:
+        snapshot_id = uuid4()
+        snapshot_ids = [str(uuid4()) for _ in range(10)]
+        published = (uuid4(), EXPECTED, 10)
+        mock_session.execute.side_effect = _build_results(
+            snapshot=(snapshot_id, snapshot_ids, 10),
+            published=published,
+            candidate_count=10,
+            daily_bar_count=7,
+            pipeline=(uuid4(), "succeeded"),
+        )
+
+        response = client.get(ENDPOINT, params={"expected_trade_date": EXPECTED.isoformat()})
+
+        assert response.status_code == 200
+        # Locate the daily-bar query (the call that binds ``ids``); it
+        # must carry the snapshot's instrument ids so the count is
+        # scoped to the personal pool rather than every ETF in the
+        # market.
+        daily_bar_call = next(
+            call
+            for call in mock_session.execute.call_args_list
+            if len(call.args) > 1 and "ids" in call.args[1]
+        )
+        bound_params = daily_bar_call.args[1]
+        assert bound_params["trade_date"] == EXPECTED
+        assert bound_params["ids"] == snapshot_ids
+
+    def test_market_wide_bars_do_not_distort_missing_count(
+        self,
+        client: TestClient,
+        mock_session: MagicMock,
+    ) -> None:
+        snapshot_id = uuid4()
+        snapshot_ids = [str(uuid4()) for _ in range(50)]
+        published = (uuid4(), EXPECTED, 30)
+        mock_session.execute.side_effect = _build_results(
+            snapshot=(snapshot_id, snapshot_ids, 50),
+            published=published,
+            candidate_count=30,
+            daily_bar_count=30,
+            pipeline=(uuid4(), "succeeded"),
+        )
+
+        response = client.get(
+            ENDPOINT, params={"expected_trade_date": EXPECTED.isoformat()}
+        )
+
+        assert response.status_code == 200
+        body = response.json()
+        # snapshot universe is 50 (covers the whole personal pool);
+        # only 30 of them have a bar, so missing_count is 20 - it must
+        # not be inflated by market-wide bars outside the snapshot.
+        assert body["universe_count"] == 50
+        assert body["daily_bar_count"] == 30
+        assert body["missing_count"] == 20
+        assert body["status"] == "partial"
+
+    def test_snapshot_id_is_returned_when_snapshot_present(
+        self,
+        client: TestClient,
+        mock_session: MagicMock,
+    ) -> None:
+        snapshot_id = uuid4()
+        snapshot_ids = [str(uuid4()) for _ in range(5)]
+        published = (uuid4(), EXPECTED, 5)
+        mock_session.execute.side_effect = _build_results(
+            snapshot=(snapshot_id, snapshot_ids, 5),
+            published=published,
+            candidate_count=5,
+            daily_bar_count=5,
+            pipeline=(uuid4(), "succeeded"),
+        )
+
+        response = client.get(
+            ENDPOINT, params={"expected_trade_date": EXPECTED.isoformat()}
+        )
+
+        body = response.json()
+        assert body["snapshot_id"] == str(snapshot_id)
+
+
+class TestDataFreshnessFallbackChain:
+    """Coverage for the snapshot/published/empty fallback chain (PR-02)."""
+
+    def test_no_snapshot_falls_back_to_published_input_row_count(
+        self,
+        client: TestClient,
+        mock_session: MagicMock,
+    ) -> None:
+        pipeline_id = uuid4()
+        # No snapshot for the expected date, but a published run from a
+        # previous weekday. The handler must use ``input_row_count`` as
+        # the universe and still scope the daily-bar lookup to the
+        # published run's items.
+        published = (uuid4(), EXPECTED - timedelta(days=1), 42)
+        mock_session.execute.side_effect = _build_results(
+            snapshot=None,
+            published=published,
+            candidate_count=40,
+            daily_bar_count=37,
+            pipeline=(pipeline_id, "succeeded"),
+        )
+
+        response = client.get(
+            ENDPOINT, params={"expected_trade_date": EXPECTED.isoformat()}
+        )
+
+        assert response.status_code == 200
+        body = response.json()
+        assert body["snapshot_id"] is None
+        assert body["universe_count"] == 42
+        assert body["daily_bar_count"] == 37
+        assert body["missing_count"] == 5
+        assert body["candidate_count"] == 40
+
+        # Locate the fallback daily-bar query (the one that binds
+        # ``run_id`` to the published run). The correlated IN-sub-select
+        # keeps the count scoped to the personal universe rather than
+        # letting market-wide ETFs leak in.
+        daily_bar_call = next(
+            call
+            for call in mock_session.execute.call_args_list
+            if len(call.args) > 1 and "run_id" in call.args[1]
+        )
+        bound_params = daily_bar_call.args[1]
+        assert bound_params["trade_date"] == EXPECTED
+        assert bound_params["run_id"] == published[0]
+
+    def test_no_snapshot_and_no_published_yields_zero_universe(
+        self,
+        client: TestClient,
+        mock_session: MagicMock,
+    ) -> None:
+        mock_session.execute.side_effect = _build_results(
+            snapshot=None,
+            published=None,
+            candidate_count=0,
+            daily_bar_count=0,
+            pipeline=None,
+        )
+
+        response = client.get(
+            ENDPOINT, params={"expected_trade_date": EXPECTED.isoformat()}
+        )
+
+        body = response.json()
+        assert body["universe_count"] == 0
+        assert body["daily_bar_count"] == 0
+        assert body["missing_count"] == 0
+        assert body["candidate_count"] == 0
+        assert body["snapshot_id"] is None
+
+    def test_partial_status_is_set_when_snapshot_misses_bars(
+        self,
+        client: TestClient,
+        mock_session: MagicMock,
+    ) -> None:
+        snapshot_id = uuid4()
+        snapshot_ids = [str(uuid4()) for _ in range(80)]
+        published = (uuid4(), EXPECTED, 60)
+        mock_session.execute.side_effect = _build_results(
+            snapshot=(snapshot_id, snapshot_ids, 80),
+            published=published,
+            candidate_count=60,
+            daily_bar_count=60,
+            pipeline=(uuid4(), "succeeded"),
+        )
+
+        response = client.get(
+            ENDPOINT, params={"expected_trade_date": EXPECTED.isoformat()}
+        )
+
+        assert response.status_code == 200
+        body = response.json()
+        assert body["status"] == "partial"
+        assert body["missing_count"] == 20
 
 
 class TestDataFreshnessErrorSanitization:
@@ -240,12 +494,12 @@ class TestDataFreshnessErrorSanitization:
         client: TestClient,
         mock_session: MagicMock,
     ) -> None:
-        # First three queries succeed (no published => no items query), the
-        # snapshot lookup blows up with a connection-level error.
+        # The snapshot + published lookups succeed (the published row
+        # is None so the candidate-count query is skipped), then the
+        # daily-bar lookup blows up.
         mock_session.execute.side_effect = [
-            _scalar(10),
             _row(None),
-            _scalar(0),
+            _row(None),
             OperationalError("SELECT", {}, Exception("boom")),
         ]
 
@@ -284,11 +538,10 @@ class TestDataFreshnessDefaultDate:
         monkeypatch.setattr(data_freshness_module, "date", _FakeDate)
 
         mock_session.execute.side_effect = _build_results(
-            universe_count=1,
+            snapshot=None,
             published=None,
             candidate_count=0,
             daily_bar_count=0,
-            snapshot=None,
             pipeline=None,
         )
 
@@ -306,5 +559,7 @@ class TestDataFreshnessDefaultDate:
 __all__ = [
     "TestDataFreshnessDefaultDate",
     "TestDataFreshnessErrorSanitization",
+    "TestDataFreshnessFallbackChain",
+    "TestDataFreshnessSnapshotUniverse",
     "TestDataFreshnessStatus",
 ]

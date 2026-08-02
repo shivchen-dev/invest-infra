@@ -225,6 +225,35 @@ class SqlAlchemyPipelineRunRepositoryMockTests(unittest.TestCase):
         for item in result:
             self.assertIsInstance(item, PipelineRun)
 
+    def test_list_by_job_key_applies_filter_and_pagination(self) -> None:
+        first = _make_row(job_key="personal_etf_daily_job")
+        second = _make_row(job_key="personal_etf_daily_job")
+        scalars_mock = self._session.scalars.return_value
+        scalars_mock.all.return_value = [first, second]
+
+        result = self._repo.list_by_job_key(
+            "personal_etf_daily_job", limit=1, offset=125
+        )
+
+        statement = self._session.scalars.call_args.args[0]
+        compiled = statement.compile()
+        self.assertIn("personal_etf_daily_job", compiled.params.values())
+        self.assertEqual(statement._limit_clause.value, 1)
+        self.assertEqual(statement._offset_clause.value, 125)
+        self.assertEqual([item.id for item in result], [first.id, second.id])
+        for item in result:
+            self.assertIsInstance(item, PipelineRun)
+
+    def test_count_by_job_key_filters_correctly(self) -> None:
+        self._session.scalar.return_value = 42
+
+        result = self._repo.count_by_job_key("personal_etf_daily_job")
+
+        statement = self._session.scalar.call_args.args[0]
+        compiled = statement.compile()
+        self.assertIn("personal_etf_daily_job", compiled.params.values())
+        self.assertEqual(result, 42)
+
     # ------------------------------------------------------------------
     # count_by_status
     # ------------------------------------------------------------------
