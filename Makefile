@@ -1,6 +1,6 @@
 SHELL := /bin/bash
 
-.PHONY: help up down logs api-dev pipeline-dev web-dev migrate test lint arch-check lock test-domain test-storage test-storage-integration test-migrations test-pipeline test-api test-web provider-smoke personal-daily-run
+.PHONY: help up down logs api-dev pipeline-dev web-dev migrate test lint arch-check lock test-domain test-storage test-storage-integration test-migrations test-pipeline test-api test-web provider-smoke personal-daily-run reprocess-date personal-backfill
 
 help:
 	@echo "make up              启动 PostgreSQL、API、Web、Dagster"
@@ -137,3 +137,83 @@ personal-daily-run:
 		$(if $(UNIVERSE),--universe '$(UNIVERSE)') \
 		$(if $(POLICY),--policy '$(POLICY)') \
 		$(if $(CONFIRM_NETWORK),--confirm-network)
+
+# 重新处理单个交易日：复用 personal-daily-run。
+# 用法：make reprocess-date TRADE_DATE=2026-07-30
+reprocess-date:
+	@if [ -z "$(TRADE_DATE)" ]; then \
+		echo "ERROR: TRADE_DATE is required (YYYY-MM-DD)" >&2; exit 2; \
+	fi
+	+@$(MAKE) -s personal-daily-run TRADE_DATE='$(TRADE_DATE)' \
+		$(if $(UNIVERSE),UNIVERSE='$(UNIVERSE)') \
+		$(if $(POLICY),POLICY='$(POLICY)') \
+		$(if $(CONFIRM_NETWORK),CONFIRM_NETWORK=$(CONFIRM_NETWORK))
+
+# 个人回填：按交易日顺序在 [START_DATE, END_DATE] 区间内执行 personal-daily-run。
+#
+# 校验：
+#   - START_DATE / END_DATE 必须为 ISO 日期 YYYY-MM-DD 且为合法日历日
+#   - START_DATE <= END_DATE
+#   - END_DATE 不能为未来日期（相对今天）
+#   - 跨度（含两端）<= 90 自然日
+#   - 周六 / 周日自动跳过，仅周一至周五逐日执行
+#   - 任一工作日运行失败立即停止，首条非零退出码即中止回填
+#   - 输出仅包含日期与状态摘要，不回显密钥 / 路径等敏感参数
+#
+# 用法示例：
+#   make personal-backfill START_DATE=2026-07-01 END_DATE=2026-07-31
+personal-backfill:
+	@case '$(START_DATE)' in \
+		'') echo "ERROR: START_DATE is required (YYYY-MM-DD)" >&2; exit 2 ;; \
+	esac
+	@case '$(END_DATE)' in \
+		'') echo "ERROR: END_DATE is required (YYYY-MM-DD)" >&2; exit 2 ;; \
+	esac
+	@START_DATE_VAL='$(START_DATE)'; END_DATE_VAL='$(END_DATE)'; \
+	for d in "$$START_DATE_VAL" "$$END_DATE_VAL"; do \
+		case "$$d" in \
+			[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]) ;; \
+			*) echo "ERROR: $$d is not ISO YYYY-MM-DD" >&2; exit 2 ;; \
+		esac; \
+		got=$$(date -d "$$d" +%Y-%m-%d 2>/dev/null) || { echo "ERROR: $$d is not a valid date" >&2; exit 2; }; \
+		if [ "$$got" != "$$d" ]; then \
+			echo "ERROR: $$d is not a valid calendar date (parsed as $$got)" >&2; exit 2; \
+		fi; \
+	done
+	@START_DATE_VAL='$(START_DATE)'; END_DATE_VAL='$(END_DATE)'; \
+	start_epoch=$$(date -d "$$START_DATE_VAL" +%s); \
+	end_epoch=$$(date -d "$$END_DATE_VAL" +%s); \
+	if [ $$start_epoch -gt $$end_epoch ]; then \
+		echo "ERROR: START_DATE ($$START_DATE_VAL) is after END_DATE ($$END_DATE_VAL)" >&2; exit 2; \
+	fi; \
+	today_epoch=$$(date +%s); \
+	if [ $$end_epoch -gt $$today_epoch ]; then \
+		echo "ERROR: END_DATE ($$END_DATE_VAL) is in the future" >&2; exit 2; \
+	fi; \
+	span_days=$$(( (end_epoch - start_epoch) / 86400 + 1 )); \
+	if [ $$span_days -gt 90 ]; then \
+		echo "ERROR: range is $$span_days calendar days, exceeds 90-day limit" >&2; exit 2; \
+	fi
+	+@START_DATE_VAL='$(START_DATE)'; END_DATE_VAL='$(END_DATE)'; \
+	span=$$(( ( $$(date -d "$$END_DATE_VAL" +%s) - $$(date -d "$$START_DATE_VAL" +%s) ) / 86400 + 1 )); \
+	echo "personal-backfill: $$START_DATE_VAL -> $$END_DATE_VAL (span=$$span days)"; \
+	cur=$$START_DATE_VAL; end=$$END_DATE_VAL; \
+	while [ "$$cur" \< "$$end" ] || [ "$$cur" = "$$end" ]; do \
+		dow=$$(date -d "$$cur" +%u); \
+		if [ $$dow -ge 1 ] && [ $$dow -le 5 ]; then \
+			echo "[backfill] $$cur: running personal-daily-run"; \
+			if $(MAKE) -s personal-daily-run TRADE_DATE="$$cur" \
+				$(if $(UNIVERSE),UNIVERSE='$(UNIVERSE)') \
+				$(if $(POLICY),POLICY='$(POLICY)') \
+				$(if $(CONFIRM_NETWORK),CONFIRM_NETWORK=$(CONFIRM_NETWORK)); then \
+				echo "[backfill] $$cur: ok"; \
+			else \
+				rc=$$?; echo "[backfill] $$cur: FAILED (exit $$rc)" >&2; exit $$rc; \
+			fi; \
+		else \
+			echo "[backfill] $$cur: skip (weekend)"; \
+		fi; \
+		if [ "$$cur" = "$$end" ]; then break; fi; \
+		cur=$$(date -d "$$cur + 1 day" +%Y-%m-%d); \
+	done
+	@echo "personal-backfill: completed"
