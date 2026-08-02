@@ -56,7 +56,28 @@ class CandidatePoolLatestResponse(BaseModel):
     items: list[CandidatePoolItemResponse]
 
 
+class CandidatePoolDiffResponse(BaseModel):
+    """Response envelope for the candidate-pool diff endpoints.
+
+    Compares the set of ``instrument_id`` values in the current published
+    run against the most recent earlier published run. ``added`` is the
+    set of instruments that appear only in the current run,
+    ``retained`` is the intersection, and ``removed`` is the set that
+    appear only in the previous run. When no earlier published run
+    exists, ``previous_trade_date`` is ``None`` and every instrument in
+    the current run is reported as ``added`` with ``retained`` and
+    ``removed`` both empty.
+    """
+
+    trade_date: date
+    previous_trade_date: date | None = None
+    added: list[UUID] = Field(default_factory=list)
+    retained: list[UUID] = Field(default_factory=list)
+    removed: list[UUID] = Field(default_factory=list)
+
+
 __all__ = [
+    "CandidatePoolDiffResponse",
     "CandidatePoolItemResponse",
     "CandidatePoolLatestResponse",
     "ExclusionReasonResponse",

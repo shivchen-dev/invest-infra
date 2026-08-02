@@ -10,6 +10,7 @@ modules.
 from __future__ import annotations
 
 from invest_api.schemas.candidate_pool import (
+    CandidatePoolDiffResponse,
     CandidatePoolItemResponse,
     CandidatePoolLatestResponse,
     ExclusionReasonResponse,
@@ -34,6 +35,7 @@ from invest_api.schemas.etf import (
 from invest_api.schemas.pipeline_runs import PipelineRunResponse
 
 __all__ = [
+    "CandidatePoolDiffResponse",
     "CandidatePoolItemResponse",
     "CandidatePoolLatestResponse",
     "DailyBarListResponse",
