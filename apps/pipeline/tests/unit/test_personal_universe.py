@@ -25,17 +25,25 @@ from __future__ import annotations
 import hashlib
 import json
 from pathlib import Path
+from types import SimpleNamespace
+from uuid import UUID
 
 import pytest
 import yaml
+from invest_domain.instruments import Instrument, InstrumentId, InstrumentType
 from invest_pipeline.personal_universe import (
     PersonalUniverse,
+    PersonalUniverseAmbiguousSymbolError,
     PersonalUniverseError,
     PersonalUniverseGroupError,
+    PersonalUniverseInvalidInstrumentError,
+    PersonalUniverseMissingSymbolError,
     PersonalUniverseStructureError,
     PersonalUniverseSymbolError,
     PersonalUniverseVersionError,
+    ResolvedPersonalUniverse,
     load_personal_universe,
+    resolve_personal_universe,
 )
 
 # Mirror the seven-symbol example shipped in
@@ -78,6 +86,20 @@ def _build_payload(
         "groups": {name: list(symbols) for name, symbols in groups.items()},
         "version": version,
     }
+
+
+def _universe(*symbols: str) -> PersonalUniverse:
+    return PersonalUniverse(version=1, symbols=symbols, content_hash="0" * 64)
+
+
+def _instrument(symbol: str, *, kind: InstrumentType = InstrumentType.ETF) -> Instrument:
+    return Instrument(
+        symbol=symbol,
+        name=f"{symbol} test ETF",
+        exchange="SSE",
+        instrument_type=kind,
+        instrument_id=InstrumentId.generate(),
+    )
 
 
 def test_loads_seven_symbol_example(tmp_path: Path) -> None:
@@ -290,6 +312,60 @@ def test_hash_matches_documented_algorithm(tmp_path: Path) -> None:
     ).hexdigest()
 
     assert universe.content_hash == expected
+
+
+def test_resolve_preserves_universe_order_and_exposes_snapshot_ids() -> None:
+    universe = _universe("159915", "510300")
+    records = {symbol: _instrument(symbol) for symbol in universe.symbols}
+
+    resolved = resolve_personal_universe(universe, lambda symbol: [records[symbol]])
+
+    assert isinstance(resolved, ResolvedPersonalUniverse)
+    assert tuple(item.symbol for item in resolved.instruments) == universe.symbols
+    assert all(isinstance(item, UUID) for item in resolved.instrument_ids)
+    assert len(set(resolved.instrument_ids)) == len(resolved.instrument_ids)
+
+
+def test_resolve_missing_symbol_is_explicit() -> None:
+    with pytest.raises(PersonalUniverseMissingSymbolError, match="510300"):
+        resolve_personal_universe(_universe("510300"), lambda _symbol: ())
+
+
+def test_resolve_non_etf_candidate_is_rejected() -> None:
+    candidate = _instrument("510300", kind=InstrumentType.STOCK)
+
+    with pytest.raises(PersonalUniverseInvalidInstrumentError, match="510300"):
+        resolve_personal_universe(_universe("510300"), lambda _symbol: [candidate])
+
+
+def test_resolve_foreign_exchange_candidate_is_rejected() -> None:
+    candidate = SimpleNamespace(
+        symbol="510300",
+        exchange="HKEX",
+        instrument_type=InstrumentType.ETF,
+        instrument_id=InstrumentId.generate(),
+    )
+
+    with pytest.raises(PersonalUniverseInvalidInstrumentError, match="510300"):
+        resolve_personal_universe(_universe("510300"), lambda _symbol: [candidate])
+
+
+def test_resolve_multiple_valid_candidates_is_rejected() -> None:
+    candidates = [_instrument("510300"), _instrument("510300")]
+
+    with pytest.raises(PersonalUniverseAmbiguousSymbolError, match="510300"):
+        resolve_personal_universe(_universe("510300"), lambda _symbol: candidates)
+
+
+def test_resolve_accepts_one_valid_candidate_among_rejections() -> None:
+    stock = _instrument("510300", kind=InstrumentType.STOCK)
+    etf = _instrument("510300")
+
+    resolved = resolve_personal_universe(
+        _universe("510300"), lambda _symbol: [stock, etf]
+    )
+
+    assert resolved.instruments == (etf,)
 
 
 @pytest.mark.parametrize("bad_version", [0, -1, -100])
