@@ -26,7 +26,7 @@ from decimal import Decimal
 from types import TracebackType
 from typing import Any
 from unittest.mock import MagicMock
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 from invest_domain.instruments.models import InstrumentId
 from invest_domain.market_data.models import (
@@ -41,11 +41,14 @@ from invest_pipeline.adapters.fixture_dev.adapter import (
     deserialize_daily_bars,
 )
 from invest_pipeline.etf_daily_bars import write_etf_daily_bars_raw
-from invest_storage.models import ProviderAttemptRow
+from invest_storage.models import ProviderAttemptRow, ProviderRequestRow
 from invest_storage.repositories import (
+    NewProviderRequest,
     SqlAlchemyProviderAttemptRepository,
     SqlAlchemyProviderBatchRepository,
     SqlAlchemyProviderRequestRepository,
+    StoredProviderAttempt,
+    StoredProviderRequest,
 )
 from sqlalchemy.orm import Session
 
@@ -57,13 +60,101 @@ class _FakeUnitOfWork:
     service can exercise its real repository code paths without
     booting PostgreSQL. ``session.add`` records every persisted row
     so the test can inspect the sidecar stored on the attempt row.
+
+    ``request_log`` is shared across every UoW instance the factory
+    hands out for a given session so
+    :meth:`SqlAlchemyProviderRequestRepository.get_or_create` honours
+    the natural ``uq_provider_requests_logical_key`` constraint at
+    the fake layer: a repeat call with the same
+    ``(provider_key, dataset_key, request_key)`` returns the row
+    inserted by the first call instead of producing a duplicate.
     """
 
-    def __init__(self, session: MagicMock) -> None:
+    def __init__(
+        self, session: MagicMock, *, request_log: list[ProviderRequestRow]
+    ) -> None:
         self._session = session
+        self._request_log = request_log
         self._provider_requests = SqlAlchemyProviderRequestRepository(session)
+        self._provider_requests.get_or_create = self._get_or_create  # type: ignore[method-assign]
         self._provider_attempts = SqlAlchemyProviderAttemptRepository(session)
+        self._provider_attempts.list_by_request = self._list_by_request  # type: ignore[method-assign]
         self._provider_batches = SqlAlchemyProviderBatchRepository(session)
+
+    def _get_or_create(self, request: NewProviderRequest) -> StoredProviderRequest:
+        for row in self._request_log:
+            if (
+                row.provider_key == request.provider_key
+                and row.dataset_key == request.dataset_key
+                and row.request_key == request.request_key
+            ):
+                return StoredProviderRequest(
+                    id=row.id,
+                    provider_key=row.provider_key,
+                    dataset_key=row.dataset_key,
+                    request_key=row.request_key,
+                    request_params=dict(row.request_params or {}),
+                    requested_by_run_id=row.requested_by_run_id,
+                    status=row.status,
+                )
+        new_row = ProviderRequestRow(
+            id=uuid4(),
+            provider_key=request.provider_key,
+            dataset_key=request.dataset_key,
+            request_key=request.request_key,
+            request_params=dict(request.request_params),
+            requested_by_run_id=request.requested_by_run_id,
+            status=request.status,
+        )
+        self._session.add(new_row)
+        self._request_log.append(new_row)
+        return StoredProviderRequest(
+            id=new_row.id,
+            provider_key=new_row.provider_key,
+            dataset_key=new_row.dataset_key,
+            request_key=new_row.request_key,
+            request_params=dict(new_row.request_params or {}),
+            requested_by_run_id=new_row.requested_by_run_id,
+            status=new_row.status,
+        )
+
+    def _list_by_request(
+        self, request_id: UUID, *, limit: int = 100, offset: int = 0
+    ) -> list[StoredProviderAttempt]:
+        """Return attempts the fake has actually persisted for ``request_id``.
+
+        Mirrors :meth:`SqlAlchemyProviderAttemptRepository.list_by_request`
+        against the in-memory ``session.added_rows`` so the raw write
+        path's rerun attempt-numbering logic (max existing
+        ``attempt_no`` + 1) sees the attempts the previous run
+        inserted.
+        """
+
+        matched = sorted(
+            (
+                row
+                for row in self._session.added_rows
+                if isinstance(row, ProviderAttemptRow)
+                and row.provider_request_id == request_id
+            ),
+            key=lambda row: row.attempt_no,
+        )
+        return [
+            StoredProviderAttempt(
+                id=row.id,
+                provider_request_id=row.provider_request_id,
+                attempt_no=row.attempt_no,
+                started_at=row.started_at,
+                finished_at=row.finished_at,
+                status=row.status,
+                error_stage=row.error_stage,
+                error_code=row.error_code,
+                error_message=row.error_message,
+                response_payload_sha256=row.response_payload_sha256,
+                response_payload_json=row.response_payload_json,
+            )
+            for row in matched[offset : offset + limit]
+        ]
 
     @property
     def provider_requests(self) -> SqlAlchemyProviderRequestRepository:
@@ -129,8 +220,10 @@ def _make_session_factory(session: MagicMock) -> MagicMock:
 
 
 def _make_uow_factory(session: MagicMock) -> MagicMock:
+    log: list[ProviderRequestRow] = []
+
     def _factory(*_args: Any, **_kwargs: Any) -> _FakeUnitOfWork:
-        return _FakeUnitOfWork(session)
+        return _FakeUnitOfWork(session, request_log=log)
 
     return MagicMock(name="UnitOfWorkFactory", side_effect=_factory)
 
@@ -327,6 +420,110 @@ class WriteEtfDailyBarsRawResolutionFailureTest(unittest.TestCase):
         message = str(ctx.exception)
         self.assertIn("could not resolve instrument_id", message)
         self.assertIn("fixture_dev", message)
+
+
+class WriteEtfDailyBarsRawIdempotentRerunTest(unittest.TestCase):
+    """A rerun must reuse the existing ``raw.provider_requests`` row
+    (no ``uq_provider_requests_logical_key`` violation) and still
+    record a fresh attempt + batch so the audit trail captures the
+    rerun. ``attempt_no`` must be derived from the persisted attempts
+    (max + 1) so the ``uq_provider_attempts_request_attempt_no``
+    constraint holds across reruns even though the fixture provider
+    keeps returning ``attempt_number=1``.
+    """
+
+    def setUp(self) -> None:
+        self._provider = FixtureDevInstrumentProvider()
+        self._start = date(2026, 7, 24)
+        self._end = date(2026, 7, 28)
+        self._session = _build_session()
+        self._factory = _make_session_factory(self._session)
+        self._uow_factory = _make_uow_factory(self._session)
+
+    def test_rerun_reuses_logical_request_and_appends_attempt(self) -> None:
+        first = write_etf_daily_bars_raw(
+            self._provider,
+            self._factory,
+            symbols=["510300"],
+            start_date=self._start,
+            end_date=self._end,
+            unit_of_work_factory=self._uow_factory,
+        )
+
+        second = write_etf_daily_bars_raw(
+            self._provider,
+            self._factory,
+            symbols=["510300"],
+            start_date=self._start,
+            end_date=self._end,
+            unit_of_work_factory=self._uow_factory,
+        )
+
+        third = write_etf_daily_bars_raw(
+            self._provider,
+            self._factory,
+            symbols=["510300"],
+            start_date=self._start,
+            end_date=self._end,
+            unit_of_work_factory=self._uow_factory,
+        )
+
+        # The logical request is reused — same UUID, no new row in
+        # ``raw.provider_requests`` across the reruns.
+        self.assertEqual(first.request_id, second.request_id)
+        self.assertEqual(first.request_id, third.request_id)
+        request_rows = [
+            r for r in self._session.added_rows if isinstance(r, ProviderRequestRow)
+        ]
+        self.assertEqual(
+            len(request_rows),
+            1,
+            "get_or_create must not re-insert the existing request row",
+        )
+
+        # The audit trail still grows — a fresh attempt is recorded
+        # for every rerun, with ``attempt_no`` derived from the
+        # existing attempts so the
+        # ``uq_provider_attempts_request_attempt_no`` constraint is
+        # satisfied across reruns (the fixture provider keeps returning
+        # ``attempt_number=1``).
+        self.assertNotEqual(first.attempt_id, second.attempt_id)
+        self.assertNotEqual(second.attempt_id, third.attempt_id)
+        attempt_rows = [
+            r for r in self._session.added_rows if isinstance(r, ProviderAttemptRow)
+        ]
+        self.assertEqual(len(attempt_rows), 3)
+        attempt_nos = sorted(row.attempt_no for row in attempt_rows)
+        self.assertEqual(attempt_nos, [1, 2, 3])
+        for row in attempt_rows:
+            self.assertEqual(row.provider_request_id, first.request_id)
+
+    def test_first_run_preserves_provider_attempt_number(self) -> None:
+        """First-run ``attempt_no`` honours the value the provider returns.
+
+        Guards against the rerun-fix accidentally forcing every attempt
+        to ``max(existing)+1``: a fresh logical request has no existing
+        attempts, so ``attempt.attempt_number`` (currently ``1`` for the
+        fixture_dev adapter) must still flow through.
+        """
+
+        result = write_etf_daily_bars_raw(
+            self._provider,
+            self._factory,
+            symbols=["510300"],
+            start_date=self._start,
+            end_date=self._end,
+            unit_of_work_factory=self._uow_factory,
+        )
+
+        attempt_rows = [
+            row
+            for row in self._session.added_rows
+            if isinstance(row, ProviderAttemptRow)
+        ]
+        self.assertEqual(len(attempt_rows), 1)
+        self.assertEqual(attempt_rows[0].id, result.attempt_id)
+        self.assertEqual(attempt_rows[0].attempt_no, 1)
 
 
 if __name__ == "__main__":

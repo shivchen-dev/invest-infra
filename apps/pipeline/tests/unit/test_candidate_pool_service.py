@@ -243,6 +243,43 @@ def _build_uow_factory(
 
     candidate_pool_runs_repo.add = MagicMock(side_effect=_add_run)  # type: ignore[method-assign]
 
+    def _get_by_natural_key(
+        *,
+        trade_date: date,
+        algorithm_key: str,
+        algorithm_version: str,
+        parameter_hash: str,
+        input_snapshot_id: UUID,
+    ) -> CandidatePoolRun | None:
+        for row in persisted_rows:
+            if (
+                row.trade_date == trade_date
+                and row.algorithm_key == algorithm_key
+                and row.algorithm_version == algorithm_version
+                and row.parameter_hash == parameter_hash
+                and row.input_snapshot_id == input_snapshot_id
+            ):
+                return CandidatePoolRun(
+                    id=row.id,
+                    trade_date=row.trade_date,
+                    algorithm_key=row.algorithm_key,
+                    algorithm_version=row.algorithm_version,
+                    parameter_set_key=row.parameter_set_key,
+                    parameter_hash=row.parameter_hash,
+                    input_snapshot_id=row.input_snapshot_id,
+                    input_row_count=row.input_row_count,
+                    included_count=row.included_count,
+                    status=CandidatePoolStatus(row.status),
+                    created_at=row.started_at,
+                    finished_at=row.finished_at,
+                    published_at=row.published_at,
+                    rejected_at=row.rejected_at,
+                    rejection_reason=row.rejection_reason,
+                )
+        return None
+
+    candidate_pool_runs_repo.get_by_natural_key = MagicMock(side_effect=_get_by_natural_key)  # type: ignore[method-assign]
+
     def _transition(
         run_id: UUID,
         new_status: CandidatePoolStatus,
@@ -940,6 +977,142 @@ def test_repeated_identical_invocations_produce_identical_policy_hash() -> None:
 
     assert first.run.parameter_hash == second.run.parameter_hash
     assert first.run.parameter_hash == policy.parameter_hash
+
+
+class IdempotentRerunTest(unittest.TestCase):
+    """Rerunning the service with the same natural key must return the same run.
+
+    The first call is allowed to insert the run and walk the state machine.
+    Subsequent identical calls MUST reuse the existing row (so the DB unique
+    constraint never fires) and MUST NOT touch the state machine. The freshly
+    calculated :class:`CandidatePoolResult` is still returned alongside so
+    callers can audit the deterministic recompute.
+    """
+
+    @staticmethod
+    def _build_state(
+        snapshot_id: UUID, instrument_ids: list[UUID]
+    ) -> tuple[SimpleNamespace, dict[UUID, StoredDailyBar | None]]:
+        snapshot = _make_snapshot_row(snapshot_id=snapshot_id, instrument_ids=instrument_ids)
+        bars = {
+            instrument_id: _make_stored_bar(instrument_id=instrument_id)
+            for instrument_id in instrument_ids
+        }
+        return snapshot, bars
+
+    def test_rerun_returns_existing_run_and_skips_insert_and_transitions(self) -> None:
+        snapshot_id = uuid4()
+        instr_a = UUID("00000000-0000-0000-0000-000000000011")
+        instr_b = UUID("00000000-0000-0000-0000-000000000012")
+        snapshot, bars = self._build_state(snapshot_id, [instr_a, instr_b])
+        policy = _build_policy()
+        factory, uow, _ = _build_uow_factory(
+            snapshot=snapshot, daily_bars_by_instrument=bars
+        )
+
+        first = calculate_and_publish_candidate_pool(
+            uow_factory=factory,
+            trade_date=_TRADE_DATE,
+            snapshot_id=snapshot_id,
+            policy=policy,
+            now_factory=_fixed_now,
+        )
+        self.assertEqual(first.run.status, CandidatePoolStatus.PUBLISHED)
+        self.assertEqual(
+            uow.candidate_pool_runs_repo.add.call_count, 1  # type: ignore[attr-defined]
+        )
+        self.assertEqual(
+            uow.candidate_pool_runs_repo.transition_status.call_count, 2  # type: ignore[attr-defined]
+        )
+
+        second = calculate_and_publish_candidate_pool(
+            uow_factory=factory,
+            trade_date=_TRADE_DATE,
+            snapshot_id=snapshot_id,
+            policy=policy,
+            now_factory=_fixed_now,
+        )
+
+        self.assertEqual(second.run.id, first.run.id)
+        self.assertEqual(second.run.status, CandidatePoolStatus.PUBLISHED)
+        self.assertEqual(
+            second.run.published_at, first.run.published_at
+        )
+        self.assertEqual(
+            second.run.parameter_hash, policy.parameter_hash
+        )
+        self.assertEqual(
+            uow.candidate_pool_runs_repo.add.call_count, 1  # type: ignore[attr-defined]
+        )
+        self.assertEqual(
+            uow.candidate_pool_items_repo.bulk_add.call_count, 1  # type: ignore[attr-defined]
+        )
+        self.assertEqual(
+            uow.candidate_pool_runs_repo.transition_status.call_count, 2  # type: ignore[attr-defined]
+        )
+        self.assertEqual(
+            uow.candidate_pool_runs_repo.get_by_natural_key.call_count, 2  # type: ignore[attr-defined]
+        )
+
+    def test_rerun_still_returns_freshly_calculated_result(self) -> None:
+        snapshot_id = uuid4()
+        instr = UUID("00000000-0000-0000-0000-000000000013")
+        snapshot, bars = self._build_state(snapshot_id, [instr])
+        policy = _build_policy()
+        factory, _, _ = _build_uow_factory(
+            snapshot=snapshot, daily_bars_by_instrument=bars
+        )
+
+        first = calculate_and_publish_candidate_pool(
+            uow_factory=factory,
+            trade_date=_TRADE_DATE,
+            snapshot_id=snapshot_id,
+            policy=policy,
+            now_factory=_fixed_now,
+        )
+        second = calculate_and_publish_candidate_pool(
+            uow_factory=factory,
+            trade_date=_TRADE_DATE,
+            snapshot_id=snapshot_id,
+            policy=policy,
+            now_factory=_fixed_now,
+        )
+
+        self.assertEqual(
+            first.result.items, second.result.items
+        )
+        self.assertEqual(
+            first.result.summary.included_count,
+            second.result.summary.included_count,
+        )
+
+    def test_first_run_behavior_unchanged_when_no_existing_run(self) -> None:
+        snapshot_id = uuid4()
+        instr = UUID("00000000-0000-0000-0000-000000000014")
+        factory, uow, _ = _build_uow_factory(
+            snapshot=_make_snapshot_row(snapshot_id=snapshot_id, instrument_ids=[instr]),
+            daily_bars_by_instrument={instr: _make_stored_bar(instrument_id=instr)},
+        )
+        policy = _build_policy()
+
+        result = calculate_and_publish_candidate_pool(
+            uow_factory=factory,
+            trade_date=_TRADE_DATE,
+            snapshot_id=snapshot_id,
+            policy=policy,
+            now_factory=_fixed_now,
+        )
+
+        self.assertEqual(result.run.status, CandidatePoolStatus.PUBLISHED)
+        self.assertEqual(
+            uow.candidate_pool_runs_repo.add.call_count, 1  # type: ignore[attr-defined]
+        )
+        self.assertEqual(
+            uow.candidate_pool_runs_repo.get_by_natural_key.call_count, 1  # type: ignore[attr-defined]
+        )
+        self.assertEqual(
+            uow.candidate_pool_runs_repo.transition_status.call_count, 2  # type: ignore[attr-defined]
+        )
 
 
 if __name__ == "__main__":

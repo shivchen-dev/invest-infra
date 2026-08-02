@@ -260,6 +260,54 @@ class SqlAlchemyCandidatePoolRunRepositoryMockTests(unittest.TestCase):
         self.assertIsNone(result)
 
     # ------------------------------------------------------------------
+    # get_by_natural_key
+    # ------------------------------------------------------------------
+
+    def test_get_by_natural_key_returns_run_when_present(self) -> None:
+        snapshot_id = uuid4()
+        row = _make_run_row(
+            status="published",
+            algorithm_key="candidate_pool.v1",
+            algorithm_version="v1.0",
+            parameter_hash="a" * 64,
+            input_snapshot_id=snapshot_id,
+            published_at=_utc(2026, 7, 31, 11),
+        )
+        scalars_mock = self._session.scalars.return_value
+        scalars_mock.first.return_value = row
+
+        result = self._repo.get_by_natural_key(
+            trade_date=date(2026, 7, 31),
+            algorithm_key="candidate_pool.v1",
+            algorithm_version="v1.0",
+            parameter_hash="a" * 64,
+            input_snapshot_id=snapshot_id,
+        )
+
+        self.assertEqual(self._session.scalars.call_count, 1)
+        self.assertIsNotNone(result)
+        assert result is not None
+        self.assertEqual(result.id, row.id)
+        self.assertEqual(result.status, CandidatePoolStatus.PUBLISHED)
+        self.assertEqual(result.input_snapshot_id, snapshot_id)
+        self.assertEqual(result.parameter_hash, "a" * 64)
+
+    def test_get_by_natural_key_returns_none_when_absent(self) -> None:
+        scalars_mock = self._session.scalars.return_value
+        scalars_mock.first.return_value = None
+
+        result = self._repo.get_by_natural_key(
+            trade_date=date(2026, 7, 31),
+            algorithm_key="candidate_pool.v1",
+            algorithm_version="v1.0",
+            parameter_hash="a" * 64,
+            input_snapshot_id=uuid4(),
+        )
+
+        self.assertEqual(self._session.scalars.call_count, 1)
+        self.assertIsNone(result)
+
+    # ------------------------------------------------------------------
     # list_by_status / list_by_trade_date
     # ------------------------------------------------------------------
 

@@ -164,6 +164,57 @@ def test_duplicate_natural_key_raises_integrity_error(
         candidate_pool_run_repository.add(duplicate)
 
 
+def test_get_by_natural_key_returns_persisted_run(
+    candidate_pool_run_repository: SqlAlchemyCandidatePoolRunRepository,
+) -> None:
+    """``get_by_natural_key`` is the idempotent rerun lookup surface."""
+
+    snapshot = uuid4()
+    first = _new_calculated_run(
+        trade_date=date(2026, 7, 31),
+        algorithm_key="candidate_pool.v1",
+        algorithm_version="v1.0",
+        parameter_hash="a" * 64,
+        input_snapshot_id=snapshot,
+    )
+    candidate_pool_run_repository.add(first)
+    candidate_pool_run_repository.transition_status(
+        first.id, CandidatePoolStatus.VALIDATED, at=_utc(2026, 7, 31, 10)
+    )
+    candidate_pool_run_repository.transition_status(
+        first.id, CandidatePoolStatus.PUBLISHED, at=_utc(2026, 7, 31, 11)
+    )
+
+    fetched = candidate_pool_run_repository.get_by_natural_key(
+        trade_date=date(2026, 7, 31),
+        algorithm_key="candidate_pool.v1",
+        algorithm_version="v1.0",
+        parameter_hash="a" * 64,
+        input_snapshot_id=snapshot,
+    )
+
+    assert fetched is not None
+    assert fetched.id == first.id
+    assert fetched.status == CandidatePoolStatus.PUBLISHED
+    assert fetched.published_at == _utc(2026, 7, 31, 11)
+
+
+def test_get_by_natural_key_returns_none_when_absent(
+    candidate_pool_run_repository: SqlAlchemyCandidatePoolRunRepository,
+) -> None:
+    """A fresh trade date has no matching row yet."""
+
+    fetched = candidate_pool_run_repository.get_by_natural_key(
+        trade_date=date(2026, 7, 31),
+        algorithm_key="candidate_pool.v1",
+        algorithm_version="v1.0",
+        parameter_hash="a" * 64,
+        input_snapshot_id=uuid4(),
+    )
+
+    assert fetched is None
+
+
 def test_transition_runs_full_lifecycle(
     candidate_pool_run_repository: SqlAlchemyCandidatePoolRunRepository,
 ) -> None:

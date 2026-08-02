@@ -374,10 +374,16 @@ def calculate_and_publish_candidate_pool(
     3. Read only ``trade_date`` bars with ``Adjust.NONE`` and rebuild
        them through the domain :class:`DailyBar` model.
     4. Run :class:`DefaultMinimumCandidatePoolCalculator` against the
-       snapshot, bars and ``policy``.
-    5. Persist the run and items; verify the inserted item count
-       matches the calculator result count.
-    6. Transition the run ``CALCULATED -> VALIDATED -> PUBLISHED`` with
+       snapshot, bars and ``policy`` to obtain the deterministic
+       result.
+    5. Look up an existing run by the ADR-0008 natural unique key
+       ``(trade_date, algorithm_key, algorithm_version, parameter_hash,
+       input_snapshot_id)``. If one is already published, return it
+       paired with the freshly calculated result without writing
+       anything (idempotent rerun).
+    6. Otherwise, persist the run and items; verify the inserted item
+       count matches the calculator result count.
+    7. Transition the run ``CALCULATED -> VALIDATED -> PUBLISHED`` with
        timezone-aware UTC timestamps.
 
     The returned :class:`CandidatePoolPublishResult` carries the
@@ -399,6 +405,17 @@ def calculate_and_publish_candidate_pool(
             uow, instrument_ids=snapshot.instrument_ids, trade_date=trade_date
         )
         result: CandidatePoolResult = calculator.calculate(snapshot, bars, policy)
+
+        existing = uow.candidate_pool_runs.get_by_natural_key(
+            trade_date=trade_date,
+            algorithm_key=policy.algorithm_key,
+            algorithm_version=policy.algorithm_version,
+            parameter_hash=policy.parameter_hash,
+            input_snapshot_id=snapshot.id,
+        )
+        if existing is not None:
+            uow.commit()
+            return CandidatePoolPublishResult(run=existing, result=result)
 
         finished_at = now_factory()
         run = CandidatePoolRun(

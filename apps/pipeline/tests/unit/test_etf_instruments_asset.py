@@ -48,6 +48,7 @@ from invest_storage.models import (
     RawProviderBatchRow,
 )
 from invest_storage.repositories import (
+    NewProviderRequest,
     SqlAlchemyInstrumentRepository,
     SqlAlchemyProviderAttemptRepository,
     SqlAlchemyProviderBatchRepository,
@@ -66,12 +67,22 @@ class _FakeUnitOfWork:
     service tried to persist without booting a real database. The
     read paths used by :func:`upsert_etf_instruments` are stubbed via
     pre-seeded ``side_effect`` callbacks.
+
+    ``request_log`` is shared across every UoW instance the factory
+    hands out for a given session so that
+    :meth:`SqlAlchemyProviderRequestRepository.get_or_create` —
+    invoked by the raw asset's write path — honours the natural
+    ``uq_provider_requests_logical_key`` constraint at the fake
+    layer: a second call with the same
+    ``(provider_key, dataset_key, request_key)`` returns the row
+    inserted by the first call instead of producing a duplicate.
     """
 
     def __init__(
         self,
         session: MagicMock,
         *,
+        request_log: list[ProviderRequestRow],
         request_lookup: Any,
         attempt_list: Any,
         upsert_records: list[list[Instrument]] | None = None,
@@ -81,6 +92,7 @@ class _FakeUnitOfWork:
         self._provider_requests = SqlAlchemyProviderRequestRepository(session)
         self._provider_attempts = SqlAlchemyProviderAttemptRepository(session)
         self._provider_batches = SqlAlchemyProviderBatchRepository(session)
+        self._request_log = request_log
         self._request_lookup = request_lookup
         self._attempt_list = attempt_list
         self._upsert_calls = upsert_records if upsert_records is not None else []
@@ -89,12 +101,81 @@ class _FakeUnitOfWork:
         self._provider_requests.get_by_logical_key = MagicMock(  # type: ignore[method-assign]
             side_effect=request_lookup
         )
-        self._provider_attempts.list_by_request = MagicMock(  # type: ignore[method-assign]
-            side_effect=attempt_list
-        )
+        # Override the idempotent write entry point so the fake
+        # emulates the database's natural unique constraint on the
+        # logical key; the raw asset relies on this for rerun safety.
+        self._provider_requests.get_or_create = self._get_or_create  # type: ignore[method-assign]
+        self._provider_attempts.list_by_request = self._list_by_request  # type: ignore[method-assign]
         self._instruments.upsert_many = MagicMock(  # type: ignore[method-assign]
             side_effect=self._record_upsert_call
         )
+
+    def _list_by_request(
+        self, request_id: UUID, *, limit: int = 100, offset: int = 0
+    ) -> list[StoredProviderAttempt]:
+        """Return attempts the fake has actually persisted for ``request_id``.
+
+        Mirrors :meth:`SqlAlchemyProviderAttemptRepository.list_by_request`
+        against the in-memory ``session.added_rows`` so the raw write
+        path's rerun attempt-numbering logic (max existing
+        ``attempt_no`` + 1) sees the attempts the previous run
+        inserted. Falls back to the pre-seeded ``attempt_list`` callback
+        when no attempts have been written to the fake session yet —
+        the read-path tests use that callback to project a successful
+        attempt the upsert asset should pick up.
+        """
+
+        matched = sorted(
+            (
+                row
+                for row in self._session.added_rows
+                if isinstance(row, ProviderAttemptRow)
+                and row.provider_request_id == request_id
+            ),
+            key=lambda row: row.attempt_no,
+        )
+        if matched:
+            projected = [
+                StoredProviderAttempt(
+                    id=row.id,
+                    provider_request_id=row.provider_request_id,
+                    attempt_no=row.attempt_no,
+                    started_at=row.started_at,
+                    finished_at=row.finished_at,
+                    status=row.status,
+                    error_stage=row.error_stage,
+                    error_code=row.error_code,
+                    error_message=row.error_message,
+                    response_payload_sha256=row.response_payload_sha256,
+                    response_payload_json=row.response_payload_json,
+                )
+                for row in matched
+            ]
+            return projected[offset : offset + limit]
+        return self._attempt_list(
+            request_id, limit=limit, offset=offset
+        )
+
+    def _get_or_create(self, request: NewProviderRequest) -> StoredProviderRequest:
+        for row in self._request_log:
+            if (
+                row.provider_key == request.provider_key
+                and row.dataset_key == request.dataset_key
+                and row.request_key == request.request_key
+            ):
+                return _row_to_stored_request_from_log(row)
+        new_row = ProviderRequestRow(
+            id=uuid4(),
+            provider_key=request.provider_key,
+            dataset_key=request.dataset_key,
+            request_key=request.request_key,
+            request_params=dict(request.request_params),
+            requested_by_run_id=request.requested_by_run_id,
+            status=request.status,
+        )
+        self._session.add(new_row)
+        self._request_log.append(new_row)
+        return _row_to_stored_request_from_log(new_row)
 
     def _record_upsert_call(self, instruments: Any) -> int:
         self._upsert_calls.append(list(instruments))
@@ -144,10 +225,16 @@ def _build_uow_factory(
     request_lookup: Any,
     attempt_list: Any,
     upsert_records: list[list[Instrument]] | None = None,
+    request_log: list[ProviderRequestRow] | None = None,
 ) -> Any:
+    # Shared across every UoW the factory creates for this session so
+    # ``get_or_create`` sees prior insertions on later runs.
+    log = request_log if request_log is not None else []
+
     def _factory(*_args: Any, **_kwargs: Any) -> _FakeUnitOfWork:
         return _FakeUnitOfWork(
             session,
+            request_log=log,
             request_lookup=request_lookup,
             attempt_list=attempt_list,
             upsert_records=upsert_records,
@@ -163,6 +250,22 @@ def _make_attempt_list(
         return list(attempts)
 
     return _list
+
+
+def _row_to_stored_request_from_log(
+    row: ProviderRequestRow,
+) -> StoredProviderRequest:
+    """Project a tracked ``ProviderRequestRow`` back to its domain view."""
+
+    return StoredProviderRequest(
+        id=row.id,
+        provider_key=row.provider_key,
+        dataset_key=row.dataset_key,
+        request_key=row.request_key,
+        request_params=dict(row.request_params or {}),
+        requested_by_run_id=row.requested_by_run_id,
+        status=row.status,
+    )
 
 
 def _build_session() -> MagicMock:
@@ -314,8 +417,11 @@ class EtfInstrumentsRawAssetTest(unittest.TestCase):
         self.assertIsNone(attempt_row.response_payload_sha256)
         self.assertIsNone(attempt_row.response_payload_json)
 
-    def test_idempotent_rerun_creates_fresh_request_via_uow(self) -> None:
-        """The asset opens a fresh UoW per run; each run gets its own request UUID."""
+    def test_idempotent_rerun_reuses_logical_request_via_uow(self) -> None:
+        """A rerun reuses the existing ``raw.provider_requests`` row and
+        records a fresh attempt + batch instead of violating the
+        ``uq_provider_requests_logical_key`` constraint.
+        """
 
         first = write_etf_instruments_raw(
             self._provider,
@@ -323,15 +429,73 @@ class EtfInstrumentsRawAssetTest(unittest.TestCase):
             as_of=self._as_of,
             unit_of_work_factory=self._uow_factory,
         )
-        self._session.added_rows.clear()
         second = write_etf_instruments_raw(
             self._provider,
             self._factory,
             as_of=self._as_of,
             unit_of_work_factory=self._uow_factory,
         )
-        self.assertNotEqual(first.request_id, second.request_id)
+        third = write_etf_instruments_raw(
+            self._provider,
+            self._factory,
+            as_of=self._as_of,
+            unit_of_work_factory=self._uow_factory,
+        )
+
+        # The logical request is reused — same UUID, only one row in
+        # ``raw.provider_requests`` across all three runs.
+        self.assertEqual(first.request_id, second.request_id)
+        self.assertEqual(first.request_id, third.request_id)
+        rows = self._session.added_rows
+        request_rows = [r for r in rows if isinstance(r, ProviderRequestRow)]
+        self.assertEqual(
+            len(request_rows),
+            1,
+            "get_or_create must not re-insert the existing request row",
+        )
+
+        # The audit trail still grows — a fresh attempt + batch is
+        # recorded for every rerun, with ``attempt_no`` derived from
+        # the existing attempts so the ``uq_provider_attempts_request_attempt_no``
+        # constraint is satisfied across reruns (fixture providers keep
+        # returning ``attempt_number=1``).
         self.assertNotEqual(first.attempt_id, second.attempt_id)
+        self.assertNotEqual(second.attempt_id, third.attempt_id)
+        attempt_rows = [r for r in rows if isinstance(r, ProviderAttemptRow)]
+        batch_rows = [r for r in rows if isinstance(r, RawProviderBatchRow)]
+        self.assertEqual(len(attempt_rows), 3)
+        self.assertEqual(len(batch_rows), 3)
+        attempt_nos = sorted(row.attempt_no for row in attempt_rows)
+        self.assertEqual(attempt_nos, [1, 2, 3])
+        for row in attempt_rows:
+            self.assertEqual(row.provider_request_id, first.request_id)
+        for row in batch_rows:
+            self.assertEqual(row.provider_request_id, first.request_id)
+
+    def test_first_run_preserves_provider_attempt_number(self) -> None:
+        """First-run ``attempt_no`` honours the value the provider returns.
+
+        Guards against the rerun-fix accidentally forcing every attempt
+        to ``max(existing)+1``: a fresh logical request has no existing
+        attempts, so ``attempt.attempt_number`` (currently ``1`` for the
+        fixture_dev adapter) must still flow through.
+        """
+
+        result = write_etf_instruments_raw(
+            self._provider,
+            self._factory,
+            as_of=self._as_of,
+            unit_of_work_factory=self._uow_factory,
+        )
+
+        attempt_rows = [
+            row
+            for row in self._session.added_rows
+            if isinstance(row, ProviderAttemptRow)
+        ]
+        self.assertEqual(len(attempt_rows), 1)
+        self.assertEqual(attempt_rows[0].id, result.attempt_id)
+        self.assertEqual(attempt_rows[0].attempt_no, 1)
 
 
 class EtfInstrumentsAssetTest(unittest.TestCase):

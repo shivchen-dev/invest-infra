@@ -149,6 +149,13 @@ def write_etf_instruments_raw(
     ProviderBatch)`` triple returned by ``provider.fetch_instruments``
     in order so the FK wiring on ``provider_attempts`` and
     ``provider_batches`` resolves against the storage-assigned UUIDs.
+    The logical request is resolved through
+    :meth:`SqlAlchemyProviderRequestRepository.get_or_create` so a
+    re-run of the same ``(provider_key, dataset_key, request_key)``
+    reuses the existing ``raw.provider_requests`` row instead of
+    triggering the ``uq_provider_requests_logical_key`` constraint;
+    a fresh attempt (and batch, when appropriate) is still recorded
+    so the audit trail captures the rerun.
 
     Failure semantics:
 
@@ -172,7 +179,7 @@ def write_etf_instruments_raw(
 
     factory = _coerce_session_factory(session_factory)
     with unit_of_work_factory(factory) as uow:
-        stored_request = uow.provider_requests.add(
+        stored_request = uow.provider_requests.get_or_create(
             NewProviderRequest(
                 provider_key=request.provider_key,
                 dataset_key=request.dataset_key,
@@ -182,11 +189,20 @@ def write_etf_instruments_raw(
             )
         )
 
+        existing_attempts = uow.provider_attempts.list_by_request(
+            stored_request.id, limit=1000
+        )
+        next_attempt_no = (
+            max(a.attempt_no for a in existing_attempts) + 1
+            if existing_attempts
+            else attempt.attempt_number
+        )
+
         if attempt.status is ProviderAttemptStatus.FAILED:
             stored_attempt = uow.provider_attempts.add(
                 NewProviderAttempt(
                     provider_request_id=stored_request.id,
-                    attempt_no=attempt.attempt_number,
+                    attempt_no=next_attempt_no,
                     started_at=attempt.started_at,
                     finished_at=finished_at,
                     status="failed",
@@ -215,7 +231,7 @@ def write_etf_instruments_raw(
         stored_attempt = uow.provider_attempts.add(
             NewProviderAttempt(
                 provider_request_id=stored_request.id,
-                attempt_no=attempt.attempt_number,
+                attempt_no=next_attempt_no,
                 started_at=attempt.started_at,
                 finished_at=finished_at,
                 status="succeeded",

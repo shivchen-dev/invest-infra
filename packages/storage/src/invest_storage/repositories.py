@@ -1409,6 +1409,41 @@ class SqlAlchemyCandidatePoolRunRepository:
         row = self._session.get(CandidatePoolRunRow, run_id)
         return _row_to_candidate_pool_run(row) if row is not None else None
 
+    def get_by_natural_key(
+        self,
+        *,
+        trade_date: date,
+        algorithm_key: str,
+        algorithm_version: str,
+        parameter_hash: str,
+        input_snapshot_id: UUID,
+    ) -> CandidatePoolRun | None:
+        """Return the run identified by the ADR-0008 natural unique key.
+
+        The natural key
+        ``(trade_date, algorithm_key, algorithm_version, parameter_hash,
+        input_snapshot_id)`` is enforced by the database unique constraint
+        ``uq_candidate_pool_runs_natural_key``; at most one row can match.
+        This lookup is the idempotent entry point used by the application
+        service when the same business calculation is rerun so the existing
+        ``PUBLISHED`` run can be returned instead of triggering a duplicate
+        insert.
+        """
+
+        stmt = (
+            select(CandidatePoolRunRow)
+            .where(
+                CandidatePoolRunRow.trade_date == trade_date,
+                CandidatePoolRunRow.algorithm_key == algorithm_key,
+                CandidatePoolRunRow.algorithm_version == algorithm_version,
+                CandidatePoolRunRow.parameter_hash == parameter_hash,
+                CandidatePoolRunRow.input_snapshot_id == input_snapshot_id,
+            )
+            .limit(1)
+        )
+        row = self._session.scalars(stmt).first()
+        return _row_to_candidate_pool_run(row) if row is not None else None
+
     def list_by_status(
         self,
         status: CandidatePoolStatus | str,
