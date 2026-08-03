@@ -17,17 +17,18 @@ import { EmptyState } from "../components/EmptyState";
 import { ErrorState } from "../components/ErrorState";
 import { LoadingState } from "../components/LoadingState";
 import { StatusBanner } from "../components/StatusBanner";
+import { LatestRunPanel } from "../features/operations/LatestRunPanel";
+import { ReprocessHint } from "../features/operations/ReprocessHint";
+import { RunHistoryTable } from "../features/operations/RunHistoryTable";
 import {
   formatCount,
   formatDate,
   formatDateTime,
-  formatDuration,
 } from "../utils/format";
 
 const HISTORY_LIMIT = 20;
 const HISTORY_OFFSET = 0;
 const REFETCH_INTERVAL = 60_000;
-const ERROR_SUMMARY_MAX_LEN = 240;
 const MARKET_TIMEZONE = "Asia/Shanghai";
 
 const STATUS_LABELS: Record<DataFreshnessStatus, string> = {
@@ -106,7 +107,7 @@ export function OperationsPage() {
             最新运行
           </h3>
         </header>
-        <LatestRunSection query={latestRunQuery} />
+        <LatestRunPanel query={latestRunQuery} />
       </section>
 
       <section
@@ -121,7 +122,11 @@ export function OperationsPage() {
             最近 {HISTORY_LIMIT} 条 · offset {HISTORY_OFFSET}
           </span>
         </header>
-        <RecentRunsSection query={historyQuery} />
+        <RunHistoryTable
+          query={historyQuery}
+          limit={HISTORY_LIMIT}
+          offset={HISTORY_OFFSET}
+        />
       </section>
 
       <section
@@ -133,7 +138,7 @@ export function OperationsPage() {
             重跑命令提示
           </h3>
         </header>
-        <RerunHint />
+        <ReprocessHint />
       </section>
     </div>
   );
@@ -196,228 +201,6 @@ function FreshnessSection({ query }: { query: FreshnessQuery }) {
       ]}
     />
   );
-}
-
-type RunQuery = UseQueryResult<PipelineRunResponse, Error>;
-
-function LatestRunSection({ query }: { query: RunQuery }) {
-  if (query.isPending) {
-    return <LoadingState label="正在加载最新运行" compact />;
-  }
-  if (query.isError) {
-    if (isNotFound(query.error)) {
-      return (
-        <EmptyState
-          title="尚无 Pipeline Run"
-          description="系统暂未执行过任何 Pipeline。"
-        />
-      );
-    }
-    return (
-      <ErrorState
-        title="无法读取最新运行"
-        message={describeError(query.error)}
-        onRetry={() => {
-          void query.refetch();
-        }}
-      />
-    );
-  }
-  const run = query.data;
-  if (!run) {
-    return <EmptyState title="暂无最新运行" />;
-  }
-  const tone = pipelineStatusTone(run.status);
-  return (
-    <dl className="runSummary">
-      <div>
-        <dt>状态</dt>
-        <dd>
-          <span className={statusPillClass(tone)}>{run.status}</span>
-        </dd>
-      </div>
-      <div>
-        <dt>业务/分区日期</dt>
-        <dd>{formatDate(run.partition_key)}</dd>
-      </div>
-      <div>
-        <dt>触发方式</dt>
-        <dd>{run.trigger_type}</dd>
-      </div>
-      <div>
-        <dt>开始时间</dt>
-        <dd>{formatDateTime(run.started_at)}</dd>
-      </div>
-      <div>
-        <dt>结束时间</dt>
-        <dd>{formatDateTime(run.finished_at)}</dd>
-      </div>
-      <div>
-        <dt>耗时</dt>
-        <dd>{formatDuration(run.started_at, run.finished_at)}</dd>
-      </div>
-      <div className="runSummaryFull">
-        <dt>错误摘要</dt>
-        <dd className="operationsErrorSummary">
-          {sanitizeErrorSummary(run.error_summary)}
-        </dd>
-      </div>
-    </dl>
-  );
-}
-
-type HistoryQuery = UseQueryResult<PipelineRunListResponse, Error>;
-
-function RecentRunsSection({ query }: { query: HistoryQuery }) {
-  if (query.isPending) {
-    return <LoadingState label="正在加载最近运行" compact />;
-  }
-  if (query.isError) {
-    if (isNotFound(query.error)) {
-      return (
-        <EmptyState
-          title="暂无运行历史"
-          description="Pipeline Run 历史为空。"
-        />
-      );
-    }
-    return (
-      <ErrorState
-        title="无法读取运行历史"
-        message={describeError(query.error)}
-        onRetry={() => {
-          void query.refetch();
-        }}
-      />
-    );
-  }
-  const data = query.data;
-  if (!data || data.items.length === 0) {
-    return (
-      <EmptyState
-        title="暂无运行历史"
-        description={`limit ${HISTORY_LIMIT} / offset ${HISTORY_OFFSET} 内没有结果。`}
-      />
-    );
-  }
-
-  const sorted = sortRunsByDateDesc(data.items);
-
-  return (
-    <div className="dataTableWrapper">
-      <table
-        className="dataTable operationsHistoryTable"
-        aria-label="最近运行"
-      >
-        <thead>
-          <tr>
-            <th scope="col">日期</th>
-            <th scope="col">状态</th>
-            <th scope="col">触发</th>
-            <th scope="col">开始</th>
-            <th scope="col">结束</th>
-            <th scope="col">耗时</th>
-            <th scope="col">错误码</th>
-            <th scope="col">Run ID</th>
-          </tr>
-        </thead>
-        <tbody>
-          {sorted.map((run) => {
-            const tone = pipelineStatusTone(run.status);
-            return (
-              <tr key={run.id}>
-                <td>{formatDate(run.partition_key)}</td>
-                <td>
-                  <span className={statusPillClass(tone)}>{run.status}</span>
-                </td>
-                <td>{run.trigger_type}</td>
-                <td>{formatDateTime(run.started_at)}</td>
-                <td>{formatDateTime(run.finished_at)}</td>
-                <td>{formatDuration(run.started_at, run.finished_at)}</td>
-                <td>{run.error_code ?? "—"}</td>
-                <td>
-                  <code className="inlineCode">{run.id}</code>
-                </td>
-              </tr>
-            );
-          })}
-        </tbody>
-      </table>
-      <p className="operationsHistoryFooter">
-        共 {formatCount(data.total)} 条 · 显示 {formatCount(sorted.length)} 条
-      </p>
-    </div>
-  );
-}
-
-function RerunHint() {
-  return (
-    <div className="operationsRerunHint">
-      <p className="operationsRerunNote">
-        仅作命令提示，不会触发任何写操作；请在确认网络影响后由运维执行。
-      </p>
-      <pre className="operationsRerunCode" aria-label="重跑命令">
-        <code>{`make reprocess-date TRADE_DATE=YYYY-MM-DD CONFIRM_NETWORK=1`}</code>
-      </pre>
-    </div>
-  );
-}
-
-type PipelineTone = "neutral" | "success" | "warning" | "danger";
-
-function pipelineStatusTone(status: string | null | undefined): PipelineTone {
-  if (!status) return "neutral";
-  const normalized = status.toLowerCase();
-  if (
-    normalized === "success" ||
-    normalized === "succeeded" ||
-    normalized === "completed"
-  ) {
-    return "success";
-  }
-  if (normalized === "failed" || normalized === "error") return "danger";
-  if (
-    normalized === "running" ||
-    normalized === "pending" ||
-    normalized === "started" ||
-    normalized === "queued"
-  ) {
-    return "warning";
-  }
-  return "neutral";
-}
-
-function statusPillClass(tone: PipelineTone): string {
-  switch (tone) {
-    case "success":
-      return "statusPill statusPillSuccess";
-    case "warning":
-      return "statusPill statusPillWarning";
-    case "danger":
-      return "statusPill statusPillDanger";
-    default:
-      return "statusPill statusPillNeutral";
-  }
-}
-
-function sortRunsByDateDesc(runs: PipelineRunResponse[]): PipelineRunResponse[] {
-  return runs.slice().sort((a, b) => {
-    const ad = a.started_at ?? a.partition_key ?? "";
-    const bd = b.started_at ?? b.partition_key ?? "";
-    if (ad === bd) return a.id.localeCompare(b.id);
-    return bd.localeCompare(ad);
-  });
-}
-
-function sanitizeErrorSummary(raw: string | null | undefined): string {
-  if (!raw) return "—";
-  const cleaned = raw
-    .replace(/[\u0000-\u001f\u007f]+/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
-  if (cleaned.length === 0) return "—";
-  if (cleaned.length <= ERROR_SUMMARY_MAX_LEN) return cleaned;
-  return `${cleaned.slice(0, ERROR_SUMMARY_MAX_LEN)}…`;
 }
 
 export function computeExpectedTradeDate(asOf: string | null | undefined): string {
