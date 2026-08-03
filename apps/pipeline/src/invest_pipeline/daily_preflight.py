@@ -6,6 +6,8 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import date
 
+from invest_pipeline.clock import market_today
+
 _KNOWN_PROVIDERS = frozenset({"fixture_dev", "cifangquant"})
 
 
@@ -29,7 +31,7 @@ def evaluate_daily_preflight(
 ) -> DailyPreflightResult:
     """Evaluate safe-to-run checks without touching infrastructure."""
 
-    if trade_date > (today if today is not None else date.today()):
+    if trade_date > (today if today is not None else market_today()):
         return DailyPreflightResult("fail", "future_date")
     if trade_date.weekday() >= 5:
         return DailyPreflightResult("skip", "skip_non_business_day")

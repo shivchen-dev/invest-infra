@@ -54,6 +54,7 @@ from invest_pipeline.adapters.errors import (
     ProviderError,
     RealProviderRequiresExplicitEnablementError,
 )
+from invest_pipeline.clock import market_today
 
 _MIN_SYMBOLS = 1
 _MAX_SYMBOLS = 5
@@ -344,7 +345,7 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     try:
         symbols = parse_symbols(args.symbols)
-        trade_date = parse_trade_date(args.trade_date, date.today())
+        trade_date = parse_trade_date(args.trade_date, market_today())
     except SmokeConfigError as exc:
         print(f"error: {exc}", file=stderr)
         return 2

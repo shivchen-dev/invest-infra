@@ -56,6 +56,7 @@ from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
+from invest_api import clock as market_clock
 from invest_api.dependencies import get_db_session
 from invest_api.schemas.data_freshness import DataFreshnessResponse
 
@@ -235,7 +236,7 @@ def get_data_freshness(
 ) -> DataFreshnessResponse:
     """Return the data-freshness summary for ``expected_trade_date``."""
 
-    expected = expected_trade_date or latest_weekday(date.today())
+    expected = expected_trade_date or latest_weekday(market_clock.market_today())
     as_of = datetime.now(UTC)
 
     try:

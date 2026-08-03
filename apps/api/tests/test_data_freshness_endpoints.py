@@ -25,12 +25,13 @@ effect with one ``MagicMock`` result per query in order:
 
 from __future__ import annotations
 
-from datetime import date, timedelta
+from datetime import UTC, date, datetime, timedelta
 from typing import TYPE_CHECKING
 from unittest.mock import MagicMock
 from uuid import uuid4
 
 import pytest
+from invest_api import clock as clock_module
 from invest_api.routers import data_freshness as data_freshness_module
 from invest_api.routers.data_freshness import latest_weekday
 from sqlalchemy.exc import OperationalError
@@ -510,7 +511,7 @@ class TestDataFreshnessErrorSanitization:
 
 
 class TestDataFreshnessDefaultDate:
-    """When ``expected_trade_date`` is omitted the handler snaps to the latest weekday."""
+    """When ``expected_trade_date`` is omitted the handler uses the market clock."""
 
     def test_default_uses_latest_weekday_helper(self) -> None:
         # Sanity-check the helper directly so the default behaviour is
@@ -526,16 +527,15 @@ class TestDataFreshnessDefaultDate:
         mock_session: MagicMock,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        # Force "today" to be a Saturday so the handler should snap to the
-        # previous Friday and query ops.pipeline_runs with that partition key.
-        from datetime import date as _real_date
-
-        class _FakeDate(_real_date):
-            @classmethod
-            def today(cls) -> _real_date:
-                return _real_date(2026, 8, 1)  # Saturday
-
-        monkeypatch.setattr(data_freshness_module, "date", _FakeDate)
+        # Force ``market_today`` to read a Shanghai Saturday so the
+        # handler should snap to the previous Friday and query
+        # ``ops.pipeline_runs`` with that partition key. We patch the
+        # dedicated clock helper rather than the built-in
+        # ``date.today`` so the rest of the interpreter keeps its real
+        # clock.
+        monkeypatch.setattr(
+            clock_module, "market_today", lambda: date(2026, 8, 1)
+        )
 
         mock_session.execute.side_effect = _build_results(
             snapshot=None,
@@ -548,12 +548,218 @@ class TestDataFreshnessDefaultDate:
         response = client.get(ENDPOINT)
 
         assert response.status_code == 200
-        # Locate the execute call that targets ops.pipeline_runs (the last one
-        # in the sequence) and confirm it bound partition_key to the Friday.
+        # Locate the execute call that targets ops.pipeline_runs (the last
+        # one in the sequence) and confirm it bound partition_key to the
+        # Friday.
         last_call = mock_session.execute.call_args_list[-1]
         bound_params = last_call.kwargs.get("params") or last_call.args[1]
         assert bound_params["partition_key"] == date(2026, 7, 31).isoformat()
         assert bound_params["job_key"] == "personal_etf_daily_job"
+
+    def test_default_resolves_via_market_clock_helper(
+        self,
+        client: TestClient,
+        mock_session: MagicMock,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """The handler must consult ``market_today``, not the local clock.
+
+        Driving the date via the clock module proves the dependency
+        without touching the built-in :class:`date` class (which is
+        what the old test used to do and what PR-03 forbids).
+        """
+
+        monkeypatch.setattr(
+            clock_module, "market_today", lambda: date(2026, 8, 5)
+        )
+
+        mock_session.execute.side_effect = _build_results(
+            snapshot=None,
+            published=None,
+            candidate_count=0,
+            daily_bar_count=0,
+            pipeline=None,
+        )
+
+        response = client.get(ENDPOINT)
+
+        assert response.status_code == 200
+        last_call = mock_session.execute.call_args_list[-1]
+        bound_params = last_call.kwargs.get("params") or last_call.args[1]
+        # August 5, 2026 is a Wednesday in Shanghai -> passes through.
+        assert bound_params["partition_key"] == "2026-08-05"
+
+    def test_beijing_monday_early_morning_while_utc_is_sunday(
+        self,
+        client: TestClient,
+        mock_session: MagicMock,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Beijing Monday 00:30 / UTC Sunday 16:30 must still report Monday.
+
+        Without :func:`market_today`, a host running in UTC would have
+        returned Sunday and the partition lookup would have targeted
+        ``2026-08-02``. The expected Monday is ``2026-08-03``.
+        """
+
+        def _fake_market_today() -> date:
+            # Shanghai wall clock at 00:30 on Monday 2026-08-03 (UTC is
+            # Sunday 2026-08-02 at 16:30). The helper implementation
+            # ``datetime.now(MARKET_TIMEZONE).date()`` already returns
+            # this date, so the test just exercises the wiring.
+            return datetime(2026, 8, 3, 0, 30, tzinfo=clock_module.MARKET_TIMEZONE).date()
+
+        monkeypatch.setattr(clock_module, "market_today", _fake_market_today)
+
+        mock_session.execute.side_effect = _build_results(
+            snapshot=None,
+            published=None,
+            candidate_count=0,
+            daily_bar_count=0,
+            pipeline=None,
+        )
+
+        response = client.get(ENDPOINT)
+
+        assert response.status_code == 200
+        last_call = mock_session.execute.call_args_list[-1]
+        bound_params = last_call.kwargs.get("params") or last_call.args[1]
+        assert bound_params["partition_key"] == "2026-08-03"
+
+    def test_weekend_saturday_falls_back_to_friday(
+        self,
+        client: TestClient,
+        mock_session: MagicMock,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Shanghai Saturday in the default branch should fall back to Friday."""
+
+        monkeypatch.setattr(
+            clock_module, "market_today", lambda: date(2026, 8, 1)
+        )
+
+        mock_session.execute.side_effect = _build_results(
+            snapshot=None,
+            published=None,
+            candidate_count=0,
+            daily_bar_count=0,
+            pipeline=None,
+        )
+
+        response = client.get(ENDPOINT)
+
+        assert response.status_code == 200
+        last_call = mock_session.execute.call_args_list[-1]
+        bound_params = last_call.kwargs.get("params") or last_call.args[1]
+        assert bound_params["partition_key"] == "2026-07-31"
+
+    def test_weekend_sunday_falls_back_to_friday(
+        self,
+        client: TestClient,
+        mock_session: MagicMock,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Shanghai Sunday in the default branch should fall back to Friday."""
+
+        monkeypatch.setattr(
+            clock_module, "market_today", lambda: date(2026, 8, 2)
+        )
+
+        mock_session.execute.side_effect = _build_results(
+            snapshot=None,
+            published=None,
+            candidate_count=0,
+            daily_bar_count=0,
+            pipeline=None,
+        )
+
+        response = client.get(ENDPOINT)
+
+        assert response.status_code == 200
+        last_call = mock_session.execute.call_args_list[-1]
+        bound_params = last_call.kwargs.get("params") or last_call.args[1]
+        assert bound_params["partition_key"] == "2026-07-31"
+
+    def test_explicit_date_bypasses_market_clock(
+        self,
+        client: TestClient,
+        mock_session: MagicMock,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """An explicit ``expected_trade_date`` must not consult the clock.
+
+        Even when ``market_today`` returns a Sunday, the handler binds
+        the partition key to the caller-supplied date (a Friday) so
+        the API remains deterministic for replay / integration tests.
+        """
+
+        requested = date(2026, 7, 31)  # Friday
+        monkeypatch.setattr(
+            clock_module, "market_today", lambda: date(2026, 8, 2)
+        )
+
+        mock_session.execute.side_effect = _build_results(
+            snapshot=None,
+            published=None,
+            candidate_count=0,
+            daily_bar_count=0,
+            pipeline=None,
+        )
+
+        response = client.get(
+            ENDPOINT, params={"expected_trade_date": requested.isoformat()}
+        )
+
+        assert response.status_code == 200
+        last_call = mock_session.execute.call_args_list[-1]
+        bound_params = last_call.kwargs.get("params") or last_call.args[1]
+        assert bound_params["partition_key"] == requested.isoformat()
+
+    def test_as_of_is_utc_aware_timestamp(
+        self,
+        client: TestClient,
+        mock_session: MagicMock,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """``as_of`` must remain a UTC-aware ``datetime``.
+
+        The market-local clock drives ``expected_trade_date``; the wall
+        timestamp is independent and must continue to be UTC-aware so
+        downstream consumers can serialise it unambiguously.
+        """
+
+        captured: dict[str, object] = {}
+
+        class _AwareDatetime(datetime):
+            @classmethod
+            def now(cls, tz: object | None = None) -> datetime:
+                captured["tz"] = tz
+                return datetime(2026, 8, 3, 1, 15, tzinfo=tz)  # type: ignore[arg-type]
+
+        monkeypatch.setattr(data_freshness_module, "datetime", _AwareDatetime)
+
+        mock_session.execute.side_effect = _build_results(
+            snapshot=None,
+            published=None,
+            candidate_count=0,
+            daily_bar_count=0,
+            pipeline=None,
+        )
+
+        response = client.get(
+            ENDPOINT, params={"expected_trade_date": EXPECTED.isoformat()}
+        )
+
+        assert response.status_code == 200
+        assert captured["tz"] is UTC
+        body = response.json()
+        # Pydantic emits the trailing ``Z`` suffix for naive-vs-aware
+        # UTC datetimes; the precise wall time depends on the
+        # monkey-patched ``datetime.now`` but the offset must still be
+        # UTC, not the local market timezone.
+        assert body["as_of"].endswith("Z")
+        # Prefix is the ISO calendar day of the monkey-patched value.
+        assert body["as_of"].startswith("2026-08-03T")
 
 
 __all__ = [

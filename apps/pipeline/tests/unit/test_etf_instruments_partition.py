@@ -422,15 +422,13 @@ class EtfInstrumentsPartitionConsistencyTest(unittest.TestCase):
 
 
 class EtfInstrumentsPreservationTest(unittest.TestCase):
-    """``seed_instruments`` and the CLI default stay untouched.
+    """``seed_instruments`` stays untouched while CLI dates use market time.
 
     PR-01 explicitly preserves the legacy ``seed_instruments`` asset
     (it must keep its direct ``FixtureDevInstrumentProvider()`` call
-    and stay non-partitioned) and the ``personal_daily_cli`` default
-    that uses ``date.today()`` to seed ``--trade-date`` when the user
-    omits it. Both guarantees are pinned at the source / import level
-    so a future refactor that broadens the slice to those surfaces
-    surfaces loudly.
+    and stay non-partitioned). PR-03 separately standardises the CLI
+    default on the Asia/Shanghai market clock. Both guarantees are
+    pinned at the source / import level.
     """
 
     def test_seed_instruments_keeps_legacy_fixture_construction(self) -> None:
@@ -442,15 +440,12 @@ class EtfInstrumentsPreservationTest(unittest.TestCase):
             getattr(assets.seed_instruments, "partitions_def", None)
         )
 
-    def test_personal_daily_cli_default_trade_date_keeps_date_today(self) -> None:
+    def test_personal_daily_cli_default_trade_date_uses_market_today(self) -> None:
         from invest_pipeline import personal_daily_cli
 
         source = Path(inspect.getsourcefile(personal_daily_cli) or "").resolve()
         text = source.read_text(encoding="utf-8")
-        # The CLI default is intentionally ``date.today()`` (PR-01
-        # preserves it). Pin the call site so a future refactor
-        # that switches it to ``partition_key`` surfaces loudly.
-        self.assertIn("parse_trade_date(args.trade_date, date.today())", text)
+        self.assertIn("parse_trade_date(args.trade_date, market_today())", text)
 
 
 def _build_raw_etl_result() -> Any:

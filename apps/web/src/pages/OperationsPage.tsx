@@ -28,6 +28,7 @@ const HISTORY_LIMIT = 20;
 const HISTORY_OFFSET = 0;
 const REFETCH_INTERVAL = 60_000;
 const ERROR_SUMMARY_MAX_LEN = 240;
+const MARKET_TIMEZONE = "Asia/Shanghai";
 
 const STATUS_LABELS: Record<DataFreshnessStatus, string> = {
   fresh: "数据已更新",
@@ -419,22 +420,36 @@ function sanitizeErrorSummary(raw: string | null | undefined): string {
   return `${cleaned.slice(0, ERROR_SUMMARY_MAX_LEN)}…`;
 }
 
-function computeExpectedTradeDate(asOf: string | null | undefined): string {
+export function computeExpectedTradeDate(asOf: string | null | undefined): string {
   if (!asOf) return "—";
+  if (/^\d{4}-\d{2}-\d{2}$/.test(asOf)) {
+    return previousBusinessDay(asOf);
+  }
   const date = new Date(asOf);
   if (Number.isNaN(date.getTime())) return asOf.slice(0, 10);
-  let candidate = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: MARKET_TIMEZONE,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  })
+    .formatToParts(date)
+    .reduce<Record<string, string>>((result, part) => {
+      result[part.type] = part.value;
+      return result;
+    }, {});
+  const marketDate = `${parts.year}-${parts.month}-${parts.day}`;
+  return previousBusinessDay(marketDate);
+}
+
+function previousBusinessDay(value: string): string {
+  const candidate = new Date(`${value}T00:00:00Z`);
   for (let i = 0; i < 7; i += 1) {
-    const day = candidate.getDay();
-    if (day !== 0 && day !== 6) {
-      break;
-    }
-    candidate.setDate(candidate.getDate() - 1);
+    const day = candidate.getUTCDay();
+    if (day !== 0 && day !== 6) break;
+    candidate.setUTCDate(candidate.getUTCDate() - 1);
   }
-  const yyyy = candidate.getFullYear();
-  const mm = String(candidate.getMonth() + 1).padStart(2, "0");
-  const dd = String(candidate.getDate()).padStart(2, "0");
-  return `${yyyy}-${mm}-${dd}`;
+  return candidate.toISOString().slice(0, 10);
 }
 
 function shouldRetry(failureCount: number, error: Error): boolean {

@@ -10,6 +10,17 @@ const FIXED_TWO = new Intl.NumberFormat("zh-CN", {
 
 const INT = new Intl.NumberFormat("zh-CN");
 
+const MARKET_DATE_TIME = new Intl.DateTimeFormat("en-CA", {
+  timeZone: "Asia/Shanghai",
+  year: "numeric",
+  month: "2-digit",
+  day: "2-digit",
+  hour: "2-digit",
+  minute: "2-digit",
+  second: "2-digit",
+  hourCycle: "h23",
+});
+
 function toFiniteNumber(value: string | number | null | undefined): number | null {
   if (value === null || value === undefined || value === "") return null;
   const n = typeof value === "string" ? Number(value) : value;
@@ -50,15 +61,16 @@ export function formatDate(value: string | null | undefined): string {
 
 export function formatDateTime(value: string | null | undefined): string {
   if (!value) return "—";
+  if (/^\d{4}-\d{2}-\d{2}$/.test(value)) return value;
   const d = new Date(value);
   if (Number.isNaN(d.getTime())) return value;
-  const yyyy = d.getFullYear();
-  const mm = String(d.getMonth() + 1).padStart(2, "0");
-  const dd = String(d.getDate()).padStart(2, "0");
-  const hh = String(d.getHours()).padStart(2, "0");
-  const mi = String(d.getMinutes()).padStart(2, "0");
-  const ss = String(d.getSeconds()).padStart(2, "0");
-  return `${yyyy}-${mm}-${dd} ${hh}:${mi}:${ss}`;
+  const parts = Object.fromEntries(
+    MARKET_DATE_TIME.formatToParts(d).map(({ type, value: part }) => [
+      type,
+      part,
+    ]),
+  );
+  return `${parts.year}-${parts.month}-${parts.day} ${parts.hour}:${parts.minute}:${parts.second}`;
 }
 
 export function formatDuration(

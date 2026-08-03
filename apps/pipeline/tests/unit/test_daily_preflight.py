@@ -49,6 +49,17 @@ def test_preflight_ready() -> None:
     assert _evaluate().reason == "ready"
 
 
+def test_preflight_default_today_comes_from_market_clock(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "invest_pipeline.daily_preflight.market_today",
+        lambda: date(2026, 7, 30),
+    )
+
+    result = _evaluate(trade_date=date(2026, 7, 31))
+
+    assert (result.decision, result.reason) == ("fail", "future_date")
+
+
 def test_preflight_catches_universe_loader_error() -> None:
     result = _evaluate(personal_universe_loader=lambda: 1 / 0)
     assert (result.decision, result.reason) == ("fail", "personal_universe_unavailable")

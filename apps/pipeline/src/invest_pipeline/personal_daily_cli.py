@@ -58,6 +58,8 @@ from datetime import UTC, date, datetime
 from typing import Any, Protocol
 from uuid import UUID
 
+from invest_pipeline.clock import market_today
+
 _UNIVERSE_ENV = "INVEST_PIPELINE_PERSONAL_UNIVERSE_PATH"
 _POLICY_ENV = "INVEST_PIPELINE_CANDIDATE_POOL_POLICY_PATH"
 _PROVIDER_KEY_ENV = "INVEST_PIPELINE_PROVIDER_KEY"
@@ -935,7 +937,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     stderr = sys.stderr
 
     try:
-        trade_date = parse_trade_date(args.trade_date, date.today())
+        trade_date = parse_trade_date(args.trade_date, market_today())
     except DailyCLIConfigError as exc:
         print(f"error: {exc}", file=stderr)
         return 2
