@@ -438,7 +438,12 @@ class CandidatePoolRunRow(Base):
     parameter_set_key: Mapped[str] = mapped_column(String(80), nullable=False)
     parameter_hash: Mapped[str] = mapped_column(String(64), nullable=False)
     input_snapshot_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), nullable=False
+        UUID(as_uuid=True),
+        ForeignKey(
+            "analytics.input_snapshots.id",
+            name="fk_cpool_runs_snapshot_id",
+        ),
+        nullable=False,
     )
     input_row_count: Mapped[int] = mapped_column(Integer, nullable=False)
     included_count: Mapped[int] = mapped_column(Integer, nullable=False)

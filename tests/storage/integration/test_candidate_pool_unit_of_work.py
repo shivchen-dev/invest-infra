@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from datetime import UTC, date, datetime
 from decimal import Decimal
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 from invest_domain.candidate_pool.models import (
@@ -25,6 +25,8 @@ from invest_storage import (
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
+TEST_INPUT_SNAPSHOT_ID = UUID("00000000-0000-0000-0000-000000000001")
+
 
 def _utc(year: int, month: int, day: int, hour: int = 0) -> datetime:
     return datetime(year, month, day, hour, tzinfo=UTC)
@@ -38,7 +40,7 @@ def _new_calculated_run() -> CandidatePoolRun:
         algorithm_version="v1.0",
         parameter_set_key="default",
         parameter_hash="a" * 64,
-        input_snapshot_id=uuid4(),
+        input_snapshot_id=TEST_INPUT_SNAPSHOT_ID,
         input_row_count=2,
         included_count=1,
         status=CandidatePoolStatus.CALCULATED,

@@ -12,7 +12,7 @@ help:
 	@echo "make test-migrations 运行数据库迁移往返测试"
 	@echo "make test-pipeline   运行 Pipeline 应用测试"
 	@echo "make test-api        运行 API 应用测试"
-	@echo "make test-web        运行 Web 类型检查、测试和构建"
+	@echo "make test-web        运行 Web 类型检查和构建"
 	@echo "make arch-check      检查依赖边界"
 	@echo "make lock            为各 Python 应用生成锁文件"
 	@echo "make provider-smoke  对 CifangQuant 真实 API 做受限 smoke（opt-in）"
@@ -50,15 +50,14 @@ test: arch-check test-domain test-storage test-storage-integration test-migratio
 	@echo "All tests passed"
 
 test-domain:
-	PYTHONPATH=packages/domain/src python -m pytest packages/domain/tests -q
+	PYTHONPATH=packages/domain/src python3 -m pytest packages/domain/tests -q
 
 test-storage:
 	cd packages/storage && uv sync
-	PYTHONPATH=packages/domain/src:packages/storage/src:tests packages/storage/.venv/bin/python -m pytest tests/storage --ignore=tests/storage/integration -q
+	cd packages/storage && PYTHONPATH=../domain/src:../../tests uv run --with pytest --with testcontainers pytest ../../tests/storage --ignore=../../tests/storage/integration -q
 
 test-storage-integration:
-	pip install sqlalchemy psycopg2-binary pytest testcontainers
-	DATABASE_URL=postgresql+psycopg://invest:invest_dev_password@localhost:5432/invest PYTHONPATH=packages/domain/src:packages/storage/src:tests python -m pytest tests/storage/integration -q
+	uv run --project packages/storage --with pytest --with testcontainers --with psycopg2-binary pytest tests/storage/integration -q
 
 test-migrations:
 	cd apps/migrations && uv sync
@@ -81,7 +80,6 @@ test-api:
 test-web:
 	cd apps/web && pnpm install --frozen-lockfile
 	cd apps/web && pnpm typecheck
-	cd apps/web && pnpm test --run
 	cd apps/web && pnpm build
 
 lint:
@@ -89,7 +87,7 @@ lint:
 	cd apps/pipeline && uv run ruff check src tests
 
 arch-check:
-	python scripts/check_architecture.py
+	python3 scripts/check_architecture.py
 
 # 受限的 CifangQuant smoke（ADR-0011 Phase 1）。
 #

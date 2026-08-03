@@ -10,7 +10,7 @@
 | A-2 | 新增 `docs/implementation/M0-DECISIONS.md` | 存在 | `ls docs/implementation/M0-DECISIONS.md` |
 | A-3 | 新增 `docs/implementation/M0-ACCEPTANCE.md` | 自身 | — |
 | A-4 | 新增 `docs/implementation/M0-CODING-BRIEF.md` | 存在 | `ls docs/implementation/M0-CODING-BRIEF.md` |
-| A-5 | 现有 `docs/plan/invest-infra-v2-etf-vertical-slice-plan.md` 未修改 | git 未变更 | `git diff -- docs/plan/invest-infra-v2-etf-vertical-slice-plan.md` 输出为空 |
+| A-5 | 归档的 `docs/archive/2026-08-02-stage1/invest-infra-v2-etf-vertical-slice-plan.md` 未修改 | git 未变更 | `git diff -- docs/archive/2026-08-02-stage1/invest-infra-v2-etf-vertical-slice-plan.md` 输出为空 |
 | A-6 | 未创建或修改业务代码、迁移、配置 | git 无变更 | `git status --short` 不显示 `apps/ packages/ scripts/ tests/ compose.yaml` 等路径下变更 |
 
 ## B. ADR 结构

@@ -1,4 +1,4 @@
-import { apiGet, queryKeys } from "./client";
+import { apiGet } from "./client";
 import type { InstrumentListResponse } from "./types";
 
 export type EtfInstrumentFilters = {
@@ -26,5 +26,3 @@ export function fetchEtfInstruments(
     signal,
   );
 }
-
-export const etfInstrumentsQueryKey = queryKeys.etfInstruments;

@@ -107,7 +107,7 @@ candidate_pool_runs.status: calculated -> validated -> published (终态)
 
 ## 8. 不可逾越的红线
 
-- 不得修改 `docs/plan/invest-infra-v2-etf-vertical-slice-plan.md` 作为 M0 决策依据；本文件为基线。
+- 不得修改归档计划 `docs/archive/2026-08-02-stage1/invest-infra-v2-etf-vertical-slice-plan.md` 作为 M0 决策依据；本文件为基线。
 - 不得宣称已选定或接入真实 Provider。
 - 不得把 `app.pipeline_runs` 当作已完成运行审计（已废弃，请使用 `ops.pipeline_runs`）。
 - 不得让 Adapter 提交数据库事务或写 `raw.provider_batches`。

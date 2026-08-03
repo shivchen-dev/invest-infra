@@ -126,14 +126,6 @@ export function useParams<T = Record<string, string>>(): T {
   return (ctx.match?.params ?? {}) as T;
 }
 
-export function useCurrentPath(): string {
-  const ctx = useContext(RouterContext);
-  if (!ctx) {
-    throw new Error("useCurrentPath must be used inside <Router>");
-  }
-  return ctx.match?.pathname ?? "/";
-}
-
 interface NavLinkRenderProps {
   isActive: boolean;
 }

@@ -5,7 +5,7 @@
 ## 0. 任务范围与边界
 
 - 阶段：Phase 1（依据 M0 已冻结 ADR）。
-- 不做：不实现真实 Provider SDK 接入、不引入 Redis/Kafka/K8s、不部署、不申请生产权限、不动 `docs/plan/invest-infra-v2-etf-vertical-slice-plan.md`、不动业务代码直到 M1 启动。
+- 不做：不实现真实 Provider SDK 接入、不引入 Redis/Kafka/K8s、不部署、不申请生产权限、不动归档计划 `docs/archive/2026-08-02-stage1/invest-infra-v2-etf-vertical-slice-plan.md`、不动业务代码直到 M1 启动。
 - 任务目标：把 M0 文档固化为可执行代码、迁移、CI 门禁与运行说明，使 M1 起步即可迁移、M2 起步即可接 Provider。
 - 唯一允许修改的目录/文件（与现有 ADR 一致）：
   - 新建：`packages/domain/src/invest_domain/...`（新子包与对象）
@@ -23,7 +23,7 @@
   - 修改：`docs/adr/0003-0010`（如需 `Accepted`，按 M1 完成时升级；不得回退到 `Proposed` 之前）
   - 修改：`docs/implementation/M1-*`（M1 起新建）
 - 禁止：
-  - 修改 `docs/plan/invest-infra-v2-etf-vertical-slice-plan.md`；
+  - 修改归档计划 `docs/archive/2026-08-02-stage1/invest-infra-v2-etf-vertical-slice-plan.md`；
   - 修改现有 `tests/test_domain.py`、`packages/storage/src/invest_storage/models.py` 中已有 `InstrumentRow`/`PipelineRunRow` 的字段（必要时通过新迁移迁移数据并加 `__table_args__` 扩展，不要直接 drop/create）；
   - 修改 `compose.yaml` 中默认账号；
   - 添加 Redis/Kafka/K8s 任何引用；
@@ -120,7 +120,7 @@
   - `resources/`：`ProviderRateLimiter`（Provider 选型确认后再启用配置项）、`PostgresResource`（注入 engine、UnitOfWork factory）。
   - `quality/`：规则注册器与阈值加载（仅读取版本化 YAML；阈值未确认时不内置任何业务数值）。
   - `candidate_pool/`：纯函数 `build_candidate_pool(...)` 内部 import `invest_domain.candidate_pool.ports`，不访问 IO/时间/env；不读 SQL。
-  - `definitions.py` 注册 asset/job/resource，并按 `Settings.environment` 决定启用 fixture 或真实 Provider。
+  - `definitions.py` 注册 asset/job/resource，并按运行时 Provider 配置决定启用 fixture 或真实 Provider。
   - 现有 `assets.py` 中的 `seed_instruments` 改为 thin wrapper，**生产路径禁用**；保留仅供开发验证。
 - `contracts/`：
   - `provider-fixtures/` 至少包含 `etf_instruments_success.json`、`etf_daily_bars_success.json`、`etf_daily_bars_partial.json`、`rate_limit.json`、`malformed_response.json`（脱敏，不含真实价格档）；
@@ -136,8 +136,8 @@
 - `apps/api`：
   - 新增只读路由 `/v1/candidate-pools/{run_id}`、`/v1/candidate-pools/latest`（仅返回 publication pointer 指向且 `status=published` 的 run）、`/v1/candidate-pools/{run_id}/items/{symbol}`、`/v1/data-freshness`、`/v1/pipeline-runs` 与详情；
   - 现有 `routes.py` 不直接改写，新路由在 `routes/` 子包中以 `APIRouter` 形式挂载，避免破坏既有 `/v1/instruments` 行为；
-  - 运维触发端点 M1 阶段先以 `404` 或仅在 `Settings.environment=dev` 注册；不允许生产默认开启；
-  - 引入 `pydantic-settings` 中 `environment` 字段；密钥不出现；
+  - 运维触发端点 M1 阶段先以 `404` 注册；不允许生产默认开启；
+  - 引入 `pydantic-settings` 管理运行时配置；密钥不出现；
   - 编译命令 `uv run ruff check`、`uv run pyright`、集成测试（`/v1/candidate-pools/latest` 在 pointer 为空时返回 200 + 空集）。
 - `apps/web`：
   - 不改 `App.tsx` 现有仪表盘逻辑；新增 `pages/CandidatePoolPage.tsx`、`DataFreshnessPage.tsx`、`PipelineRunsPage.tsx`；
@@ -187,7 +187,7 @@
 
 ## 5. 与现有资产的协调
 
-- `apps/pipeline/src/invest_pipeline/assets.py` 现有 `seed_instruments`：在新代码中标记 `@dg.asset(owners=["code-invest-infra@local"], tags={"phase":"dev-only"})`，并通过 `Settings.environment=dev` 才注册到 `Definitions`；生产 `Definitions` 不得包含此 asset。
+- `apps/pipeline/src/invest_pipeline/assets.py` 现有 `seed_instruments`：在新代码中标记 `@dg.asset(owners=["code-invest-infra@local"], tags={"phase":"dev-only"})`，仅供开发验证；生产 `Definitions` 不得包含此 asset。
 - `apps/pipeline/src/invest_pipeline/providers.py`：`MockInstrumentProvider` 标记 deprecated 并迁移到 `adapters/dev/fixture_provider.py`；现有 import 路径保留为 thin re-export，确保 import 站点不变。
 - `packages/storage/src/invest_storage/models.py`：`InstrumentRow`/`PipelineRunRow` 字段保留，新功能通过新 schema/新表实现；不得直接 drop 重建。
 - `tests/test_domain.py`：保留并随 domain 扩展补充；不删除。

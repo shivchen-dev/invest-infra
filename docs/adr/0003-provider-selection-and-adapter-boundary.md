@@ -8,7 +8,7 @@
 
 当前生产代码只有 `apps/pipeline/src/invest_pipeline/providers.py` 中的 `MockInstrumentProvider`，且 `packages/domain/src/invest_domain/ports.py` 只定义了简化的主数据端口；仓库没有真实 Provider SDK、凭据、契约 fixture 或授权证明。`apps/pipeline/pyproject.toml` 也尚未声明 `httpx`、重试库或供应商 SDK。因此不能声称真实 Provider 已选定或已接入。
 
-现有边界要求见 `docs/ARCHITECTURE.md`：领域层不得依赖具体 SDK；`docs/plan/invest-infra-v2-etf-vertical-slice-plan.md` 要求真实 ETF 主数据、日行情、错误分类和原始批次证据。现有 `seed_instruments` asset 在 `apps/pipeline/src/invest_pipeline/assets.py` 内同时创建 Provider、Repository 和事务，仅是骨架，不是生产采集边界。
+现有边界要求见 `docs/ARCHITECTURE.md`：领域层不得依赖具体 SDK；归档计划 `docs/archive/2026-08-02-stage1/invest-infra-v2-etf-vertical-slice-plan.md` 要求真实 ETF 主数据、日行情、错误分类和原始批次证据。现有 `seed_instruments` asset 在 `apps/pipeline/src/invest_pipeline/assets.py` 内同时创建 Provider、Repository 和事务，仅是骨架，不是生产采集边界。
 
 候选方向仅作事实核验清单，不代表仓库已有授权：
 

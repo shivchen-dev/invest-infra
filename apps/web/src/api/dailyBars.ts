@@ -1,4 +1,4 @@
-import { apiGet, queryKeys } from "./client";
+import { apiGet } from "./client";
 import type { DailyBarListResponse } from "./types";
 
 export type EtfDailyBarsFilters = {
@@ -28,5 +28,3 @@ export function fetchEtfDailyBars(
     signal,
   );
 }
-
-export const etfDailyBarsQueryKey = queryKeys.etfDailyBars;

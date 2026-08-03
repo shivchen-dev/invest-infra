@@ -79,7 +79,7 @@ Web 数据工作台提供以下只读页面：
 
 ```bash
 cd apps/web
-npm exec --offline --yes --package=typescript@5.9.3 -- tsc -b
+pnpm typecheck
 ```
 
 `apps/web` 不提供写操作，也不会从浏览器触发 Pipeline。
@@ -102,8 +102,8 @@ make test
 - 不在第一阶段引入 Redis、MinIO、消息队列和微服务。
 - 不把 Notebook 或 `vectorbt[full]` 装进 API 镜像。
 
-详细决策见 `docs/ARCHITECTURE.md`、`docs/plan/invest-infra-v2-stage2-automation-stability-plan-no-matrix.md` 和
-`docs/plan/invest-infra-v2-next-stage-web-workbench-plan.md`。
+详细决策见 `docs/ARCHITECTURE.md`、`docs/adr/` 和
+`docs/plan/invest-infra-v2-stage2-automation-stability-plan-no-matrix.md`。
 
 ## 骨架验证状态
 

@@ -4,7 +4,7 @@
 > 日期：2026-07-30
 > 适用范围：`invest-infra-v2` M0 → M1 过渡期（Provider 选型未冻结）
 > 输入来源：ARC 已核实的归档系统事实清单
-> 边界参考：`docs/adr/0003`、`docs/adr/0004`、`docs/adr/0005`、`docs/adr/0009`、`docs/adr/0010`、`docs/implementation/M0-DECISIONS.md`、`docs/plan/invest-infra-v2-etf-vertical-slice-plan.md` §4
+> 边界参考：`docs/adr/0003`、`docs/adr/0004`、`docs/adr/0005`、`docs/adr/0009`、`docs/adr/0010`、`docs/implementation/M0-DECISIONS.md`、`docs/archive/2026-08-02-stage1/invest-infra-v2-etf-vertical-slice-plan.md` §4
 
 ## 0. 文档目的与边界
 

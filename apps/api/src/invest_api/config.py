@@ -9,7 +9,6 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
     app_name: str = "invest-infra-v2"
-    environment: str = "development"
     database_url: str = "postgresql+psycopg://invest:invest_dev_password@localhost:5432/invest"
     api_cors_origins: str = "http://localhost:5173"
 

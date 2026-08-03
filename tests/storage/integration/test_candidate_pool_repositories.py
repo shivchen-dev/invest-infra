@@ -39,6 +39,8 @@ from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+TEST_INPUT_SNAPSHOT_ID = UUID("00000000-0000-0000-0000-000000000001")
+
 
 @pytest.fixture()
 def candidate_pool_run_repository(
@@ -101,7 +103,7 @@ def _new_calculated_run(
         algorithm_version=algorithm_version,
         parameter_set_key=parameter_set_key,
         parameter_hash=parameter_hash,
-        input_snapshot_id=input_snapshot_id or uuid4(),
+        input_snapshot_id=input_snapshot_id or TEST_INPUT_SNAPSHOT_ID,
         input_row_count=input_row_count,
         included_count=included_count,
         status=CandidatePoolStatus.CALCULATED,
@@ -143,7 +145,7 @@ def test_duplicate_natural_key_raises_integrity_error(
 ) -> None:
     """The ADR-0008 natural-key unique constraint rejects duplicates."""
 
-    snapshot = uuid4()
+    snapshot = TEST_INPUT_SNAPSHOT_ID
     first = _new_calculated_run(
         trade_date=date(2026, 7, 31),
         algorithm_key="candidate_pool.v1",
@@ -169,7 +171,7 @@ def test_get_by_natural_key_returns_persisted_run(
 ) -> None:
     """``get_by_natural_key`` is the idempotent rerun lookup surface."""
 
-    snapshot = uuid4()
+    snapshot = TEST_INPUT_SNAPSHOT_ID
     first = _new_calculated_run(
         trade_date=date(2026, 7, 31),
         algorithm_key="candidate_pool.v1",

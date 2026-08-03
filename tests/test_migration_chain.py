@@ -161,6 +161,26 @@ class MigrationChainTest(unittest.TestCase):
             f"{initial_revision_file} upgrade() must call op.create_table() with a 'pipeline_runs' table name",
         )
 
+    def test_candidate_pool_snapshot_fk_migration(self) -> None:
+        repository_root = Path(__file__).resolve().parents[1]
+        migration_file = (
+            repository_root
+            / "apps"
+            / "migrations"
+            / "migrations"
+            / "versions"
+            / "20260731_0006_candidate_pool_snapshot_fk.py"
+        )
+        source = migration_file.read_text(encoding="utf-8")
+        self.assertIn('revision: str = "20260731_0006"', source)
+        self.assertIn('down_revision: str | None = "20260731_0005"', source)
+        self.assertIn(
+            "fk_cpool_runs_snapshot_id",
+            source,
+        )
+        self.assertIn('"candidate_pool_runs"', source)
+        self.assertIn('"input_snapshots"', source)
+
 
 def _first_string_literal(call_node: ast.Call) -> str | None:
     for argument in call_node.args:

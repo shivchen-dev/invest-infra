@@ -1,5 +1,7 @@
 # invest-infra V2 下一阶段执行计划：Web 数据工作台
 
+> **状态更新（2026-08-03）**：本计划第 5 节之前的基线描述来自 `55ebfed`，已被后续 Web 实现覆盖。Dashboard、Candidate Pool、ETF 详情、Operations、统一 API Client 已落地，且 `apps/web` 类型检查与生产构建已通过。本文剩余未勾选项仍是后续验收/增强事项，不应据此判断 Web 页面“尚未实施”。当前运行与接入说明以 `README.md` 和 `openwiki/quickstart.md` 为准。
+
 > 仓库：`shivchen-dev/invest-infra`
 > 基线提交：`55ebfed2bb0b457cd05fcf124cec42f1919bf869`
 > 阶段主题：Web 数据展示与个人投研使用体验

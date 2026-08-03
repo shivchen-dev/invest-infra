@@ -25,7 +25,11 @@ def _evaluate(**overrides: object):
 @pytest.mark.parametrize(
     ("overrides", "decision", "reason"),
     [
-        ({"trade_date": date(2026, 8, 3)}, "fail", "future_date"),
+        (
+            {"trade_date": date(2026, 8, 3), "today": date(2026, 7, 30)},
+            "fail",
+            "future_date",
+        ),
         ({"trade_date": date(2026, 8, 1)}, "skip", "skip_non_business_day"),
         ({"provider_key": "unknown"}, "fail", "provider_not_configured"),
         ({"personal_universe_loader": lambda: None}, "fail", "personal_universe_unavailable"),

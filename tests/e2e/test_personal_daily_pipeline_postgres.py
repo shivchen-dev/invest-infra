@@ -275,8 +275,8 @@ def test_personal_daily_pipeline_postgres() -> None:
         proc = subprocess.Popen(api_cmd, cwd=repo_root, env=api_env)
         _wait_for_api(port)
         payload = _get_latest_candidate_pool(port)
-        assert payload.get("snapshot_date") == TRADE_DATE, (
-            f"API latest snapshot_date {payload.get('snapshot_date')} != {TRADE_DATE}"
+        assert payload.get("trade_date") == TRADE_DATE, (
+            f"API latest trade_date {payload.get('trade_date')} != {TRADE_DATE}"
         )
         items = payload.get("items") or []
         assert len(items) == snapshot_row_count, (

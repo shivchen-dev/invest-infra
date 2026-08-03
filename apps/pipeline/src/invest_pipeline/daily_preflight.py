@@ -25,10 +25,11 @@ def evaluate_daily_preflight(
     published_run_exists: Callable[[date], bool],
     running_run_exists: Callable[[date], bool],
     data_ready_checker: Callable[[date], bool] | None = None,
+    today: date | None = None,
 ) -> DailyPreflightResult:
     """Evaluate safe-to-run checks without touching infrastructure."""
 
-    if trade_date > date.today():
+    if trade_date > (today if today is not None else date.today()):
         return DailyPreflightResult("fail", "future_date")
     if trade_date.weekday() >= 5:
         return DailyPreflightResult("skip", "skip_non_business_day")

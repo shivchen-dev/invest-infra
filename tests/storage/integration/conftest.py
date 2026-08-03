@@ -13,12 +13,15 @@ inherited from the parent ``tests/storage/conftest.py``.
 from __future__ import annotations
 
 from collections.abc import Iterator
+from uuid import UUID
 
 import pytest
 from invest_storage.models import Base
 from sqlalchemy import text
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session
+
+TEST_INPUT_SNAPSHOT_ID = UUID("00000000-0000-0000-0000-000000000001")
 
 
 @pytest.fixture(scope="session", autouse=True)
@@ -61,6 +64,14 @@ def _truncate_between_tests(engine: Engine) -> Iterator[None]:
         with engine.begin() as connection:
             connection.execute(
                 text(f"TRUNCATE TABLE {', '.join(tables)} RESTART IDENTITY CASCADE")
+            )
+            connection.execute(
+                text(
+                    "INSERT INTO analytics.input_snapshots "
+                    "(id, snapshot_date, instrument_ids, content_hash, row_count) "
+                    "VALUES (:id, '2026-07-31', '[]'::jsonb, :content_hash, 1)"
+                ),
+                {"id": TEST_INPUT_SNAPSHOT_ID, "content_hash": "a" * 64},
             )
     yield
 
