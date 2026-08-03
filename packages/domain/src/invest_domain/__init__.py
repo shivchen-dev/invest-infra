@@ -40,8 +40,11 @@ from invest_domain.candidate_pool import (
     is_official_channel_strategy,
     normalise_codes,
     utc_now,
-    validate_v1_target_selection,
+    UniverseCandidate,
+    UniverseEligibility,
+    build_etf_universe,
 )
+
 from invest_domain.instruments import (
     Instrument,
     InstrumentId,
@@ -194,5 +197,7 @@ __all__ = [
     "pack_content_projection",
     "pack_view",
     "utc_now",
-    "validate_v1_target_selection",
+    "UniverseCandidate",
+    "UniverseEligibility",
+    "build_etf_universe",
 ]

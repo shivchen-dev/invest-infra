@@ -66,10 +66,18 @@ class DefaultBehaviorTest(unittest.TestCase):
             AliasChoices("INVEST_PIPELINE_PROVIDER_KEY", "provider_key"),
         )
 
-    def test_known_provider_keys_are_exactly_fixture_dev_and_cifang(self) -> None:
-        # The factory intentionally supports two keys only; this pins the
-        # public tuple so a future addition cannot slip through unnoticed.
-        self.assertEqual(KNOWN_PROVIDER_KEYS, ("fixture_dev", "cifangquant"))
+    def test_known_provider_keys_are_exactly_fixture_dev_cifang_and_akshare(self) -> None:
+        # The factory now supports three keys: the legacy
+        # ``fixture_dev`` / ``cifangquant`` pair plus the ``akshare``
+        # branch added in PR-02 behind the ``AkshareSettings.enabled``
+        # gate (matrix §6). This pins the public tuple so a future
+        # addition cannot slip through unnoticed; the runtime
+        # behaviour for each branch is verified in
+        # ``test_provider_factory_runtime.py`` /
+        # ``test_akshare_adapter.py``.
+        self.assertEqual(
+            KNOWN_PROVIDER_KEYS, ("fixture_dev", "cifangquant", "akshare")
+        )
 
 
 class FixtureDevBranchTest(unittest.TestCase):
@@ -196,11 +204,14 @@ class UnknownKeyTest(unittest.TestCase):
     def test_unknown_provider_error_carries_offending_key(self) -> None:
         # ``UnknownProviderError`` is a ``KeyError`` subclass; the
         # requested key must be the first argument so callers can
-        # introspect it without parsing the message string.
-        settings = Settings(provider_key="akshare")
+        # introspect it without parsing the message string. ``akshare``
+        # is intentionally NOT used here any more — PR-02 added it as
+        # a gated third factory branch (matrix §6), so a non-registered
+        # key is needed to exercise the unknown-key path.
+        settings = Settings(provider_key="not_a_real_provider")
         with self.assertRaises(UnknownProviderError) as ctx:
             build_provider(settings)
-        self.assertEqual(ctx.exception.args[0], "akshare")
+        self.assertEqual(ctx.exception.args[0], "not_a_real_provider")
 
     def test_empty_provider_key_is_unknown(self) -> None:
         settings = Settings(provider_key="")

@@ -22,6 +22,11 @@ from invest_domain.candidate_pool.models import (
     ScoreWeights,
     SelectionCriteria,
 )
+from invest_domain.candidate_pool.universe import (
+    UniverseCandidate,
+    UniverseEligibility,
+    build_etf_universe,
+)
 from invest_domain.candidate_pool.v1_adapter import (
     OFFICIAL_CHANNEL_STRATEGIES,
     V1_ADAPTER_CHANNEL_VERSION,
@@ -79,5 +84,7 @@ __all__ = [
     "is_official_channel_strategy",
     "normalise_codes",
     "utc_now",
-    "validate_v1_target_selection",
+    "UniverseCandidate",
+    "UniverseEligibility",
+    "build_etf_universe",
 ]

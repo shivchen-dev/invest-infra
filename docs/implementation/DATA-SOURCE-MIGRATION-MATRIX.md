@@ -268,3 +268,65 @@ apps/pipeline/tests/
 上述条款中任何一项被关闭前，仓库不得宣告 Provider “已选定/已接入生产
 SLA”。本矩阵的所有 `推荐角色` 也仅是“归档事实下的合理分组”，不得被
 任何文档误读为终态承诺。
+## 9. 2026-08-03 实际核验结果
+
+本节记录本次对 V1 归档、官方文档和当前令牌配置的交叉核验结果；不记录
+任何令牌值。
+
+| Provider | V1 记录 | V2 当前实现 | 本次真实核验 | 当前边界 |
+|---|---|---|---|---|
+| CifangQuant | 有 ETF 列表、实时和历史日 K 采集 | 已有正式 Adapter、Factory、Smoke 和历史回填 CLI | `list`、`hist_em`、`spot`、`exchange_rank`、`trading/list` 均鉴权成功；返回 862 个标的 | 可作为 V2 ETF 主数据/近期日线源；2016 年抽查无数据；历史行缺少 `amount` |
+| QuickTiny/Wudao | 有 MCP 报告/市场快照调用记录 | 已登记为 `research_only`，未进入 V2 Pipeline | 当前令牌 `initialize`、`tools/list` 成功；返回 63 个工具，包含 `etf_market` 和 `index_market`；ETF 排行成功 | 可作为研究和 ETF 市场快照/排行源；尚未接入 V2 `ProviderBatch`；2016 日线探测遇上游 503，不能据此判断无数据 |
+| RssCast | 有股票/指数 MCP 采集器 | 未实现 V2 Adapter | MCP `initialize`、`tools/list` 成功；返回 17 个工具 | 仅股票/指数/资讯研究，不宣称 ETF 日线能力 |
+| AkShare | 有 ETF OHLCV、NAV、交易日历采集器 | 未实现 V2 Adapter | 当前运行环境未安装 SDK，本次未做实时调用；官方文档确认 ETF 历史、NAV 和实时接口存在 | 后续优先用于 2016 年及更早历史覆盖探测；受上游限流和接口变更影响 |
+
+### 9.1 QuickTiny 当前官方入口
+
+V1 归档使用的旧入口为：
+
+```text
+https://stock.quicktiny.cn/api/mcp-stream
+```
+
+当前官方文档推荐：
+
+```text
+MCP:  https://stock.quicktiny.cn/api/mcp
+REST: https://stock.quicktiny.cn/api/openclaw
+```
+
+当前令牌已配置在本机 OpenClaw MCP 配置中，文件权限为 `600`，不进入 Git。
+
+### 9.2 关键能力结论
+
+```text
+V2 已正式实现：fixture_dev、CifangQuant
+V2 已配置但尚未接入 Pipeline：QuickTiny/Wudao
+V1 已验证、V2 尚未接入：AkShare、RssCast
+```
+
+QuickTiny 的 `etf_market` 是本次新发现能力，V1 归档没有记录。它支持 ETF
+搜索、实时快照、涨幅/成交额排行、日线和分钟线，但当前不得绕过 V2
+Provider Contract 直接写入 `core.daily_bars`。
+
+## 10. 全数据源接入 V2 的实施顺序
+
+接入目标不是把所有源无差别写入同一张行情表，而是统一请求、尝试、批次、
+字段映射和质量证据，再按能力决定是否进入生产数据路径。
+
+1. **统一 Provider Contract**：补齐 capability、settings、鉴权、错误分类、
+   `ProviderRequest/Attempt/Batch` 和字段映射测试。
+2. **AkShare Adapter**：先实现 ETF 主数据、OHLCV、NAV 和交易日历；运行
+   分层覆盖探测，确认 2016 年可用范围后再进入历史回填。
+3. **RssCast Adapter**：接入股票/指数/资讯研究能力，明确不得产生 ETF
+   `DailyBar`。
+4. **QuickTiny Adapter**：接入 `etf_market`、`index_market` 和研究工具；
+   首期以 `research`/`market_snapshot` 形式进入，不直接覆盖 Cifang 的
+   ETF 主数据和日线写入路径。
+5. **Provider Routing 与质量融合**：按 dataset/capability 选择源，保存
+   每次请求的来源、字段完整度、起止日期、上游错误和响应哈希。
+6. **全量覆盖验收**：对 active ETF 生成 source × symbol × date-range ×
+   field coverage 矩阵，确认后再执行历史回填和动态候选池联调。
+
+在上述 Adapter 和覆盖验收完成前，不宣称“所有数据源已接入 V2”，也不将
+QuickTiny 的 ETF 结果直接当作确定性行情事实。
