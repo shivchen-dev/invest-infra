@@ -105,6 +105,31 @@ at a missing input snapshot. This storage invariant backs the
 [Candidate pool input-snapshot binding](../domain/candidate-pool.md#input-snapshot-binding)
 and the API's published-pool audit response.
 
+### Pipeline-run audit guards
+
+`SqlAlchemyPipelineRunRepository` carries two safety nets the personal
+CLI and the API rely on:
+
+- `get_blocking_by_job_and_partition` first takes a
+  `pg_advisory_xact_lock` keyed on a blake2b hash of
+  `(len(job_key), job_key, partition_key)`, then returns the latest
+  `ops.pipeline_runs` row whose `status` is in
+  `('queued', 'running', 'succeeded')` for that `(job_key,
+  partition_key)`. The recorder uses this as a single-run guard so a
+  second concurrent manual invocation for the same partition cannot
+  open a duplicate `running` row. `('failed', 'partial',
+  'cancelled')` are explicitly **not** blocking — those are retryable
+  outcomes and a fresh run may open a new row for the same partition.
+- `mark_succeeded` is idempotent: when the row is already in the
+  `succeeded` state the call returns the existing record without
+  re-writing `finished_at`, so a duplicate
+  `mark_succeeded` from a CLI retry after the original succeeded row
+  has been persisted does not corrupt the audit history.
+  `mark_failed` is the symmetric guard — it refuses to downgrade an
+  already-`succeeded` row and raises `ValueError`; a retry that fails
+  after a prior success must therefore open a brand-new
+  `ops.pipeline_runs` row rather than overwriting the succeeded one.
+
 ## 4. Transactions and Unit of Work
 
 `SqlAlchemyUnitOfWork`:

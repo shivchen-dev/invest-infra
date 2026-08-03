@@ -238,7 +238,10 @@ definition with two names. Test code uses this surface
 ### `GET /api/v1/data-freshness`
 
 - Optional `expected_trade_date` is an ISO date; when omitted, the handler
-  snaps the local `date.today()` back to Friday on weekends. The response
+  reads the market clock via `invest_api.clock.market_today()`
+  (`Asia/Shanghai`, single source of truth — see
+  [`invest_api/clock.py`](../../apps/api/src/invest_api/clock.py)) and
+  snaps the result back to Friday on weekends. The response
   combines personal-universe snapshot (or published-run fallback), daily-bar,
   published-candidate, input-snapshot and personal-job audit counts/IDs.
 - The daily-bar and missing counts are scoped to the expected-date snapshot's

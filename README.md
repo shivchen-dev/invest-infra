@@ -97,10 +97,21 @@ make test
 ## 明确不做
 
 - 不复制旧系统的 43 张表。
-- 不复制 cron/systemd/subprocess 调度。
+- 不复制旧系统的 cron/systemd/subprocess 业务调度；仅使用 systemd 托管
+  Dagster 进程，由 Dagster Schedule 负责交易日触发。
 - 不建立 TypeScript 后端和第二套数据库模型。
 - 不在第一阶段引入 Redis、MinIO、消息队列和微服务。
 - 不把 Notebook 或 `vectorbt[full]` 装进 API 镜像。
+
+自动调度的用户级 systemd unit 位于
+`deploy/invest-infra-dagster.service`，安装后使用：
+
+```bash
+mkdir -p ~/.config/systemd/user
+cp deploy/invest-infra-dagster.service ~/.config/systemd/user/
+systemctl --user daemon-reload
+systemctl --user enable --now invest-infra-dagster.service
+```
 
 详细决策见 `docs/ARCHITECTURE.md`、`docs/adr/` 和
 `docs/plan/invest-infra-v2-stage2-automation-stability-plan-no-matrix.md`。

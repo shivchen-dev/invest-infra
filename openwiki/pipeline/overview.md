@@ -491,10 +491,20 @@ Two CLIs land alongside the personal pipeline:
   runs never need `--confirm-network`. The default CLI also starts an
   `ops.pipeline_runs` audit row with `job_key=personal_etf_daily_job`,
   `trigger_type=manual`, and the trade-date partition, then marks it
-  succeeded or failed. Audit insertion and terminal-state updates are
+  succeeded or failed. The single-run guard calls
+  `SqlAlchemyPipelineRunRepository.get_blocking_by_job_and_partition`
+  so an already `queued` / `running` / `succeeded` row for the same
+  partition causes the recorder to skip the new `running` insert; only
+  `failed` / `partial` / `cancelled` prior rows are treated as
+  retryable and a fresh audit row is opened (see
+  [Storage overview](../storage/overview.md#pipeline-run-audit-guards)).
+  Audit insertion and terminal-state updates are
   best-effort: database errors produce a warning but never replace the
   job's summary or exit code, and recorded failure summaries scrub the
-  configured provider token.
+  configured provider token. The CLI also pins the market clock
+  through `invest_pipeline.clock.market_today()` so the trade-date
+  validation and the preflight gate agree on the same `Asia/Shanghai`
+  business date.
 
 For operations, [`make reprocess-date`](../../Makefile) is the canonical
 single-date replay alias; it requires `TRADE_DATE` and delegates to the same

@@ -25,18 +25,19 @@ The CI workflow is fan-out by domain so failures are easy to triage:
 | `storage-unit` | `pip install sqlalchemy psycopg[binary] pytest`, then `pytest tests/storage --ignore=tests/storage/integration -q` against the mock repositories. |
 | `storage-integration` | Spins up a `postgres:16` service, `pip install`s `testcontainers`, runs `pytest tests/storage/integration -q` with `DATABASE_URL` pointed at the container. |
 | `migrations` | `astral-sh/setup-uv@v6`, `cd apps/migrations && uv sync`, then `upgrade head → downgrade base → upgrade head` round-trip. |
-| `pipeline-tests` | `uv sync` + `ruff check` + `pytest -q` for `apps/pipeline`. |
+| `pipeline-tests` | `uv sync` + `ruff check` + `pytest -q` for `apps/pipeline` (the `Makefile` target uses `uv run --no-env-file pytest` so a local `apps/pipeline/.env` cannot mask the real `DATABASE_URL` in CI). |
 | `pipeline-import-smoke` | Imports `invest_pipeline.definitions.defs` after `uv sync`. |
 | `api-tests` | `uv sync` + `ruff check` + `pytest -q` for `apps/api`. |
 | `api-openapi-smoke` | Imports `invest_api.main.app` after `uv sync`. |
 | `personal-daily-e2e` | Runs `tests/e2e/test_personal_daily_pipeline_postgres.py -q` against a PostgreSQL 16 service after syncing migrations, pipeline and API environments. |
-| `web-check` | `pnpm install` + `pnpm typecheck` + `pnpm build` in `apps/web`; neither this workflow job nor the local `test-web` target runs a web unit-test command. |
+| `openapi-contract` | Re-runs `apps/api/src/invest_api/export_openapi.py` to refresh `apps/api/openapi.json`, then `pnpm api:generate` to refresh `apps/web/src/api/generated.ts`, and finally `git diff --exit-code` on the generated TypeScript file. The job fails when the Web workbench's generated client drifts from the live FastAPI OpenAPI surface. |
+| `web-check` | `pnpm install --frozen-lockfile` + `pnpm typecheck` + `pnpm test:run` + `pnpm build` in `apps/web`; the test step drives the vitest + jsdom suite (router, API client, page compositions, components, utils). |
 
 The job name overrides in the `Makefile` (`make test` etc.) cover the
-main test slices, but the workflow also has separate import-smoke and
-personal-daily-e2e jobs. The `web-check` job and local `test-web` target
-both type-check and build; the repository does not currently configure a
-web unit-test script.
+main test slices, but the workflow also has separate import-smoke,
+personal-daily-e2e, and openapi-contract jobs. The `web-check` job
+type-checks, runs the vitest unit-test suite, and builds; the local
+`test-web` target mirrors the same three commands.
 
 ### Migration-chain AST gate
 
@@ -189,7 +190,9 @@ the asset-level integration paths against fixture data:
 - `web` — `apps/web/Dockerfile` (Vite dev server) listening on
   `5173:5173`.
 - `dagster` — built from `apps/pipeline/Dockerfile`, exposes
-  `3000:3000`, persists state in the `dagster-home` named volume.
+  `3000:3000`, persists state in the `dagster-home` named volume, and
+  loads `apps/pipeline/.env` via `env_file` so the in-container Dagster
+  process sees the same opt-ins the host CLI uses.
 
 `make up` (or `docker compose up --build`) starts the full stack and
 prints the OpenAPI / Vite / Dagster URLs from the README.
@@ -202,13 +205,36 @@ pipeline against the host environment without booting the stack:
   for an explicit `--trade-date` and symbol list. It needs
   `INVEST_PIPELINE_CIFANG_ENABLED=true` plus a non-empty
   `INVEST_PIPELINE_CIFANG_API_KEY` plus `SMOKE_CONFIRM_NETWORK=1`
-  before it touches the network.
+  before it touches the network. The Make target sets
+  `INVEST_PIPELINE_AUTO_SCHEDULE_ENABLED=false` and forwards
+  `apps/pipeline/.env` (when present) so the smoke never runs against
+  a mis-configured schedule.
 - `make personal-daily-run TRADE_DATE=...` invokes
   [`personal_daily_cli.py`](../../apps/pipeline/src/invest_pipeline/personal_daily_cli.py)
   for the manual `personal_etf_daily_job` driver. Fixture mode
   (`INVEST_PIPELINE_PROVIDER_KEY=fixture_dev`) needs no opt-in; real
   CifangQuant runs require the three env opt-ins plus
-  `CONFIRM_NETWORK=1`.
+  `CONFIRM_NETWORK=1`. The Make target sets
+  `INVEST_PIPELINE_AUTO_SCHEDULE_ENABLED=false` and forwards
+  `apps/pipeline/.env` for the same reason.
+- `make openapi-generate` re-derives
+  [`apps/api/openapi.json`](../../apps/api/openapi.json) from the
+  live FastAPI app via
+  [`apps/api/src/invest_api/export_openapi.py`](../../apps/api/src/invest_api/export_openapi.py)
+  and then regenerates the Web's
+  [`apps/web/src/api/generated.ts`](../../apps/web/src/api/generated.ts)
+  through `pnpm api:generate` (`openapi-typescript`).
+
+For host operation, [`deploy/invest-infra-dagster.service`](../../deploy/invest-infra-dagster.service)
+ships a **user-level** systemd unit that runs `dagster dev` out of
+`/home/claw/invest-infra/apps/pipeline` with
+`INVEST_PIPELINE_AUTO_SCHEDULE_ENABLED=true`,
+`DAGSTER_HOME=/home/claw/invest-infra/.dagster`, and
+`EnvironmentFile=/home/claw/invest-infra/apps/pipeline/.env`. Operators
+install it under `~/.config/systemd/user/` and run
+`systemctl --user enable --now invest-infra-dagster.service`; the
+`Restart=on-failure` directive keeps the dev server alive across transient
+crashes. User lingering must be enabled if the service should survive logout.
 
 The CI job `migrations` is the migration counterpart for production:
 [ADR-0010](../../docs/adr/0010-production-deployment-secrets-backup-recovery.md)

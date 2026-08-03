@@ -83,6 +83,15 @@ Then visit:
 - API docs (Swagger UI) — `http://localhost:8000/docs`
 - Dagster UI — `http://localhost:3000`
 
+For a host-managed Dagster process, install the user-level unit instead:
+
+```bash
+mkdir -p ~/.config/systemd/user
+cp deploy/invest-infra-dagster.service ~/.config/systemd/user/
+systemctl --user daemon-reload
+systemctl --user enable --now invest-infra-dagster.service
+```
+
 Apply database migrations separately:
 
 ```bash
@@ -210,8 +219,14 @@ the [API overview](api/overview.md), and use the replay/backfill procedures in
 
 ## 7. Web data workbench
 
-`apps/web/` is now a read-only React workbench backed by the `/api/v1`
-surface. The main routes are:
+`apps/web/` is a read-only React workbench backed by the `/api/v1`
+surface. The page files under `apps/web/src/pages/` are intentionally
+thin compositions: each route delegates the heavy lifting to a feature
+folder (`apps/web/src/features/{dashboard,candidatePool,instruments,operations}/`)
+that owns the data widgets, filters, status badges, and chart helpers
+— for example, `CandidateFilters`, `CandidateTable`, `CandidateRowDetails`,
+`DailyBarsTable`, `ClosePriceChart`, `RunStatusBadge`, and
+`LatestRunPanel`. The main routes are:
 
 - `/dashboard` — freshness, candidate summary, diff and latest run;
 - `/candidate-pool` — included/excluded/all tabs, filters, exclusion reasons
@@ -221,16 +236,20 @@ surface. The main routes are:
 - `/operations` — freshness, latest/history Pipeline Runs and a non-executing
   replay command hint.
 
-The browser has no write controls and does not trigger Pipeline runs. The
-Web typecheck can be run with:
+The browser has no write controls and does not trigger Pipeline runs.
+The Web's API client is auto-generated from the FastAPI OpenAPI surface
+via `pnpm api:generate` (see
+[`apps/web/src/api/generated.ts`](../apps/web/src/api/generated.ts));
+manually hand-maintaining response types in `apps/web/src/api/types.ts`
+is intentionally discouraged so the contract has a single source of
+truth. The local commands are:
 
 ```bash
 cd apps/web
-pnpm typecheck
+pnpm typecheck       # TypeScript + Vite build type-check
+pnpm test:run        # vitest + jsdom unit suite (router, API client, pages, components, utils)
+pnpm build           # production bundle
 ```
-
-The Web package has typecheck and build scripts but no configured browser
-unit-test command yet.
 
 ## 8. Backlog
 - **Real Provider selection (O-1 in M0-DECISIONS §4).** `cifangquant`
