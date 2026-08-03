@@ -1,0 +1,187 @@
+"""Focused offline tests for the AkShare client NAV / calendar methods.
+
+The :mod:`invest_pipeline.adapters.akshare.client` module owns the
+lazy import of the optional ``akshare`` SDK. The adapter tests in
+``test_akshare_adapter.py`` already cover the master-data /
+daily-bars client methods end-to-end. This module pins the new
+NAV / trading-calendar client methods:
+
+- :meth:`AkshareClient.fetch_fund_etf_fund_daily_em` accepts a
+  six-digit ``symbol`` and routes through ``ak.fund_etf_fund_daily_em``.
+- :meth:`AkshareClient.fetch_tool_trade_date_hist_sina` returns the
+  read-only SSE / SZSE trading-calendar payload through
+  ``ak.tool_trade_date_hist_sina``.
+- Both methods honour the existing typed-error contract:
+  ``ProviderUnavailableError`` for missing SDK functions,
+  ``ProviderBadResponseError`` for upstream exceptions,
+  ``ValueError`` for bad input.
+- Both methods normalise the pandas ``DataFrame`` returns to a list
+  of plain ``dict`` records so the rest of the adapter stack stays
+  ``pandas``-free.
+- Both methods stamp the existing canonical SHA-256 response hash
+  on the returned :class:`AkshareResponse`.
+
+The tests inject a stub ``akshare`` module via the client's
+``module=`` kwarg so CI never has the real SDK installed.
+"""
+
+from __future__ import annotations
+
+import unittest
+from types import ModuleType, SimpleNamespace
+from typing import Any
+
+from invest_pipeline.adapters.akshare.client import AkshareClient, AkshareResponse
+from invest_pipeline.adapters.akshare.config import AkshareSettings
+from invest_pipeline.adapters.errors import (
+    ProviderBadResponseError,
+    ProviderUnavailableError,
+)
+
+
+def _enabled_settings(**overrides: Any) -> AkshareSettings:
+    """Return a settings object with ``enabled=True``.
+
+    The Akshare ``adjust`` lock must remain in force so the post-
+    construction mutation is the smallest change that flips the
+    default-on gate.
+    """
+
+    settings = AkshareSettings(**overrides)
+    object.__setattr__(settings, "enabled", True)
+    return settings
+
+
+class AkshareClientNavFetchTest(unittest.TestCase):
+    """:meth:`AkshareClient.fetch_fund_etf_fund_daily_em` happy path."""
+
+    def test_returns_normalised_records(self) -> None:
+        # The stub returns a list-of-dicts (already-normalised shape).
+        # The client passes through unchanged and stamps a hex hash.
+        stub_module = SimpleNamespace(
+            fund_etf_fund_daily_em=lambda **kwargs: [
+                {
+                    "净值日期": "2026-07-30",
+                    "单位净值": "1.234",
+                    "累计净值": "1.567",
+                    "日增长率": "0.5",
+                },
+            ]
+        )
+        client = AkshareClient(_enabled_settings(), module=stub_module)
+        response = client.fetch_fund_etf_fund_daily_em(symbol="510300")
+        assert isinstance(response, AkshareResponse)
+        self.assertEqual(response.operation, "fund_etf_fund_daily_em")
+        self.assertEqual(
+            response.raw_payload,
+            [
+                {
+                    "净值日期": "2026-07-30",
+                    "单位净值": "1.234",
+                    "累计净值": "1.567",
+                    "日增长率": "0.5",
+                },
+            ],
+        )
+        self.assertEqual(len(response.raw_payload_hash), 64)
+
+    def test_passes_symbol_kwarg_through(self) -> None:
+        captured: dict[str, Any] = {}
+
+        def _capture(**kwargs: Any) -> list[dict[str, Any]]:
+            captured.update(kwargs)
+            return []
+
+        stub_module = SimpleNamespace(fund_etf_fund_daily_em=_capture)
+        client = AkshareClient(_enabled_settings(), module=stub_module)
+        client.fetch_fund_etf_fund_daily_em(symbol="159919")
+        self.assertEqual(captured, {"symbol": "159919"})
+
+    def test_blank_symbol_raises_value_error(self) -> None:
+        client = AkshareClient(_enabled_settings(), module=SimpleNamespace())
+        with self.assertRaises(ValueError):
+            client.fetch_fund_etf_fund_daily_em(symbol="")
+        with self.assertRaises(ValueError):
+            client.fetch_fund_etf_fund_daily_em(symbol="   ")
+
+    def test_missing_sdk_function_raises_unavailable(self) -> None:
+        # A stub that lacks ``fund_etf_fund_daily_em`` simulates an
+        # SDK upgrade that renamed the function. The client must
+        # raise the typed ``ProviderUnavailableError`` carrying the
+        # install hint so the adapter surfaces a clean failure.
+        stub_module = SimpleNamespace(__version__="99.0.0")
+        client = AkshareClient(_enabled_settings(), module=stub_module)
+        with self.assertRaises(ProviderUnavailableError) as ctx:
+            client.fetch_fund_etf_fund_daily_em(symbol="510300")
+        message = str(ctx.exception)
+        self.assertIn("fund_etf_fund_daily_em", message)
+        self.assertIn("99.0.0", message)
+
+    def test_upstream_exception_is_wrapped_as_bad_response(self) -> None:
+        def _raise(**kwargs: Any) -> list[dict[str, Any]]:
+            raise ValueError("network blip")
+
+        stub_module = SimpleNamespace(fund_etf_fund_daily_em=_raise)
+        client = AkshareClient(_enabled_settings(), module=stub_module)
+        with self.assertRaises(ProviderBadResponseError) as ctx:
+            client.fetch_fund_etf_fund_daily_em(symbol="510300")
+        self.assertIn("ValueError", str(ctx.exception))
+        self.assertIn("network blip", str(ctx.exception))
+
+
+class AkshareClientCalendarFetchTest(unittest.TestCase):
+    """:meth:`AkshareClient.fetch_tool_trade_date_hist_sina` happy path."""
+
+    def test_returns_normalised_records(self) -> None:
+        stub_module = SimpleNamespace(
+            tool_trade_date_hist_sina=lambda: [
+                {"trade_date": "2026-07-29"},
+                {"trade_date": "2026-07-30"},
+            ]
+        )
+        client = AkshareClient(_enabled_settings(), module=stub_module)
+        response = client.fetch_tool_trade_date_hist_sina()
+        assert isinstance(response, AkshareResponse)
+        self.assertEqual(response.operation, "tool_trade_date_hist_sina")
+        self.assertEqual(len(response.raw_payload), 2)
+        self.assertEqual(len(response.raw_payload_hash), 64)
+
+    def test_missing_sdk_function_raises_unavailable(self) -> None:
+        stub_module = SimpleNamespace(__version__="99.0.0")
+        client = AkshareClient(_enabled_settings(), module=stub_module)
+        with self.assertRaises(ProviderUnavailableError) as ctx:
+            client.fetch_tool_trade_date_hist_sina()
+        self.assertIn("tool_trade_date_hist_sina", str(ctx.exception))
+
+    def test_upstream_exception_is_wrapped_as_bad_response(self) -> None:
+        def _raise() -> list[dict[str, Any]]:
+            raise RuntimeError("upstream 503")
+
+        stub_module = SimpleNamespace(tool_trade_date_hist_sina=_raise)
+        client = AkshareClient(_enabled_settings(), module=stub_module)
+        with self.assertRaises(ProviderBadResponseError) as ctx:
+            client.fetch_tool_trade_date_hist_sina()
+        self.assertIn("upstream 503", str(ctx.exception))
+
+
+class AkshareClientModuleResolutionTest(unittest.TestCase):
+    """The lazy ``module_resolver`` path is preserved for NAV / calendar."""
+
+    def test_missing_akshare_sdk_translates_to_unavailable(self) -> None:
+        def _missing() -> ModuleType:
+            raise ModuleNotFoundError("akshare is not installed")
+
+        client = AkshareClient(
+            _enabled_settings(),
+            module_resolver=_missing,
+        )
+        with self.assertRaises(ProviderUnavailableError) as ctx:
+            client.fetch_fund_etf_fund_daily_em(symbol="510300")
+        self.assertIn("pip install akshare", str(ctx.exception))
+        with self.assertRaises(ProviderUnavailableError) as ctx:
+            client.fetch_tool_trade_date_hist_sina()
+        self.assertIn("pip install akshare", str(ctx.exception))
+
+
+if __name__ == "__main__":
+    unittest.main()
