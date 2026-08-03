@@ -2,7 +2,7 @@ SHELL := /bin/bash
 
 PIPELINE_ENV_FILE := $(if $(wildcard apps/pipeline/.env),--env-file apps/pipeline/.env)
 
-.PHONY: help up down logs api-dev pipeline-dev web-dev migrate openapi-generate test lint arch-check lock test-domain test-storage test-storage-integration test-migrations test-pipeline test-api test-web provider-smoke personal-daily-run reprocess-date personal-backfill
+.PHONY: help up down logs api-dev pipeline-dev web-dev migrate openapi-generate test lint arch-check lock test-domain test-storage test-storage-integration test-migrations test-pipeline test-api test-web provider-smoke personal-daily-run historical-daily-bars-backfill reprocess-date personal-backfill
 
 help:
 	@echo "make up              启动 PostgreSQL、API、Web、Dagster"
@@ -19,6 +19,7 @@ help:
 	@echo "make lock            为各 Python 应用生成锁文件"
 	@echo "make provider-smoke  对 CifangQuant 真实 API 做受限 smoke（opt-in）"
 	@echo "make personal-daily-run  手动运行 personal_etf_daily_job（PR-4）"
+	@echo "make historical-daily-bars-backfill  手动回填历史 ETF 日线（不触发 Dagster 作业 / 候选池 / 输入快照）"
 
 up:
 	docker compose up --build
@@ -140,6 +141,47 @@ personal-daily-run:
 		--trade-date '$(TRADE_DATE)' \
 		$(if $(UNIVERSE),--universe '$(UNIVERSE)') \
 		$(if $(POLICY),--policy '$(POLICY)') \
+		$(if $(CONFIRM_NETWORK),--confirm-network)
+
+# 手动回填历史 ETF 日线：在 [START_DATE, END_DATE] 区间内按 <=90 自然日
+# chunks 顺序回放 write_etf_daily_bars_raw + upsert_etf_daily_bars。仅写
+# 现有的 raw provider evidence 表与 core.daily_bars；不触发 personal
+# daily Dagster 作业、输入快照、候选池、evidence-pack、AI research 等任何
+# 其它资产。
+#
+# 校验：
+#   - START_DATE / END_DATE 必须为 ISO 日期 YYYY-MM-DD 且为合法日历日
+#   - START_DATE <= END_DATE
+#   - END_DATE 不能为未来日期（相对今天）
+#   - 区间被切成 <=90 自然日 chunks，顺序处理，无并发请求
+#   - 任一 chunk 的 provider 尝试失败 / 缺失成功 attempt 立即停止并返回非零退出码
+#   - 输出仅包含去敏后的标识与计数，不回显密钥 / 路径 / 异常 repr
+#
+# 可选：UNIVERSE 映射到 INVEST_PIPELINE_PERSONAL_UNIVERSE_PATH，覆盖
+# 默认 config/personal-universe.yaml。
+#
+# 用法示例（fixture 历史回填）：
+#   make historical-daily-bars-backfill \
+#       START_DATE=2016-01-01 END_DATE=2016-12-31
+#
+# 用法示例（CifangQuant 真实 API 验收）：
+#   export INVEST_PIPELINE_PROVIDER_KEY=cifangquant
+#   export INVEST_PIPELINE_CIFANG_ENABLED=true
+#   export INVEST_PIPELINE_CIFANG_API_KEY=***           # 不会回显
+#   make historical-daily-bars-backfill \
+#       START_DATE=2016-01-01 END_DATE=2016-12-31 \
+#       CONFIRM_NETWORK=1
+historical-daily-bars-backfill:
+	@case '$(START_DATE)' in \
+		'') echo "ERROR: START_DATE is required (YYYY-MM-DD)" >&2; exit 2 ;; \
+	esac
+	@case '$(END_DATE)' in \
+		'') echo "ERROR: END_DATE is required (YYYY-MM-DD)" >&2; exit 2 ;; \
+	esac
+	INVEST_PIPELINE_AUTO_SCHEDULE_ENABLED=false uv run --project apps/pipeline $(PIPELINE_ENV_FILE) python -m invest_pipeline.historical_daily_bars_cli \
+		--start-date '$(START_DATE)' \
+		--end-date '$(END_DATE)' \
+		$(if $(UNIVERSE),--universe '$(UNIVERSE)') \
 		$(if $(CONFIRM_NETWORK),--confirm-network)
 
 # 重新处理单个交易日：复用 personal-daily-run。
