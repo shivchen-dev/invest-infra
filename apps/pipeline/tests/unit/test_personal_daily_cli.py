@@ -39,7 +39,7 @@ import os
 import sys
 import unittest
 from collections.abc import Sequence
-from datetime import date, datetime
+from datetime import UTC, date, datetime
 from types import SimpleNamespace
 from typing import Any
 from unittest import mock
@@ -830,9 +830,11 @@ class _RecordingPipelineRunRecorder:
         *,
         fail_start: bool = False,
         fail_mark: bool = False,
+        start_returns_none: bool = False,
     ) -> None:
         self.fail_start = fail_start
         self.fail_mark = fail_mark
+        self.start_returns_none = start_returns_none
         self.calls: list[tuple[str, Any]] = []
         self.start_run_id: UUID | None = None
 
@@ -840,6 +842,8 @@ class _RecordingPipelineRunRecorder:
         self.calls.append(("start", kwargs))
         if self.fail_start:
             raise RuntimeError("database unavailable")
+        if self.start_returns_none:
+            return None
         self.start_run_id = uuid4()
         return self.start_run_id
 
@@ -1071,6 +1075,177 @@ class PipelineRunRecorderConstructionTest(unittest.TestCase):
         # audit-write path is best-effort). Either way the construction
         # itself must not raise.
         self.assertTrue(recorder is None or hasattr(recorder, "start"))
+
+
+class _FakePipelineRunsRepo:
+    """In-memory stand-in for ``uow.pipeline_runs`` used by idempotency tests.
+
+    Records every ``start`` call and serves a configurable
+    ``get_latest_by_job_and_partition`` result so the recorder's
+    idempotency guard can be driven without SQLAlchemy.
+    """
+
+    def __init__(
+        self,
+        *,
+        existing_for_partition: Any = None,
+    ) -> None:
+        self.existing = existing_for_partition
+        self.start_calls: list[Any] = []
+
+    def get_latest_by_job_and_partition(
+        self,
+        *,
+        job_key: str,
+        partition_key: str | None,
+    ) -> Any:
+        if (
+            self.existing is not None
+            and self.existing.job_key == job_key
+            and self.existing.partition_key == partition_key
+        ):
+            return self.existing
+        return None
+
+    def start(self, run: Any) -> Any:
+        from dataclasses import replace
+
+        self.start_calls.append(run)
+        # ``PipelineRun`` is a frozen dataclass; ``dataclasses.replace``
+        # produces a copy with the storage-assigned UUID threaded
+        # through without mutating the original.
+        return replace(run, id=uuid4())
+
+
+class _FakePipelineRunsUow:
+    """Minimal UoW exposing only the ``pipeline_runs`` attribute the recorder touches."""
+
+    def __init__(self, pipeline_runs: _FakePipelineRunsRepo) -> None:
+        self.pipeline_runs = pipeline_runs
+
+    def __enter__(self) -> "_FakePipelineRunsUow":
+        return self
+
+    def __exit__(self, exc_type: Any, exc: Any, tb: Any) -> None:
+        return None
+
+
+class SqlAlchemyPipelineRunRecorderIdempotencyTest(unittest.TestCase):
+    """The SQLAlchemy recorder enforces the Stage-1 idempotency contract."""
+
+    def _build_recorder(
+        self,
+        *,
+        existing: Any = None,
+    ) -> tuple[cli.SqlAlchemyPipelineRunRecorder, _FakePipelineRunsRepo]:
+        repo = _FakePipelineRunsRepo(existing_for_partition=existing)
+        uow = _FakePipelineRunsUow(repo)
+        recorder = cli.SqlAlchemyPipelineRunRecorder(
+            session_factory=object(),
+            unit_of_work_factory=lambda _factory: uow,
+        )
+        return recorder, repo
+
+    def test_start_skips_insert_when_succeeded_row_exists(self) -> None:
+        """A second manual run for the same partition is a no-op for the audit table."""
+        from invest_domain.pipeline import PipelineRun, PipelineRunStatus
+
+        existing = PipelineRun(
+            job_key="personal_etf_daily_job",
+            trigger_type="manual",
+            status=PipelineRunStatus.SUCCEEDED,
+            partition_key="2026-07-31",
+            started_at=datetime(2026, 7, 31, 9, 0, tzinfo=UTC),
+            finished_at=datetime(2026, 7, 31, 9, 5, tzinfo=UTC),
+        )
+        recorder, repo = self._build_recorder(existing=existing)
+
+        run_id = recorder.start(
+            job_key="personal_etf_daily_job",
+            trigger_type="manual",
+            started_at=datetime(2026, 7, 31, 10, 0, tzinfo=UTC),
+            partition_key="2026-07-31",
+            dagster_run_id=None,
+            config_snapshot={"provider_key": "fixture_dev"},
+        )
+
+        self.assertIsNone(run_id)
+        self.assertEqual(repo.start_calls, [])
+
+    def test_start_inserts_when_only_failed_row_exists(self) -> None:
+        """A failed prior run must not block a fresh attempt (failed is retryable)."""
+        from invest_domain.pipeline import PipelineRun, PipelineRunStatus
+
+        failed = PipelineRun(
+            job_key="personal_etf_daily_job",
+            trigger_type="manual",
+            status=PipelineRunStatus.FAILED,
+            partition_key="2026-07-31",
+            started_at=datetime(2026, 7, 31, 9, 0, tzinfo=UTC),
+            finished_at=datetime(2026, 7, 31, 9, 5, tzinfo=UTC),
+            error_summary="boom",
+        )
+        recorder, repo = self._build_recorder(existing=failed)
+
+        run_id = recorder.start(
+            job_key="personal_etf_daily_job",
+            trigger_type="manual",
+            started_at=datetime(2026, 7, 31, 10, 0, tzinfo=UTC),
+            partition_key="2026-07-31",
+            dagster_run_id=None,
+            config_snapshot={"provider_key": "fixture_dev"},
+        )
+
+        self.assertIsNotNone(run_id)
+        self.assertEqual(len(repo.start_calls), 1)
+        self.assertEqual(
+            repo.start_calls[0].status_value, PipelineRunStatus.RUNNING.value
+        )
+
+    def test_start_inserts_when_no_prior_row_exists(self) -> None:
+        recorder, repo = self._build_recorder(existing=None)
+
+        run_id = recorder.start(
+            job_key="personal_etf_daily_job",
+            trigger_type="manual",
+            started_at=datetime(2026, 7, 31, 10, 0, tzinfo=UTC),
+            partition_key="2026-07-31",
+            dagster_run_id=None,
+            config_snapshot={"provider_key": "fixture_dev"},
+        )
+
+        self.assertIsNotNone(run_id)
+        self.assertEqual(len(repo.start_calls), 1)
+
+    def test_run_daily_skips_mark_calls_when_recorder_returns_none(
+        self,
+    ) -> None:
+        """``run_daily`` must not call mark_* when start refused to insert."""
+
+        recorder = _RecordingPipelineRunRecorder(start_returns_none=True)
+
+        runner = _StubJobRunner(events=_happy_path_events())
+        defs = _StubDefinitions(job_runner=runner)
+        stdout = io.StringIO()
+        stderr = io.StringIO()
+
+        rc = cli.run_daily(
+            trade_date=date(2026, 7, 31),
+            defs=defs,
+            provider_key="fixture_dev",
+            stdout=stdout,
+            stderr=stderr,
+            pipeline_run_recorder=recorder,
+        )
+
+        self.assertEqual(rc, 0)
+        # The job ran, the JSON summary is emitted, and the recorder
+        # was not touched past the start() refusal.
+        self.assertEqual(
+            [name for name, _ in recorder.calls], ["start"]
+        )
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual(payload["trade_date"], "2026-07-31")
 
 
 if __name__ == "__main__":

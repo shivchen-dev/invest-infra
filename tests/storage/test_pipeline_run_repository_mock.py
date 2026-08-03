@@ -50,6 +50,7 @@ def _make_row(
     *,
     row_id: UUID | None = None,
     job_key: str = "etf_daily",
+    partition_key: str | None = None,
     trigger_type: str = "manual",
     status: str = "running",
     algorithm_version: str | None = "v1.0",
@@ -58,6 +59,8 @@ def _make_row(
     error_summary: str | None = None,
     created_at: datetime | None = None,
     updated_at: datetime | None = None,
+    dagster_run_id: str | None = None,
+    config_snapshot: dict | None = None,
 ) -> MagicMock:
     """Build a mock that looks like a :class:`PipelineRunRow`."""
 
@@ -65,6 +68,7 @@ def _make_row(
     row = MagicMock(spec=PipelineRunRow)
     row.id = row_id or uuid4()
     row.job_key = job_key
+    row.partition_key = partition_key
     row.trigger_type = trigger_type
     row.status = status
     row.algorithm_version = algorithm_version
@@ -73,6 +77,8 @@ def _make_row(
     row.error_summary = error_summary
     row.created_at = created_at or base
     row.updated_at = updated_at or base
+    row.dagster_run_id = dagster_run_id
+    row.config_snapshot = config_snapshot or {}
     return row
 
 
@@ -267,6 +273,136 @@ class SqlAlchemyPipelineRunRepositoryMockTests(unittest.TestCase):
         self.assertEqual(self._session.scalars.call_count, 1)
         scalars_mock.all.assert_called_once_with()
         self.assertEqual(result, 2)
+
+    # ------------------------------------------------------------------
+    # get_latest_by_job_and_partition (idempotency lookup)
+    # ------------------------------------------------------------------
+
+    def test_get_latest_by_job_and_partition_returns_row(self) -> None:
+        latest = _make_row(
+            row_id=uuid4(),
+            job_key="personal_etf_daily_job",
+            partition_key="2026-07-30",
+            status="succeeded",
+            started_at=datetime(2026, 7, 30, 13, 0, tzinfo=UTC),
+            finished_at=datetime(2026, 7, 30, 13, 5, tzinfo=UTC),
+        )
+        scalars_mock = self._session.scalars.return_value
+        scalars_mock.first.return_value = latest
+
+        result = self._repo.get_latest_by_job_and_partition(
+            job_key="personal_etf_daily_job",
+            partition_key="2026-07-30",
+        )
+
+        statement = self._session.scalars.call_args.args[0]
+        compiled = statement.compile()
+        params = dict(compiled.params)
+        self.assertIn("personal_etf_daily_job", params.values())
+        self.assertIn("2026-07-30", params.values())
+        scalars_mock.first.assert_called_once_with()
+        self.assertIsNotNone(result)
+        assert result is not None
+        self.assertEqual(result.id, latest.id)
+        self.assertEqual(result.status_value, "succeeded")
+        self.assertEqual(result.job_key, "personal_etf_daily_job")
+        self.assertEqual(result.partition_key, "2026-07-30")
+
+    def test_get_latest_by_job_and_partition_returns_none_when_absent(
+        self,
+    ) -> None:
+        scalars_mock = self._session.scalars.return_value
+        scalars_mock.first.return_value = None
+
+        result = self._repo.get_latest_by_job_and_partition(
+            job_key="personal_etf_daily_job",
+            partition_key="2026-07-30",
+        )
+
+        scalars_mock.first.assert_called_once_with()
+        self.assertIsNone(result)
+
+    def test_get_latest_by_job_and_partition_rejects_empty_job_key(self) -> None:
+        with self.assertRaises(ValueError):
+            self._repo.get_latest_by_job_and_partition(
+                job_key="",
+                partition_key="2026-07-30",
+            )
+
+    # ------------------------------------------------------------------
+    # mark_succeeded idempotency
+    # ------------------------------------------------------------------
+
+    def test_mark_succeeded_is_noop_when_already_succeeded(self) -> None:
+        """Calling mark_succeeded on a succeeded row is a no-op."""
+        run_id = uuid4()
+        original_finished = datetime(2026, 7, 30, 12, 5, tzinfo=UTC)
+        existing = _make_row(
+            row_id=run_id,
+            status="succeeded",
+            finished_at=original_finished,
+        )
+        self._session.get.return_value = existing
+
+        new_finished = datetime(2026, 7, 30, 13, 0, tzinfo=UTC)
+        result = self._repo.mark_succeeded(run_id, finished_at=new_finished)
+
+        # Status stays succeeded; finished_at is NOT overwritten.
+        self.assertEqual(existing.status, "succeeded")
+        self.assertEqual(existing.finished_at, original_finished)
+        # No flush is performed for the no-op path.
+        self.assertEqual(self._session.flush.call_count, 0)
+        self.assertIsInstance(result, PipelineRun)
+        self.assertEqual(result.id, run_id)
+        self.assertEqual(result.finished_at, original_finished)
+
+    # ------------------------------------------------------------------
+    # mark_failed sticky-success guard
+    # ------------------------------------------------------------------
+
+    def test_mark_failed_refuses_to_downgrade_succeeded(self) -> None:
+        """A succeeded row must not be downgraded to failed."""
+        run_id = uuid4()
+        existing = _make_row(
+            row_id=run_id,
+            status="succeeded",
+            finished_at=datetime(2026, 7, 30, 12, 5, tzinfo=UTC),
+        )
+        self._session.get.return_value = existing
+
+        with self.assertRaises(ValueError) as ctx:
+            self._repo.mark_failed(
+                run_id,
+                error="late failure",
+                finished_at=datetime(2026, 7, 30, 13, 0, tzinfo=UTC),
+            )
+
+        self.assertIn("already in 'succeeded'", str(ctx.exception))
+        # The row must be untouched.
+        self.assertEqual(existing.status, "succeeded")
+        self.assertEqual(self._session.flush.call_count, 0)
+
+    def test_mark_failed_can_overwrite_failed_state(self) -> None:
+        """A failed row may be re-marked as failed (failed is retryable)."""
+        run_id = uuid4()
+        existing = _make_row(
+            row_id=run_id,
+            status="failed",
+            error_summary="transient",
+            finished_at=datetime(2026, 7, 30, 12, 5, tzinfo=UTC),
+        )
+        self._session.get.return_value = existing
+
+        result = self._repo.mark_failed(
+            run_id,
+            error="second failure",
+            finished_at=datetime(2026, 7, 30, 13, 0, tzinfo=UTC),
+        )
+
+        self.assertEqual(existing.status, "failed")
+        self.assertEqual(existing.error_summary, "second failure")
+        self.assertEqual(self._session.flush.call_count, 1)
+        self.assertEqual(result.error_summary, "second failure")
 
 
 if __name__ == "__main__":

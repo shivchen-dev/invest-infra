@@ -163,6 +163,25 @@ jobs:
       - run: pip install sqlalchemy "psycopg[binary]" pytest
       - run: PYTHONPATH=. python -m pytest tests/e2e/test_personal_daily_pipeline_postgres.py -q
 
+  openapi-contract:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.12"
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - run: cd apps/api && uv sync
+      - run: cd apps/web && pnpm install --frozen-lockfile
+      - run: cd apps/api && uv run python -m invest_api.export_openapi
+      - run: cd apps/web && pnpm api:generate
+      - run: git diff --exit-code -- apps/web/src/api/generated.ts
+
   web-check:
     runs-on: ubuntu-latest
     steps:

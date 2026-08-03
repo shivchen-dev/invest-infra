@@ -1215,6 +1215,12 @@ class SqlAlchemyPipelineRunRepository:
         Updates ``status='succeeded'`` and ``finished_at``; ``error_summary``
         is reset to ``None`` so a previous transient failure is not
         carried forward.
+
+        Idempotent: when the row is already in the ``succeeded`` state
+        the call returns the existing record without re-writing
+        ``finished_at`` so a duplicate ``mark_succeeded`` (e.g. a retry
+        by the CLI after the original succeeded row has already been
+        persisted) does not corrupt the audit history.
         """
 
         row = self._session.get(PipelineRunRow, run_id)
@@ -1222,6 +1228,8 @@ class SqlAlchemyPipelineRunRepository:
             raise LookupError(
                 f"PipelineRun {run_id!s} not found; cannot mark succeeded"
             )
+        if row.status == PipelineRunStatus.SUCCEEDED.value:
+            return _row_to_pipeline_run(row)
         row.status = PipelineRunStatus.SUCCEEDED.value
         row.finished_at = finished_at
         row.error_summary = None
@@ -1236,6 +1244,14 @@ class SqlAlchemyPipelineRunRepository:
         Updates ``status='failed'``, ``finished_at`` and ``error_summary``.
         Raises :class:`ValueError` when ``error`` is empty so the
         repository never writes a meaningless failure record.
+
+        Sticky success: when the row is already in the ``succeeded``
+        state the call refuses to downgrade it and raises
+        :class:`ValueError`. Callers (e.g. the manual personal CLI)
+        must check :meth:`get_latest_by_job_and_partition` before
+        opening a new run so this branch is unreachable in practice,
+        but the safety net is preserved so a buggy caller cannot
+        silently rewrite a successful audit row as a failure.
         """
 
         if not isinstance(error, str) or not error.strip():
@@ -1248,11 +1264,56 @@ class SqlAlchemyPipelineRunRepository:
             raise LookupError(
                 f"PipelineRun {run_id!s} not found; cannot mark failed"
             )
+        if row.status == PipelineRunStatus.SUCCEEDED.value:
+            raise ValueError(
+                f"PipelineRun {run_id!s} is already in 'succeeded' state; "
+                "refusing to downgrade to 'failed' (a retry that fails must "
+                "open a brand-new ops.pipeline_runs row instead of "
+                "overwriting the existing succeeded record)"
+            )
         row.status = PipelineRunStatus.FAILED.value
         row.finished_at = finished_at
         row.error_summary = error
         self._session.flush()
         return _row_to_pipeline_run(row)
+
+    def get_latest_by_job_and_partition(
+        self,
+        *,
+        job_key: str,
+        partition_key: str | None,
+    ) -> PipelineRun | None:
+        """Return the most recent run for ``(job_key, partition_key)``.
+
+        Used by the manual personal CLI to enforce the Stage-1
+        idempotency contract: a successful manual run for the same
+        ``(job_key, partition_key)`` must not produce a second
+        ``ops.pipeline_runs`` row. The lookup orders by
+        ``started_at`` descending (ties broken by ``id``) so the
+        caller always sees the latest attempt; ``None`` is returned
+        when no row matches. ``partition_key`` is matched verbatim so
+        callers must supply a consistent value (the CLI always uses
+        the trade-date ISO string).
+        """
+
+        if not isinstance(job_key, str) or not job_key.strip():
+            raise ValueError(
+                "get_latest_by_job_and_partition requires a non-empty job_key"
+            )
+        stmt = (
+            select(PipelineRunRow)
+            .where(
+                PipelineRunRow.job_key == job_key,
+                PipelineRunRow.partition_key == partition_key,
+            )
+            .order_by(
+                PipelineRunRow.started_at.desc(),
+                PipelineRunRow.id.asc(),
+            )
+            .limit(1)
+        )
+        row = self._session.scalars(stmt).first()
+        return _row_to_pipeline_run(row) if row is not None else None
 
     def get_by_id(self, run_id: UUID) -> PipelineRun | None:
         """Return the run for ``run_id`` or ``None`` if absent."""

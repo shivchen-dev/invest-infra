@@ -12,6 +12,14 @@ Dagster Pipeline ───────────────SQL───┘
 
 API 与 Pipeline 可以共享纯领域包和存储包，但拥有独立 `pyproject.toml`、锁文件、镜像和运行生命周期。
 
+Web 边界明确如下：
+
+- Web 只通过 FastAPI 暴露的 OpenAPI/HTTP 契约访问后端；
+- Web 不直接连接 PostgreSQL，也不调用 Dagster；
+- Web 不持有 Provider 凭据；
+- 生成的 OpenAPI TypeScript 类型是 API 契约的权威来源，禁止手工维护响应类型。
+
+
 ## 2. 分层
 
 ### Domain
@@ -37,9 +45,9 @@ FastAPI 路由、Dagster assets 和命令行入口。入口只负责校验、调
 - `raw`：第三方原始数据和采集元信息；
 - `core`：标准化标的、行情和公司主数据；
 - `analytics`：因子、信号、候选池和回测结果；
-- `app`：用户组合、关注列表、报告索引和工作流状态。
+- `ops`：运行审计、数据新鲜度和运维状态。
 
-骨架只创建 `core.instruments` 和 `app.pipeline_runs`，其他表应随垂直切片增量增加。
+骨架只创建 `core.instruments` 和 `ops.pipeline_runs`，其他表应随垂直切片增量增加。
 
 ## 4. 关键规则
 

@@ -1,5 +1,7 @@
 SHELL := /bin/bash
 
+PIPELINE_ENV_FILE := $(if $(wildcard apps/pipeline/.env),--env-file apps/pipeline/.env)
+
 .PHONY: help up down logs api-dev pipeline-dev web-dev migrate openapi-generate test lint arch-check lock test-domain test-storage test-storage-integration test-migrations test-pipeline test-api test-web provider-smoke personal-daily-run reprocess-date personal-backfill
 
 help:
@@ -28,7 +30,7 @@ logs:
 	docker compose logs -f
 
 migrate:
-	cd apps/migrations && uv run alembic upgrade head
+	cd apps/migrations && uv run --env-file ../pipeline/.env alembic upgrade head
 
 api-dev:
 	cd apps/api && uv run fastapi dev src/invest_api/main.py --host 0.0.0.0 --port 8000
@@ -65,9 +67,9 @@ test-storage-integration:
 
 test-migrations:
 	cd apps/migrations && uv sync
-	cd apps/migrations && DATABASE_URL=postgresql+psycopg://invest:invest_dev_password@localhost:5432/invest uv run alembic upgrade head
-	cd apps/migrations && DATABASE_URL=postgresql+psycopg://invest:invest_dev_password@localhost:5432/invest uv run alembic downgrade base
-	cd apps/migrations && DATABASE_URL=postgresql+psycopg://invest:invest_dev_password@localhost:5432/invest uv run alembic upgrade head
+	cd apps/migrations && uv run --env-file ../pipeline/.env alembic upgrade head
+	cd apps/migrations && uv run --env-file ../pipeline/.env alembic downgrade base
+	cd apps/migrations && uv run --env-file ../pipeline/.env alembic upgrade head
 
 test-pipeline:
 	cd apps/pipeline && uv sync
@@ -107,7 +109,7 @@ arch-check:
 #       SMOKE_TRADE_DATE=2026-07-30 \
 #       SMOKE_CONFIRM_NETWORK=1
 provider-smoke:
-	cd apps/pipeline && uv run python -m invest_pipeline.cifang_smoke \
+	INVEST_PIPELINE_AUTO_SCHEDULE_ENABLED=false uv run --project apps/pipeline $(PIPELINE_ENV_FILE) python -m invest_pipeline.cifang_smoke \
 		--symbols '$(SMOKE_SYMBOLS)' \
 		--trade-date '$(SMOKE_TRADE_DATE)' \
 		$(if $(SMOKE_CONFIRM_NETWORK),--confirm-network)
@@ -134,7 +136,7 @@ provider-smoke:
 #       TRADE_DATE=2026-07-31 \
 #       CONFIRM_NETWORK=1
 personal-daily-run:
-	cd apps/pipeline && uv run python -m invest_pipeline.personal_daily_cli \
+	INVEST_PIPELINE_AUTO_SCHEDULE_ENABLED=false uv run --project apps/pipeline $(PIPELINE_ENV_FILE) python -m invest_pipeline.personal_daily_cli \
 		--trade-date '$(TRADE_DATE)' \
 		$(if $(UNIVERSE),--universe '$(UNIVERSE)') \
 		$(if $(POLICY),--policy '$(POLICY)') \
