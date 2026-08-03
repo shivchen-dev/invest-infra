@@ -173,6 +173,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "20"
-      - run: cd apps/web && pnpm install
+      - run: cd apps/web && pnpm install --frozen-lockfile
       - run: cd apps/web && pnpm typecheck
+      - run: cd apps/web && pnpm test:run
       - run: cd apps/web && pnpm build

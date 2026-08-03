@@ -43,7 +43,8 @@ export async function apiGet<T>(
 
   if (!response.ok) {
     const raw = await response.json().catch(() => null);
-    const detail = extractDetail(raw);
+    const detail =
+      response.status === 500 ? undefined : extractDetail(raw);
     throw new ApiError(
       detail ?? `Request failed with status ${response.status}`,
       response.status,

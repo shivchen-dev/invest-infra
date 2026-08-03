@@ -1,6 +1,6 @@
 SHELL := /bin/bash
 
-.PHONY: help up down logs api-dev pipeline-dev web-dev migrate test lint arch-check lock test-domain test-storage test-storage-integration test-migrations test-pipeline test-api test-web provider-smoke personal-daily-run reprocess-date personal-backfill
+.PHONY: help up down logs api-dev pipeline-dev web-dev migrate openapi-generate test lint arch-check lock test-domain test-storage test-storage-integration test-migrations test-pipeline test-api test-web provider-smoke personal-daily-run reprocess-date personal-backfill
 
 help:
 	@echo "make up              启动 PostgreSQL、API、Web、Dagster"
@@ -38,6 +38,10 @@ pipeline-dev:
 
 web-dev:
 	cd apps/web && pnpm dev
+
+openapi-generate:
+	cd apps/api && uv run python -m invest_api.export_openapi
+	cd apps/web && pnpm api:generate
 
 lock:
 	cd packages/domain && uv lock
