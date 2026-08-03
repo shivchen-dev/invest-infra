@@ -250,22 +250,11 @@ class SqlAlchemyPipelineRunRecorder:
     ) -> UUID | None:
         try:
             with self._unit_of_work_factory(self._session_factory) as uow:
-                existing = uow.pipeline_runs.get_latest_by_job_and_partition(
+                existing = uow.pipeline_runs.get_blocking_by_job_and_partition(
                     job_key=job_key,
                     partition_key=partition_key,
                 )
-                if (
-                    existing is not None
-                    and existing.status_value
-                    == self._PipelineRunStatus.SUCCEEDED.value
-                ):
-                    # Idempotency: the partition already has a successful
-                    # manual run on record. Skip the new ``running`` row
-                    # so the dashboard does not see a duplicate
-                    # successful entry; the caller already treats a
-                    # ``None`` return as "no recording this time" and
-                    # the job still proceeds so the operator sees a
-                    # fresh JSON summary.
+                if existing is not None:
                     return None
                 run = uow.pipeline_runs.start(
                     self._PipelineRun(

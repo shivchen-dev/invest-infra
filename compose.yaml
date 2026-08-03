@@ -43,6 +43,8 @@ services:
     build:
       context: .
       dockerfile: apps/pipeline/Dockerfile
+    env_file:
+      - ./apps/pipeline/.env
     environment:
       DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-invest}:${POSTGRES_PASSWORD:-invest_dev_password}@postgres:5432/${POSTGRES_DB:-invest}
       DAGSTER_HOME: /workspace/.dagster

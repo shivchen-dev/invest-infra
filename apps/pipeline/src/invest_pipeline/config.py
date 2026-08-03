@@ -10,7 +10,7 @@ _REPOSITORY_ROOT = Path(__file__).resolve().parents[4]
 
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_file=".env", extra="ignore")
+    model_config = SettingsConfigDict(extra="ignore")
     database_url: str = "postgresql+psycopg://invest:invest_dev_password@localhost:5432/invest"
     provider_key: str = Field(
         default="fixture_dev",

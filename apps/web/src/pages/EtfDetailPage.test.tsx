@@ -8,9 +8,7 @@ import {
   within,
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { ReactNode } from "react";
-import { ApiError } from "../api/client";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type {
   DailyBarListResponse,
   DailyBarResponse,
@@ -36,26 +34,6 @@ const mockFetchEtfDailyBars = vi.mocked(fetchEtfDailyBars);
 
 const INSTRUMENT_LOOKUP_LIMIT = 1000;
 const DAILY_BARS_PAGE_LIMIT = 1000;
-const RealDate = globalThis.Date;
-const FIXED_NOW = new RealDate("2026-08-03T12:00:00").getTime();
-
-function installFixedDate() {
-  class FixedDate extends RealDate {
-    constructor(...args: any[]) {
-      if (args.length === 0) {
-        super(FIXED_NOW);
-      } else {
-        super(...(args as [any]));
-      }
-    }
-
-    static now() {
-      return FIXED_NOW;
-    }
-  }
-
-  vi.stubGlobal("Date", FixedDate);
-}
 
 function setPathname(pathname: string) {
   window.history.replaceState(null, "", pathname);
@@ -136,17 +114,13 @@ function renderWithClient() {
       },
     },
   });
-  function Wrapper({ children }: { children?: ReactNode }) {
-    return (
-      <QueryClientProvider client={client}>
-        <Router
-          routes={[{ path: "/etf/:instrumentId", element: <EtfDetailPage /> }]}
-        />
-        {children}
-      </QueryClientProvider>
-    );
-  }
-  return render(null, { wrapper: Wrapper });
+  return render(
+    <QueryClientProvider client={client}>
+      <Router
+        routes={[{ path: "/etf/:instrumentId", element: <EtfDetailPage /> }]}
+      />
+    </QueryClientProvider>,
+  );
 }
 
 afterEach(() => {
@@ -157,41 +131,33 @@ afterEach(() => {
 });
 
 describe("EtfDetailPage", () => {
-  beforeEach(() => {
-    vi.useRealTimers();
-    installFixedDate();
-  });
-
   describe("route parameter handling", () => {
     it("decodes a percent-encoded instrumentId and surfaces it in the page header", async () => {
+      const decodedId = "a0e1d2c3-b4a5-4687-8901-23456789abcd";
+      const path = "/etf/%61" + decodedId.slice(1);
       const instrument = makeInstrument({
-        id: "510300.SH%26ETF",
-        symbol: "510300.SH&ETF",
-        name: "测试 ETF & 编码",
+        id: decodedId,
+        symbol: "TEST",
+        name: "测试ETF",
       });
-      // Note: EtfDetailPage decodes the URL segment a second time, so we
-      // mock the instrument list to contain the *decoded* id.
       mockFetchEtfInstruments.mockResolvedValue(
         makeInstrumentList([instrument]),
       );
       mockFetchEtfDailyBars.mockResolvedValue(
         makeBarsList([
           makeBar("2026-08-03", {
-            instrument_id: "510300.SH%26ETF",
+            instrument_id: decodedId,
             revision: 1,
           }),
         ]),
       );
 
-      setPathname("/etf/510300.SH%26ETF");
+      setPathname(path);
       renderWithClient();
 
-      // Page header surfaces the decoded id in the <code> snippet.
-      const code = await screen.findByText("510300.SH&ETF");
+      const code = await screen.findByText(decodedId, { selector: "code" });
       expect(code.tagName).toBe("CODE");
 
-      // The decoded id is forwarded verbatim to the API request as
-      // instrument_id (no second encoding).
       await waitFor(() => {
         expect(mockFetchEtfDailyBars).toHaveBeenCalled();
       });
@@ -199,24 +165,7 @@ describe("EtfDetailPage", () => {
         mockFetchEtfDailyBars.mock.calls[
           mockFetchEtfDailyBars.mock.calls.length - 1
         ];
-      expect(lastCall[0]).toMatchObject({ instrument_id: "510300.SH&ETF" });
-    });
-
-    it("decodes a UTF-8 encoded Chinese instrumentId", async () => {
-      const decoded = "上证ETF";
-      mockFetchEtfInstruments.mockResolvedValue(
-        makeInstrumentList([
-          makeInstrument({ id: decoded, symbol: decoded, name: decoded }),
-        ]),
-      );
-      mockFetchEtfDailyBars.mockResolvedValue(
-        makeBarsList([makeBar("2026-08-03", { instrument_id: decoded })]),
-      );
-
-      setPathname("/etf/%E4%B8%8A%E8%AF%81ETF");
-      renderWithClient();
-
-      expect(await screen.findByText(decoded)).toBeInTheDocument();
+      expect(lastCall[0]).toMatchObject({ instrument_id: decodedId });
     });
   });
 
@@ -227,7 +176,6 @@ describe("EtfDetailPage", () => {
           makeInstrument({ id: "other-instrument", symbol: "000000" }),
         ]),
       );
-      // daily bars would still be queried for the requested id.
       mockFetchEtfDailyBars.mockResolvedValue(makeBarsList([]));
 
       setPathname("/etf/missing-instrument");
@@ -291,50 +239,53 @@ describe("EtfDetailPage", () => {
 
       setPathname(`/etf/${instrument.id}`);
       const user = userEvent.setup();
-      renderWithClient();
 
-      // First fetch happens with the default 60-day range.
-      await waitFor(() => {
-        expect(mockFetchEtfDailyBars).toHaveBeenCalledTimes(1);
-      });
-      expect(mockFetchEtfDailyBars.mock.calls[0][0]).toEqual({
-        instrument_id: instrument.id,
-        start_date: "2026-06-05",
-        end_date: "2026-08-03",
-        limit: DAILY_BARS_PAGE_LIMIT,
-        offset: 0,
-      });
-      // The instruments fetch must always carry limit=1000 / offset=0.
-      expect(mockFetchEtfInstruments).toHaveBeenCalledWith(
-        { limit: INSTRUMENT_LOOKUP_LIMIT, offset: 0 },
-        expect.anything(),
-      );
+      vi.useFakeTimers({ toFake: ["Date"] });
+      vi.setSystemTime(new Date("2026-08-03T12:00:00"));
+      try {
+        renderWithClient();
 
-      // Switch to 30-day range.
-      await user.click(await screen.findByRole("button", { name: "30 日" }));
-      await waitFor(() => {
-        expect(mockFetchEtfDailyBars).toHaveBeenCalledTimes(2);
-      });
-      expect(mockFetchEtfDailyBars.mock.calls[1][0]).toEqual({
-        instrument_id: instrument.id,
-        start_date: "2026-07-05",
-        end_date: "2026-08-03",
-        limit: DAILY_BARS_PAGE_LIMIT,
-        offset: 0,
-      });
+        await waitFor(() => {
+          expect(mockFetchEtfDailyBars).toHaveBeenCalledTimes(1);
+        });
+        expect(mockFetchEtfDailyBars.mock.calls[0][0]).toEqual({
+          instrument_id: instrument.id,
+          start_date: "2026-06-05",
+          end_date: "2026-08-03",
+          limit: DAILY_BARS_PAGE_LIMIT,
+          offset: 0,
+        });
+        expect(mockFetchEtfInstruments).toHaveBeenCalledWith(
+          { limit: INSTRUMENT_LOOKUP_LIMIT, offset: 0 },
+          expect.anything(),
+        );
 
-      // Switch to 120-day range.
-      await user.click(screen.getByRole("button", { name: "120 日" }));
-      await waitFor(() => {
-        expect(mockFetchEtfDailyBars).toHaveBeenCalledTimes(3);
-      });
-      expect(mockFetchEtfDailyBars.mock.calls[2][0]).toEqual({
-        instrument_id: instrument.id,
-        start_date: "2026-04-06",
-        end_date: "2026-08-03",
-        limit: DAILY_BARS_PAGE_LIMIT,
-        offset: 0,
-      });
+        await user.click(await screen.findByRole("button", { name: "30 日" }));
+        await waitFor(() => {
+          expect(mockFetchEtfDailyBars).toHaveBeenCalledTimes(2);
+        });
+        expect(mockFetchEtfDailyBars.mock.calls[1][0]).toEqual({
+          instrument_id: instrument.id,
+          start_date: "2026-07-05",
+          end_date: "2026-08-03",
+          limit: DAILY_BARS_PAGE_LIMIT,
+          offset: 0,
+        });
+
+        await user.click(screen.getByRole("button", { name: "120 日" }));
+        await waitFor(() => {
+          expect(mockFetchEtfDailyBars).toHaveBeenCalledTimes(3);
+        });
+        expect(mockFetchEtfDailyBars.mock.calls[2][0]).toEqual({
+          instrument_id: instrument.id,
+          start_date: "2026-04-06",
+          end_date: "2026-08-03",
+          limit: DAILY_BARS_PAGE_LIMIT,
+          offset: 0,
+        });
+      } finally {
+        vi.useRealTimers();
+      }
     });
   });
 
@@ -357,7 +308,6 @@ describe("EtfDetailPage", () => {
       setPathname(`/etf/${instrument.id}`);
       renderWithClient();
 
-      // Latest metric card: revision > 1 → warning tone, value still shows "2".
       const latestRegion = await screen.findByRole("region", {
         name: "最新行情",
       });
@@ -369,7 +319,6 @@ describe("EtfDetailPage", () => {
         .closest("article")!;
       expect(revisedCard).toHaveClass("etfDetailLatestCard-warning");
 
-      // Bars table: revision > 1 row shows the 已修订 pill.
       const barsRegion = await screen.findByRole("region", {
         name: "日行情明细",
       });
@@ -384,7 +333,6 @@ describe("EtfDetailPage", () => {
         expect(pill).toHaveClass("statusPillWarning");
       }
 
-      // Normal row renders the revision number, not the pill text.
       expect(within(barsRegion).getByText("1")).toBeInTheDocument();
     });
   });

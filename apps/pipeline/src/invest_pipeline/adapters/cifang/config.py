@@ -43,7 +43,6 @@ class CifangSettings(BaseSettings):
 
     model_config = SettingsConfigDict(
         env_prefix="INVEST_PIPELINE_CIFANG_",
-        env_file=".env",
         extra="ignore",
     )
 

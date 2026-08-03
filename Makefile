@@ -74,7 +74,7 @@ test-migrations:
 test-pipeline:
 	cd apps/pipeline && uv sync
 	cd apps/pipeline && uv run ruff check src tests
-	cd apps/pipeline && uv run pytest -q
+	cd apps/pipeline && uv run --no-env-file pytest -q
 	cd apps/pipeline && uv run python -c "from invest_pipeline.definitions import defs"
 
 test-api:

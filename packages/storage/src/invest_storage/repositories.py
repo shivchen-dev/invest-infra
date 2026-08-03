@@ -40,6 +40,7 @@ storage layer.
 
 from __future__ import annotations
 
+import hashlib
 import uuid
 from collections.abc import Sequence
 from dataclasses import dataclass, field
@@ -56,13 +57,13 @@ from invest_domain.candidate_pool.models import (
     RuleOutcome,
     RuleSeverity,
 )
+from invest_domain.input_snapshot import InputSnapshot
 from invest_domain.instruments import (
     Instrument,
     InstrumentId,
     InstrumentStatus,
     InstrumentType,
 )
-from invest_domain.input_snapshot import InputSnapshot
 from invest_domain.market_data.models import BarSource, DailyBar
 from invest_domain.market_data.values import Adjust, TradingStatus
 from invest_domain.pipeline import PipelineRun, PipelineRunStatus
@@ -1248,7 +1249,7 @@ class SqlAlchemyPipelineRunRepository:
         Sticky success: when the row is already in the ``succeeded``
         state the call refuses to downgrade it and raises
         :class:`ValueError`. Callers (e.g. the manual personal CLI)
-        must check :meth:`get_latest_by_job_and_partition` before
+        must check :meth:`get_blocking_by_job_and_partition` before
         opening a new run so this branch is unreachable in practice,
         but the safety net is preserved so a buggy caller cannot
         silently rewrite a successful audit row as a failure.
@@ -1277,34 +1278,38 @@ class SqlAlchemyPipelineRunRepository:
         self._session.flush()
         return _row_to_pipeline_run(row)
 
-    def get_latest_by_job_and_partition(
+    def get_blocking_by_job_and_partition(
         self,
         *,
         job_key: str,
         partition_key: str | None,
     ) -> PipelineRun | None:
-        """Return the most recent run for ``(job_key, partition_key)``.
-
-        Used by the manual personal CLI to enforce the Stage-1
-        idempotency contract: a successful manual run for the same
-        ``(job_key, partition_key)`` must not produce a second
-        ``ops.pipeline_runs`` row. The lookup orders by
-        ``started_at`` descending (ties broken by ``id``) so the
-        caller always sees the latest attempt; ``None`` is returned
-        when no row matches. ``partition_key`` is matched verbatim so
-        callers must supply a consistent value (the CLI always uses
-        the trade-date ISO string).
-        """
+        """Lock the logical run key and return any non-retryable run."""
 
         if not isinstance(job_key, str) or not job_key.strip():
             raise ValueError(
-                "get_latest_by_job_and_partition requires a non-empty job_key"
+                "get_blocking_by_job_and_partition requires a non-empty job_key"
             )
+        lock_material = (
+            f"{len(job_key)}:{job_key}:{partition_key!r}"
+        ).encode()
+        lock_key = int.from_bytes(
+            hashlib.blake2b(lock_material, digest_size=8).digest(),
+            byteorder="big",
+            signed=True,
+        )
+        self._session.execute(select(func.pg_advisory_xact_lock(lock_key)))
+        blocking_statuses = (
+            PipelineRunStatus.QUEUED.value,
+            PipelineRunStatus.RUNNING.value,
+            PipelineRunStatus.SUCCEEDED.value,
+        )
         stmt = (
             select(PipelineRunRow)
             .where(
                 PipelineRunRow.job_key == job_key,
                 PipelineRunRow.partition_key == partition_key,
+                PipelineRunRow.status.in_(blocking_statuses),
             )
             .order_by(
                 PipelineRunRow.started_at.desc(),

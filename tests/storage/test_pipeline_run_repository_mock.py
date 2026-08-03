@@ -275,10 +275,10 @@ class SqlAlchemyPipelineRunRepositoryMockTests(unittest.TestCase):
         self.assertEqual(result, 2)
 
     # ------------------------------------------------------------------
-    # get_latest_by_job_and_partition (idempotency lookup)
+    # get_blocking_by_job_and_partition (idempotency lookup)
     # ------------------------------------------------------------------
 
-    def test_get_latest_by_job_and_partition_returns_row(self) -> None:
+    def test_get_blocking_by_job_and_partition_returns_row(self) -> None:
         latest = _make_row(
             row_id=uuid4(),
             job_key="personal_etf_daily_job",
@@ -290,16 +290,23 @@ class SqlAlchemyPipelineRunRepositoryMockTests(unittest.TestCase):
         scalars_mock = self._session.scalars.return_value
         scalars_mock.first.return_value = latest
 
-        result = self._repo.get_latest_by_job_and_partition(
+        result = self._repo.get_blocking_by_job_and_partition(
             job_key="personal_etf_daily_job",
             partition_key="2026-07-30",
         )
 
+        lock_statement = self._session.execute.call_args.args[0]
+        self.assertIn("pg_advisory_xact_lock", str(lock_statement))
+        self._session.execute.assert_called_once()
         statement = self._session.scalars.call_args.args[0]
         compiled = statement.compile()
         params = dict(compiled.params)
         self.assertIn("personal_etf_daily_job", params.values())
         self.assertIn("2026-07-30", params.values())
+        self.assertIn(
+            ["queued", "running", "succeeded"],
+            params.values(),
+        )
         scalars_mock.first.assert_called_once_with()
         self.assertIsNotNone(result)
         assert result is not None
@@ -308,13 +315,13 @@ class SqlAlchemyPipelineRunRepositoryMockTests(unittest.TestCase):
         self.assertEqual(result.job_key, "personal_etf_daily_job")
         self.assertEqual(result.partition_key, "2026-07-30")
 
-    def test_get_latest_by_job_and_partition_returns_none_when_absent(
+    def test_get_blocking_by_job_and_partition_returns_none_when_absent(
         self,
     ) -> None:
         scalars_mock = self._session.scalars.return_value
         scalars_mock.first.return_value = None
 
-        result = self._repo.get_latest_by_job_and_partition(
+        result = self._repo.get_blocking_by_job_and_partition(
             job_key="personal_etf_daily_job",
             partition_key="2026-07-30",
         )
@@ -322,9 +329,9 @@ class SqlAlchemyPipelineRunRepositoryMockTests(unittest.TestCase):
         scalars_mock.first.assert_called_once_with()
         self.assertIsNone(result)
 
-    def test_get_latest_by_job_and_partition_rejects_empty_job_key(self) -> None:
+    def test_get_blocking_by_job_and_partition_rejects_empty_job_key(self) -> None:
         with self.assertRaises(ValueError):
-            self._repo.get_latest_by_job_and_partition(
+            self._repo.get_blocking_by_job_and_partition(
                 job_key="",
                 partition_key="2026-07-30",
             )
