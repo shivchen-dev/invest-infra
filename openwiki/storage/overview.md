@@ -1,7 +1,7 @@
 ---
 type: Concept
 title: Storage overview
-description: SQLAlchemy 2 ORM models, repositories, the SqlAlchemyUnitOfWork + SessionProvider, and the three-layer Provider evidence model under packages/storage/src/invest_storage.
+description: SQLAlchemy 2 ORM models, repositories, the SqlAlchemyUnitOfWork + SessionProvider, the three-layer Provider evidence model, and the candidate-pool snapshot and job-history read contracts under packages/storage/src/invest_storage.
 resource: /openwiki/storage/overview.md
 tags: [storage, sqlalchemy, repository, unit-of-work, provider-evidence]
 ---
@@ -72,7 +72,8 @@ always hand callers **domain objects**, never SQLAlchemy ORM rows.
 Examples:
 
 - `SqlAlchemyInstrumentRepository`: `upsert_many`,
-  `get_by_id`, `get_by_business_key`, `list_active`, `count_active`.
+  `get_by_id`, `get_many_by_ids`, `get_by_business_key`, `list_active`,
+  `count_active`.
 - `SqlAlchemyProviderRequestRepository`: `add`, `get_or_create`,
   `get_by_logical_key`, `mark_status`.
 - `SqlAlchemyProviderAttemptRepository`: `add`, `start`, `mark_succeeded`,
@@ -80,7 +81,8 @@ Examples:
 - `SqlAlchemyProviderBatchRepository`: `add`, `list_by_attempt`,
   `list_by_provider_dataset`.
 - `SqlAlchemyPipelineRunRepository`: `start`, `mark_succeeded`,
-  `mark_failed`, `get_by_id`, `list_recent`, `count_by_status`.
+  `mark_failed`, `get_by_id`, `list_recent`, `list_by_job_key`,
+  `count_by_job_key`, `count_by_status`.
 - `SqlAlchemyCandidatePoolRunRepository`: `add`, `get_by_id`,
   `get_by_natural_key`, `transition_status`, `list_by_status`,
   `list_by_trade_date`.
@@ -94,6 +96,14 @@ Domain code (and the FastAPI routers) interact with repositories via
 this module's surface. Application code that needs to coordinate
 multiple repositories uses the `UnitOfWork` instead of taking
 individual session handles.
+
+`CandidatePoolRunRow.input_snapshot_id` is a non-null foreign key to
+`analytics.input_snapshots.id`, named `fk_cpool_runs_snapshot_id`. The
+Alembic [migration](../migrations/overview.md#the-six-revision-chain)
+adds the same constraint, so a persisted candidate-pool run cannot point
+at a missing input snapshot. This storage invariant backs the
+[Candidate pool input-snapshot binding](../domain/candidate-pool.md#input-snapshot-binding)
+and the API's published-pool audit response.
 
 ## 4. Transactions and Unit of Work
 
@@ -130,8 +140,8 @@ SQLAlchemy classes above.
 | `core.daily_bars` | `etf_daily_bars` asset via `SqlAlchemyDailyBarRepository.upsert_many` (ADR-0006 revision rules). | `/api/v1/etf/daily-bars`. |
 | `core.latest_daily_bars` | View maintained by the database (revision desc row_number). | New snapshot builders (NOT for replay). |
 | `analytics.input_snapshots` | `etf_input_snapshot` asset + `InputSnapshotRepository.add`. | `/api/v1/candidate-pool/latest` (for `content_hash`). |
-| `analytics.candidate_pool_runs` / `_items` | Future candidate-pool assets; today's only producer is the FastAPI router's read path. | `/api/v1/candidate-pool/latest`. |
-| `ops.pipeline_runs` | Dagster job wrappers via `SqlAlchemyPipelineRunRepository`. | Future pipeline-runs pages; not surfaced to the API yet. |
+| `analytics.candidate_pool_runs` / `_items` | `personal_candidate_pool` via `candidate_pool_service.calculate_and_publish_candidate_pool`, inside one `UnitOfWork`. | `/api/v1/candidate-pool/latest` and the candidate-pool diff endpoints. |
+| `ops.pipeline_runs` | Pipeline job wrappers via `SqlAlchemyPipelineRunRepository`. | `/api/v1/pipeline-runs` latest, detail, and paginated history endpoints. |
 
 ## 6. Boundary rules enforced from the storage side
 

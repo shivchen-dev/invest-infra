@@ -1,7 +1,7 @@
 ---
 type: Concept
 title: API overview
-description: FastAPI routers, Pydantic response shapes and the read-only endpoint surface for ETF data, candidate-pool results and diffs, personal pipeline-run status, and data freshness, including the legacy /v1/instruments endpoint.
+description: FastAPI routers, Pydantic response shapes and the read-only endpoint surface for ETF data, candidate-pool results and diffs, personal pipeline-run status and paginated history, and data freshness, including the legacy /v1/instruments endpoint.
 resource: /openwiki/api/overview.md
 tags: [api, fastapi, routers, pydantic, etf, candidate-pool]
 ---
@@ -31,14 +31,14 @@ apps/api/src/invest_api/
 ├── routers/
 │   ├── etf.py             # PR-09 read-only ETF endpoints
 │   ├── candidate_pool.py  # candidate-pool latest + diff endpoints
-│   ├── pipeline_runs.py   # personal daily pipeline-run status
+│   ├── pipeline_runs.py   # personal daily pipeline-run status + history
 │   └── data_freshness.py  # personal daily data-freshness summary
 └── schemas/
     ├── __init__.py        # re-exports all public response shapes
     ├── common.py          # legacy HealthResponse + re-exports
     ├── etf.py             # InstrumentResponse / DailyBarResponse + paginated lists
     ├── candidate_pool.py  # latest, item and diff shapes
-    ├── pipeline_runs.py   # PipelineRunResponse
+    ├── pipeline_runs.py   # PipelineRunResponse + PipelineRunListResponse
     └── data_freshness.py  # DataFreshnessResponse + status vocabulary
 ```
 
@@ -53,9 +53,10 @@ apps/api/src/invest_api/
 | `GET /v1/instruments` | `routes.py` | Legacy sparse instrument list (`limit/offset` only, response uses `response_model_exclude` to keep the historically contracted fields). |
 | `GET /api/v1/etf/instruments` | `routers/etf.py` | Active ETF instruments with optional `exchange` and `status` filters, paginated with `limit/offset`. |
 | `GET /api/v1/etf/daily-bars` | `routers/etf.py` | Daily-bars range query — collapses to the latest revision per `trade_date` (ADR-0006 §6). |
-| `GET /api/v1/candidate-pool/latest` | `routers/candidate_pool.py` | The most recently `published` candidate-pool run plus its `InputSnapshot.content_hash`. |
-| `GET /api/v1/candidate-pool/latest/diff` | `routers/candidate_pool.py` | Added, retained and removed instrument IDs for the latest published run versus the most recent earlier published run. |
-| `GET /api/v1/candidate-pool/{run_id}/diff` | `routers/candidate_pool.py` | The same set diff for a specified published run; missing or non-published runs return 404. |
+| `GET /api/v1/candidate-pool/latest` | `routers/candidate_pool.py` | The most recently `published` candidate-pool run with run metadata, snapshot audit data, item display fields, and its `InputSnapshot.content_hash`. |
+| `GET /api/v1/candidate-pool/latest/diff` | `routers/candidate_pool.py` | Added, retained and removed included-candidate entries for the latest published run versus the most recent earlier published run. |
+| `GET /api/v1/candidate-pool/{run_id}/diff` | `routers/candidate_pool.py` | The same included-candidate diff for a specified published run; missing or non-published runs return 404. |
+| `GET /api/v1/pipeline-runs` | `routers/pipeline_runs.py` | Paginated history scoped to the `personal_etf_daily_job` job key (default `limit=20`, maximum 100). |
 | `GET /api/v1/pipeline-runs/latest` | `routers/pipeline_runs.py` | Most recent run scoped to the `personal_etf_daily_job` job key. |
 | `GET /api/v1/pipeline-runs/{run_id}` | `routers/pipeline_runs.py` | One personal daily pipeline run; missing or other-job IDs return 404. |
 | `GET /api/v1/data-freshness` | `routers/data_freshness.py` | Counts and status summary for the expected trade date, defaulting to the latest weekday. |
@@ -89,17 +90,23 @@ override it with a `MagicMock` `Session` and patch the relevant
   `invest_domain.candidate_pool.models.RuleOutcome`.
 - `ExclusionReasonResponse` (`code`, `message`) mirrors
   `ExclusionReason`.
+- `InstrumentDisplay` defines optional server-resolved `symbol`, `name`, and
+  `exchange` fields used by the candidate-pool read models.
 - `CandidatePoolItemResponse` (`instrument_id`, `included`, optional
   `rank` / `total_score`, `metrics`, `rule_results`,
-  `exclusion_reasons`).
-- `CandidatePoolLatestResponse` (`snapshot_date`, `row_count`,
-  `content_hash`, `items`) — the response envelope for the
-  `/api/v1/candidate-pool/latest` endpoint; `row_count` is the
-  input-snapshot row count mirrored from `input_row_count`.
-- `CandidatePoolDiffResponse` (`trade_date`, optional
-  `previous_trade_date`, `added`, `retained`, `removed`) represents set
-  differences between published candidate-pool runs. With no predecessor,
-  every current instrument is `added`.
+  `exclusion_reasons`, plus optional `symbol`, `name`, `exchange`). Missing
+  instrument rows degrade those display fields to `None`.
+- `CandidatePoolLatestResponse` (`run_id`, `trade_date`, `algorithm_key`,
+  `algorithm_version`, `parameter_set_key`, `snapshot_id`, `content_hash`,
+  `row_count`, `included_count`, `excluded_count`, optional `published_at`,
+  and `items`) is the response envelope for
+  `/api/v1/candidate-pool/latest`; `row_count` mirrors the input snapshot's
+  `input_row_count`.
+- `CandidatePoolDiffEntry` carries an `instrument_id` plus optional display
+  fields. `CandidatePoolDiffResponse` (`trade_date`, optional
+  `previous_trade_date`, `added`, `retained`, `removed`) contains lists of
+  these entries for included-candidate membership changes, not UUID-only
+  lists or excluded input items.
 
 ### `schemas/pipeline_runs.py`
 
@@ -109,6 +116,12 @@ row: `id`, `job_key`, `partition_key`, `trigger_type`, `status`, optional
 the contract but remains `None` until the storage layer persists a separate
 structured code. The router only returns the hard-coded
 `personal_etf_daily_job` scope.
+
+`PipelineRunListResponse` wraps a page of those rows with `items`,
+`total`, `limit`, and `offset`; history is ordered by `started_at` descending
+with `id` as a deterministic tiebreaker. The storage layer provides the
+job-key-filtered page and exact count documented in the
+[Storage overview](../storage/overview.md#repositories-repositoriespy).
 
 ### `schemas/data_freshness.py`
 
@@ -133,7 +146,8 @@ Re-exports the ETF, candidate-pool, pipeline-run and data-freshness shapes **and
 `LegacyInstrumentResponse` / `LegacyInstrumentListResponse` so
 pre-PR-09 callers can import the legacy names directly
 (`from invest_api.schemas import LegacyInstrumentResponse,
-DailyBarResponse, CandidatePoolLatestResponse, PipelineRunResponse`). The aliases point at
+DailyBarResponse, CandidatePoolLatestResponse, CandidatePoolDiffEntry,
+PipelineRunListResponse, PipelineRunResponse`). The aliases point at
 the same Pydantic classes that [`schemas/common.py`](#schemascommonpy)
 re-exports from `schemas/etf.py`, so the public surface is one
 definition with two names. Test code uses this surface
@@ -172,26 +186,44 @@ definition with two names. Test code uses this surface
   `InputSnapshotRepository.list_by_date(trade_date)`; a missing
   snapshot for the run's `input_snapshot_id` raises 500 (data integrity
   violation).
-- Returns `CandidatePoolLatestResponse(snapshot_date, row_count,
-  content_hash, items)`.
+- Resolves display fields for each item through
+  `SqlAlchemyInstrumentRepository.get_many_by_ids`; missing instrument rows
+  leave `symbol`, `name`, and `exchange` as `None` rather than failing the
+  endpoint.
+- Returns `CandidatePoolLatestResponse(run_id, trade_date, algorithm_key,
+  algorithm_version, parameter_set_key, snapshot_id, content_hash,
+  row_count, included_count, excluded_count, published_at, items)`.
 
 ### `GET /api/v1/candidate-pool/latest/diff`
 
-- No query string. Resolves the latest `PUBLISHED` run and compares its
-  instrument-ID set with the most recent earlier published run.
-- Returns sorted `added`, `retained`, and `removed` UUID lists plus
-  `trade_date` and optional `previous_trade_date`.
+- No query string. Resolves the latest `PUBLISHED` run and compares the set
+  of `included=True` instrument IDs with the most recent earlier published
+  run; excluded input items never participate.
+- Returns `CandidatePoolDiffEntry` rows sorted by `symbol` and then
+  `instrument_id` in the `added`, `retained`, and `removed` buckets, plus
+  `trade_date` and optional `previous_trade_date`. Each entry includes
+  optional `symbol`, `name`, and `exchange` display fields.
 - Returns 404 when no published run exists. If there is no predecessor, the
-  response is 200 with every current instrument in `added` and the other two
-  lists empty. The predecessor search is bounded to the latest 100 published
-  runs.
+  response is 200 with every included current instrument in `added` and the
+  other two lists empty. The predecessor search is bounded to the latest 100
+  published runs.
 
 ### `GET /api/v1/candidate-pool/{run_id}/diff`
 
 - `run_id` is a UUID path parameter. A missing or non-`PUBLISHED` run returns
   404, while malformed UUID input is rejected by FastAPI with 422.
-- Otherwise it uses the same set-diff contract and predecessor bound as
-  `/latest/diff`; the endpoint is read-only.
+- Otherwise it uses the same included-only `CandidatePoolDiffEntry` contract
+  and predecessor bound as `/latest/diff`; the endpoint is read-only.
+
+### `GET /api/v1/pipeline-runs`
+
+- Query: `limit` (1..100, default 20) and `offset` (≥0, default 0).
+- The repository applies the `job_key="personal_etf_daily_job"` filter in
+  SQL through `list_by_job_key`; `count_by_job_key` supplies the exact
+  unbounded `total`. Items are ordered by `started_at` descending and then
+  `id` ascending for stable pagination.
+- Returns `PipelineRunListResponse(items, total, limit, offset)`. SQLAlchemy
+  failures become a sanitized 500 with detail `Pipeline runs query failed`.
 
 ### `GET /api/v1/pipeline-runs/latest` and `/{run_id}`
 
@@ -207,12 +239,17 @@ definition with two names. Test code uses this surface
 
 - Optional `expected_trade_date` is an ISO date; when omitted, the handler
   snaps the local `date.today()` back to Friday on weekends. The response
-  combines active-universe, daily-bar, published-candidate, input-snapshot and
-  personal-job audit counts/IDs.
+  combines personal-universe snapshot (or published-run fallback), daily-bar,
+  published-candidate, input-snapshot and personal-job audit counts/IDs.
+- The daily-bar and missing counts are scoped to the expected-date snapshot's
+  `instrument_ids`; without that snapshot, the handler uses the latest
+  published run's candidate-pool membership. `universe_count` comes from the
+  snapshot `row_count`, or the published run's `input_row_count` fallback.
 - `status` precedence is `failed` (failed pipeline and no publication for the
   expected date), `missing` (no publication ever), `stale` (latest publication
-  before expected), `partial` (expected publication but fewer bars than active
-  instruments), then `fresh` (expected publication and complete bar coverage).
+  before expected), `partial` (expected publication but fewer bars than the
+  personal universe), then `fresh` (expected publication and complete scoped
+  bar coverage).
   A failed pipeline is therefore not surfaced as `failed` when an expected-date
   publication already exists.
 - SQLAlchemy errors become a sanitized 500 response with detail
@@ -223,7 +260,6 @@ definition with two names. Test code uses this surface
 `invest_api.config.Settings` (pydantic-settings, `extra="ignore"`):
 
 - `app_name` (default `"invest-infra-v2"`).
-- `environment` (default `"development"`).
 - `database_url` (default points at `postgres:5432/invest`).
 - `api_cors_origins` (default `"http://localhost:5173"`), parsed into
   `Settings.cors_origins: list[str]`.

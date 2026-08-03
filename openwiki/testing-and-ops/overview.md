@@ -30,13 +30,13 @@ The CI workflow is fan-out by domain so failures are easy to triage:
 | `api-tests` | `uv sync` + `ruff check` + `pytest -q` for `apps/api`. |
 | `api-openapi-smoke` | Imports `invest_api.main.app` after `uv sync`. |
 | `personal-daily-e2e` | Runs `tests/e2e/test_personal_daily_pipeline_postgres.py -q` against a PostgreSQL 16 service after syncing migrations, pipeline and API environments. |
-| `web-check` | `pnpm install` + `pnpm typecheck` + `pnpm build` in `apps/web`; this workflow job does not run the local `pnpm test --run` command. |
+| `web-check` | `pnpm install` + `pnpm typecheck` + `pnpm build` in `apps/web`; neither this workflow job nor the local `test-web` target runs a web unit-test command. |
 
 The job name overrides in the `Makefile` (`make test` etc.) cover the
 main test slices, but the workflow also has separate import-smoke and
-personal-daily-e2e jobs. The workflow's `web-check` job is intentionally
-lighter than the local `test-web` target: CI currently type-checks and
-builds, while the Make target also runs the web test command.
+personal-daily-e2e jobs. The `web-check` job and local `test-web` target
+both type-check and build; the repository does not currently configure a
+web unit-test script.
 
 ### Migration-chain AST gate
 
@@ -98,9 +98,9 @@ fixtures in [`conftest.py`](../../apps/api/tests/conftest.py) provide:
 - `client` — a `TestClient(app)` whose `get_db_session` dependency
   yields a `MagicMock` `Session`.
 - `instrument_repo`, `daily_bar_repo`, `candidate_pool_run_repo`,
-  `candidate_pool_item_repo`, `input_snapshot_repo`, and
-  `pipeline_run_repo` — each one a `MagicMock` patched into the
-  per-router module via `monkeypatch.setattr`.
+  `candidate_pool_item_repo`, `input_snapshot_repo`,
+  `candidate_pool_instrument_repo`, and `pipeline_run_repo` — each one a
+  `MagicMock` patched into the per-router module via `monkeypatch.setattr`.
 - Builders: `make_instrument`, `make_daily_bar`, `make_input_snapshot`,
   `make_candidate_pool_run`, `make_pool_item`, and `make_pipeline_run` —
   keep the response-shape and invalid-input tests terse.
@@ -110,6 +110,10 @@ fixtures in [`conftest.py`](../../apps/api/tests/conftest.py) provide:
 cover:
 
 - happy paths and candidate-pool added/retained/removed diffs;
+- `test_pipeline_run_endpoints.py` covers the paginated history contract,
+  SQL-side personal-job filtering, stable paging parameters, and sanitized
+  query failures; candidate-pool tests cover server-side instrument display
+  lookup for latest and diff responses.
 - filter parameters (`exchange`, `status`, `limit`, `offset`);
 - input validation (inverted date range, malformed UUID/date, missing
   instrument or run);

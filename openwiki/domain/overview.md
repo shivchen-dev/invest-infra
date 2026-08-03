@@ -50,7 +50,7 @@ The helper:
   digest in an auditable way instead of silently re-mapping data.
 
 The `InputSnapshot.content_hash` is built on a more restrictive
-algorithm (see [Migrations overview](../migrations/overview.md#the-five-revision-chain))
+algorithm (see [Migrations overview](../migrations/overview.md#the-six-revision-chain))
 because it only depends on the byte-sorted `instrument_ids`.
 
 ## 3. The infrastructure-free invariant

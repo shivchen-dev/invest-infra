@@ -50,7 +50,7 @@ Read these pages in order:
 1. [Architecture overview](architecture/overview.md) — modular monolith
    layers, four PostgreSQL schemas, layered rules and ADR index.
 2. [Migrations overview](migrations/overview.md) — how
-   `apps/migrations` owns the schema and the 5-revision chain.
+   `apps/migrations` owns the schema and the six-revision chain.
 3. [Domain overview](domain/overview.md) — bounded contexts and the
    canonical hashing scheme.
 4. [Candidate pool](domain/candidate-pool.md) — the pure-function
@@ -58,7 +58,7 @@ Read these pages in order:
 5. [Storage overview](storage/overview.md) — repositories, the
    `UnitOfWork` and the three-layer Provider evidence model.
 6. [API overview](api/overview.md) — FastAPI routers (legacy + ETF +
-   candidate-pool latest/diff + pipeline-run status + data freshness),
+   candidate-pool latest/diff + pipeline-run status/history + data freshness),
    Pydantic response shapes.
 7. [Pipeline overview](pipeline/overview.md) — Dagster `Definitions`, the
    `etf_*` assets, adapter boundaries, the declarative provider catalog,
@@ -226,11 +226,11 @@ Web typecheck can be run with:
 
 ```bash
 cd apps/web
-npm exec --offline --yes --package=typescript@5.9.3 -- tsc -b
+pnpm typecheck
 ```
 
-The remaining Web follow-up is a minimal executable unit-test setup; the
-current environment does not have the Vitest package installed.
+The Web package has typecheck and build scripts but no configured browser
+unit-test command yet.
 
 ## 8. Backlog
 - **Real Provider selection (O-1 in M0-DECISIONS §4).** `cifangquant`
