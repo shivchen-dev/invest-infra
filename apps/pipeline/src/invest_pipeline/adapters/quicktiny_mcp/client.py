@@ -56,6 +56,11 @@ _RETRYABLE_HTTP_STATUS = frozenset({429, 500, 502, 503, 504})
 _AUTH_FAILURE_HTTP_STATUS = frozenset({401, 403})
 _MAX_ATTEMPTS = 1
 _JSONRPC_VERSION = "2.0"
+_MCP_PROTOCOL_VERSION = "2024-11-05"
+_CONTENT_TYPE_HEADER = "application/json"
+_ACCEPT_HEADER = "application/json, text/event-stream"
+_MCP_PROTOCOL_HEADER = "MCP-Protocol-Version"
+_MCP_SESSION_HEADER = "Mcp-Session-Id"
 
 
 def _redact_token(message: str, token: str | None) -> str:
@@ -120,6 +125,9 @@ class QuickTinyMcpClient:
                 f"got {max_attempts}"
             )
         self._settings = settings
+        self._initialized = False
+        self._protocol_version = _MCP_PROTOCOL_VERSION
+        self._session_id: str | None = None
         self._id_factory: Callable[[], str] = (
             id_factory if id_factory is not None else _default_id_factory
         )
@@ -203,7 +211,12 @@ class QuickTinyMcpClient:
             "params": dict(params),
         }
         body = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
-        headers = _build_auth_headers(self._settings)
+        headers = _build_request_headers(
+            self._settings,
+            include_protocol=self._initialized and method != "initialize",
+            protocol_version=self._protocol_version,
+            session_id=self._session_id if self._initialized else None,
+        )
         token = self._settings.token.get_secret_value() or None
         attempts = 0
         last_error: ProviderError | None = None
@@ -234,10 +247,17 @@ class QuickTinyMcpClient:
                     f"HTTP {response.status_code} (client error)",
                 )
 
-            return _decode_response(
+            decoded = _decode_response(
                 response,
                 request_url=str(response.request.url),
             )
+            if method == "initialize":
+                self._initialized = True
+                negotiated_version = decoded.raw_payload.get("protocolVersion")
+                if isinstance(negotiated_version, str) and negotiated_version:
+                    self._protocol_version = negotiated_version
+                self._session_id = response.headers.get(_MCP_SESSION_HEADER)
+            return decoded
 
         assert last_error is not None
         raise last_error
@@ -266,6 +286,25 @@ def _build_auth_headers(settings: QuickTinyMcpSettings) -> dict[str, str]:
     if not token:
         return {}
     return {f"{_AUTH_HEADER}": f"{_AUTH_SCHEME} {token}"}
+
+
+def _build_request_headers(
+    settings: QuickTinyMcpSettings,
+    *,
+    include_protocol: bool,
+    protocol_version: str,
+    session_id: str | None,
+) -> dict[str, str]:
+    """Build the MCP Streamable HTTP headers for one JSON-RPC POST."""
+
+    headers = _build_auth_headers(settings)
+    headers["Content-Type"] = _CONTENT_TYPE_HEADER
+    headers["Accept"] = _ACCEPT_HEADER
+    if include_protocol:
+        headers[_MCP_PROTOCOL_HEADER] = protocol_version
+        if session_id:
+            headers[_MCP_SESSION_HEADER] = session_id
+    return headers
 
 
 def _classify_status(status_code: int) -> ProviderError | None:

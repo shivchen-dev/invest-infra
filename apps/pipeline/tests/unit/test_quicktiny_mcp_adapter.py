@@ -229,6 +229,7 @@ class QuickTinyMcpClientEnvelopeTest(unittest.TestCase):
 
         def handler(request: httpx.Request) -> httpx.Response:
             captured["url"] = str(request.url)
+            captured["headers"] = dict(request.headers)
             captured["body"] = json.loads(request.content.decode("utf-8"))
             return _ok_envelope(
                 {
@@ -248,6 +249,14 @@ class QuickTinyMcpClientEnvelopeTest(unittest.TestCase):
         )
         self.assertEqual(captured["body"]["jsonrpc"], "2.0")
         self.assertEqual(captured["body"]["method"], "initialize")
+        self.assertEqual(
+            captured["headers"]["accept"],
+            "application/json, text/event-stream",
+        )
+        self.assertEqual(
+            captured["headers"]["content-type"],
+            "application/json",
+        )
         self.assertEqual(
             captured["body"]["params"]["clientInfo"]["name"], "invest-pipeline"
         )
@@ -380,6 +389,51 @@ class QuickTinyMcpClientEnvelopeTest(unittest.TestCase):
                 client.call_tool("")
         finally:
             client.close()
+
+    def test_initialize_negotiates_protocol_and_session_for_follow_up_calls(self) -> None:
+        captured: list[dict[str, str]] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            captured.append(dict(request.headers))
+            method = json.loads(request.content.decode("utf-8"))["method"]
+            if method == "initialize":
+                return httpx.Response(
+                    200,
+                    headers={"Mcp-Session-Id": "session-without-token"},
+                    json={
+                        "jsonrpc": "2.0",
+                        "id": "fixed-id-0001",
+                        "result": {
+                            "protocolVersion": "2025-06-18",
+                            "capabilities": {"tools": {}},
+                        },
+                    },
+                )
+            return _ok_envelope({"tools": []})
+
+        client = _make_client(handler=handler, token=_SECRET_TOKEN)
+        try:
+            client.initialize()
+            client.list_tools()
+            client.call_tool("etf_market")
+        finally:
+            client.close()
+
+        self.assertEqual(
+            [headers["accept"] for headers in captured],
+            ["application/json, text/event-stream"] * 3,
+        )
+        self.assertEqual(
+            [headers["content-type"] for headers in captured],
+            ["application/json"] * 3,
+        )
+        self.assertNotIn("mcp-protocol-version", captured[0])
+        self.assertNotIn("mcp-session-id", captured[0])
+        for headers in captured[1:]:
+            self.assertEqual(headers["mcp-protocol-version"], "2025-06-18")
+            self.assertEqual(headers["mcp-session-id"], "session-without-token")
+            self.assertEqual(headers["authorization"], f"Bearer {_SECRET_TOKEN}")
+            self.assertNotIn(_SECRET_TOKEN, headers["mcp-session-id"])
 
 
 # ----------------------------------------------------------------------
