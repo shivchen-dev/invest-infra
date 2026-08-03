@@ -21,6 +21,11 @@ import type {
   ExclusionReason,
   RuleOutcome,
 } from "../api/types";
+import { CandidatePoolMetadata } from "../features/candidatePool/CandidatePoolMetadata";
+import {
+  exclusionReasonLabel,
+  reasonFilterLabel,
+} from "../features/candidatePool/exclusionLabels";
 import { EmptyState } from "../components/EmptyState";
 import { ErrorState } from "../components/ErrorState";
 import { LoadingState } from "../components/LoadingState";
@@ -29,7 +34,6 @@ import {
   formatAmount,
   formatCount,
   formatDate,
-  formatDateTime,
   formatDecimal,
 } from "../utils/format";
 
@@ -42,14 +46,6 @@ const TABS: ReadonlyArray<{ value: CandidateTab; label: string }> = [
   { value: "excluded", label: "排除" },
   { value: "all", label: "全部" },
 ];
-
-const EXCLUSION_REASON_LABELS: Record<string, string> = {
-  no_data: "无当日行情",
-  suspended: "当日停牌",
-  invalid_price: "收盘价无效",
-  low_volume: "成交量不足",
-  low_amount: "成交额不足",
-};
 
 export function CandidatePoolPage() {
   const latestPool = useQuery<CandidatePoolLatestResponse>({
@@ -109,7 +105,7 @@ export function CandidatePoolPage() {
   return (
     <div className="candidatePoolPage">
       <PageHeader />
-      <MetadataSection pool={pool} />
+      <CandidatePoolMetadata pool={pool} />
       <CandidatePoolExplorer items={pool.items} />
 
       <section className="pageSection" aria-labelledby="candidate-diff-title">
@@ -137,74 +133,6 @@ function PageHeader() {
       <h2 className="pageTitle">候选池</h2>
       <p className="pageSubtitle">查看最新筛选结果、排除依据与跨期变化。</p>
     </header>
-  );
-}
-
-function MetadataSection({ pool }: { pool: CandidatePoolLatestResponse }) {
-  const algorithmVersion = [pool.algorithm_key, pool.algorithm_version]
-    .filter(Boolean)
-    .join(" · ");
-
-  return (
-    <section className="pageSection" aria-labelledby="candidate-metadata-title">
-      <header className="sectionHeader">
-        <h3 className="sectionTitle" id="candidate-metadata-title">
-          最新发布
-        </h3>
-        <span className="sectionMeta">交易日 {formatDate(pool.trade_date)}</span>
-      </header>
-      <dl className="runSummary candidatePoolMetadata">
-        <div>
-          <dt>交易日</dt>
-          <dd>{formatDate(pool.trade_date)}</dd>
-        </div>
-        <div>
-          <dt>Run ID</dt>
-          <dd>
-            <CompactIdentifier value={pool.run_id} />
-          </dd>
-        </div>
-        <div>
-          <dt>Snapshot ID</dt>
-          <dd>
-            <CompactIdentifier value={pool.snapshot_id} />
-          </dd>
-        </div>
-        <div>
-          <dt>算法版本</dt>
-          <dd>{algorithmVersion || "—"}</dd>
-        </div>
-        <div>
-          <dt>参数集</dt>
-          <dd>{pool.parameter_set_key || "—"}</dd>
-        </div>
-        <div>
-          <dt>输入数</dt>
-          <dd>{formatCount(pool.row_count)}</dd>
-        </div>
-        <div>
-          <dt>入选数</dt>
-          <dd>{formatCount(pool.included_count)}</dd>
-        </div>
-        <div>
-          <dt>排除数</dt>
-          <dd>{formatCount(pool.excluded_count)}</dd>
-        </div>
-        <div>
-          <dt>发布时间</dt>
-          <dd>{formatDateTime(pool.published_at)}</dd>
-        </div>
-      </dl>
-    </section>
-  );
-}
-
-function CompactIdentifier({ value }: { value: string }) {
-  const display = value.length > 16 ? `${value.slice(0, 8)}…${value.slice(-4)}` : value;
-  return (
-    <code className="candidatePoolIdentifier" title={value || undefined}>
-      {display || "—"}
-    </code>
   );
 }
 
@@ -446,11 +374,6 @@ function exclusionReasonOptions(
   return [...reasons.values()].sort((a, b) =>
     exclusionReasonLabel(a.code).localeCompare(exclusionReasonLabel(b.code), "zh-CN"),
   );
-}
-
-function reasonFilterLabel(code: string): string {
-  const label = exclusionReasonLabel(code);
-  return label === code ? code : `${label}（${code}）`;
 }
 
 function sortCandidateItems(
@@ -735,10 +658,6 @@ function primaryExclusionReason(
   item: CandidatePoolItem,
 ): ExclusionReason | undefined {
   return item.exclusion_reasons[0];
-}
-
-function exclusionReasonLabel(code: string): string {
-  return EXCLUSION_REASON_LABELS[normalize(code)] ?? code;
 }
 
 function matchingRule(
