@@ -181,6 +181,49 @@ class MigrationChainTest(unittest.TestCase):
         self.assertIn('"candidate_pool_runs"', source)
         self.assertIn('"input_snapshots"', source)
 
+    def test_research_evidence_packs_migration(self) -> None:
+        repository_root = Path(__file__).resolve().parents[1]
+        migration_file = (
+            repository_root
+            / "apps"
+            / "migrations"
+            / "migrations"
+            / "versions"
+            / "20260803_0007_research_evidence_packs.py"
+        )
+        source = migration_file.read_text(encoding="utf-8")
+
+        self.assertIn('revision: str = "20260803_0007"', source)
+        self.assertIn('down_revision: str | None = "20260731_0006"', source)
+        self.assertIn('"research_evidence_packs"', source)
+        self.assertIn("jsonb_typeof(payload) = 'object'", source)
+        self.assertIn("ck_research_evidence_packs_payload_object", source)
+        self.assertIn("length(content_hash) = 64", source)
+        self.assertIn("ck_research_evidence_packs_content_hash_len64", source)
+        self.assertIn(
+            'sa.UniqueConstraint(\n'
+            '            "instrument_id",\n'
+            '            "as_of_date",\n'
+            '            "schema_version",\n'
+            '            "factor_set_version",\n'
+            '            "content_hash",\n'
+            '            name="uq_research_evidence_packs_natural_key",\n'
+            "        )",
+            source,
+        )
+        for foreign_key_name in (
+            "fk_research_packs_instrument",
+            "fk_research_packs_snapshot",
+            "fk_research_packs_candidate_run",
+        ):
+            self.assertIn(f'name="{foreign_key_name}"', source)
+        for foreign_key_target in (
+            "core.instruments.id",
+            "analytics.input_snapshots.id",
+            "analytics.candidate_pool_runs.id",
+        ):
+            self.assertIn(f'"{foreign_key_target}"', source)
+
 
 def _first_string_literal(call_node: ast.Call) -> str | None:
     for argument in call_node.args:

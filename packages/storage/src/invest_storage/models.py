@@ -709,3 +709,71 @@ class InputSnapshotRow(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
+
+
+class ResearchEvidencePackRow(Base):
+    __tablename__ = "research_evidence_packs"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["instrument_id"],
+            ["core.instruments.id"],
+            name="fk_research_packs_instrument",
+        ),
+        ForeignKeyConstraint(
+            ["input_snapshot_id"],
+            ["analytics.input_snapshots.id"],
+            name="fk_research_packs_snapshot",
+        ),
+        ForeignKeyConstraint(
+            ["candidate_pool_run_id"],
+            ["analytics.candidate_pool_runs.id"],
+            name="fk_research_packs_candidate_run",
+        ),
+        UniqueConstraint(
+            "instrument_id",
+            "as_of_date",
+            "schema_version",
+            "factor_set_version",
+            "content_hash",
+            name="uq_research_evidence_packs_natural_key",
+        ),
+        CheckConstraint(
+            "length(content_hash) = 64",
+            name="ck_research_evidence_packs_content_hash_len64",
+        ),
+        CheckConstraint(
+            "jsonb_typeof(payload) = 'object'",
+            name="ck_research_evidence_packs_payload_object",
+        ),
+        Index(
+            "ix_research_evidence_packs_instrument_as_of_date",
+            "instrument_id",
+            "as_of_date",
+        ),
+        Index("ix_research_evidence_packs_content_hash", "content_hash"),
+        {"schema": "analytics"},
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    instrument_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), nullable=False
+    )
+    as_of_date: Mapped[date] = mapped_column(Date, nullable=False)
+    schema_version: Mapped[str] = mapped_column(String(32), nullable=False)
+    factor_set_key: Mapped[str] = mapped_column(String(80), nullable=False)
+    factor_set_version: Mapped[str] = mapped_column(String(32), nullable=False)
+    input_snapshot_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), nullable=True
+    )
+    candidate_pool_run_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), nullable=True
+    )
+    freshness_status: Mapped[str] = mapped_column(String(24), nullable=False)
+    quality_status: Mapped[str] = mapped_column(String(24), nullable=False)
+    content_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    payload: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
