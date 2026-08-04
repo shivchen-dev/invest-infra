@@ -64,11 +64,12 @@ import contextlib
 import os
 import re
 import sys
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime
 from typing import Any, Protocol
 
+from invest_domain.instruments.models import Instrument
 from invest_domain.market_data.models import (
     DailyBar,
     ProviderAttempt,
@@ -84,6 +85,7 @@ from invest_pipeline.adapters.errors import (
     ProviderError,
     RealProviderRequiresExplicitEnablementError,
 )
+from invest_pipeline.provider_coverage_plan import select_active_etf_symbols
 from invest_pipeline.provider_coverage_report import (
     CoverageError,
     CoverageReportBuildError,
@@ -624,6 +626,45 @@ class ProviderCoverageRunner:
     def close(self) -> None:
         with contextlib.suppress(Exception):
             self.provider.close()
+
+    @classmethod
+    def from_active_instruments(
+        cls,
+        *,
+        start_date: date,
+        end_date: date,
+        instruments: Iterable[Instrument],
+        provider: _CoverageProviderPort,
+        requested_fields: tuple[str, ...] | None = None,
+        generated_at: str | None = None,
+    ) -> ProviderCoverageRunner:
+        """Build a runner whose ``symbols`` is the active ETF universe.
+
+        The bridge delegates the universe resolution to
+        :func:`invest_pipeline.provider_coverage_plan.select_active_etf_symbols`
+        so the runner and the rest of the coverage pipeline share one
+        definition of "active domestic ETF": instrument kind is ``ETF``,
+        ``is_active`` is true, lifecycle status is ``ACTIVE`` and the
+        exchange is one of ``SSE`` / ``SZSE``. The helper returns a
+        sorted, deduplicated tuple of symbols; when a symbol appears on
+        more than one exchange the helper raises
+        :class:`invest_pipeline.provider_coverage_plan.ActiveUniverseAmbiguityError`
+        and the classmethod re-raises it untouched so callers see the
+        cross-exchange ambiguity without any silent fallback. An empty
+        ``instruments`` iterable yields an empty-symbol runner.
+        """
+
+        symbols = select_active_etf_symbols(instruments)
+        if requested_fields is None:
+            requested_fields = default_daily_bars_field_set()
+        return cls(
+            start_date=start_date,
+            end_date=end_date,
+            symbols=symbols,
+            provider=provider,
+            requested_fields=requested_fields,
+            generated_at=generated_at,
+        )
 
 
 def _attempt_to_probe_result(

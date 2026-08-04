@@ -5,9 +5,19 @@ from datetime import date
 from types import SimpleNamespace
 
 import pytest
+from invest_domain.instruments.models import Instrument, InstrumentType
+from invest_domain.instruments.values import InstrumentStatus
 from invest_domain.market_data.models import ProviderAttemptStatus
+from invest_domain.shared.values import Exchange
 from invest_pipeline import provider_coverage_cli as cli
-from invest_pipeline.provider_coverage_report import serialize_coverage_report
+from invest_pipeline.provider_coverage_plan import (
+    ActiveUniverseAmbiguityError,
+    select_active_etf_symbols,
+)
+from invest_pipeline.provider_coverage_report import (
+    default_daily_bars_field_set,
+    serialize_coverage_report,
+)
 
 
 class StubProvider:
@@ -148,3 +158,120 @@ def test_token_string_is_absent_from_output(monkeypatch, capsys):
     captured = capsys.readouterr()
     assert token not in captured.out
     assert token not in captured.err
+
+
+# ---------------------------------------------------------------------------
+# ProviderCoverageRunner.from_active_instruments bridge
+# ---------------------------------------------------------------------------
+
+
+def _make_instrument(
+    *,
+    symbol: str,
+    exchange: str = Exchange.SSE,
+    instrument_type: InstrumentType = InstrumentType.ETF,
+    is_active: bool = True,
+    status: InstrumentStatus = InstrumentStatus.ACTIVE,
+    delist_date: date | None = None,
+) -> Instrument:
+    return Instrument(
+        symbol=symbol,
+        name=f"name-{symbol}",
+        exchange=exchange,
+        instrument_type=instrument_type,
+        is_active=is_active,
+        status=status,
+        delist_date=delist_date,
+    )
+
+
+def test_from_active_instruments_returns_sorted_active_etf_symbols():
+    provider = StubProvider({})
+    instruments = (
+        _make_instrument(symbol="510500"),
+        _make_instrument(symbol="159915"),
+        _make_instrument(symbol="510300"),
+    )
+
+    runner = cli.ProviderCoverageRunner.from_active_instruments(
+        start_date=date(2026, 7, 23),
+        end_date=date(2026, 7, 30),
+        instruments=instruments,
+        provider=provider,
+    )
+
+    assert runner.symbols == ("159915", "510300", "510500")
+    assert isinstance(runner.symbols, tuple)
+    assert runner.symbols == select_active_etf_symbols(instruments)
+    assert runner.start_date == date(2026, 7, 23)
+    assert runner.end_date == date(2026, 7, 30)
+    assert runner.provider is provider
+    assert runner.requested_fields == default_daily_bars_field_set()
+    assert runner.generated_at is None
+    assert not provider.closed
+
+
+def test_from_active_instruments_filters_through_bridge():
+    provider = StubProvider({})
+    instruments = (
+        _make_instrument(symbol="510300"),
+        _make_instrument(symbol="159915", exchange=Exchange.SZSE),
+        _make_instrument(
+            symbol="600000",
+            instrument_type=InstrumentType.STOCK,
+        ),
+        _make_instrument(symbol="510310", is_active=False),
+        _make_instrument(symbol="510320", status=InstrumentStatus.SUSPENDED),
+        _make_instrument(
+            symbol="510330",
+            status=InstrumentStatus.DELISTED,
+            delist_date=date(2026, 1, 1),
+        ),
+    )
+
+    runner = cli.ProviderCoverageRunner.from_active_instruments(
+        start_date=date(2026, 7, 23),
+        end_date=date(2026, 7, 30),
+        instruments=instruments,
+        provider=provider,
+    )
+
+    assert runner.symbols == ("159915", "510300")
+
+
+def test_from_active_instruments_propagates_cross_exchange_ambiguity():
+    provider = StubProvider({})
+    instruments = (
+        _make_instrument(symbol="510300", exchange=Exchange.SSE),
+        _make_instrument(symbol="510300", exchange=Exchange.SZSE),
+    )
+
+    with pytest.raises(ActiveUniverseAmbiguityError) as exc_info:
+        cli.ProviderCoverageRunner.from_active_instruments(
+            start_date=date(2026, 7, 23),
+            end_date=date(2026, 7, 30),
+            instruments=instruments,
+            provider=provider,
+        )
+
+    assert "510300" in str(exc_info.value)
+    assert Exchange.SSE in str(exc_info.value)
+    assert Exchange.SZSE in str(exc_info.value)
+    assert not provider.closed
+
+
+def test_from_active_instruments_returns_empty_symbol_runner_for_empty_input():
+    provider = StubProvider({})
+
+    runner = cli.ProviderCoverageRunner.from_active_instruments(
+        start_date=date(2026, 7, 23),
+        end_date=date(2026, 7, 30),
+        instruments=(),
+        provider=provider,
+    )
+
+    assert runner.symbols == ()
+    assert isinstance(runner.symbols, tuple)
+    assert runner.provider is provider
+    assert runner.requested_fields == default_daily_bars_field_set()
+    assert not provider.closed
