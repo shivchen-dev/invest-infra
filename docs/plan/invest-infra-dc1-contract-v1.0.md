@@ -88,10 +88,12 @@ DC-1 代码级契约已完成：
 - 完整、缺失、错误、过期及 SLA=0 路径已有 focused tests；
 - AkShare 与 CifangQuant 已完成 16 个 active ETF 的近期真实取数复测，字段完整且无错误；
 - Storage 已支持单标的和批量最新 revision 日线读取。
+- 2026-01-01 至 2026-08-04 已完成 16 个 ETF 的双源回填验收；`latest_daily_bars`
+  为 2,256 条，最新版本无缺失字段；2016 年历史窗口按范围决策豁免。
 
 以下项目不作为 DC-1 完成门槛，继续留在后续工作：
 
-- Coverage CLI 接入；
-- 跨 Provider 数值一致性入口（DC1-C）；
-- 历史全量覆盖、回填排序和幂等回填；
+- Coverage CLI 的更多 Provider 扩展；
+- 跨 Provider 数值一致性入口的扩展验收（DC1-C）；
+- 2016 年历史窗口（按范围决策豁免）；
 - 10 个交易日 Shadow Run 及生产授权验收。

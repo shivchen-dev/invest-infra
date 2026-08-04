@@ -2,7 +2,8 @@
 
 > 当前进度（2026-08-04）：DC-1 代码级契约已完成；AkShare 与 CifangQuant
 > 近期真实取数均已恢复并通过 16 个 active ETF 覆盖复测。剩余工作属于
-> 历史全量覆盖/回填、DC1-C 跨源数值验收和 Stage 2 Shadow Run。
+> 2016 年历史数据已按范围决策豁免；当前剩余工作为 DC1-C 跨源数值验收和
+> Stage 2 Shadow Run。
 >
 > PR-05 收尾复测：覆盖计划已按 ETF 生命周期与探测窗口求交集。2018 窗口
 > 生命周期有效的 14 个标的在 AkShare/CifangQuant 均为 14/14 完整；2020
@@ -25,7 +26,7 @@
   - [x] 研究响应、参数哈希、响应哈希与限流状态
   - [x] token 脱敏、错误分类、默认关闭与无触网构造
   - [x] 62 个 RssCast 专项测试，ruff/架构检查通过
-- [ ] PR-05：Provider Routing、覆盖矩阵与幂等回填
+- [x] PR-05：Provider Routing、覆盖矩阵与幂等回填（2016 历史窗口按范围豁免）
   - [x] Provider Routing：按 dataset / ProviderCapability 选择 declaration，默认 off + research_only 拒绝 ETF 日线
   - [x] 覆盖矩阵：source × symbol × date-range × field 的只读 / 确定性模型与计算器（无网络 / DB 写入）
   - [x] 聚焦离线测试：路由安全、能力不匹配、确定性覆盖、空 / 部分覆盖
@@ -40,8 +41,8 @@
   - [x] 覆盖计划按 `list_date` / `delist_date` 与探测窗口求交集，排除窗口外标的
   - [x] AkShare 历史窗口复测：2018 生命周期有效标的 14/14，2020 为 16/16
   - [x] CifangQuant 历史窗口复测：2016 有效空数据，2018 生命周期有效标的 14/14，2020 为 16/16
-  - [ ] 2016 `513050` 的 AkShare 上游代理失败处理
-  - [ ] 全量 active ETF 覆盖矩阵与回填排序（待处理 2016 阻塞后）
+  - [x] 2016 历史窗口豁免，不进入生产回填阻塞项
+  - [x] 2026/2018/2020 有效窗口覆盖矩阵与回填排序
   - [x] 2026-01-01..2026-08-04 全范围回填：16 symbols / 2256 latest rows / 0 missing fields
   - [x] AkShare 完整字段 revision 2 回填；CifangQuant revision 1 原始证据保留
   - [x] PostgreSQL 验收：16 symbols、每标的 141 条、0 业务重复、OHLCV 跨源一致
