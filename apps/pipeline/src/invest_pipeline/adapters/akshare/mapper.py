@@ -543,7 +543,7 @@ def _row_to_bar(
 ) -> DailyBar:
     """Build a single :class:`DailyBar` from a daily-bars row dict."""
 
-    trade_date_raw = _alias_str(entry, _AKSHARE_DATE_ALIASES)
+    trade_date_raw = _alias_value(entry, _AKSHARE_DATE_ALIASES)
     if trade_date_raw is None:
         raise _SkippedRow(
             "missing trade_date/date field "
@@ -753,7 +753,7 @@ def _coerce_optional_date(raw: Any) -> date | None:
     )
 
 
-def _coerce_trade_date(raw: str) -> date:
+def _coerce_trade_date(raw: str | date) -> date:
     """Parse a required trade-date string.
 
     Mirrors :func:`_coerce_optional_date` but is used for required
@@ -762,6 +762,10 @@ def _coerce_trade_date(raw: str) -> date:
     whole batch.
     """
 
+    if isinstance(raw, datetime):
+        return raw.date()
+    if isinstance(raw, date):
+        return raw
     text = raw.strip()
     if not text:
         raise _SkippedRow("empty trade_date/date field")

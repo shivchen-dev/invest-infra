@@ -28,6 +28,7 @@ The tests inject a stub ``akshare`` module via the client's
 from __future__ import annotations
 
 import unittest
+from datetime import date
 from types import ModuleType, SimpleNamespace
 from typing import Any
 
@@ -162,6 +163,76 @@ class AkshareClientCalendarFetchTest(unittest.TestCase):
         with self.assertRaises(ProviderBadResponseError) as ctx:
             client.fetch_tool_trade_date_hist_sina()
         self.assertIn("upstream 503", str(ctx.exception))
+
+
+class AkshareClientSinaFetchTest(unittest.TestCase):
+    def test_passes_market_prefixed_symbol_and_filters_range(self) -> None:
+        captured: dict[str, Any] = {}
+
+        def _capture(**kwargs: Any) -> list[dict[str, Any]]:
+            captured.update(kwargs)
+            return [
+                {"日期": "2026-07-22", "收盘": "1"},
+                {"日期": "2026-07-23", "收盘": "2"},
+                {"日期": "2026-07-30", "收盘": "3"},
+                {"日期": "2026-07-31", "收盘": "4"},
+            ]
+
+        client = AkshareClient(
+            _enabled_settings(),
+            module=SimpleNamespace(fund_etf_hist_sina=_capture),
+        )
+        response = client.fetch_fund_etf_hist_sina(
+            symbol="510300",
+            start_date=date(2026, 7, 23),
+            end_date=date(2026, 7, 30),
+        )
+        self.assertEqual(captured, {"symbol": "sh510300"})
+        self.assertEqual(
+            [row["日期"] for row in response.raw_payload],
+            ["2026-07-23", "2026-07-30"],
+        )
+
+    def test_shenzhen_symbol_uses_sz_prefix(self) -> None:
+        captured: dict[str, Any] = {}
+        client = AkshareClient(
+            _enabled_settings(),
+            module=SimpleNamespace(
+                fund_etf_hist_sina=lambda **kwargs: captured.update(kwargs) or []
+            ),
+        )
+        client.fetch_fund_etf_hist_sina(
+            symbol="159919",
+            start_date=date(2026, 7, 23),
+            end_date=date(2026, 7, 30),
+        )
+        self.assertEqual(captured["symbol"], "sz159919")
+
+    def test_upstream_failure_is_typed(self) -> None:
+        client = AkshareClient(
+            _enabled_settings(),
+            module=SimpleNamespace(
+                fund_etf_hist_sina=lambda **kwargs: (_ for _ in ()).throw(
+                    RuntimeError("upstream 503")
+                )
+            ),
+        )
+        with self.assertRaises(ProviderBadResponseError) as ctx:
+            client.fetch_fund_etf_hist_sina(
+                symbol="510300",
+                start_date=date(2026, 7, 23),
+                end_date=date(2026, 7, 30),
+            )
+        self.assertIn("upstream 503", str(ctx.exception))
+
+    def test_missing_sdk_function_is_typed(self) -> None:
+        client = AkshareClient(_enabled_settings(), module=SimpleNamespace())
+        with self.assertRaises(ProviderUnavailableError):
+            client.fetch_fund_etf_hist_sina(
+                symbol="510300",
+                start_date=date(2026, 7, 23),
+                end_date=date(2026, 7, 30),
+            )
 
 
 class AkshareClientModuleResolutionTest(unittest.TestCase):

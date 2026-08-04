@@ -54,7 +54,13 @@ def _make_response(payload: list[dict[str, Any]], *, operation: str = "op") -> A
     import hashlib
     import json
 
-    text = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    text = json.dumps(
+        payload,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+        default=str,
+    )
     return AkshareResponse(
         operation=operation,
         raw_payload=payload,
@@ -464,6 +470,18 @@ class MapFundEtfHistEmTest(unittest.TestCase):
         )
         self.assertEqual(len(result.bars), 1)
         self.assertEqual(result.bars[0].trade_date, date(2026, 7, 30))
+
+    def test_native_date_trade_date_is_parsed(self) -> None:
+        payload = [{
+            "date": date(2026, 7, 30),
+            "open": "3.900", "close": "3.910",
+            "high": "3.920", "low": "3.890", "volume": "10000000",
+        }]
+        result = map_fund_etf_hist_em(
+            _make_response(payload), symbol="510300", source_batch_id=uuid4(),
+            observed_at=_observed_at(), instrument_id_resolver=_resolver(),
+        )
+        self.assertEqual(len(result.bars), 1)
 
     def test_unknown_symbol_exchange_raises_contract_error(self) -> None:
         # The mapper still raises the typed allow-list error when a

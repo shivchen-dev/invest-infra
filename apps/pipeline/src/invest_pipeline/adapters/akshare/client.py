@@ -52,7 +52,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, datetime
 from types import ModuleType
 from typing import Any
 
@@ -229,6 +229,57 @@ class AkshareClient:
                 f"{_scrub_message(str(exc), self._settings)}",
             ) from exc
         records = _dataframe_to_records(dataframe, operation)
+        return AkshareResponse(
+            operation=operation,
+            raw_payload=records,
+            raw_payload_hash=_canonical_payload_hash(records),
+        )
+
+    def fetch_fund_etf_hist_sina(
+        self,
+        *,
+        symbol: str,
+        start_date: date,
+        end_date: date,
+    ) -> AkshareResponse:
+        """Return the requested-range ETF daily-bars payload from Sina.
+
+        Sina exposes the full history for a market-prefixed symbol, so the
+        client applies the inclusive date boundary after normalising the
+        SDK response.
+        """
+
+        if not symbol or not symbol.strip():
+            raise ValueError("symbol must be a non-empty string")
+        if end_date < start_date:
+            raise ValueError(
+                f"end_date {end_date.isoformat()} must be on or after "
+                f"start_date {start_date.isoformat()}"
+            )
+        module = self._resolve_module()
+        operation = "fund_etf_hist_sina"
+        if not hasattr(module, operation):
+            raise ProviderUnavailableError(
+                _PROVIDER_KEY,
+                f"akshare module exposes no '{operation}' function; "
+                "the installed SDK version may have removed or renamed "
+                f"it (akshare.__version__={getattr(module, '__version__', 'unknown')!r})",
+            )
+        sina_symbol = _sina_symbol(symbol)
+        try:
+            dataframe = getattr(module, operation)(symbol=sina_symbol)
+        except Exception as exc:
+            raise ProviderBadResponseError(
+                _PROVIDER_KEY,
+                f"akshare.{operation}(symbol={sina_symbol!r}) raised "
+                f"{type(exc).__name__}: {_scrub_message(str(exc), self._settings)}",
+            ) from exc
+        records = _filter_date_range(
+            _dataframe_to_records(dataframe, operation),
+            operation=operation,
+            start_date=start_date,
+            end_date=end_date,
+        )
         return AkshareResponse(
             operation=operation,
             raw_payload=records,
@@ -444,6 +495,63 @@ def _dataframe_to_records(dataframe: Any, operation: str) -> list[dict[str, Any]
     return normalised
 
 
+def _sina_symbol(symbol: str) -> str:
+    """Apply the V1 ETF market-prefix convention used by Sina."""
+
+    code = symbol.strip()
+    if code[0] in {"5", "6"}:
+        return f"sh{code}"
+    if code[0] in {"1", "2"}:
+        return f"sz{code}"
+    raise ProviderBadResponseError(
+        _PROVIDER_KEY,
+        f"cannot map ETF symbol {symbol!r} to Sina's sh/sz market prefix",
+    )
+
+
+def _filter_date_range(
+    records: list[dict[str, Any]],
+    *,
+    operation: str,
+    start_date: date,
+    end_date: date,
+) -> list[dict[str, Any]]:
+    filtered: list[dict[str, Any]] = []
+    for index, record in enumerate(records):
+        raw_date = next(
+            (
+                record.get(key)
+                for key in ("日期", "trade_date", "date")
+                if record.get(key) is not None
+            ),
+            None,
+        )
+        if raw_date is None:
+            raise ProviderBadResponseError(
+                _PROVIDER_KEY,
+                f"akshare.{operation}() row {index} has no date field",
+            )
+        try:
+            if isinstance(raw_date, datetime):
+                row_date = raw_date.date()
+            elif isinstance(raw_date, date):
+                row_date = raw_date
+            else:
+                text = str(raw_date).strip()
+                if "-" in text:
+                    row_date = datetime.strptime(text[:10], "%Y-%m-%d").date()
+                else:
+                    row_date = datetime.strptime(text[:8], "%Y%m%d").date()
+        except (TypeError, ValueError) as exc:
+            raise ProviderBadResponseError(
+                _PROVIDER_KEY,
+                f"akshare.{operation}() row {index} has invalid date {raw_date!r}",
+            ) from exc
+        if start_date <= row_date <= end_date:
+            filtered.append(record)
+    return filtered
+
+
 def _canonical_payload_hash(records: list[dict[str, Any]]) -> str:
     """Return a stable SHA-256 of the normalised AkShare payload.
 
@@ -457,7 +565,11 @@ def _canonical_payload_hash(records: list[dict[str, Any]]) -> str:
     from hashlib import sha256
 
     text = json.dumps(
-        records, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+        records,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+        default=str,
     )
     return sha256(text.encode("utf-8")).hexdigest()
 

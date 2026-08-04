@@ -287,31 +287,52 @@ class AkshareInstrumentProvider:
         failed_symbol: str | None = None
 
         for symbol in symbol_list:
+            response = None
+            mapping = None
+            source_key = "sina"
             try:
-                response = self._client.fetch_fund_etf_hist_em(
+                response = self._client.fetch_fund_etf_hist_sina(
                     symbol=symbol,
                     start_date=start_date,
                     end_date=end_date,
                 )
-            except ProviderError as exc:
-                first_failure = exc
-                failed_symbol = symbol
-                break
-            symbol_payloads.append(
-                {"symbol": symbol, "rows": response.raw_payload}
-            )
-            try:
                 mapping = map_fund_etf_hist_em(
                     response,
                     symbol=symbol,
                     source_batch_id=attempt_id,
                     observed_at=self._now(),
                     instrument_id_resolver=self._resolve_placeholder_instrument_id,
+                    bar_source_key=source_key,
                 )
-            except ProviderDataContractError as exc:
-                first_failure = exc
-                failed_symbol = symbol
-                break
+            except ProviderError:
+                mapping = None
+
+            if not mapping or not mapping.bars:
+                source_key = "eastmoney"
+                try:
+                    response = self._client.fetch_fund_etf_hist_em(
+                        symbol=symbol,
+                        start_date=start_date,
+                        end_date=end_date,
+                    )
+                    mapping = map_fund_etf_hist_em(
+                        response,
+                        symbol=symbol,
+                        source_batch_id=attempt_id,
+                        observed_at=self._now(),
+                        instrument_id_resolver=self._resolve_placeholder_instrument_id,
+                        bar_source_key=source_key,
+                    )
+                except ProviderError as exc:
+                    first_failure = exc
+                    failed_symbol = symbol
+                    break
+
+            assert response is not None
+            assert mapping is not None
+            symbol_payloads.append(
+                {"symbol": symbol, "source": source_key, "rows": response.raw_payload}
+            )
             all_bars.extend(mapping.bars)
             all_warnings.extend(mapping.warnings)
 
@@ -619,7 +640,11 @@ def _canonical_payload_hash(payload: Any) -> str:
     import json
 
     text = json.dumps(
-        payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+        payload,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+        default=str,
     )
     return sha256(text.encode("utf-8")).hexdigest()
 

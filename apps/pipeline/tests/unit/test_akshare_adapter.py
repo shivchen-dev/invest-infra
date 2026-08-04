@@ -255,6 +255,104 @@ class AkshareLazyDependencyTest(unittest.TestCase):
         self.assertIsNone(batch)
 
 
+class AkshareSinaPriorityTest(unittest.TestCase):
+    def _row(self, trade_date: str = "2026-07-30") -> dict[str, str]:
+        return {
+            "日期": trade_date,
+            "开盘": "3.900",
+            "收盘": "3.910",
+            "最高": "3.920",
+            "最低": "3.890",
+            "成交量": "10000000",
+        }
+
+    def test_sina_success_does_not_call_eastmoney(self) -> None:
+        calls = {"sina": 0, "em": 0}
+
+        def _sina(**kwargs: Any) -> list[dict[str, str]]:
+            calls["sina"] += 1
+            return [self._row()]
+
+        def _em(**kwargs: Any) -> list[dict[str, str]]:
+            calls["em"] += 1
+            return [self._row()]
+
+        client = AkshareClient(
+            _enabled_settings(),
+            module=SimpleNamespace(
+                fund_etf_hist_sina=_sina,
+                fund_etf_hist_em=_em,
+            ),
+        )
+        provider = AkshareInstrumentProvider(
+            settings=_enabled_settings(), client=client
+        )
+        _, _, batch = provider.fetch_daily_bars(
+            symbols=["510300"],
+            start_date=date(2026, 7, 30),
+            end_date=date(2026, 7, 30),
+        )
+        assert batch is not None
+        self.assertEqual(calls, {"sina": 1, "em": 0})
+        self.assertEqual(batch.records[0].source.provider_key, "sina")
+
+    def test_sina_failure_falls_back_to_eastmoney(self) -> None:
+        calls = {"sina": 0, "em": 0}
+
+        def _sina(**kwargs: Any) -> list[dict[str, str]]:
+            calls["sina"] += 1
+            raise RuntimeError("sina unavailable")
+
+        def _em(**kwargs: Any) -> list[dict[str, str]]:
+            calls["em"] += 1
+            return [self._row()]
+
+        client = AkshareClient(
+            _enabled_settings(),
+            module=SimpleNamespace(fund_etf_hist_sina=_sina, fund_etf_hist_em=_em),
+        )
+        provider = AkshareInstrumentProvider(
+            settings=_enabled_settings(), client=client
+        )
+        _, attempt, batch = provider.fetch_daily_bars(
+            symbols=["510300"],
+            start_date=date(2026, 7, 30),
+            end_date=date(2026, 7, 30),
+        )
+        assert batch is not None
+        self.assertEqual(attempt.status, ProviderAttemptStatus.SUCCEEDED)
+        self.assertEqual(calls, {"sina": 1, "em": 1})
+        self.assertEqual(batch.records[0].source.provider_key, "eastmoney")
+
+    def test_sina_empty_falls_back_to_eastmoney(self) -> None:
+        calls = {"sina": 0, "em": 0}
+        def _sina(**kwargs: Any) -> list[dict[str, str]]:
+            calls["sina"] += 1
+            return []
+
+        def _em(**kwargs: Any) -> list[dict[str, str]]:
+            calls["em"] += 1
+            return [self._row()]
+
+        client = AkshareClient(
+            _enabled_settings(),
+            module=SimpleNamespace(
+                fund_etf_hist_sina=_sina,
+                fund_etf_hist_em=_em,
+            ),
+        )
+        provider = AkshareInstrumentProvider(
+            settings=_enabled_settings(), client=client
+        )
+        _, _, batch = provider.fetch_daily_bars(
+            symbols=["510300"],
+            start_date=date(2026, 7, 30),
+            end_date=date(2026, 7, 30),
+        )
+        assert batch is not None
+        self.assertEqual(calls, {"sina": 1, "em": 1})
+
+
 class AkshareMappingSuccessTest(unittest.TestCase):
     """End-to-end success path with an injected stub ``akshare`` module."""
 
