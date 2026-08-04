@@ -27,7 +27,8 @@
   - [x] Fixture matrix result：`docs/implementation/PROVIDER-COVERAGE-FIXTURE-2026-08-04.md`
   - [x] Fixture full active-universe bridge：16 symbols / 2026-07-23..2026-07-30 / 6 fields
   - [x] 多 Provider CoverageReport 合并：重复 Provider / schema mismatch 拒绝，aggregate hash 确定性
-  - [ ] AkShare 真实全量覆盖探测（SDK 已通过 Clash 安装并完成导入验证；16 个 active ETF 请求均因 EastMoney 上游经代理返回 `ProxyError / RemoteDisconnected`，待网络链路恢复后重试）
+  - [x] AkShare 真实近期全量覆盖探测（16 个 active ETF / 2026-07-30..2026-08-03 / 6 fields；无错误）
+  - [ ] AkShare 历史全量覆盖探测（2016、2018、2020 及更长窗口仍待执行）
   - [x] CifangQuant 全量 active-universe 探测：16 symbols / 2016、2020、2026-07 三窗口
   - [ ] 全量 active ETF 覆盖矩阵与回填排序
   - [x] AkShare NAV/交易日历 Adapter：只读 fetch_nav + fetch_trading_calendar；mapper 不把 NAV 映射为 OHLCV；聚焦离线测试

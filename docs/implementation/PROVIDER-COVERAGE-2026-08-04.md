@@ -33,3 +33,17 @@
 - 适配器单 ETF 调用曾成功返回 23 条记录；随后对 16 个 active ETF 的近期窗口进行有限重试，均在 EastMoney 上游请求阶段失败。
 - 失败类型：`ProviderBadResponseError`，根因是经当前代理连接 EastMoney 时 `ProxyError / RemoteDisconnected`。
 - 结论：当前不能据此判定 AkShare 字段映射或覆盖能力不足；真实全量覆盖报告待代理/上游链路恢复后重跑。
+
+## 2026-08-04 近期窗口复测
+
+代理链路恢复后，对当前 16 个 active ETF 执行了只读覆盖探测：
+
+| Provider | 日期窗口 | 标的覆盖 | 单标的记录 | 字段完整度 | 错误 |
+|---|---|---:|---:|---|---:|
+| AkShare | 2026-07-30 — 2026-08-03 | 16/16 | 3 | 6/6 | 0 |
+| CifangQuant | 2026-07-30 — 2026-08-03 | 16/16 | 3 | 6/6 | 0 |
+
+- AkShare content hash：`bda9e7852d87ca2c93b08968253328033bb67663695deb3a5469a0dab1a2724a`
+- CifangQuant content hash：`15a724b48386ff11c6de92c103b3b92cad8fbf7a37c4e4e8251c52b01799d5e4`
+- 两次探测均为只读 CLI，不写 PostgreSQL、不执行历史回填。
+- 本结果证明近期窗口的真实可用性，不等同于 2016 年历史覆盖或跨源数值一致性验收。
