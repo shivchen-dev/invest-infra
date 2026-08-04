@@ -2,10 +2,19 @@
 
 All priorities, reliability scores, and freshness SLAs below are explicit
 provisional policy values, not measured provider-quality statistics. The
-provisional order is fixture_dev (0), cifangquant (10), akshare (20),
-eastmoney (30), sina (40), and tonghuashun (50). Their provisional
-reliability scores are 1.00, 0.80, 0.70, 0.60, 0.60, and 0.60; their
-freshness SLAs are respectively 0, 1, 1, 1, 1, and 1 days.
+provisional order is fixture_dev (0), cifangquant (10), and akshare (20).
+Their provisional reliability scores are 1.00, 0.80, and 0.70; their
+freshness SLAs are respectively 0, 1, and 1 days.
+
+The historical V2 three-provider plan (``eastmoney`` / ``sina`` /
+``tonghuashun``) had a provisional order of (30), (40), (50) with
+reliability 0.60 and SLA 1 day each. That plan has been de-scoped in
+this slice: the three sources are not selectable runtime providers in
+V2 and no ``ProviderDatasetRegistration`` entry exists for them. Their
+public historical-quotes endpoints remain internal upstreams of the
+AkShare aggregator; the quality registry therefore tracks the three
+runtime ETF daily-bars providers (``fixture_dev`` / ``cifangquant`` /
+``akshare``) only.
 """
 
 from __future__ import annotations
@@ -94,9 +103,6 @@ ETF_DAILY_BAR_REGISTRY: tuple[ProviderDatasetRegistration, ...] = (
     _etf_registration("fixture_dev", 0, "1.00", 0),
     _etf_registration("cifangquant", 10, "0.80", 1),
     _etf_registration("akshare", 20, "0.70", 1),
-    _etf_registration("eastmoney", 30, "0.60", 1),
-    _etf_registration("sina", 40, "0.60", 1),
-    _etf_registration("tonghuashun", 50, "0.60", 1),
 )
 
 

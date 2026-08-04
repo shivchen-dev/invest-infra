@@ -133,6 +133,20 @@ response 或数据库 row。
   `apps/pipeline/tests/unit/test_provider_catalog.py`；其余 Provider 的能
   力声明待对应 Adapter 落地后再补齐，避免在没有占位实现的源码里声称
   能力）。
+- 东方财富 / 新浪 / 同花顺三个数据源在 V2 中**不是** selectable
+  runtime Provider；`provider_catalog.py` 与
+  `provider_quality.ETF_DAILY_BAR_REGISTRY` 都不注册它们。其公开历史
+  行情接口仅作为 AkShare 聚合库的内部上游：
+  `ak.fund_etf_hist_sina`（新浪）由
+  `AkshareClient.fetch_fund_etf_hist_sina` 作为首选路径调用，
+  对应 `BarSource.provider_key="sina"`；失败 / 空结果时回退到
+  `ak.fund_etf_hist_em`（东方财富）路径，对应
+  `BarSource.provider_key="eastmoney"`。同花顺（同花顺 iFinD /
+  10jqka）目前没有对应的开源历史行情 endpoint 在 V2 中作为 AkShare
+  内部上游使用。三源作为独立 runtime Provider 的可能性留待未来 ADR
+  评估；当前 slice 的 plan / todo 文档以 planned-only 形式保留历史
+  提案（`tasks/plan-data-source-three-provider.md` 与
+  `tasks/todo-data-source-three-provider.md`）。
 - 配置驱动的 Provider Registry/Factory、`fixture_dev` 与每个归档源对应
   的 redacted config 模板。
 - `ProviderAuthenticationError` / `ProviderRateLimitError` 等错误分类

@@ -83,14 +83,23 @@ def test_registry_contains_valid_frozen_entries() -> None:
         "fixture_dev",
         "cifangquant",
         "akshare",
-        "eastmoney",
-        "sina",
-        "tonghuashun",
     }
     assert all(entry.dataset is Dataset.ETF_DAILY_BARS for entry in ETF_DAILY_BAR_REGISTRY)
     assert all(entry.supported_fields == DAILY_BARS_FIELDS for entry in ETF_DAILY_BAR_REGISTRY)
     with pytest.raises(FrozenInstanceError):
         ETF_DAILY_BAR_REGISTRY[0].priority = 99  # type: ignore[misc]
+
+
+def test_registry_excludes_three_provider_plan_keys() -> None:
+    # The historical V2 three-provider plan (``eastmoney`` / ``sina``
+    # / ``tonghuashun``) proposed additional ETF daily-bar providers;
+    # that plan has been de-scoped and the registry must not carry
+    # entries for them. The three sources remain internal upstreams
+    # of the AkShare aggregator (``ak.fund_etf_hist_sina`` /
+    # ``ak.fund_etf_hist_em``).
+    registered_keys = {entry.provider_key for entry in ETF_DAILY_BAR_REGISTRY}
+    for key in ("eastmoney", "sina", "tonghuashun"):
+        assert key not in registered_keys
 
 
 def test_registry_iteration_has_stable_policy_order() -> None:

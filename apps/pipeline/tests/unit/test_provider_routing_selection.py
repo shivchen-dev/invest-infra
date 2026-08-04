@@ -42,12 +42,9 @@ import unittest
 from invest_pipeline.provider_catalog import (
     AKSHARE,
     CIFANGQUANT,
-    EASTMONEY,
     FIXTURE_DEV,
     QUICKTINY_MCP,
     RSSCAST,
-    SINA,
-    TONGHUASHUN,
     ProviderCapability,
     ProviderDeclaration,
     ProviderRole,
@@ -452,23 +449,21 @@ class SelectProvidersCatalogIntegrationTest(unittest.TestCase):
     _FULL_CATALOG: tuple[ProviderDeclaration, ...] = (
         AKSHARE,
         CIFANGQUANT,
-        EASTMONEY,
         FIXTURE_DEV,
         QUICKTINY_MCP,
         RSSCAST,
-        SINA,
-        TONGHUASHUN,
     )
 
     def test_etf_daily_bars_selection_over_full_catalog(self) -> None:
-        # Over the full eight-entry catalog the only on-by-default
+        # Over the full five-entry catalog the only on-by-default
         # provider for ETF daily bars is ``fixture_dev``. The
         # catalog's real providers advertise the capability but
-        # either default off (``cifangquant``, ``akshare``,
-        # ``eastmoney``, ``sina``, ``tonghuashun``) or are
+        # either default off (``cifangquant``, ``akshare``) or are
         # research-only / out-of-scope for ETF (``akshare``,
-        # ``eastmoney``, ``sina``, ``tonghuashun``, ``rsscast``,
-        # ``quicktiny_mcp``).
+        # ``rsscast``, ``quicktiny_mcp``). The historical
+        # three-provider plan (``eastmoney`` / ``sina`` /
+        # ``tonghuashun``) was de-scoped: those entries are not in
+        # the catalog and the routing layer never observes them.
         declarations = self._FULL_CATALOG
         selected = select_providers(declarations, Dataset.ETF_DAILY_BARS)
         self.assertEqual(
@@ -508,11 +503,14 @@ class SelectProvidersCatalogIntegrationTest(unittest.TestCase):
         )
 
     def test_index_daily_bars_full_catalog_with_default_enabled_gate(self) -> None:
-        # The three-provider plan adds Eastmoney / Sina / Tonghuashun
-        # as ``INDEX_DAILY_BARS`` providers, but they all default
-        # off. The default-enabled gate therefore must surface a
+        # The catalog's ``akshare`` provider advertises
+        # ``INDEX_DAILY_BARS`` but defaults off per matrix §6, so
+        # the default-enabled gate must surface a
         # :class:`NoEligibleProviderError` for ``INDEX_DAILY_BARS``
-        # just like the RESEARCH surface.
+        # just like the RESEARCH surface. The historical
+        # three-provider plan entries (``eastmoney`` / ``sina`` /
+        # ``tonghuashun``) were de-scoped and are not in the
+        # catalog; the routing layer never observes them.
         declarations = self._FULL_CATALOG
         with self.assertRaises(NoEligibleProviderError) as ctx:
             select_providers(declarations, Dataset.INDEX_DAILY_BARS)
@@ -520,59 +518,65 @@ class SelectProvidersCatalogIntegrationTest(unittest.TestCase):
 
 
 class ThreeProviderPlanRoutingTest(unittest.TestCase):
-    """The three-provider plan Phase 1 routing contract.
+    """The historical three-provider plan is de-scoped in this slice.
 
-    Each of the three new sources (``eastmoney`` / ``sina`` /
-    ``tonghuashun``) advertises the three market-data capabilities but
-    stays ``research_only`` and ``enabled_by_default=False``. The
-    routing layer must therefore:
-
-    - reject the source for the ETF daily-bars / ETF-instruments
-      surfaces (matrix §5.4 "no research-only source as production
-      SLA" rule) — even when ``enabled_only=False`` flips the default
-      gate off, the research-only rejection must still apply;
-    - keep the source as an eligible provider for ``INDEX_DAILY_BARS``
-      when ``enabled_only=False`` is explicitly opted in
-      (operator-facing flow);
-    - drop the source for every surface when ``enabled_only=True``
-      (the default) because the matrix §6 ``enabled_by_default=False``
-      rule must hold the gate.
+    The three-provider plan proposed ``eastmoney`` / ``sina`` /
+    ``tonghuashun`` as independent V2 read-only providers. The plan
+    has been de-scoped: the three sources are not selectable runtime
+    providers in V2 and the catalog carries no
+    :class:`ProviderDeclaration` for them. Their public
+    historical-quotes endpoints remain internal upstreams of the
+    AkShare aggregator (``ak.fund_etf_hist_sina`` /
+    ``ak.fund_etf_hist_em``). The routing layer therefore never sees
+    them, and the catalog-level de-scope is the only contract left.
+    The routing-layer rules exercised here pin that contract: a
+    locally-constructed :class:`ProviderDeclaration` that mirrors the
+    historical three-provider plan shape is still subject to the
+    catalog's research-only / default-disabled rules when the routing
+    function is asked to evaluate it directly, but no such declaration
+    lives in the catalog anymore.
     """
 
-    _THREE_PROVIDER_DECLARATIONS: tuple[ProviderDeclaration, ...] = (
-        EASTMONEY,
-        SINA,
-        TONGHUASHUN,
-    )
+    def test_three_provider_plan_keys_are_unknown_to_lookup(self) -> None:
+        # The catalog has no entry for the three-provider plan keys;
+        # routing-layer tests therefore cannot reach them through
+        # the catalog surface and the local-declaration form below
+        # is the only contract left for the routing rules.
+        # Pin the negative lookup so a future regression that
+        # re-introduces one of the three entries surfaces here.
+        from invest_pipeline.provider_catalog import lookup_provider
 
-    def test_three_sources_are_default_disabled(self) -> None:
-        # Matrix §6: real providers default to off. The catalog must
-        # carry the flag so the routing layer can drop them before
-        # any other rule fires.
-        for declaration in self._THREE_PROVIDER_DECLARATIONS:
-            with self.subTest(provider_key=declaration.provider_key):
-                self.assertFalse(declaration.enabled_by_default)
+        for key in ("eastmoney", "sina", "tonghuashun"):
+            with self.subTest(provider_key=key):
+                with self.assertRaises(KeyError) as ctx:
+                    lookup_provider(key)
+                self.assertEqual(ctx.exception.args[0], key)
 
-    def test_three_sources_advertise_market_data_capabilities(self) -> None:
-        # The three sources share the AkShare capability set so the
-        # routing layer treats them as ETF / index market-data
-        # providers on the surfaces matrix §2 observed.
-        expected = {
+    def test_local_three_provider_shape_is_research_only_by_default(self) -> None:
+        # The historical plan shape (three research-only providers
+        # advertising ETF / index market-data capabilities and
+        # defaulting off) is still evaluated correctly by the
+        # routing layer when a caller passes an equivalent local
+        # declaration. The routing rules therefore remain
+        # observable for future plan resurrections without the
+        # catalog carrying the entries.
+        expected_capabilities = {
             ProviderCapability.ETF_DAILY_BARS,
             ProviderCapability.ETF_MASTER_DATA,
             ProviderCapability.INDEX_DAILY_BARS,
         }
-        for declaration in self._THREE_PROVIDER_DECLARATIONS:
-            with self.subTest(provider_key=declaration.provider_key):
-                self.assertTrue(expected.issubset(set(declaration.capabilities)))
-
-    def test_etf_daily_bars_rejects_each_research_only_source(self) -> None:
-        # Mirror of the AkShare test: each new research-only source
-        # is rejected for the ETF daily-bars surface, even when the
-        # default-enabled gate is flipped off (the research-only
-        # rule is applied **after** the capability match).
-        for declaration in self._THREE_PROVIDER_DECLARATIONS:
-            with self.subTest(provider_key=declaration.provider_key):
+        for key in ("eastmoney", "sina", "tonghuashun"):
+            declaration = _make_declaration(
+                provider_key=key,
+                role=ProviderRole.RESEARCH_ONLY,
+                capabilities=tuple(expected_capabilities),
+                enabled_by_default=False,
+            )
+            with self.subTest(provider_key=key):
+                self.assertFalse(declaration.enabled_by_default)
+                self.assertTrue(
+                    expected_capabilities.issubset(set(declaration.capabilities))
+                )
                 with self.assertRaises(NoEligibleProviderError) as ctx:
                     select_providers(
                         (declaration,),
@@ -581,85 +585,20 @@ class ThreeProviderPlanRoutingTest(unittest.TestCase):
                     )
                 self.assertEqual(ctx.exception.args[0], "etf_daily_bars")
 
-    def test_etf_instruments_rejects_each_research_only_source(self) -> None:
-        # The ETF master-data surface shares the production-SLA rule
-        # with ETF daily-bars, so the rejection applies symmetrically.
-        for declaration in self._THREE_PROVIDER_DECLARATIONS:
-            with self.subTest(provider_key=declaration.provider_key):
-                with self.assertRaises(NoEligibleProviderError) as ctx:
-                    select_providers(
-                        (declaration,),
-                        Dataset.ETF_INSTRUMENTS,
-                        enabled_only=False,
-                    )
-                self.assertEqual(ctx.exception.args[0], "etf_instruments")
-
-    def test_index_daily_bars_keeps_each_research_only_source(self) -> None:
-        # The research-only-rejection rule is intentionally scoped
-        # to the ETF production surfaces. The index surface keeps
-        # the research-only sources as eligible providers (that is
-        # their only production-grade consumer for cross-validation
-        # / historical-quotes purposes per the three-provider plan
-        # §"Architecture Decisions").
-        for declaration in self._THREE_PROVIDER_DECLARATIONS:
-            with self.subTest(provider_key=declaration.provider_key):
-                selected = select_providers(
-                    (declaration,),
-                    Dataset.INDEX_DAILY_BARS,
-                    enabled_only=False,
-                )
-                self.assertEqual(
-                    tuple(d.provider_key for d in selected),
-                    (declaration.provider_key,),
-                )
-
-    def test_three_sources_share_index_daily_bars_with_akshare(self) -> None:
-        # The AkShare source is the canonical research-only
-        # aggregator already used for ``INDEX_DAILY_BARS``. With the
-        # default gate flipped off the three new sources must join
-        # it in the eligible set, sorted alphabetically by
-        # ``provider_key``.
-        declarations = (AKSHARE,) + self._THREE_PROVIDER_DECLARATIONS
-        selected = select_providers(
-            declarations,
-            Dataset.INDEX_DAILY_BARS,
-            enabled_only=False,
-        )
-        self.assertEqual(
-            tuple(d.provider_key for d in selected),
-            ("akshare", "eastmoney", "sina", "tonghuashun"),
-        )
-
-    def test_default_enabled_gate_drops_each_source(self) -> None:
-        # With ``enabled_only=True`` (the default) the three new
-        # sources must be filtered out so the routing layer never
-        # silently enables a third-party API. The
-        # :class:`NoEligibleProviderError` is the typed failure that
-        # callers (and the coverage calculator) rely on to drive
-        # alerting without parsing free text.
-        for declaration in self._THREE_PROVIDER_DECLARATIONS:
-            with self.subTest(provider_key=declaration.provider_key):
-                with self.assertRaises(NoEligibleProviderError) as ctx:
-                    select_providers(
-                        (declaration,),
-                        Dataset.INDEX_DAILY_BARS,
-                    )
-                self.assertEqual(ctx.exception.args[0], "index_daily_bars")
-
-    def test_full_eight_catalog_yields_only_fixture_dev_by_default(self) -> None:
-        # End-to-end check over the full extended catalog: with
+    def test_full_five_catalog_yields_only_fixture_dev_by_default(self) -> None:
+        # End-to-end check over the full five-entry catalog: with
         # ``enabled_only=True`` every real provider (matrix §6
         # default-off) is dropped, leaving ``fixture_dev`` as the
         # sole eligible provider for the production ETF surfaces.
+        # The historical three-provider plan entries were never in
+        # the catalog; this assertion confirms the V2 routing
+        # story does not depend on them.
         declarations = (
             AKSHARE,
             CIFANGQUANT,
-            EASTMONEY,
             FIXTURE_DEV,
             QUICKTINY_MCP,
             RSSCAST,
-            SINA,
-            TONGHUASHUN,
         )
         selected = select_providers(declarations, Dataset.ETF_DAILY_BARS)
         self.assertEqual(
