@@ -23,10 +23,12 @@ from invest_pipeline.provider_coverage_report import (
 class StubProvider:
     provider_key = "fixture_dev"
 
-    def __init__(self, records_by_symbol):
+    def __init__(self, records_by_symbol, *, provider_key="fixture_dev"):
+        self.provider_key = provider_key
         self.records_by_symbol = records_by_symbol
         self.calls = []
         self.closed = False
+        self.received_settings = None
 
     def fetch_daily_bars(self, symbols, start_date, end_date):
         symbol = symbols[0]
@@ -275,3 +277,167 @@ def test_from_active_instruments_returns_empty_symbol_runner_for_empty_input():
     assert runner.provider is provider
     assert runner.requested_fields == default_daily_bars_field_set()
     assert not provider.closed
+
+
+# ---------------------------------------------------------------------------
+# AkShare opt-in path (PR-05 follow-up)
+# ---------------------------------------------------------------------------
+
+
+def test_parser_accepts_akshare_provider_key():
+    parsed = cli.build_parser().parse_args(
+        [
+            "--provider",
+            "akshare",
+            "--symbols",
+            "510300",
+            "--confirm-network",
+        ]
+    )
+
+    assert parsed.provider == "akshare"
+    assert parsed.confirm_network is True
+
+
+def test_parser_rejects_unknown_provider_key():
+    with pytest.raises(SystemExit):
+        cli.build_parser().parse_args(
+            [
+                "--provider",
+                "eastmoney",
+                "--symbols",
+                "510300",
+            ]
+        )
+
+
+def test_validate_provider_opt_in_akshare_requires_enabled_and_confirm():
+    with pytest.raises(cli.CoverageCLIConfigError) as ctx:
+        cli.validate_provider_opt_in(
+            provider_key="akshare",
+            cifang_enabled=False,
+            confirm_network=True,
+            akshare_enabled=False,
+        )
+    assert "INVEST_PIPELINE_AKSHARE_ENABLED" in str(ctx.value)
+
+    with pytest.raises(cli.CoverageCLIConfigError) as ctx:
+        cli.validate_provider_opt_in(
+            provider_key="akshare",
+            cifang_enabled=False,
+            confirm_network=False,
+            akshare_enabled=True,
+        )
+    assert "--confirm-network" in str(ctx.value)
+
+    cli.validate_provider_opt_in(
+        provider_key="akshare",
+        cifang_enabled=False,
+        confirm_network=True,
+        akshare_enabled=True,
+    )
+
+
+def test_akshare_missing_opt_in_fails_closed(monkeypatch, capsys):
+    built = False
+
+    def unexpected_build(**_kwargs):
+        nonlocal built
+        built = True
+        raise AssertionError("provider must not be built")
+
+    monkeypatch.delenv("INVEST_PIPELINE_AKSHARE_ENABLED", raising=False)
+    monkeypatch.setattr(cli, "_build_provider", unexpected_build)
+
+    assert (
+        cli.main(["--provider", "akshare", "--symbols", "510300"]) == 2
+    )
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert captured.err.startswith("refused:")
+    assert "INVEST_PIPELINE_AKSHARE_ENABLED" in captured.err
+    assert not built
+
+
+def test_akshare_without_confirm_fails_closed(monkeypatch, capsys):
+    built = False
+
+    def unexpected_build(**_kwargs):
+        nonlocal built
+        built = True
+        raise AssertionError("provider must not be built")
+
+    monkeypatch.setenv("INVEST_PIPELINE_AKSHARE_ENABLED", "true")
+    monkeypatch.setattr(cli, "_build_provider", unexpected_build)
+
+    assert cli.main(["--provider", "akshare", "--symbols", "510300"]) == 2
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert captured.err.startswith("refused:")
+    assert "--confirm-network" in captured.err
+    assert not built
+
+
+def test_akshare_cli_forwards_settings_to_factory(monkeypatch, capsys):
+    provider = StubProvider(
+        {"510300": (date(2026, 7, 24),)},
+        provider_key="akshare",
+    )
+    captured_kwargs: dict = {}
+
+    def fake_build_provider(**kwargs):
+        captured_kwargs.update(kwargs)
+        return provider
+
+    monkeypatch.setenv("INVEST_PIPELINE_AKSHARE_ENABLED", "true")
+    monkeypatch.setattr(cli, "_build_provider", fake_build_provider)
+
+    assert (
+        cli.main(
+            [
+                "--provider",
+                "akshare",
+                "--symbols",
+                "510300",
+                "--confirm-network",
+                "--generated-at",
+                "2026-08-04T00:00:00+00:00",
+            ]
+        )
+        == 0
+    )
+    captured = capsys.readouterr()
+
+    assert captured_kwargs["provider_key"] == "akshare"
+    assert captured_kwargs["akshare_settings"] is not None
+    assert captured_kwargs["akshare_settings"].enabled is True
+    assert captured_kwargs.get("cifang_settings") is None
+    assert provider.closed
+    assert json.loads(captured.out)["providers"][0]["provider_key"] == "akshare"
+
+
+def test_akshare_token_does_not_leak_into_output(monkeypatch, capsys):
+    token = "super-secret-akshare-token"
+    provider = StubProvider(
+        {"510300": (date(2026, 7, 24),)},
+        provider_key="akshare",
+    )
+    monkeypatch.setenv("INVEST_PIPELINE_AKSHARE_ENABLED", "true")
+    monkeypatch.setenv("INVEST_PIPELINE_AKSHARE_TOKEN", token)
+    monkeypatch.setattr(cli, "_build_provider", lambda **_kwargs: provider)
+
+    assert (
+        cli.main(
+            [
+                "--provider",
+                "akshare",
+                "--symbols",
+                "510300",
+                "--confirm-network",
+            ]
+        )
+        == 0
+    )
+    captured = capsys.readouterr()
+    assert token not in captured.out
+    assert token not in captured.err

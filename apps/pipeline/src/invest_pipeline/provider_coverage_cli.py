@@ -3,8 +3,8 @@
 Stage 1 PR-05 shipped the deterministic
 ``source × symbol × date-range × field`` coverage matrix the rest of
 the pipeline can consume. This CLI adds the operator-facing surface
-that runs the matrix against the V2 ETF Provider adapters in two
-explicit opt-in modes:
+that runs the matrix against the V2 ETF Provider adapters in three
+explicit modes:
 
 * **Offline mode (default).** The CLI uses the in-repo
   :class:`invest_pipeline.adapters.fixture_dev.adapter.
@@ -15,9 +15,14 @@ explicit opt-in modes:
   the documented triple opt-in
   (``INVEST_PIPELINE_CIFANG_ENABLED=true``,
   ``INVEST_PIPELINE_CIFANG_API_KEY`` and ``--confirm-network``).
-  When any of the three levers is missing the CLI prints a single
-  concise ``refused:`` line on stderr and exits non-zero
-  *without ever opening a TCP connection*.
+* **AkShare opt-in.** When ``--provider akshare`` is passed the CLI
+  builds :class:`AkshareInstrumentProvider` through the same runtime
+  factory and requires ``INVEST_PIPELINE_AKSHARE_ENABLED=true`` plus
+  ``--confirm-network``.
+
+When a real-provider opt-in is incomplete the CLI prints a single
+concise ``refused:`` line on stderr and exits non-zero
+*without ever opening a TCP connection*.
 
 The CLI is intentionally minimal and intentionally safe-by-default:
 
@@ -32,8 +37,9 @@ The CLI is intentionally minimal and intentionally safe-by-default:
   so a default ``make provider-coverage`` run produces a stable,
   inspectable report without any date arithmetic.
 * ``--provider`` accepts the documented Provider keys
-  (``fixture_dev`` or ``cifangquant``). ``cifangquant`` requires the
-  triple opt-in; ``fixture_dev`` never needs ``--confirm-network``.
+  (``fixture_dev``, ``cifangquant`` or ``akshare``). ``cifangquant`` and
+  ``akshare`` require their explicit opt-in flags plus
+  ``--confirm-network``; ``fixture_dev`` never needs that flag.
 * ``--dataset`` is fixed at ``etf_daily_bars`` for the initial slice;
   the validator rejects every other value because the report's
   field-completeness contract is the OHLCV surface the daily-bars
@@ -45,16 +51,14 @@ The CLI is intentionally minimal and intentionally safe-by-default:
   line on stdout.
 
 The CLI does not write to PostgreSQL, does not invoke Dagster assets,
-does not perform backfill, and does not enable AkShare / QuickTiny /
-RssCast as ETF daily providers — every AkShare / QuickTiny / RssCast
-declaration in the catalog is gated on a separate increment and the
-catalog explicitly rejects the ``ETF_DAILY_BARS`` capability for those
-sources.
+does not perform backfill, and does not enable QuickTiny / RssCast as
+ETF daily providers. AkShare is available here only through its explicit
+opt-in path; the catalog's other capability declarations remain unchanged.
 
 This module never touches the network during construction or
 validation; tests construct stub providers that return canned
 evidence so the suite runs without ever importing the live
-:class:`httpx.Client` or :class:`CifangClient`.
+:mod:`httpx` / :class:`CifangClient` / :class:`AkshareClient` clients.
 """
 
 from __future__ import annotations
@@ -80,6 +84,7 @@ from invest_domain.market_data.models import (
     ProviderRequest,
 )
 
+from invest_pipeline.adapters.akshare.config import AkshareSettings
 from invest_pipeline.adapters.cifang.config import CifangSettings
 from invest_pipeline.adapters.errors import (
     ProviderError,
@@ -117,9 +122,12 @@ __all__ = [
 _PROVIDER_KEY_ENV = "INVEST_PIPELINE_PROVIDER_KEY"
 _CIFANG_ENABLED_ENV = "INVEST_PIPELINE_CIFANG_ENABLED"
 _CIFANG_API_KEY_ENV = "INVEST_PIPELINE_CIFANG_API_KEY"
+_AKSHARE_ENABLED_ENV = "INVEST_PIPELINE_AKSHARE_ENABLED"
+_AKSHARE_TOKEN_ENV = "INVEST_PIPELINE_AKSHARE_TOKEN"
 
 _FIXTURE_DEV_KEY = "fixture_dev"
 _CIFANG_KEY = "cifangquant"
+_AKSHARE_KEY = "akshare"
 _DAILY_BARS_DATASET_KEY = "etf_daily_bars"
 
 _REDACTED = "***"
@@ -337,11 +345,11 @@ def _resolve_provider_key(
                 f"--provider {explicit!r} is not supported by the coverage CLI; "
                 f"expected one of {sorted(KNOWN_PROVIDER_KEYS)}"
             )
-        if explicit not in (_FIXTURE_DEV_KEY, _CIFANG_KEY):
+        if explicit not in (_FIXTURE_DEV_KEY, _CIFANG_KEY, _AKSHARE_KEY):
             raise CoverageCLIConfigError(
                 f"--provider {explicit!r} is not enabled as an ETF daily "
-                f"provider in this slice; expected {_FIXTURE_DEV_KEY!r} or "
-                f"{_CIFANG_KEY!r}"
+                f"provider in this slice; expected {_FIXTURE_DEV_KEY!r}, "
+                f"{_CIFANG_KEY!r} or {_AKSHARE_KEY!r}"
             )
         return explicit
     if env is None:
@@ -360,6 +368,17 @@ def _cifang_enabled(env: Mapping[str, str] | None) -> bool:
     return value.strip().lower() in {"1", "true", "yes", "on"}
 
 
+def _akshare_enabled(env: Mapping[str, str] | None) -> bool:
+    """Return whether the AkShare opt-in flag is set in ``env``."""
+
+    if env is None:
+        env = os.environ
+    value = env.get(_AKSHARE_ENABLED_ENV, "")
+    if not isinstance(value, str):
+        return False
+    return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
 def _configured_cifang_token() -> str:
     """Return the configured Cifang API key, or an empty string on failure."""
 
@@ -369,21 +388,31 @@ def _configured_cifang_token() -> str:
         return ""
 
 
+def _configured_akshare_token(settings: AkshareSettings | None = None) -> str:
+    """Return the configured AkShare token without exposing it in output."""
+
+    if settings is not None:
+        try:
+            return settings.token.get_secret_value()
+        except Exception:
+            return ""
+    value = os.environ.get(_AKSHARE_TOKEN_ENV, "")
+    return value if isinstance(value, str) else ""
+
+
 def validate_provider_opt_in(
     *,
     provider_key: str,
     cifang_enabled: bool | None,
     confirm_network: bool,
+    akshare_enabled: bool | None = None,
 ) -> None:
     """Reject the run unless the real-provider opt-in gates are aligned.
 
-    Mirrors the ADR-0011 semantics preserved by the personal daily
-    and historical daily-bars CLIs: ``fixture_dev`` never reaches the
-    network; ``cifangquant`` requires both
-    ``INVEST_PIPELINE_CIFANG_ENABLED=true`` and ``--confirm-network``.
-    No other provider key is admitted in this slice because AkShare,
-    QuickTiny and RssCast are deliberately excluded from the ETF
-    daily-bars surface (DATA-SOURCE-MIGRATION-MATRIX.md §5.4).
+    ``fixture_dev`` never reaches the network; ``cifangquant`` requires
+    ``INVEST_PIPELINE_CIFANG_ENABLED=true`` and ``--confirm-network``;
+    ``akshare`` requires ``INVEST_PIPELINE_AKSHARE_ENABLED=true`` and
+    ``--confirm-network``.
     """
 
     if provider_key == _FIXTURE_DEV_KEY:
@@ -401,9 +430,22 @@ def validate_provider_opt_in(
                 "CLI with --provider cifangquant"
             )
         return
+    if provider_key == _AKSHARE_KEY:
+        if not akshare_enabled:
+            raise CoverageCLIConfigError(
+                f"{_AKSHARE_ENABLED_ENV}=true is required to run the provider "
+                "coverage CLI with --provider akshare; set it to acknowledge "
+                "the real-API opt-in"
+            )
+        if not confirm_network:
+            raise CoverageCLIConfigError(
+                "--confirm-network is required to run the provider coverage "
+                "CLI with --provider akshare"
+            )
+        return
     raise CoverageCLIConfigError(
         f"--provider {provider_key!r} is not supported by the coverage CLI; "
-        f"expected {_FIXTURE_DEV_KEY!r} or {_CIFANG_KEY!r}"
+        f"expected {_FIXTURE_DEV_KEY!r}, {_CIFANG_KEY!r} or {_AKSHARE_KEY!r}"
     )
 
 
@@ -421,21 +463,23 @@ def build_parser() -> argparse.ArgumentParser:
             "source × symbol × date-range × field matrix using the V2 ETF "
             "Provider adapters. Default mode is offline (fixture_dev); "
             "--provider cifangquant requires INVEST_PIPELINE_CIFANG_ENABLED=true "
-            "and --confirm-network. The CLI never writes to PostgreSQL, never "
-            "invokes Dagster assets and never performs backfill."
+            "and --confirm-network; --provider akshare requires "
+            "INVEST_PIPELINE_AKSHARE_ENABLED=true and --confirm-network. The "
+            "CLI never writes to PostgreSQL, never invokes Dagster assets and "
+            "never performs backfill."
         ),
     )
     parser.add_argument(
         "--provider",
         required=False,
         default=None,
-        choices=(_FIXTURE_DEV_KEY, _CIFANG_KEY),
+        choices=(_FIXTURE_DEV_KEY, _CIFANG_KEY, _AKSHARE_KEY),
         help=(
             "Provider key to probe. Defaults to "
-            f"{_PROVIDER_KEY_ENV} (fallback fixture_dev). Only "
-            f"{_FIXTURE_DEV_KEY!r} and {_CIFANG_KEY!r} are admitted in this "
-            "slice; AkShare / QuickTiny / RssCast are explicitly excluded "
-            "from the ETF daily-bars surface (DATA-SOURCE-MIGRATION-MATRIX.md §5.4)."
+            f"{_PROVIDER_KEY_ENV} (fallback fixture_dev). Supported keys are "
+            f"{_FIXTURE_DEV_KEY!r}, {_CIFANG_KEY!r} and {_AKSHARE_KEY!r}; "
+            f"{_CIFANG_KEY!r} and {_AKSHARE_KEY!r} require their explicit "
+            "environment opt-in plus --confirm-network."
         ),
     )
     parser.add_argument(
@@ -479,8 +523,9 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help=(
             "Explicit opt-in to hit a real provider. Required only when "
-            f"--provider is {_CIFANG_KEY!r} (combined with "
-            f"{_CIFANG_ENABLED_ENV}=true); ignored for {_FIXTURE_DEV_KEY!r}."
+            f"--provider is {_CIFANG_KEY!r} or {_AKSHARE_KEY!r} (combined "
+            "with the matching enabled environment flag); ignored for "
+            f"{_FIXTURE_DEV_KEY!r}."
         ),
     )
     parser.add_argument(
@@ -782,12 +827,12 @@ def _build_provider(
     *,
     provider_key: str,
     cifang_settings: CifangSettings | None = None,
+    akshare_settings: AkshareSettings | None = None,
 ) -> _CoverageProviderPort:
     """Construct the configured provider via the runtime factory.
 
     Tests inject a stub provider directly; production callers use the
-    factory so the documented ``INVEST_PIPELINE_PROVIDER_KEY`` /
-    ``INVEST_PIPELINE_CIFANG_*`` switches are honoured exactly once.
+    factory so the documented provider settings are honoured exactly once.
     """
 
     if provider_key == _FIXTURE_DEV_KEY:
@@ -803,6 +848,14 @@ def _build_provider(
         return build_provider(
             settings,
             cifang_settings=cifang_settings,
+        )
+    if provider_key == _AKSHARE_KEY:
+        from invest_pipeline.config import Settings
+
+        settings = Settings(provider_key=_AKSHARE_KEY)
+        return build_provider(
+            settings,
+            akshare_settings=akshare_settings,
         )
     raise CoverageCLIConfigError(
         f"--provider {provider_key!r} is not supported by the coverage CLI"
@@ -866,37 +919,60 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 2
 
     cifang_enabled_value = _cifang_enabled(os.environ)
+    akshare_enabled_value = _akshare_enabled(os.environ)
     try:
         validate_provider_opt_in(
             provider_key=provider_key,
             cifang_enabled=cifang_enabled_value,
             confirm_network=args.confirm_network,
+            akshare_enabled=akshare_enabled_value,
         )
     except CoverageCLIConfigError as exc:
         print(f"refused: {exc}", file=stderr)
         return 2
 
     cifang_settings_obj: CifangSettings | None = None
+    akshare_settings_obj: AkshareSettings | None = None
+    token = ""
     if provider_key == _CIFANG_KEY:
+        token = _configured_cifang_token()
         try:
             cifang_settings_obj = CifangSettings()
         except Exception as exc:
-            print(f"error: failed to load CifangSettings: {exc}", file=stderr)
+            message = _scrub(str(exc), token)
+            print(f"error: failed to load CifangSettings: {message}", file=stderr)
             return 2
+    elif provider_key == _AKSHARE_KEY:
+        token = _configured_akshare_token()
+        try:
+            akshare_settings_obj = AkshareSettings()
+        except Exception as exc:
+            message = _scrub(str(exc), token)
+            print(f"error: failed to load AkshareSettings: {message}", file=stderr)
+            return 2
+        token = _configured_akshare_token(akshare_settings_obj)
 
     try:
-        provider = _build_provider(
-            provider_key=provider_key,
-            cifang_settings=cifang_settings_obj,
-        )
+        if provider_key == _AKSHARE_KEY:
+            provider = _build_provider(
+                provider_key=provider_key,
+                cifang_settings=cifang_settings_obj,
+                akshare_settings=akshare_settings_obj,
+            )
+        else:
+            provider = _build_provider(
+                provider_key=provider_key,
+                cifang_settings=cifang_settings_obj,
+            )
     except RealProviderRequiresExplicitEnablementError as exc:
-        print(f"refused: {_scrub(str(exc), '')}", file=stderr)
+        print(f"refused: {_scrub(str(exc), token)}", file=stderr)
         return 2
     except CoverageCLIConfigError as exc:
-        print(f"error: {exc}", file=stderr)
+        print(f"error: {_scrub(str(exc), token)}", file=stderr)
         return 2
-
-    token = _configured_cifang_token() if provider_key == _CIFANG_KEY else ""
+    except Exception as exc:
+        print(f"error: failed to build provider: {type(exc).__name__}", file=stderr)
+        return 2
 
     runner = ProviderCoverageRunner(
         start_date=start_date,
