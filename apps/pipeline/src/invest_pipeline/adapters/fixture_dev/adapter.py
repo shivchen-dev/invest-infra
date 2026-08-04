@@ -4,7 +4,7 @@ The adapter returns the three-layer PR-02 evidence model:
 ``(ProviderRequest, ProviderAttempt, ProviderBatch[Instrument] | None)``.
 The deterministic fixture is loaded from
 ``etf_instruments.json`` so tests and local dev always see the same
-12-ETF SSE / SZSE universe (ADR-0004 phase 1 market scope).
+16-ETF SSE / SZSE universe (ADR-0004 phase 1 market scope).
 
 PR-06 extends the adapter with :meth:`FixtureDevInstrumentProvider.
 fetch_daily_bars` (the previous placeholder returned an empty batch).
