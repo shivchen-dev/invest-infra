@@ -62,8 +62,4 @@ export const queryKeys = {
   latestPipelineRun: ["pipeline-runs", "latest"] as const,
   pipelineRuns: (filters: { limit: number; offset: number }) =>
     ["pipeline-runs", filters] as const,
-  etfInstruments: (filters: { limit: number; offset: number }) =>
-    ["etf-instruments", filters] as const,
-  etfDailyBars: (instrumentId: string, start: string, end: string) =>
-    ["etf-daily-bars", instrumentId, start, end] as const,
 };

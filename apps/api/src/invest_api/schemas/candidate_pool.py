@@ -49,14 +49,6 @@ class ExclusionReasonResponse(BaseModel):
     message: str
 
 
-class InstrumentDisplay(BaseModel):
-    """Optional Instrument display fields resolved on the server side."""
-
-    symbol: str | None = None
-    name: str | None = None
-    exchange: str | None = None
-
-
 class CandidatePoolItemResponse(BaseModel):
     """One per-instrument judgment from the latest published pool."""
 
@@ -133,6 +125,5 @@ __all__ = [
     "CandidatePoolItemResponse",
     "CandidatePoolLatestResponse",
     "ExclusionReasonResponse",
-    "InstrumentDisplay",
     "RuleOutcomeResponse",
 ]
