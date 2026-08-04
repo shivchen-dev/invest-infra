@@ -885,6 +885,55 @@ class SqlAlchemyDailyBarRepository:
         ).scalars().all()
         return [_row_to_stored_daily_bar(row) for row in rows]
 
+    def list_latest_by_instrument_and_range(
+        self,
+        *,
+        instrument_id: UUID | InstrumentId,
+        start_date: date,
+        end_date: date,
+        adjustment: Adjust,
+    ) -> Sequence[StoredDailyBar]:
+        """Return the highest revision for each trade date in the inclusive range."""
+
+        if end_date < start_date:
+            raise ValueError(
+                f"end_date {end_date.isoformat()} must be on or after "
+                f"start_date {start_date.isoformat()}"
+            )
+        raw_id = (
+            instrument_id.value
+            if isinstance(instrument_id, InstrumentId)
+            else instrument_id
+        )
+        latest_revisions = (
+            select(
+                DailyBarRow.trade_date.label("trade_date"),
+                func.max(DailyBarRow.revision).label("revision"),
+            )
+            .where(
+                DailyBarRow.instrument_id == raw_id,
+                DailyBarRow.trade_date >= start_date,
+                DailyBarRow.trade_date <= end_date,
+                DailyBarRow.adjustment == adjustment.value,
+            )
+            .group_by(DailyBarRow.trade_date)
+            .subquery()
+        )
+        rows = self._session.execute(
+            select(DailyBarRow)
+            .join(
+                latest_revisions,
+                (DailyBarRow.trade_date == latest_revisions.c.trade_date)
+                & (DailyBarRow.revision == latest_revisions.c.revision),
+            )
+            .where(
+                DailyBarRow.instrument_id == raw_id,
+                DailyBarRow.adjustment == adjustment.value,
+            )
+            .order_by(DailyBarRow.trade_date.asc())
+        ).scalars().all()
+        return [_row_to_stored_daily_bar(row) for row in rows]
+
     def upsert_many(self, bars: Sequence[NewDailyBar | DailyBar]) -> list[StoredDailyBar]:
         """Persist ``bars`` into ``core.daily_bars`` under ADR-0006 revision rules.
 

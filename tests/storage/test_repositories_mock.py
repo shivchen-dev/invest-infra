@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import unittest
 from datetime import UTC, date, datetime
+from decimal import Decimal
 from typing import Any
 from unittest.mock import MagicMock
 from uuid import UUID, uuid4
@@ -35,12 +36,15 @@ from invest_domain.instruments import (
     InstrumentStatus,
     InstrumentType,
 )
+from invest_domain.market_data.values import Adjust
 from invest_domain.shared.values import Currency
-from invest_storage.models import InstrumentRow, RawProviderBatchRow
+from invest_storage.models import DailyBarRow, InstrumentRow, RawProviderBatchRow
 from invest_storage.repositories import (
     NewProviderBatch,
+    SqlAlchemyDailyBarRepository,
     SqlAlchemyInstrumentRepository,
     SqlAlchemyProviderBatchRepository,
+    StoredDailyBar,
     StoredProviderBatch,
 )
 
@@ -140,6 +144,108 @@ def _make_batch_row(
     row.status = status
     row.created_at = created_at or datetime(2024, 1, 1, tzinfo=UTC)
     return row
+
+
+def _make_daily_bar_row(
+    *,
+    instrument_id: UUID,
+    trade_date: date,
+    revision: int,
+) -> MagicMock:
+    row = MagicMock(spec=DailyBarRow)
+    row.id = uuid4()
+    row.instrument_id = instrument_id
+    row.trade_date = trade_date
+    row.open = Decimal("10")
+    row.high = Decimal("11")
+    row.low = Decimal("9")
+    row.close = Decimal("10.5")
+    row.prev_close = Decimal("10")
+    row.volume = Decimal("100")
+    row.amount = Decimal("1050")
+    row.adjustment = Adjust.NONE.value
+    row.trading_status = "normal"
+    row.source_provider = "fixture_dev"
+    row.source_batch_id = uuid4()
+    row.observed_at = datetime(2024, 1, 3, tzinfo=UTC)
+    row.revision = revision
+    row.row_hash = str(revision) * 64
+    row.created_at = datetime(2024, 1, 3, tzinfo=UTC)
+    return row
+
+
+class SqlAlchemyDailyBarRepositoryMockTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self._session = MagicMock(name="Session")
+        self._repo = SqlAlchemyDailyBarRepository(self._session)
+
+    def test_list_latest_returns_empty_sequence(self) -> None:
+        self._session.execute.return_value.scalars.return_value.all.return_value = []
+
+        result = self._repo.list_latest_by_instrument_and_range(
+            instrument_id=uuid4(),
+            start_date=date(2024, 1, 1),
+            end_date=date(2024, 1, 31),
+            adjustment=Adjust.NONE,
+        )
+
+        self.assertEqual(result, [])
+
+    def test_list_latest_rejects_reversed_range_without_querying(self) -> None:
+        with self.assertRaisesRegex(ValueError, "must be on or after"):
+            self._repo.list_latest_by_instrument_and_range(
+                instrument_id=uuid4(),
+                start_date=date(2024, 2, 1),
+                end_date=date(2024, 1, 31),
+                adjustment=Adjust.NONE,
+            )
+
+        self._session.execute.assert_not_called()
+
+    def test_list_latest_selects_max_revision_per_day_in_ascending_date_order(self) -> None:
+        instrument_id = uuid4()
+        rows = [
+            _make_daily_bar_row(
+                instrument_id=instrument_id,
+                trade_date=date(2024, 1, 2),
+                revision=3,
+            ),
+            _make_daily_bar_row(
+                instrument_id=instrument_id,
+                trade_date=date(2024, 1, 3),
+                revision=2,
+            ),
+        ]
+        self._session.execute.return_value.scalars.return_value.all.return_value = rows
+
+        result = self._repo.list_latest_by_instrument_and_range(
+            instrument_id=instrument_id,
+            start_date=date(2024, 1, 1),
+            end_date=date(2024, 1, 31),
+            adjustment=Adjust.NONE,
+        )
+
+        self.assertEqual([item.revision for item in result], [3, 2])
+        self.assertTrue(all(isinstance(item, StoredDailyBar) for item in result))
+        statement = self._session.execute.call_args.args[0]
+        sql = str(statement.compile(compile_kwargs={"literal_binds": True})).lower()
+        self.assertIn("max(core.daily_bars.revision)", sql)
+        self.assertIn("group by core.daily_bars.trade_date", sql)
+        self.assertIn("order by core.daily_bars.trade_date asc", sql)
+
+    def test_list_latest_accepts_uuid_and_instrument_id(self) -> None:
+        raw_id = uuid4()
+        self._session.execute.return_value.scalars.return_value.all.return_value = []
+
+        for instrument_id in (raw_id, InstrumentId(raw_id)):
+            self._repo.list_latest_by_instrument_and_range(
+                instrument_id=instrument_id,
+                start_date=date(2024, 1, 1),
+                end_date=date(2024, 1, 31),
+                adjustment=Adjust.NONE,
+            )
+            statement = self._session.execute.call_args.args[0]
+            self.assertIn(raw_id, statement.compile().params.values())
 
 
 class SqlAlchemyInstrumentRepositoryMockTests(unittest.TestCase):
