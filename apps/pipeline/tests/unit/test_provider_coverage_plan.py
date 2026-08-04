@@ -53,6 +53,7 @@ def _make_instrument(
     instrument_type: InstrumentType = InstrumentType.ETF,
     is_active: bool = True,
     status: InstrumentStatus = InstrumentStatus.ACTIVE,
+    list_date: date | None = None,
     delist_date: date | None = None,
 ) -> Instrument:
     return Instrument(
@@ -62,6 +63,7 @@ def _make_instrument(
         instrument_type=instrument_type,
         is_active=is_active,
         status=status,
+        list_date=list_date,
         delist_date=delist_date,
     )
 
@@ -188,6 +190,139 @@ def test_active_universe_ambiguity_error_is_value_error_subclass() -> None:
     err = ActiveUniverseAmbiguityError("oops")
     assert isinstance(err, ValueError)
     assert str(err) == "oops"
+
+
+def test_select_active_etf_symbols_preserves_no_window_behavior() -> None:
+    """``start_date=None`` and ``end_date=None`` keep the legacy result.
+
+    The inclusive window is purely additive: omitting both dates (the
+    default signature) must yield exactly the same tuple as the
+    historical implementation so legacy callers stay bit-identical.
+    """
+
+    instruments = (
+        # Within window by definition (no window supplied).
+        _make_instrument(symbol="510300"),
+        # ``list_date`` is set but the window is None → keeps.
+        _make_instrument(
+            symbol="159915",
+            exchange=Exchange.SZSE,
+            list_date=date(2030, 1, 1),
+        ),
+        # ``delist_date`` is set but ``status`` is still ACTIVE → the
+        # pre-window logic kept it; with no window supplied the post-
+        # window logic must also keep it.
+        _make_instrument(
+            symbol="510310",
+            delist_date=date(2030, 1, 1),
+        ),
+    )
+
+    baseline = select_active_etf_symbols(instruments)
+
+    assert baseline == ("159915", "510300", "510310")
+    # Calling with explicit ``None`` arguments produces the same tuple.
+    assert select_active_etf_symbols(
+        instruments, start_date=None, end_date=None
+    ) == baseline
+    # Same call without the keyword arguments also matches: this is the
+    # one form every legacy caller relied on, so it must be bit-stable.
+    assert select_active_etf_symbols(instruments) == baseline
+    # Instruments with ``list_date`` / ``delist_date`` set to ``None``
+    # pass the matching check unchanged when the corresponding date
+    # argument is supplied, so adding a date that no instrument's
+    # recorded lifecycle crosses still matches the baseline.
+    instruments_no_listing = (
+        _make_instrument(symbol="510300"),
+        _make_instrument(symbol="159915", exchange=Exchange.SZSE),
+    )
+    assert (
+        select_active_etf_symbols(
+            instruments_no_listing,
+            start_date=date(2026, 7, 23),
+            end_date=date(2026, 7, 30),
+        )
+        == ("159915", "510300")
+    )
+
+
+def test_select_active_etf_symbols_excludes_pre_listing_instruments() -> None:
+    """Instruments with ``list_date > end_date`` are excluded from the window."""
+
+    instruments = (
+        # Listed well before the window → kept.
+        _make_instrument(
+            symbol="510300",
+            list_date=date(2010, 1, 1),
+        ),
+        # Listed exactly on ``end_date`` → inclusive boundary, kept.
+        _make_instrument(
+            symbol="510500",
+            list_date=date(2026, 7, 30),
+        ),
+        # ``list_date`` one day after ``end_date`` → excluded.
+        _make_instrument(
+            symbol="510510",
+            list_date=date(2026, 7, 31),
+        ),
+        # Far-future listing → excluded.
+        _make_instrument(
+            symbol="159915",
+            exchange=Exchange.SZSE,
+            list_date=date(2030, 1, 1),
+        ),
+    )
+
+    result = select_active_etf_symbols(
+        instruments,
+        start_date=date(2026, 7, 23),
+        end_date=date(2026, 7, 30),
+    )
+
+    assert result == ("510300", "510500")
+
+
+def test_select_active_etf_symbols_excludes_post_delisting_instruments() -> None:
+    """Instruments with ``delist_date < start_date`` are excluded from the window.
+
+    The pre-window ``status=ACTIVE`` filter used to keep these rows in
+    the universe; the new window logic drops them so coverage probing
+    never asks a Provider about an instrument that had already been
+    delisted before the window opened.
+    """
+
+    instruments = (
+        # ``delist_date`` far in the future → kept.
+        _make_instrument(
+            symbol="510300",
+            delist_date=date(2030, 1, 1),
+        ),
+        # ``delist_date`` exactly on ``start_date`` → inclusive
+        # boundary, kept.
+        _make_instrument(
+            symbol="510500",
+            delist_date=date(2026, 7, 23),
+        ),
+        # ``delist_date`` one day before ``start_date`` → excluded.
+        _make_instrument(
+            symbol="510510",
+            delist_date=date(2026, 7, 22),
+        ),
+        # Long-delisted → excluded.
+        _make_instrument(
+            symbol="159915",
+            exchange=Exchange.SZSE,
+            delist_date=date(2020, 1, 1),
+        ),
+    )
+
+    result = select_active_etf_symbols(
+        instruments,
+        start_date=date(2026, 7, 23),
+        end_date=date(2026, 7, 30),
+    )
+
+    assert result == ("510300", "510500")
 
 
 # ---------------------------------------------------------------------------

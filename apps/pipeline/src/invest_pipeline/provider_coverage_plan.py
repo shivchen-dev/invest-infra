@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
+from datetime import date
 
 from invest_domain.instruments.models import Instrument, InstrumentType
 from invest_domain.instruments.values import InstrumentStatus
@@ -16,8 +17,31 @@ class ActiveUniverseAmbiguityError(ValueError):
     """Raised when one active ETF symbol appears on multiple exchanges."""
 
 
-def select_active_etf_symbols(instruments: Iterable[Instrument]) -> tuple[str, ...]:
-    """Return the sorted, unique symbols in the active domestic ETF universe."""
+def select_active_etf_symbols(
+    instruments: Iterable[Instrument],
+    *,
+    start_date: date | None = None,
+    end_date: date | None = None,
+) -> tuple[str, ...]:
+    """Return the sorted, unique symbols in the active domestic ETF universe.
+
+    The window arguments are optional and inclusive. When supplied they
+    further narrow the universe:
+
+    * ``end_date`` excludes instruments whose ``list_date`` is strictly
+      after ``end_date`` — the ETF was not yet listed by the inclusive
+      end of the probe window.
+    * ``start_date`` excludes instruments whose ``delist_date`` is
+      strictly before ``start_date`` — the ETF was already delisted
+      before the inclusive start of the probe window.
+
+    Instruments with ``list_date`` or ``delist_date`` set to ``None``
+    pass the matching check unchanged, so legacy callers that do not
+    record listing dates are not penalised. Passing neither date — or
+    passing only one — preserves the historical "active ETF universe"
+    semantics bit-for-bit: the optional window is purely additive and
+    never relaxes an existing exclusion.
+    """
 
     exchanges_by_symbol: dict[str, set[str]] = {}
     for instrument in instruments:
@@ -26,6 +50,18 @@ def select_active_etf_symbols(instruments: Iterable[Instrument]) -> tuple[str, .
             or not instrument.is_active
             or instrument.status is not InstrumentStatus.ACTIVE
             or instrument.exchange not in (Exchange.SSE, Exchange.SZSE)
+        ):
+            continue
+        if (
+            end_date is not None
+            and instrument.list_date is not None
+            and instrument.list_date > end_date
+        ):
+            continue
+        if (
+            start_date is not None
+            and instrument.delist_date is not None
+            and instrument.delist_date < start_date
         ):
             continue
         exchanges_by_symbol.setdefault(instrument.symbol, set()).add(

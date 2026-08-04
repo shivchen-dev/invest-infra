@@ -174,6 +174,7 @@ def _make_instrument(
     instrument_type: InstrumentType = InstrumentType.ETF,
     is_active: bool = True,
     status: InstrumentStatus = InstrumentStatus.ACTIVE,
+    list_date: date | None = None,
     delist_date: date | None = None,
 ) -> Instrument:
     return Instrument(
@@ -183,6 +184,7 @@ def _make_instrument(
         instrument_type=instrument_type,
         is_active=is_active,
         status=status,
+        list_date=list_date,
         delist_date=delist_date,
     )
 
@@ -276,6 +278,43 @@ def test_from_active_instruments_returns_empty_symbol_runner_for_empty_input():
     assert isinstance(runner.symbols, tuple)
     assert runner.provider is provider
     assert runner.requested_fields == default_daily_bars_field_set()
+    assert not provider.closed
+
+
+def test_from_active_instruments_forwards_window_to_universe_selector():
+    """The bridge must forward ``start_date`` / ``end_date`` to the selector."""
+
+    provider = StubProvider({})
+    instruments = (
+        # Within the window → kept.
+        _make_instrument(
+            symbol="510300",
+            list_date=date(2010, 1, 1),
+        ),
+        # ``list_date`` is after the inclusive end → excluded.
+        _make_instrument(
+            symbol="510500",
+            list_date=date(2026, 7, 31),
+        ),
+        # ``delist_date`` is before the inclusive start → excluded.
+        _make_instrument(
+            symbol="159915",
+            exchange=Exchange.SZSE,
+            list_date=date(2010, 1, 1),
+            delist_date=date(2026, 7, 22),
+        ),
+    )
+
+    runner = cli.ProviderCoverageRunner.from_active_instruments(
+        start_date=date(2026, 7, 23),
+        end_date=date(2026, 7, 30),
+        instruments=instruments,
+        provider=provider,
+    )
+
+    assert runner.symbols == ("510300",)
+    assert runner.start_date == date(2026, 7, 23)
+    assert runner.end_date == date(2026, 7, 30)
     assert not provider.closed
 
 

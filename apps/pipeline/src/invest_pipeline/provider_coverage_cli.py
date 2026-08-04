@@ -697,9 +697,19 @@ class ProviderCoverageRunner:
         and the classmethod re-raises it untouched so callers see the
         cross-exchange ambiguity without any silent fallback. An empty
         ``instruments`` iterable yields an empty-symbol runner.
+
+        The runner forwards its ``start_date`` / ``end_date`` window to
+        the helper so the universe is also intersected with the probe
+        range: instruments listed after ``end_date`` or delisted before
+        ``start_date`` are excluded so coverage probing never asks a
+        Provider about a listing that did not exist during the window.
         """
 
-        symbols = select_active_etf_symbols(instruments)
+        symbols = select_active_etf_symbols(
+            instruments,
+            start_date=start_date,
+            end_date=end_date,
+        )
         if requested_fields is None:
             requested_fields = default_daily_bars_field_set()
         return cls(

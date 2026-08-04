@@ -4,8 +4,10 @@
 > 近期真实取数均已恢复并通过 16 个 active ETF 覆盖复测。剩余工作属于
 > 历史全量覆盖/回填、DC1-C 跨源数值验收和 Stage 2 Shadow Run。
 >
-> PR-05 收尾复测：AkShare 2020 窗口 16/16 完整，2016/2018 分别有 3/2 个
-> 标的因 EastMoney 代理断连失败；CifangQuant 2018 对照因本机认证配置缺失未执行。
+> PR-05 收尾复测：覆盖计划已按 ETF 生命周期与探测窗口求交集。2018 窗口
+> 生命周期有效的 14 个标的在 AkShare/CifangQuant 均为 14/14 完整；2020
+> 窗口为 16/16 完整。2016 窗口仍有 `513050` 因 AkShare 上游代理失败，
+> CifangQuant 对该窗口返回有效空数据。
 
 - [x] PR-01：统一 Provider Contract / Catalog
 - [x] PR-02：AkShare Adapter 与历史覆盖探测（首个 ETF master/OHLCV 切片）
@@ -35,9 +37,11 @@
   - [x] Fixture full active-universe bridge：16 symbols / 2026-07-23..2026-07-30 / 6 fields
   - [x] 多 Provider CoverageReport 合并：重复 Provider / schema mismatch 拒绝，aggregate hash 确定性
   - [x] AkShare 真实近期全量覆盖探测（16 个 active ETF / 2026-07-30..2026-08-03 / 6 fields；无错误）
-  - [ ] AkShare 历史全量覆盖探测（2016/2018 已完成部分复测；失败标的需重试，2020 已完整）
-  - [x] CifangQuant 全量 active-universe 探测：16 symbols / 2016、2020、2026-07 三窗口
-  - [ ] 全量 active ETF 覆盖矩阵与回填排序
+  - [x] 覆盖计划按 `list_date` / `delist_date` 与探测窗口求交集，排除窗口外标的
+  - [x] AkShare 历史窗口复测：2018 生命周期有效标的 14/14，2020 为 16/16
+  - [x] CifangQuant 历史窗口复测：2016 有效空数据，2018 生命周期有效标的 14/14，2020 为 16/16
+  - [ ] 2016 `513050` 的 AkShare 上游代理失败处理
+  - [ ] 全量 active ETF 覆盖矩阵与回填排序（待处理 2016 阻塞后）
   - [x] AkShare NAV/交易日历 Adapter：只读 fetch_nav + fetch_trading_calendar；mapper 不把 NAV 映射为 OHLCV；聚焦离线测试
   - [x] 覆盖率探针输入构造器：纯函数把成功 ProviderBatch/响应 metadata 转成 calculate_coverage 输入；无网络 / DB 写入
 
