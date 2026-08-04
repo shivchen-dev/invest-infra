@@ -27,6 +27,7 @@
   - [x] Fixture matrix result：`docs/implementation/PROVIDER-COVERAGE-FIXTURE-2026-08-04.md`
   - [x] Fixture full active-universe bridge：16 symbols / 2026-07-23..2026-07-30 / 6 fields
   - [x] 多 Provider CoverageReport 合并：重复 Provider / schema mismatch 拒绝，aggregate hash 确定性
+  - [ ] AkShare 真实全量覆盖探测（当前环境缺少 `akshare` SDK；临时依赖安装超时，待运行环境补齐）
   - [ ] 全量 active ETF 覆盖矩阵与回填排序
   - [x] AkShare NAV/交易日历 Adapter：只读 fetch_nav + fetch_trading_calendar；mapper 不把 NAV 映射为 OHLCV；聚焦离线测试
   - [x] 覆盖率探针输入构造器：纯函数把成功 ProviderBatch/响应 metadata 转成 calculate_coverage 输入；无网络 / DB 写入
