@@ -26,3 +26,10 @@
 - 2020 年和 2026-07 近期数据全部返回完整 6 字段，说明接口链路和字段映射可用。
 - 本次是 CifangQuant 单源全量 active-universe 探测；跨 Provider 一致性仍未完成。
 - QuickTiny、RssCast、AkShare 本次未被当作 ETF 日线生产源参与探测。
+
+## AkShare SDK 安装与真实探测状态
+
+- SDK：`akshare 1.18.81`，已安装到 `apps/pipeline/.venv`，导入验证通过。
+- 适配器单 ETF 调用曾成功返回 23 条记录；随后对 16 个 active ETF 的近期窗口进行有限重试，均在 EastMoney 上游请求阶段失败。
+- 失败类型：`ProviderBadResponseError`，根因是经当前代理连接 EastMoney 时 `ProxyError / RemoteDisconnected`。
+- 结论：当前不能据此判定 AkShare 字段映射或覆盖能力不足；真实全量覆盖报告待代理/上游链路恢复后重跑。

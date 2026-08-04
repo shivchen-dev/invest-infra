@@ -158,9 +158,50 @@ the asset-level integration paths against fixture data:
   exercise `personal_candidate_pool` and the underlying
   `candidate_pool_service.calculate_and_publish_candidate_pool`.
 - `test_etf_assets_provider_wiring.py` and
-  `test_provider_factory_runtime.py` pin `build_provider()`'s three
-  branches (fixture_dev / cifangquant / unknown) and the
-  `INVEST_PIPELINE_PROVIDER_KEY` env wiring.
+  `test_provider_factory_runtime.py` pin `build_provider()`'s
+  four branches (fixture_dev / cifangquant / akshare / unknown) and
+  the `INVEST_PIPELINE_PROVIDER_KEY` env wiring. The runtime
+  factory test asserts
+  `KNOWN_PROVIDER_KEYS == ("fixture_dev", "cifangquant", "akshare")`
+  so a future branch cannot land without an explicit test update.
+- `test_provider_catalog.py` (≈626 LOC) pins the eight catalog
+  declarations, the alphabetical iteration order, and the
+  `KeyError(key)` behaviour of `lookup_provider`. The
+  `test_provider_routing_selection.py` /
+  `test_provider_routing_coverage.py` /
+  `test_provider_routing_probe.py` suite covers the
+  `provider_routing` pure layer (dataset / capability matching,
+  default-enabled gate, research-only rejection, coverage matrix
+  determinism). `test_provider_coverage_cli.py` /
+  `test_provider_coverage_plan.py` /
+  `test_provider_coverage_merge.py` cover the read-only coverage
+  CLI, the active-universe bridge, and the deterministic
+  multi-provider merge.
+- `test_akshare_adapter.py` / `test_akshare_client_nav_calendar.py`
+  / `test_akshare_config.py` / `test_akshare_mapping.py` cover the
+  AkShare adapter end-to-end (Sina-preference + Eastmoney-fallback
+  loop, NAV / calendar read-only surfaces, lazy SDK import seam,
+  adjustment lock). `test_quicktiny_mcp_adapter.py` and
+  `test_rsscast_adapter.py` cover the MCP research transports
+  using `httpx.MockTransport` so CI never opens a socket, and
+  `test_{eastmoney,sina,tonghuashun}_config.py` cover the
+  three-provider plan Phase-1 configuration-only stubs.
+- `test_historical_daily_bars_cli.py` (≈1154 LOC) covers the
+  guarded historical ETF backfill CLI: ISO date parsing, range
+  validation, ≤90-day chunking, the `KNOWN_PROVIDER_KEYS`-scoped
+  provider opt-in, the `TokenNonLeakTest` and the
+  `OnlyDailyBarsAssetsInvokedTest` that pins the CLI to
+  `etf_daily_bars` only.
+- `test_research_fixture_65d.py` pins four invariants of the
+  Stage 4A research fixture (`tests/fixtures/research/etf_daily_bars_65d.json`,
+  symbol `510300`, ≥65 rows, consecutive weekday chain, no
+  future dates, OHLC + amount correctness). The fixture is
+  consumed by `packages/domain/tests/test_research_evidence.py`,
+  which covers the canonical projection, evidence-id derivation,
+  the 8-factor v1.0.0 set, and the golden payload hash. The
+  companion `test_v1_adapter.py` and `test_candidate_universe.py`
+  cover the V1→V2 pure adapter and the dynamic ETF universe
+  qualification.
 - `test_personal_daily_cli.py`, `test_personal_etf_daily_job.py` and
   `test_runtime_config_paths.py` cover the manual driver, the
   `personal_etf_daily_job` selection and the
@@ -217,6 +258,18 @@ pipeline against the host environment without booting the stack:
   `CONFIRM_NETWORK=1`. The Make target sets
   `INVEST_PIPELINE_AUTO_SCHEDULE_ENABLED=false` and forwards
   `apps/pipeline/.env` for the same reason.
+- `make historical-daily-bars-backfill START_DATE=... END_DATE=...`
+  invokes
+  [`historical_daily_bars_cli.py`](../../apps/pipeline/src/invest_pipeline/historical_daily_bars_cli.py)
+  for the guarded historical ETF daily-bars backfill (≤90-day
+  chunks, no Dagster job, no input-snapshot / candidate-pool /
+  evidence-pack / AI-research assets). The target validates the
+  ISO dates, sets
+  `INVEST_PIPELINE_AUTO_SCHEDULE_ENABLED=false`, forwards
+  `apps/pipeline/.env`, and reuses the existing raw evidence +
+  core.daily_bars write path. The provider opt-in is scoped to
+  `fixture_dev` or `cifangquant`; an `akshare` historical run
+  is not yet wired into this CLI.
 - `make openapi-generate` re-derives
   [`apps/api/openapi.json`](../../apps/api/openapi.json) from the
   live FastAPI app via

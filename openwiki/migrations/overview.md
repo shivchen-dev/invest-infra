@@ -30,17 +30,18 @@ apps/migrations/
         ├── 20260731_0003_candidate_pool_tables.py
         ├── 20260731_0004_daily_bars_and_revision.py
         ├── 20260731_0005_input_snapshots.py
-        └── 20260731_0006_candidate_pool_snapshot_fk.py
+        ├── 20260731_0006_candidate_pool_snapshot_fk.py
+        └── 20260803_0007_research_evidence_packs.py
 ```
 
 The shell entry-point is `cd apps/migrations && uv run alembic ...`,
 which `make migrate` aliases.
 
-## 2. The six-revision chain
+## 2. The seven-revision chain
 
 Every revision declares its own `revision`, `down_revision` and a
 single `upgrade()` / `downgrade()` pair. The chain currently ends at
-`20260731_0006_candidate_pool_snapshot_fk.py` and is verified by an AST-based
+`20260803_0007_research_evidence_packs.py` and is verified by an AST-based
 gate — see [Testing & operations](../testing-and-ops/overview.md#migration-chain-ast-gate).
 
 | Revision | Purpose | Key additions |
@@ -51,6 +52,7 @@ gate — see [Testing & operations](../testing-and-ops/overview.md#migration-cha
 | `20260731_0004_daily_bars_and_revision` | The PR-06 daily-bars table and revision view. | `core.daily_bars` with the `(instrument_id, trade_date, adjustment, revision)` composite PK and per-row invariants; `core.latest_daily_bars` view as the read-only latest-per-day surface. |
 | `20260731_0005_input_snapshots` | The PR-07 input snapshot header. | `analytics.input_snapshots` (uuid PK, `(snapshot_date, content_hash)` unique key, jsonb membership list, length-64 content-hash CHECK). |
 | `20260731_0006_candidate_pool_snapshot_fk` | Bind candidate-pool runs to their input snapshots. | Adds `fk_cpool_runs_snapshot_id` from `analytics.candidate_pool_runs.input_snapshot_id` to `analytics.input_snapshots.id`; downgrade drops the constraint. |
+| `20260803_0007_research_evidence_packs` | Stage 4A research evidence persistence. | Creates `analytics.research_evidence_packs` (uuid PK, `instrument_id` FK, `input_snapshot_id` and `candidate_pool_run_id` nullable FKs, `schema_version` / `factor_set_key` / `factor_set_version` / `freshness_status` / `quality_status` / length-64 `content_hash` / JSONB `payload`, plus a five-column `uq_research_evidence_packs_natural_key` unique constraint and two indexes on `(instrument_id, as_of_date)` and `content_hash`). |
 
 Older `20260730_0001..0004` revisions are no longer in the chain —
 they were retired when the migrations moved to `apps/migrations/`.
@@ -91,4 +93,12 @@ they were retired when the migrations moved to `apps/migrations/`.
   superseding chain gate above is the canonical check going forward.
 - `tests/test_migration_chain.py` also asserts that revision `20260731_0006`
   references `candidate_pool_runs`, `input_snapshots`, and
-  `fk_cpool_runs_snapshot_id`.
+  `fk_cpool_runs_snapshot_id`, and that revision `20260803_0007`
+  creates the `research_evidence_packs` table with its three
+  foreign keys (`fk_research_packs_instrument` /
+  `fk_research_packs_snapshot` /
+  `fk_research_packs_candidate_run`), the two CHECK constraints
+  (`ck_research_evidence_packs_content_hash_len64` /
+  `ck_research_evidence_packs_payload_object`), and the
+  five-column `uq_research_evidence_packs_natural_key` unique
+  constraint.

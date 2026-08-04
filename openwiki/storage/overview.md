@@ -31,7 +31,7 @@ three buckets:
 - **Models.** `Base`, `InstrumentRow`, `ProviderRequestRow`,
   `ProviderAttemptRow`, `RawProviderBatchRow`, `PipelineRunRow`,
   `DailyBarRow`, `InputSnapshotRow`, `CandidatePoolRunRow`,
-  `CandidatePoolItemRow`.
+  `CandidatePoolItemRow`, `ResearchEvidencePackRow`.
 - **Repositories and DTOs.** `SqlAlchemy*Repository` classes plus the
   `New*` and `Stored*` dataclasses that shape their inputs and outputs.
 - **Unit of Work.** `UnitOfWork` (Protocol), `SqlAlchemyUnitOfWork`
@@ -166,6 +166,7 @@ SQLAlchemy classes above.
 | `core.latest_daily_bars` | View maintained by the database (revision desc row_number). | New snapshot builders (NOT for replay). |
 | `analytics.input_snapshots` | `etf_input_snapshot` asset + `InputSnapshotRepository.add`. | `/api/v1/candidate-pool/latest` (for `content_hash`). |
 | `analytics.candidate_pool_runs` / `_items` | `personal_candidate_pool` via `candidate_pool_service.calculate_and_publish_candidate_pool`, inside one `UnitOfWork`. | `/api/v1/candidate-pool/latest` and the candidate-pool diff endpoints. |
+| `analytics.research_evidence_packs` | Stage 4A research evidence persistence (migration `20260803_0007`). The ORM class `ResearchEvidencePackRow` is defined in `models.py` but is **not** yet re-exported from `invest_storage.__init__`; no `SqlAlchemy*Repository`, no Unit-of-Work property, and no FastAPI router write or read it in this slice. | No API surface; the table is in place for a future persistence slice. |
 | `ops.pipeline_runs` | Pipeline job wrappers via `SqlAlchemyPipelineRunRepository`. | `/api/v1/pipeline-runs` latest, detail, and paginated history endpoints. |
 
 ## 6. Boundary rules enforced from the storage side

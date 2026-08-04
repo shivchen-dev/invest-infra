@@ -1,9 +1,9 @@
 ---
 type: Concept
 title: Pipeline overview
-description: Dagster assets, the guarded personal daily schedule and preflight, ETL service modules, the fixture_dev and cifang adapter boundaries, the declarative provider_catalog, and replay/backfill operations wired into the raw / core / analytics / ops PostgreSQL schemas.
+description: Dagster assets, the guarded personal daily schedule and preflight, ETL service modules, the fixture_dev, cifang and akshare adapter boundaries, the MCP research transports, the declarative provider_catalog and deterministic provider-routing layer, the read-only provider coverage CLI, and replay/backfill operations wired into the raw / core / analytics / ops PostgreSQL schemas.
 resource: /openwiki/pipeline/overview.md
-tags: [pipeline, dagster, adapters, etl, fixture_dev, cifang, provider-catalog]
+tags: [pipeline, dagster, adapters, etl, fixture_dev, cifang, akshare, provider-catalog, provider-routing, coverage, historical-backfill]
 ---
 
 # Pipeline overview
@@ -31,8 +31,19 @@ apps/pipeline/src/invest_pipeline/
 ├── schedules.py           # guarded Asia/Shanghai personal daily schedule
 ├── daily_preflight.py     # pure run/skip/fail decision gate
 ├── config.py              # pydantic-settings Settings (universe + policy paths)
+├── clock.py               # market_today() — pinned Asia/Shanghai business clock
 ├── provider_catalog.py    # declarative provider role / capability registry
-├── provider_factory.py    # build_provider() — runtime fixture_dev / cifangquant selection
+├── provider_factory.py    # build_provider() — runtime fixture_dev / cifangquant / akshare
+├── provider_routing/      # deterministic dataset × capability routing layer (PR-05)
+│   ├── datasets.py        # Dataset StrEnum + DATASET_CAPABILITIES mapping
+│   ├── selection.py       # select_providers() pure function
+│   ├── coverage.py        # calculate_coverage() pure grid
+│   └── probe.py           # build_coverage_samples() input builder
+├── provider_coverage_report.py   # CoverageReportModel + deterministic content hash
+├── provider_coverage_plan.py     # select_active_etf_symbols + build_backfill_plan
+├── provider_coverage_merge.py    # deterministic multi-provider report merge
+├── provider_coverage_cli.py      # read-only coverage CLI (PR-05)
+├── historical_daily_bars_cli.py  # guarded historical ETF backfill CLI
 ├── cifang_smoke.py        # opt-in real-network CifangQuant smoke CLI (ADR-0011 §3)
 ├── personal_universe.py   # PersonalUniverse YAML loader + resolver
 ├── personal_daily_cli.py  # manual personal_etf_daily_job driver CLI
@@ -45,13 +56,34 @@ apps/pipeline/src/invest_pipeline/
 │   │   ├── adapter.py     # FixtureDevInstrumentProvider
 │   │   ├── etf_instruments.json
 │   │   └── etf_daily_bars.json
-│   └── cifang/            # CifangQuant adapter (ADR-0011 Phase 1 + Phase 2)
-│       ├── __init__.py
-│       ├── adapter.py     # CifangQuantInstrumentProvider (evidence-tuple adapter)
-│       ├── client.py      # httpx transport + chunking + error classification
-│       ├── mapper.py      # /api/fund/list + /api/fund/hist_em field mappers
-│       ├── config.py      # CifangSettings (redacted, disabled by default)
-│       └── README.md      # increment-level design notes
+│   ├── cifang/            # CifangQuant adapter (ADR-0011 Phase 1 + Phase 2)
+│   │   ├── adapter.py     # CifangQuantInstrumentProvider (evidence-tuple adapter)
+│   │   ├── client.py      # httpx transport + chunking + error classification
+│   │   ├── mapper.py      # /api/fund/list + /api/fund/hist_em field mappers
+│   │   ├── config.py      # CifangSettings (redacted, disabled by default)
+│   │   └── README.md
+│   ├── akshare/           # AkShare ETF data adapter (PR-02)
+│   │   ├── adapter.py     # AkshareInstrumentProvider (Sina-pref + Eastmoney fallback)
+│   │   ├── client.py      # lazy akshare SDK resolver + per-symbol ETF calls
+│   │   ├── mapper.py      # fund_etf_fund_info_em + fund_etf_hist_em + NAV/calendar mappers
+│   │   ├── config.py      # AkshareSettings (redacted, disabled by default, adjust="")
+│   │   └── README.md
+│   ├── quicktiny_mcp/     # QuickTiny MCP read-only transport (PR-03, research_only)
+│   │   ├── client.py      # JSON-RPC 2.0 over httpx (initialize / tools/list / tools/call)
+│   │   ├── config.py      # QuickTinyMcpSettings (redacted, default base_url frozen)
+│   │   ├── models.py      # frozen response / result dataclasses
+│   │   └── README.md
+│   ├── rsscast/           # RssCast MCP read-only transport (PR-04, research / index)
+│   │   ├── client.py      # JSON-RPC 2.0 + ETF-DailyBar-shaped tool name rejection
+│   │   ├── config.py      # RssCastMcpSettings (redacted, base_url NOT frozen)
+│   │   ├── models.py      # is_forbidden_tool_name guard
+│   │   └── README.md
+│   ├── eastmoney/         # three-provider plan Phase 1 — config-only stub
+│   │   └── config.py      # EastmoneySettings (Phase 2 adds client/mapper/adapter)
+│   ├── sina/              # three-provider plan Phase 1 — config-only stub
+│   │   └── config.py      # SinaSettings
+│   └── tonghuashun/       # three-provider plan Phase 1 — config-only stub
+│       └── config.py      # TonghuashunSettings
 ├── etf_instruments.py     # write_etf_instruments_raw / upsert_etf_instruments
 │                         # (owns RawEtlResult + UnitOfWorkFactory helpers)
 ├── etf_daily_bars.py      # write_etf_daily_bars_raw / upsert_etf_daily_bars
@@ -210,13 +242,14 @@ the intentionally unpartitioned fixture-only path.
 [`FixtureDevInstrumentProvider`](../../apps/pipeline/src/invest_pipeline/adapters/fixture_dev/adapter.py)
 is the **only** adapter that ships fully enabled by default; the
 [`cifang` adapter](#5-cifang-adapter-adr-0011-phase-1-first--second-increments)
-is wired end-to-end but disabled until `CifangSettings.enabled=True`.
+and [`akshare` adapter](#5b-akshare-adapter-pr-02)
+are wired end-to-end but disabled until the relevant `*Settings.enabled=True`.
 `fixture_dev` returns:
 
-- **ETF instruments** from `fixture_dev/etf_instruments.json` — a small
-  but representative SSE / SZSE ETF universe (12 symbols covering the
-  broad-market, sector and bond categories used throughout the slice).
-- **ETF daily bars** from `fixture_dev/etf_daily_bars.json` — eight
+- **ETF instruments** from `fixture_dev/etf_instruments.json` — 16
+  active SSE / SZSE ETF symbols covering the broad-market, sector
+  and bond categories used throughout the slice.
+- **ETF daily bars** from `fixture_dev/etf_daily_bars.json` — six
   trading days (2026-07-23..2026-07-30) of OHLCV rows including a
   deliberately mixed `trading_status` (mix of `normal` and
   `suspended`) so the calculator's `suspended` exclusion path is
@@ -226,9 +259,9 @@ The adapter's role is **purely deterministic**: serialise-deserialise
 helpers keep the standardisation tests honest about sidecar shapes
 and the `response_payload_json` round-trip. The fixture is the
 default for `INVEST_PIPELINE_PROVIDER_KEY`; production deployment
-of `cifangquant` is still blocked on ADR-0011 O-1 / O-3 / O-4, and
-the fixture is what the storage + pipeline + API layers exercise
-when those open questions are unresolved.
+of `cifangquant` and `akshare` is still blocked on ADR-0011 O-1 /
+O-3 / O-4, and the fixture is what the storage + pipeline + API
+layers exercise when those open questions are unresolved.
 
 ## 5. `cifang` adapter (ADR-0011, Phase 1 first + second increments)
 
@@ -289,12 +322,123 @@ port:
   `provider_factory.build_provider()` (see
   [Provider factory](#12-provider-factory)).
 
-The `cifang` adapter is the only real-network provider wired today.
+The `cifang` adapter is the only ETF daily-bars **provider that has
+been exercised end-to-end against a real network in this slice**.
 Real calls require three opt-ins: `CifangSettings.enabled=True` (via
 `INVEST_PIPELINE_CIFANG_ENABLED=true`), a non-empty
 `INVEST_PIPELINE_CIFANG_API_KEY`, and `--confirm-network` on the
 smoke CLI — see [Personal CLIs](#11-personal-clis). The provider
 remains gated on ADR-0011 O-1 / O-3 / O-4 closure for production use.
+[`akshare`](#5b-akshare-adapter-pr-02) is also fully wired in the
+factory; eastmoney / sina / tonghuashun ship configuration-only
+Phase-1 stubs under the three-provider plan.
+
+## 5b. `akshare` adapter (PR-02)
+
+[`apps/pipeline/src/invest_pipeline/adapters/akshare/`](../../apps/pipeline/src/invest_pipeline/adapters/akshare/)
+is the read-only AkShare provider documented in
+[`DATA-SOURCE-MIGRATION-MATRIX.md` §2 / §5.4 / §10](../../docs/implementation/DATA-SOURCE-MIGRATION-MATRIX.md).
+The package mirrors the Cifang layer separation (`client.py` is the
+only module that may import the `akshare` SDK; the import is
+performed lazily in `_resolve_module()` and surfaces
+`ProviderUnavailableError` on `ImportError` so CI never fails
+purely because the optional SDK is absent).
+
+- [`config.py`](../../apps/pipeline/src/invest_pipeline/adapters/akshare/config.py) ships `AkshareSettings` with
+  `enabled=False` default, `adjust` **locked to `""`** (the
+  AkShare "no adjustment" literal; ADR-0005 §4 forbids `hfq` /
+  `qfq`), `timeout_seconds > 0`, optional `SecretStr` token, and a
+  `redacted_dict()` that masks the token.
+- [`adapter.py`](../../apps/pipeline/src/invest_pipeline/adapters/akshare/adapter.py) exposes
+  `AkshareInstrumentProvider` with the same
+  `EtfMarketDataProvider` surface as Cifang, plus two read-only
+  extensions: `fetch_nav(symbol)` (which rides on
+  `AkshareNavRecord` — `unit_nav` / `accumulated_nav` /
+  `daily_growth_rate`; **NAV is never coerced to OHLCV** per the
+  V2 plan §5 Task 2 invariant) and `fetch_trading_calendar()` (date-only
+  records).
+- [`client.py`](../../apps/pipeline/src/invest_pipeline/adapters/akshare/client.py) lazily resolves the
+  optional `akshare` SDK; every call uses `hasattr(module, operation)`
+  and raises `ProviderUnavailableError` on missing operations.
+- [`mapper.py`](../../apps/pipeline/src/invest_pipeline/adapters/akshare/mapper.py) translates
+  `fund_etf_fund_info_em` and `fund_etf_hist_em` responses (plus
+  the NAV / calendar surfaces) into domain
+  `Instrument` / `DailyBar` records. As of `07cfd65` the
+  `fetch_daily_bars` loop prefers Sina (`fund_etf_hist_sina`) and
+  falls back to Eastmoney (`fund_etf_hist_em`); the resulting
+  `DailyBar.source.provider_key` records which upstream actually
+  served the row, so a Sina-success path is distinguishable from an
+  Eastmoney-fallback path in the raw evidence tables.
+- The `provider_factory` exposes `akshare` as the third runtime
+  branch — see [Provider factory](#12-provider-factory) — and
+  raises `RealProviderRequiresExplicitEnablementError` when
+  `AkshareSettings.enabled=False`. When the optional `akshare`
+  SDK is missing, factory construction still succeeds; the
+  `ProviderUnavailableError` is raised at fetch time so a
+  misconfigured deployment never silently succeeds.
+
+`make` does not yet expose a `provider-smoke` target for AkShare; the
+single-ETF / 16-symbol batch probes recorded in
+[`docs/implementation/PROVIDER-COVERAGE-2026-08-04.md`](../../docs/implementation/PROVIDER-COVERAGE-2026-08-04.md)
+were driven directly through `python -m
+invest_pipeline.provider_coverage_cli`. As of 2026-08-04 the SDK
+is installed and importable but the 16-symbol batch hit
+`ProxyError / RemoteDisconnected` against EastMoney via the local
+proxy; a real full-coverage verdict is pending network recovery.
+
+## 5c. MCP research transports (PR-03 QuickTiny, PR-04 RssCast)
+
+Two read-only MCP adapters share the same JSON-RPC 2.0 envelope but
+intentionally do **not** map responses to `DailyBar`:
+
+- [`adapters/quicktiny_mcp/`](../../apps/pipeline/src/invest_pipeline/adapters/quicktiny_mcp/)
+  talks to `https://stock.quicktiny.cn/api/mcp` (the
+  matrix §9.1 official endpoint) with `initialize` / `tools/list` /
+  `tools/call` methods. `QuickTinyMcpSettings` defaults to
+  `enabled=False`, `base_url` frozen to the official endpoint,
+  bounded timeout, and redacted `SecretStr` token. PR-03 deliberately
+  ships transport only — no `etf_market` → `DailyBar` mapping per
+  matrix §3 / §5.4 / §9.2 — so the catalog advertises only
+  `RESEARCH` and `MARKET_SNAPSHOT`.
+- [`adapters/rsscast/`](../../apps/pipeline/src/invest_pipeline/adapters/rsscast/) shares the
+  JSON-RPC envelope but **rejects ETF-DailyBar-shaped tool names**
+  (`etf_daily_bars`, `fund_history`, `etf_kline_em`, …) at
+  `call_tool` time via `is_forbidden_tool_name`, raising
+  `ProviderDataContractError("RSSCAST_ETF_DAILY_BARS_FORBIDDEN")` so
+  a misconfigured caller cannot accidentally promote an upstream
+  ETF-DailyBar-shaped response into a `core.daily_bars` row.
+  `RssCastMcpSettings` defaults to `enabled=False` and `base_url=""`
+  — matrix §1 explicitly notes that the archive did not freeze a
+  fixed endpoint, so operators must set
+  `INVEST_PIPELINE_RSSCAST_BASE_URL` before enabling the adapter.
+
+Neither adapter extends `provider_factory.build_provider`; both are
+exercised only through the catalog declaration. The MCP transports
+are research-only — they do not write to PostgreSQL, do not
+participate in the `personal_etf_daily_job` and do not reach the
+Dagster asset graph. CI uses `httpx.MockTransport` so the suite
+never opens a TCP connection.
+
+## 5d. Eastmoney / Sina / Tonghuashun (three-provider plan, Phase 1)
+
+Phase 1 of [`tasks/plan-data-source-three-provider.md`](../../tasks/plan-data-source-three-provider.md)
+freezes the catalog declarations and ships the configuration
+skeleton only:
+
+- [`adapters/eastmoney/config.py`](../../apps/pipeline/src/invest_pipeline/adapters/eastmoney/config.py) — `EastmoneySettings`
+  (`enabled=False`, `adjustment="none"`, `timeout_seconds > 0`).
+- [`adapters/sina/config.py`](../../apps/pipeline/src/invest_pipeline/adapters/sina/config.py) — `SinaSettings`
+  (mirrors Eastmoney).
+- [`adapters/tonghuashun/config.py`](../../apps/pipeline/src/invest_pipeline/adapters/tonghuashun/config.py) — `TonghuashunSettings`
+  (mirrors Eastmoney).
+
+Each package is import-safe (`__init__.py` re-exports only the
+settings class, no `httpx` import) so CI can introspect the catalog
+without pulling in any HTTP transport. Phase 2 of the plan adds
+the per-provider `client.py` / `mapper.py` / `adapter.py`; until
+then the catalog entry advertises `research_only` and the runtime
+factory rejects any `INVEST_PIPELINE_PROVIDER_KEY` outside the
+declared `KNOWN_PROVIDER_KEYS` tuple.
 
 ## 6. ETL service modules
 
@@ -363,12 +507,37 @@ Object surface:
 - `lookup_provider(provider_key)` — pure lookup; raises `KeyError`
   with the requested key when the provider is not registered.
 
-The only declaration that ships today is `QUICKTINY_MCP`
-(`research_only`, capabilities `RESEARCH` + `MARKET_SNAPSHOT`,
-`enabled_by_default=False`). The other Provider entries in the
-migration matrix are intentionally deferred until adapter code lands
-so the catalog never claims a capability the code does not back
-(see the matrix §5.1 rule on "no capability without an adapter").
+The catalog registers **eight** frozen declarations
+(`apps/pipeline/src/invest_pipeline/provider_catalog.py:360-396`):
+
+| Key | Role | Capabilities | `enabled_by_default` |
+|---|---|---|---|
+| `akshare` | `research_only` | `ETF_DAILY_BARS` / `ETF_MASTER_DATA` / `INDEX_DAILY_BARS` | `False` |
+| `cifangquant` | `secondary` | `ETF_DAILY_BARS` / `ETF_MASTER_DATA` / `INDEX_DAILY_BARS` | `False` |
+| `eastmoney` | `research_only` | `ETF_DAILY_BARS` / `ETF_MASTER_DATA` / `INDEX_DAILY_BARS` | `False` |
+| `fixture_dev` | `fixture_dev` | `ETF_DAILY_BARS` / `ETF_MASTER_DATA` | `True` |
+| `quicktiny_mcp` | `research_only` | `RESEARCH` / `MARKET_SNAPSHOT` | `False` |
+| `rsscast` | `out_of_scope_for_etf` | `INDEX_DAILY_BARS` / `RESEARCH` | `False` |
+| `sina` | `research_only` | `ETF_DAILY_BARS` / `ETF_MASTER_DATA` / `INDEX_DAILY_BARS` | `False` |
+| `tonghuashun` | `research_only` | `ETF_DAILY_BARS` / `ETF_MASTER_DATA` / `INDEX_DAILY_BARS` | `False` |
+
+The negative-capability contract is part of the public catalog
+contract: `quicktiny_mcp` and `rsscast` must never advertise
+`ETF_DAILY_BARS` or `ETF_MASTER_DATA` (matrix §3 / §5.4 / §9.2
+forbid it), and a future regression that silently re-adds an
+ETF daily-bars capability to a research-only source would
+violate the catalog's frozen string values. `iter_provider_declarations()`
+returns the declarations in ascending `provider_key` order so
+tests and the routing layer can iterate the catalog without
+depending on `dict` insertion order. `lookup_provider(key)` raises
+`KeyError(key)` so callers can assert on the offending key.
+
+The deterministic routing / coverage layer that consumes this
+catalog lives in `provider_routing/` (`select_providers`,
+`calculate_coverage`, `build_coverage_samples`) together with the
+operator-facing `provider_coverage_*` helpers and the
+`provider_coverage_cli` runner; the canonical home for that
+material is §12 ([Provider factory](overview.md#12-provider-factory)).
 
 ## 8. Provider error model
 
@@ -517,23 +686,162 @@ The authentication and replay procedures are maintained in
 [`docs/runbooks/cifang-auth-failure.md`](../../docs/runbooks/cifang-auth-failure.md)
 and [`docs/runbooks/reprocess-trade-date.md`](../../docs/runbooks/reprocess-trade-date.md).
 
+The fourth CLI, [`historical_daily_bars_cli.py`](../../apps/pipeline/src/invest_pipeline/historical_daily_bars_cli.py),
+is the guarded historical ETF daily-bars backfill driver. It is
+paired with the [`make historical-daily-bars-backfill`](../../Makefile)
+target and:
+
+- Replays `write_etf_daily_bars_raw` + `upsert_etf_daily_bars` over
+  an inclusive `[start_date, end_date]` range, chunked into at most
+  90 natural-day blocks processed in order. Both arguments are
+  required, must parse as `YYYY-MM-DD`, and `end_date` must not be
+  in the future; the CLI raises `HistoricalDailyBarsCLIConfigError`
+  (exit `2`) for any of these without importing Dagster or
+  touching any DB state.
+- Accepts an optional `--universe` override that maps to
+  `INVEST_PIPELINE_PERSONAL_UNIVERSE_PATH` **before**
+  `invest_pipeline.config.get_settings()` is first hit (settings are
+  `lru_cache`-d).
+- Validates `--provider-key` against the
+  `KNOWN_PROVIDER_KEYS` tuple — only `fixture_dev` and
+  `cifangquant` are admitted (the Cifang branch additionally
+  requires the documented triple opt-in). AkShare is **not**
+  accepted by the historical backfill CLI in this slice even
+  though the factory wires it; align this gap before any
+  historical run depends on the third provider.
+- Persists through `SqlAlchemyUnitOfWork` and reuses the
+  `RawEtlResult` shape from `etf_daily_bars` /
+  `etf_instruments` so the rerun idempotency contract
+  (`get_or_create` on `(provider_key, dataset_key, request_key)`)
+  remains single-source.
+- Stops at the first chunk whose attempt is not `succeeded` and
+  exits `3`; never prints the API key, raw payload, headers or
+  exception reprs. Exits `2` for configuration errors, `0` for
+  success.
+
 ## 12. Provider factory
 
 [`provider_factory.py`](../../apps/pipeline/src/invest_pipeline/provider_factory.py)
 is the runtime selection surface for the personal pipeline. The
-factory has three branches and three explicit failure modes:
+factory has three branches and four explicit failure modes:
 
 - `fixture_dev` → `FixtureDevInstrumentProvider()`.
 - `cifangquant` → `CifangQuantInstrumentProvider(CifangSettings())`;
   raises `RealProviderRequiresExplicitEnablementError` when
   `CifangSettings.enabled=False` and
   `ProviderAuthenticationError` when `api_key` is empty.
+- `akshare` → `AkshareInstrumentProvider(AkshareSettings())`;
+  raises `RealProviderRequiresExplicitEnablementError` when
+  `AkshareSettings.enabled=False`. Construction succeeds even when
+  the optional `akshare` SDK is absent; the inner
+  `AkshareClient` surfaces `ProviderUnavailableError` at fetch
+  time (not at construction time) so a missing optional
+  dependency never silently swaps in another provider.
 - Anything else → `UnknownProviderError` carrying the offending key.
 
 The factory never silently falls back to the fixture provider, so a
 misconfigured `INVEST_PIPELINE_PROVIDER_KEY` is surfaced at job-start
-time, not at fetch time. `KNOWN_PROVIDER_KEYS` is exported as a
-frozen tuple for documentation and testing.
+time, not at fetch time. `KNOWN_PROVIDER_KEYS = ("fixture_dev",
+"cifangquant", "akshare")` is exported as a frozen tuple for
+documentation and testing, and `test_provider_factory_runtime.py`
+pins that exact tuple so a fourth runtime branch cannot land
+without an explicit test update.
+
+### Provider routing layer (`provider_routing/`)
+
+[`apps/pipeline/src/invest_pipeline/provider_routing/`](../../apps/pipeline/src/invest_pipeline/provider_routing/)
+is the deterministic dataset × declaration selection layer PR-05
+adds on top of the catalog. It is pure (never imports the factory,
+network or DB) and exports four small modules:
+
+- `datasets.py` freezes five dataset identifiers
+  (`ETF_DAILY_BARS` / `ETF_INSTRUMENTS` / `INDEX_DAILY_BARS` /
+  `RESEARCH` / `MARKET_SNAPSHOT`) plus the canonical
+  `DATASET_CAPABILITIES` mapping each dataset uses. The string
+  values are persisted in `raw.provider_requests.dataset_key` so
+  a change here requires a migration. Note that
+  `Dataset.ETF_INSTRUMENTS` resolves to the `ETF_MASTER_DATA`
+  capability to keep backwards compatibility with already-persisted
+  `etf_instruments` rows.
+- `selection.py` exports the pure `select_providers(declarations,
+  dataset, *, enabled_only=True, exclude_research_only_for_etf_daily_bars=True)`
+  function. Three documented rules apply in order: capability
+  match (declaration must advertise the required capability);
+  default-enable gate (when `enabled_only=True`, declarations with
+  `enabled_by_default=False` are dropped — keeps the function safe
+  in dev without silently enabling a third-party API); and the
+  research-only-rejection rule, which is **scoped to
+  `ETF_DAILY_BARS` / `ETF_INSTRUMENTS`** (matrix §5.4 "no
+  research-only source as production SLA"). `INDEX_DAILY_BARS` /
+  `RESEARCH` / `MARKET_SNAPSHOT` keep research-only providers as
+  eligible, because those surfaces are explicitly reserved for the
+  MCP research feeds. The function returns a sorted tuple
+  (`provider_key` ascending) and raises `NoEligibleProviderError`
+  carrying the dataset string as its first argument when no
+  declaration matches.
+- `coverage.py` exposes `calculate_coverage`, a pure deterministic
+  grid builder that takes per-`(provider, symbol)` probe samples
+  and returns a `CoverageReport` with sorted `providers` and
+  sorted per-symbol date ranges. It never touches the network, DB
+  or filesystem.
+- `probe.py` is the pure input builder for `calculate_coverage`
+  (`build_coverage_samples`); the frozen `NAV_FIELDS` /
+  `DAILY_BARS_FIELDS` / `INSTRUMENT_FIELDS` / `CALENDAR_FIELDS`
+  constants anchor the field set the operator-facing tooling
+  consumes.
+
+### Provider coverage report / plan / merge
+
+The routing layer's read-only coverage surface is the JSON-ready
+[CoverageReportModel](../../apps/pipeline/src/invest_pipeline/provider_coverage_report.py).
+The model is rich and deterministic: it pins
+`schema_version=1`, exposes a stable `content_hash` (SHA-256 of
+the canonical business content, **excluding** `generated_at`),
+sorts symbols ascending and providers by `provider_key`, and is
+serialised by `serialize_coverage_report()` with `sort_keys=True`.
+`provider_coverage_plan.select_active_etf_symbols` filters an
+`Instrument` iterable to the active SSE/SZSE ETF universe
+(`is_active=True`, `status=ACTIVE`, `InstrumentType.ETF`),
+raising `ActiveUniverseAmbiguityError` when a single symbol maps
+to multiple exchanges; `build_backfill_plan` then sorts
+`(provider_priority, 0/1 for failed-vs-missing, symbol)` so the
+operator-facing CLI prints a stable work list.
+`provider_coverage_merge.merge_coverage_reports` is the
+deterministic multi-provider merge: it rejects mismatched
+`schema_version`, rejects duplicate provider keys, and produces
+an aggregate `content_hash = SHA-256(sorted(report.content_hashes))`.
+None of these modules import the factory, network or DB.
+
+### Provider coverage CLI
+
+[`provider_coverage_cli.py`](../../apps/pipeline/src/invest_pipeline/provider_coverage_cli.py)
+is the operator-facing CLI that drives the coverage matrix against
+the V2 ETF adapters in two explicit opt-in modes:
+
+- **Offline mode (default).** The CLI uses
+  `FixtureDevInstrumentProvider` and never reaches the network.
+- **Real-network opt-in.** `--provider cifangquant` requires the
+  triple opt-in (`INVEST_PIPELINE_CIFANG_ENABLED=true`,
+  `INVEST_PIPELINE_CIFANG_API_KEY`, `--confirm-network`);
+  `--provider fixture_dev` never needs `--confirm-network`. The
+  CLI rejects every other `--provider` value upfront (it only
+  accepts the two keys above) because AkShare / QuickTiny /
+  RssCast are explicitly excluded from the ETF daily-bars
+  surface (matrix §5.4).
+
+`--symbols` is required (1..20, no duplicates); the default date
+window is the fixture's six-day `2026-07-23..2026-07-30` range
+so a default run produces a stable, inspectable report. `--dataset`
+is hard-coded to `etf_daily_bars` (the field-completeness contract
+is the OHLCV surface the daily-bars mappers stamp on
+`DailyBar`). The CLI never writes to PostgreSQL, never invokes
+Dagster assets, never performs backfill, and never prints the
+API key, raw payload, request headers, exception reprs or
+absolute filesystem paths. It exits `0` on success with a single
+deterministic redacted JSON line; exit code `2` on configuration
+errors. There is no `make provider-coverage` target; invoke
+`python -m invest_pipeline.provider_coverage_cli --symbols …`
+directly (or wire up a Make target of your own).
 
 ## 13. Configuration
 
@@ -552,9 +860,15 @@ contract:
   `config/candidate-pool-personal.yaml`, env
   `INVEST_PIPELINE_CANDIDATE_POOL_POLICY_PATH`).
 
-Provider-specific settings (`CifangSettings`, future
-`AkShareSettings`, …) live next to their adapter and follow the
-redaction rules in ADR-0010 §5 / §6 and ADR-0011 §3.
+Provider-specific settings (`CifangSettings`,
+`AkshareSettings`, `QuickTinyMcpSettings`, `RssCastMcpSettings`,
+`EastmoneySettings`, `SinaSettings`, `TonghuashunSettings`) live
+next to their adapter and follow the redaction rules in
+ADR-0010 §5 / §6 and ADR-0011 §3. The MCP adapters and the
+three-provider plan Phase-1 stubs (`eastmoney`, `sina`,
+`tonghuashun`) are configuration-only in this slice and do not
+extend `provider_factory`; only `cifangquant` and `akshare` are
+runtime-selectable today.
 
 ## 14. Pipeline run audit
 

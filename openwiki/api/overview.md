@@ -90,8 +90,6 @@ override it with a `MagicMock` `Session` and patch the relevant
   `invest_domain.candidate_pool.models.RuleOutcome`.
 - `ExclusionReasonResponse` (`code`, `message`) mirrors
   `ExclusionReason`.
-- `InstrumentDisplay` defines optional server-resolved `symbol`, `name`, and
-  `exchange` fields used by the candidate-pool read models.
 - `CandidatePoolItemResponse` (`instrument_id`, `included`, optional
   `rank` / `total_score`, `metrics`, `rule_results`,
   `exclusion_reasons`, plus optional `symbol`, `name`, `exchange`). Missing

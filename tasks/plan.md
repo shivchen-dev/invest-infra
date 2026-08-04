@@ -7,8 +7,8 @@ Close the locally executable remainder of the stability and personal-use stage, 
 ## Phase 1: Baseline and test gaps
 
 - [x] Run the full repository test/architecture baseline with the current working tree.
-- [ ] Add the smallest useful Web unit-test setup and tests for the implemented read-only pages/API states.
-- [ ] Verify Web typecheck and production build after the test setup.
+- [x] Add the smallest useful Web unit-test setup and tests for the implemented read-only pages/API states.
+- [x] Verify Web typecheck and production build after the test setup.
 
 ## Phase 2: Database and operational verification
 

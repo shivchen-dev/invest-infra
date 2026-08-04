@@ -9,7 +9,7 @@ tags: [candidate-pool, calculator, state-machine, input-snapshot]
 # Candidate pool
 
 The candidate-pool bounded context owns the lifecycle of one
-calculation per `trade_date`. It is split across three pure modules
+calculation per `trade_date`. It is split across five pure modules
 inside `packages/domain/`:
 
 | Module | Responsibility |
@@ -17,6 +17,8 @@ inside `packages/domain/`:
 | [`invest_domain.candidate_pool.models`](../../packages/domain/src/invest_domain/candidate_pool/models.py) | State machine (`CandidatePoolStatus`), eligibility / scoring criteria, `CandidatePoolItem`, `CandidatePoolResult`, `RuleOutcome`, `ExclusionReason`, `CandidatePoolPolicy`. |
 | [`invest_domain.candidate_pool.calculator`](../../packages/domain/src/invest_domain/candidate_pool/calculator.py) | The PR-08 minimum calculator (`DefaultMinimumCandidatePoolCalculator`) + the `MinimumCandidatePoolCalculator` protocol. |
 | [`invest_domain.candidate_pool.ports`](../../packages/domain/src/invest_domain/candidate_pool/ports.py) | The M4 `CandidatePoolCalculator` Protocol that previously lived here has been removed; the module documents the removal and the future re-introduction. The PR-08 minimum calculator's `MinimumCandidatePoolCalculator` Protocol (in `calculator.py`) already locks the call signature used today. |
+| [`invest_domain.candidate_pool.universe`](../../packages/domain/src/invest_domain/candidate_pool/universe.py) | Pure dynamic ETF universe qualification (`build_etf_universe`) — classification into `FULL` / `PARTIAL` / `INELIGIBLE` with deterministic ordering, bar dedup by `(trade_date, revision desc, row_hash asc)`, and stable `can_enter_watch_only = (eligibility == PARTIAL)`. |
+| [`invest_domain.candidate_pool.v1_adapter`](../../packages/domain/src/invest_domain/candidate_pool/v1_adapter.py) | Pure V1→V2 adapter (`adapt_v1_target_selection`, `validate_v1_target_selection`, `build_fail_closed_output`) — frozen V1 FQIR weights, four-state decision vocabulary, fail-closed semantics; the only shipped slice of the Stage 4A-0 multi-channel routing plan. |
 
 The PR-08 minimum algorithm intentionally uses a smaller signature than
 the planned M4 contract because it does not yet consume rolling
