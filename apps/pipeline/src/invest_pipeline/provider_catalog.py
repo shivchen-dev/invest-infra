@@ -5,10 +5,14 @@ It records the ``provider_key``, ``role``, ``capabilities`` and
 ``enabled_by_default`` flag of every provider the V2 codebase references
 by name. PR-01 (see
 ``docs/plan/invest-infra-v2-all-data-sources-integration-plan.md``)
-freezes the full five-entry catalog:
+freezes the original five-entry catalog and the V2 three-provider plan
+(see ``tasks/plan-data-source-three-provider.md``) extends the catalog
+with the three additional aggregator sources for historical quotes and
+cross-validation:
 
 ```text
 fixture_dev   cifangquant   akshare   rsscast   quicktiny_mcp
+             eastmoney   sina   tonghuashun
 ```
 
 The module is intentionally small:
@@ -18,8 +22,11 @@ The module is intentionally small:
 * No runtime provider selection, factory or registry is implemented in
   this module. The runtime factory
   (:mod:`invest_pipeline.provider_factory`) owns construction and keeps
-  its own two-key surface (``fixture_dev`` / ``cifangquant``); the
-  factory is intentionally **not** extended in this increment.
+  its own three-key surface (``fixture_dev`` / ``cifangquant`` /
+  ``akshare``); the three-provider plan Phase 1 explicitly **does not**
+  extend the factory either — only the catalog and the routing layer
+  observe the new sources. The client / mapper / adapter layers land
+  in Phase 2.
 * No Dagster asset, schedule or database migration is added.
 * No external network call is issued.
 
@@ -54,6 +61,18 @@ The entries mirror ``docs/implementation/DATA-SOURCE-MIGRATION-MATRIX.md``
   constraint forbid it from claiming ``ETF_DAILY_BARS`` (or any ETF
   / index daily-bars capability). The catalog advertises only
   ``RESEARCH`` and ``MARKET_SNAPSHOT``.
+* ``eastmoney`` / ``sina`` / ``tonghuashun`` are the three
+  cross-validation / historical-quotes sources the V2
+  ``tasks/plan-data-source-three-provider.md`` adds. All three are
+  pinned to the ``research_only`` role per the plan §"Architecture
+  Decisions" (the public endpoints are non-official, no SLA contract,
+  and matrix §5.4 forbids treating them as production SLA sources).
+  The three advertise the same capability set as AkShare —
+  ``ETF_DAILY_BARS`` / ``ETF_MASTER_DATA`` / indirect
+  ``INDEX_DAILY_BARS`` — because they share the public-endpoint shape
+  the matrix §2 observations describe. All three stay
+  ``enabled_by_default=False`` per matrix §6 and the plan §"Risks and
+  Mitigations" rule that "无凭证或未显式启用时保持无网络行为".
 
 Every real provider stays ``enabled_by_default=False`` per matrix §6.
 The negative-capability assertions for RssCast and Quicktiny are part
@@ -256,20 +275,108 @@ research surface). The provider stays disabled by default per matrix
 """
 
 
+EASTMONEY = ProviderDeclaration(
+    provider_key="eastmoney",
+    role=ProviderRole.RESEARCH_ONLY,
+    capabilities=(
+        ProviderCapability.ETF_DAILY_BARS,
+        ProviderCapability.ETF_MASTER_DATA,
+        ProviderCapability.INDEX_DAILY_BARS,
+    ),
+    enabled_by_default=False,
+)
+"""Eastmoney (东方财富) provider declaration.
+
+Three-provider plan §"Architecture Decisions" introduces Eastmoney as a
+V2 independent read-only provider used for historical quotes,
+cross-validation and ETF master-data assistance. The catalog mirrors
+the matrix §2 observations: the source advertises the three ETF /
+index market-data capabilities (``ETF_DAILY_BARS``,
+``ETF_MASTER_DATA`` and the indirect ``INDEX_DAILY_BARS``) because
+the public endpoints share the same shape as the AkShare aggregator.
+
+The role is ``research_only`` to mirror the matrix §3 safer default:
+the upstream endpoints are non-official, have no SLA contract and the
+plan §"Risks and Mitigations" table flags them as "非官方接口字段或
+限流策略变化" so they cannot be used as a production SLA source until
+that is closed. The provider stays disabled by default per matrix §6.
+"""
+
+
+SINA = ProviderDeclaration(
+    provider_key="sina",
+    role=ProviderRole.RESEARCH_ONLY,
+    capabilities=(
+        ProviderCapability.ETF_DAILY_BARS,
+        ProviderCapability.ETF_MASTER_DATA,
+        ProviderCapability.INDEX_DAILY_BARS,
+    ),
+    enabled_by_default=False,
+)
+"""Sina (新浪) provider declaration.
+
+Three-provider plan §"Architecture Decisions" introduces Sina as a V2
+independent read-only provider used for historical quotes,
+cross-validation and ETF master-data assistance. The capability set
+mirrors Eastmoney's: ETF / index market-data surfaces
+(``ETF_DAILY_BARS`` / ``ETF_MASTER_DATA`` / indirect
+``INDEX_DAILY_BARS``).
+
+The role is ``research_only`` for the same reason as Eastmoney: the
+public endpoints are non-official, the plan §"Risks and Mitigations"
+table flags them as such and matrix §5.4 forbids treating them as a
+production SLA source. The provider stays disabled by default per
+matrix §6.
+"""
+
+
+TONGHUASHUN = ProviderDeclaration(
+    provider_key="tonghuashun",
+    role=ProviderRole.RESEARCH_ONLY,
+    capabilities=(
+        ProviderCapability.ETF_DAILY_BARS,
+        ProviderCapability.ETF_MASTER_DATA,
+        ProviderCapability.INDEX_DAILY_BARS,
+    ),
+    enabled_by_default=False,
+)
+"""Tonghuashun (同花顺) provider declaration.
+
+Three-provider plan §"Architecture Decisions" introduces Tonghuashun
+as a V2 independent read-only provider used for historical quotes,
+cross-validation and ETF master-data assistance. The capability set
+mirrors Eastmoney / Sina: ETF / index market-data surfaces
+(``ETF_DAILY_BARS`` / ``ETF_MASTER_DATA`` / indirect
+``INDEX_DAILY_BARS``).
+
+The role is ``research_only`` for the same reason as Eastmoney /
+Sina: the public endpoints are non-official, the plan §"Risks and
+Mitigations" table flags them as such and matrix §5.4 forbids treating
+them as a production SLA source. The provider stays disabled by
+default per matrix §6.
+"""
+
+
 _PROVIDER_CATALOG: dict[str, ProviderDeclaration] = {
     AKSHARE.provider_key: AKSHARE,
     CIFANGQUANT.provider_key: CIFANGQUANT,
+    EASTMONEY.provider_key: EASTMONEY,
     FIXTURE_DEV.provider_key: FIXTURE_DEV,
     QUICKTINY_MCP.provider_key: QUICKTINY_MCP,
     RSSCAST.provider_key: RSSCAST,
+    SINA.provider_key: SINA,
+    TONGHUASHUN.provider_key: TONGHUASHUN,
 }
 
 _ALL_DECLARATIONS: tuple[ProviderDeclaration, ...] = (
     AKSHARE,
     CIFANGQUANT,
+    EASTMONEY,
     FIXTURE_DEV,
     QUICKTINY_MCP,
     RSSCAST,
+    SINA,
+    TONGHUASHUN,
 )
 
 _ALL_PROVIDER_KEYS: tuple[str, ...] = tuple(
@@ -318,12 +425,15 @@ _PROVIDER_CATALOG_SORTED: tuple[ProviderDeclaration, ...] = tuple(
 __all__ = [
     "AKSHARE",
     "CIFANGQUANT",
+    "EASTMONEY",
     "FIXTURE_DEV",
     "ProviderCapability",
     "ProviderDeclaration",
     "ProviderRole",
     "QUICKTINY_MCP",
     "RSSCAST",
+    "SINA",
+    "TONGHUASHUN",
     "iter_provider_declarations",
     "lookup_provider",
 ]

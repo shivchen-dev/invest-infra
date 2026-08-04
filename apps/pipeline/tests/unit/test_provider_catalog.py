@@ -1,32 +1,43 @@
-"""Unit tests for the V2 provider catalog (PR-01).
+"""Unit tests for the V2 provider catalog (PR-01 + three-provider plan Phase 1).
 
 The catalog is a data declaration only — these tests assert the
 catalog invariants without touching the network, the database or any
 external resource. PR-01
 (``docs/plan/invest-infra-v2-all-data-sources-integration-plan.md``)
-freezes the full five-entry catalog: ``fixture_dev``, ``cifangquant``,
-``akshare``, ``rsscast`` and ``quicktiny_mcp``. The tests verify:
+freezes the original five-entry catalog (``fixture_dev``,
+``cifangquant``, ``akshare``, ``rsscast``, ``quicktiny_mcp``) and the
+V2 three-provider plan
+(``tasks/plan-data-source-three-provider.md``) extends it with three
+cross-validation / historical-quotes sources (``eastmoney``, ``sina``,
+``tonghuashun``). The tests verify:
 
 * Each declaration's ``provider_key`` / ``role`` / ``capabilities`` /
   ``enabled_by_default`` matches
   ``docs/implementation/DATA-SOURCE-MIGRATION-MATRIX.md`` §2 / §3 /
-  §5.4 / §6.
+  §5.4 / §6 and the three-provider plan §"Architecture Decisions".
 * RssCast and Quicktiny do **not** advertise ``ETF_DAILY_BARS`` (or
   any other ETF / index daily-bars capability) — matrix §5.4 plus the
   plan PR-01 "do not claim ETF daily bars for RssCast or QuickTiny"
   constraint.
+* Eastmoney / Sina / Tonghuashun advertise the same three market-data
+  capabilities as AkShare (``ETF_DAILY_BARS`` / ``ETF_MASTER_DATA`` /
+  indirect ``INDEX_DAILY_BARS``) but stay ``research_only`` and
+  ``enabled_by_default=False`` per the three-provider plan §"Risks and
+  Mitigations".
 * Every real provider stays ``enabled_by_default=False``; only
   ``fixture_dev`` is on by default.
 * ``lookup_provider`` resolves every known key and raises
   ``KeyError`` for unknown keys (carrying the key as the first
   argument).
-* ``iter_provider_declarations`` returns the five expected entries
+* ``iter_provider_declarations`` returns the eight expected entries
   in a stable, alphabetical order.
 
 The provider factory's runtime surface is intentionally **not**
 exercised here — that lives in ``test_provider_factory_runtime.py``
-and continues to assert the existing two-key factory surface per
-PR-01's "preserve the existing runtime factory behavior" guardrail.
+and continues to assert the existing three-key factory surface per
+PR-01's "preserve the existing runtime factory behavior" guardrail and
+the three-provider plan Phase 1 "do not extend the factory in Phase 1"
+rule.
 """
 
 from __future__ import annotations
@@ -36,9 +47,12 @@ import unittest
 from invest_pipeline.provider_catalog import (
     AKSHARE,
     CIFANGQUANT,
+    EASTMONEY,
     FIXTURE_DEV,
     QUICKTINY_MCP,
     RSSCAST,
+    SINA,
+    TONGHUASHUN,
     ProviderCapability,
     ProviderDeclaration,
     ProviderRole,
@@ -46,12 +60,15 @@ from invest_pipeline.provider_catalog import (
     lookup_provider,
 )
 
-_ALL_FIVE_PROVIDER_KEYS: tuple[str, ...] = (
+_ALL_EIGHT_PROVIDER_KEYS: tuple[str, ...] = (
     "akshare",
     "cifangquant",
+    "eastmoney",
     "fixture_dev",
     "quicktiny_mcp",
     "rsscast",
+    "sina",
+    "tonghuashun",
 )
 
 
@@ -73,9 +90,7 @@ class DeclarationShapeTest(unittest.TestCase):
             capabilities = declaration.capabilities
             self.assertIsInstance(capabilities, tuple)
             for capability in capabilities:
-                with self.subTest(
-                    provider_key=declaration.provider_key, capability=capability
-                ):
+                with self.subTest(provider_key=declaration.provider_key, capability=capability):
                     self.assertIsInstance(capability, ProviderCapability)
 
     def test_enabled_by_default_is_a_boolean(self) -> None:
@@ -139,9 +154,7 @@ class CifangquantDeclarationTest(unittest.TestCase):
         # CifangQuant is a deterministic market-data source; it must
         # not advertise the research-only surfaces.
         self.assertNotIn(ProviderCapability.RESEARCH, CIFANGQUANT.capabilities)
-        self.assertNotIn(
-            ProviderCapability.MARKET_SNAPSHOT, CIFANGQUANT.capabilities
-        )
+        self.assertNotIn(ProviderCapability.MARKET_SNAPSHOT, CIFANGQUANT.capabilities)
 
     def test_enabled_by_default_is_false(self) -> None:
         # Matrix §6: real providers default to off.
@@ -179,9 +192,7 @@ class AkshareDeclarationTest(unittest.TestCase):
         # the research / market-snapshot surfaces reserved for the MCP
         # research providers.
         self.assertNotIn(ProviderCapability.RESEARCH, AKSHARE.capabilities)
-        self.assertNotIn(
-            ProviderCapability.MARKET_SNAPSHOT, AKSHARE.capabilities
-        )
+        self.assertNotIn(ProviderCapability.MARKET_SNAPSHOT, AKSHARE.capabilities)
 
     def test_enabled_by_default_is_false(self) -> None:
         # Matrix §6: real providers default to off. The fact that
@@ -217,23 +228,17 @@ class RsscastDeclarationTest(unittest.TestCase):
         # matrix §5.4. The negative assertion is the whole point of
         # the catalog entry — a future regression that adds
         # ``ETF_DAILY_BARS`` to RssCast would corrupt the matrix.
-        self.assertNotIn(
-            ProviderCapability.ETF_DAILY_BARS, RSSCAST.capabilities
-        )
+        self.assertNotIn(ProviderCapability.ETF_DAILY_BARS, RSSCAST.capabilities)
 
     def test_etf_master_data_capability_is_absent(self) -> None:
         # Belt-and-braces: RssCast must not claim ETF master data
         # either; matrix §3 places it firmly out-of-scope-for-etf.
-        self.assertNotIn(
-            ProviderCapability.ETF_MASTER_DATA, RSSCAST.capabilities
-        )
+        self.assertNotIn(ProviderCapability.ETF_MASTER_DATA, RSSCAST.capabilities)
 
     def test_market_snapshot_capability_is_absent(self) -> None:
         # Plan PR-01 constrains RssCast to "research / index only";
         # market_snapshot belongs to Quicktiny alone in PR-01.
-        self.assertNotIn(
-            ProviderCapability.MARKET_SNAPSHOT, RSSCAST.capabilities
-        )
+        self.assertNotIn(ProviderCapability.MARKET_SNAPSHOT, RSSCAST.capabilities)
 
     def test_enabled_by_default_is_false(self) -> None:
         self.assertFalse(RSSCAST.enabled_by_default)
@@ -297,6 +302,116 @@ class QuicktinyMcpDeclarationTest(unittest.TestCase):
         self.assertIsInstance(QUICKTINY_MCP.enabled_by_default, bool)
 
 
+class EastmoneyDeclarationTest(unittest.TestCase):
+    """The ``eastmoney`` declaration matches the three-provider plan §Architecture Decisions."""
+
+    def test_provider_key_is_eastmoney(self) -> None:
+        self.assertEqual(EASTMONEY.provider_key, "eastmoney")
+
+    def test_role_is_research_only(self) -> None:
+        # Three-provider plan §"Architecture Decisions" pins Eastmoney
+        # to ``research_only`` because the public endpoints are
+        # non-official and matrix §5.4 forbids treating it as a
+        # production SLA source.
+        self.assertEqual(EASTMONEY.role, ProviderRole.RESEARCH_ONLY)
+        self.assertEqual(EASTMONEY.role.value, "research_only")
+
+    def test_capabilities_cover_etf_and_indirect_index(self) -> None:
+        # Three-provider plan: Eastmoney advertises the same three
+        # market-data capabilities as AkShare because the public
+        # endpoints share the same shape as the AkShare aggregator
+        # (``ETF_DAILY_BARS`` / ``ETF_MASTER_DATA`` / indirect
+        # ``INDEX_DAILY_BARS``).
+        capabilities = set(EASTMONEY.capabilities)
+        self.assertEqual(
+            capabilities,
+            {
+                ProviderCapability.ETF_DAILY_BARS,
+                ProviderCapability.ETF_MASTER_DATA,
+                ProviderCapability.INDEX_DAILY_BARS,
+            },
+        )
+
+    def test_research_and_market_snapshot_capabilities_are_absent(self) -> None:
+        # Eastmoney is a deterministic market-data source; the
+        # research / market-snapshot surfaces remain reserved for the
+        # MCP research providers.
+        self.assertNotIn(ProviderCapability.RESEARCH, EASTMONEY.capabilities)
+        self.assertNotIn(ProviderCapability.MARKET_SNAPSHOT, EASTMONEY.capabilities)
+
+    def test_enabled_by_default_is_false(self) -> None:
+        # Matrix §6: real providers default to off. The capability
+        # set must not override the safe default.
+        self.assertFalse(EASTMONEY.enabled_by_default)
+
+
+class SinaDeclarationTest(unittest.TestCase):
+    """The ``sina`` declaration matches the three-provider plan §Architecture Decisions."""
+
+    def test_provider_key_is_sina(self) -> None:
+        self.assertEqual(SINA.provider_key, "sina")
+
+    def test_role_is_research_only(self) -> None:
+        # Three-provider plan §"Architecture Decisions" pins Sina to
+        # ``research_only`` for the same reason as Eastmoney.
+        self.assertEqual(SINA.role, ProviderRole.RESEARCH_ONLY)
+        self.assertEqual(SINA.role.value, "research_only")
+
+    def test_capabilities_cover_etf_and_indirect_index(self) -> None:
+        # Mirror of Eastmoney: the three market-data capabilities
+        # are advertised.
+        capabilities = set(SINA.capabilities)
+        self.assertEqual(
+            capabilities,
+            {
+                ProviderCapability.ETF_DAILY_BARS,
+                ProviderCapability.ETF_MASTER_DATA,
+                ProviderCapability.INDEX_DAILY_BARS,
+            },
+        )
+
+    def test_research_and_market_snapshot_capabilities_are_absent(self) -> None:
+        self.assertNotIn(ProviderCapability.RESEARCH, SINA.capabilities)
+        self.assertNotIn(ProviderCapability.MARKET_SNAPSHOT, SINA.capabilities)
+
+    def test_enabled_by_default_is_false(self) -> None:
+        self.assertFalse(SINA.enabled_by_default)
+
+
+class TonghuashunDeclarationTest(unittest.TestCase):
+    """The ``tonghuashun`` declaration matches the three-provider plan §Architecture Decisions."""
+
+    def test_provider_key_is_tonghuashun(self) -> None:
+        self.assertEqual(TONGHUASHUN.provider_key, "tonghuashun")
+
+    def test_role_is_research_only(self) -> None:
+        # Three-provider plan §"Architecture Decisions" pins
+        # Tonghuashun to ``research_only`` for the same reason as
+        # Eastmoney / Sina.
+        self.assertEqual(TONGHUASHUN.role, ProviderRole.RESEARCH_ONLY)
+        self.assertEqual(TONGHUASHUN.role.value, "research_only")
+
+    def test_capabilities_cover_etf_and_indirect_index(self) -> None:
+        # Mirror of Eastmoney / Sina: the three market-data
+        # capabilities are advertised.
+        capabilities = set(TONGHUASHUN.capabilities)
+        self.assertEqual(
+            capabilities,
+            {
+                ProviderCapability.ETF_DAILY_BARS,
+                ProviderCapability.ETF_MASTER_DATA,
+                ProviderCapability.INDEX_DAILY_BARS,
+            },
+        )
+
+    def test_research_and_market_snapshot_capabilities_are_absent(self) -> None:
+        self.assertNotIn(ProviderCapability.RESEARCH, TONGHUASHUN.capabilities)
+        self.assertNotIn(ProviderCapability.MARKET_SNAPSHOT, TONGHUASHUN.capabilities)
+
+    def test_enabled_by_default_is_false(self) -> None:
+        self.assertFalse(TONGHUASHUN.enabled_by_default)
+
+
 class NoEtfDailyBarsForResearchOnlyProvidersTest(unittest.TestCase):
     """Cross-provider negative assertion: research providers never claim ETF bars.
 
@@ -345,12 +460,8 @@ class NoEtfDailyBarsForResearchOnlyProvidersTest(unittest.TestCase):
                     # RssCast is the out-of-scope-for-etf MCP source:
                     # matrix §3 places it firmly outside the ETF
                     # surface, so neither ETF capability is allowed.
-                    self.assertNotIn(
-                        ProviderCapability.ETF_DAILY_BARS, advertised
-                    )
-                    self.assertNotIn(
-                        ProviderCapability.ETF_MASTER_DATA, advertised
-                    )
+                    self.assertNotIn(ProviderCapability.ETF_DAILY_BARS, advertised)
+                    self.assertNotIn(ProviderCapability.ETF_MASTER_DATA, advertised)
                 elif declaration is QUICKTINY_MCP:
                     # Quicktiny is the research / market_snapshot MCP
                     # source: none of the three market-data caps
@@ -383,7 +494,7 @@ class LookupProviderTest(unittest.TestCase):
     """``lookup_provider`` resolves every known key and raises on unknowns."""
 
     def test_lookup_resolves_every_known_key(self) -> None:
-        for key in _ALL_FIVE_PROVIDER_KEYS:
+        for key in _ALL_EIGHT_PROVIDER_KEYS:
             with self.subTest(provider_key=key):
                 declaration = lookup_provider(key)
                 self.assertEqual(declaration.provider_key, key)
@@ -402,6 +513,9 @@ class LookupProviderTest(unittest.TestCase):
         self.assertIs(lookup_provider("akshare"), AKSHARE)
         self.assertIs(lookup_provider("rsscast"), RSSCAST)
         self.assertIs(lookup_provider("quicktiny_mcp"), QUICKTINY_MCP)
+        self.assertIs(lookup_provider("eastmoney"), EASTMONEY)
+        self.assertIs(lookup_provider("sina"), SINA)
+        self.assertIs(lookup_provider("tonghuashun"), TONGHUASHUN)
 
     def test_lookup_raises_key_error_for_unknown_key(self) -> None:
         with self.assertRaises(KeyError) as ctx:
@@ -430,20 +544,17 @@ class LookupProviderTest(unittest.TestCase):
 class IterProviderDeclarationsTest(unittest.TestCase):
     """``iter_provider_declarations`` exposes the catalog for tests / docs."""
 
-    def test_iteration_returns_exactly_the_five_expected_keys(self) -> None:
+    def test_iteration_returns_exactly_the_eight_expected_keys(self) -> None:
         declarations = iter_provider_declarations()
         self.assertEqual(
             tuple(declaration.provider_key for declaration in declarations),
-            _ALL_FIVE_PROVIDER_KEYS,
+            _ALL_EIGHT_PROVIDER_KEYS,
         )
 
     def test_iteration_is_alphabetical_by_provider_key(self) -> None:
         # Stable order so documentation tables and snapshot tests can
         # rely on the iteration order.
-        provider_keys = [
-            declaration.provider_key
-            for declaration in iter_provider_declarations()
-        ]
+        provider_keys = [declaration.provider_key for declaration in iter_provider_declarations()]
         self.assertEqual(provider_keys, sorted(provider_keys))
 
     def test_iteration_returns_immutable_tuple_with_equal_contents(self) -> None:
@@ -459,18 +570,18 @@ class IterProviderDeclarationsTest(unittest.TestCase):
         self.assertEqual(first, second)
 
     def test_iteration_covers_every_module_constant(self) -> None:
-        iterated_keys = {
-            declaration.provider_key
-            for declaration in iter_provider_declarations()
-        }
+        iterated_keys = {declaration.provider_key for declaration in iter_provider_declarations()}
         self.assertEqual(
             iterated_keys,
             {
                 AKSHARE.provider_key,
                 CIFANGQUANT.provider_key,
+                EASTMONEY.provider_key,
                 FIXTURE_DEV.provider_key,
                 QUICKTINY_MCP.provider_key,
                 RSSCAST.provider_key,
+                SINA.provider_key,
+                TONGHUASHUN.provider_key,
             },
         )
 
@@ -479,21 +590,17 @@ class CatalogWideInvariantsTest(unittest.TestCase):
     """Catalog-wide structural invariants."""
 
     def test_every_expected_provider_key_is_registered(self) -> None:
-        # PR-01 freezes the full five-entry catalog. Adding a
-        # provider without a matrix update is a regression; removing
-        # one is a regression. This test pins the membership exactly
-        # so the next PR cannot silently drop a provider.
-        iterated_keys = {
-            declaration.provider_key
-            for declaration in iter_provider_declarations()
-        }
-        self.assertEqual(iterated_keys, set(_ALL_FIVE_PROVIDER_KEYS))
+        # PR-01 freezes the original five-entry catalog; the
+        # three-provider plan Phase 1 extends it with three more.
+        # Adding a provider without a plan / matrix update is a
+        # regression; removing one is a regression. This test pins
+        # the membership exactly so the next PR cannot silently drop
+        # a provider.
+        iterated_keys = {declaration.provider_key for declaration in iter_provider_declarations()}
+        self.assertEqual(iterated_keys, set(_ALL_EIGHT_PROVIDER_KEYS))
 
     def test_catalog_provider_keys_are_unique(self) -> None:
-        provider_keys = [
-            declaration.provider_key
-            for declaration in iter_provider_declarations()
-        ]
+        provider_keys = [declaration.provider_key for declaration in iter_provider_declarations()]
         self.assertEqual(len(provider_keys), len(set(provider_keys)))
 
     def test_quicktiny_mcp_capabilities_subset_holds(self) -> None:
@@ -503,9 +610,7 @@ class CatalogWideInvariantsTest(unittest.TestCase):
         # market_snapshot only" constraint.
         advertised = set(QUICKTINY_MCP.capabilities)
         self.assertTrue(
-            advertised.issubset(
-                {ProviderCapability.RESEARCH, ProviderCapability.MARKET_SNAPSHOT}
-            )
+            advertised.issubset({ProviderCapability.RESEARCH, ProviderCapability.MARKET_SNAPSHOT})
         )
 
     def test_rsscapabilities_subset_holds(self) -> None:
@@ -513,9 +618,7 @@ class CatalogWideInvariantsTest(unittest.TestCase):
         # be a subset of the plan PR-01 "research / index only" pair.
         advertised = set(RSSCAST.capabilities)
         self.assertTrue(
-            advertised.issubset(
-                {ProviderCapability.RESEARCH, ProviderCapability.INDEX_DAILY_BARS}
-            )
+            advertised.issubset({ProviderCapability.RESEARCH, ProviderCapability.INDEX_DAILY_BARS})
         )
 
 
