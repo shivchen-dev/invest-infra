@@ -42,6 +42,9 @@
   - [x] CifangQuant 历史窗口复测：2016 有效空数据，2018 生命周期有效标的 14/14，2020 为 16/16
   - [ ] 2016 `513050` 的 AkShare 上游代理失败处理
   - [ ] 全量 active ETF 覆盖矩阵与回填排序（待处理 2016 阻塞后）
+  - [x] 2026-01-01..2026-08-04 全范围回填：16 symbols / 2256 latest rows / 0 missing fields
+  - [x] AkShare 完整字段 revision 2 回填；CifangQuant revision 1 原始证据保留
+  - [x] PostgreSQL 验收：16 symbols、每标的 141 条、0 业务重复、OHLCV 跨源一致
   - [x] AkShare NAV/交易日历 Adapter：只读 fetch_nav + fetch_trading_calendar；mapper 不把 NAV 映射为 OHLCV；聚焦离线测试
   - [x] 覆盖率探针输入构造器：纯函数把成功 ProviderBatch/响应 metadata 转成 calculate_coverage 输入；无网络 / DB 写入
 

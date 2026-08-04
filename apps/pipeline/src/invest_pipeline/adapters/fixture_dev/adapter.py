@@ -54,6 +54,8 @@ from invest_domain.market_data.models import (
 from invest_domain.market_data.values import Adjust, TradingStatus
 from invest_domain.shared.values import Currency
 
+from invest_pipeline.request_keys import make_daily_bars_request_key
+
 _FIXTURE_PATH = Path(__file__).resolve().parent / "etf_instruments.json"
 _DAILY_BARS_FIXTURE_PATH = (
     Path(__file__).resolve().parent / "etf_daily_bars.json"
@@ -550,10 +552,7 @@ class FixtureDevInstrumentProvider:
         request = ProviderRequest(
             provider_key=self.provider_key,
             dataset_key="etf_daily_bars",
-            request_key=(
-                f"daily-bars-{start_date.isoformat()}-{end_date.isoformat()}-"
-                f"{'-'.join(symbols)}"
-            ),
+            request_key=make_daily_bars_request_key(start_date, end_date, symbols),
             params={
                 "symbols": list(symbols),
                 "start_date": start_date.isoformat(),

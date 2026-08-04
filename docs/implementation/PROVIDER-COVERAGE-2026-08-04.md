@@ -83,3 +83,23 @@
 `20eb7554383e75993ecfb2e2454401d7c50ec55aaa0fe0d57228cf070d7cbc9d`，
 2018 为 `c0e29245e534a1fc761648418185af36443b3a2f6c75f8bf3803e81ed9bec3b0`，
 2020 为 `793976b50daaec2c916f8b8acfad667ccd9405e206358120aa2a9112582b002b`。
+
+## 2026 全范围回填验收
+
+本轮先以 CifangQuant 只读探测 2026-01-01 — 2026-08-04 的 16 个标的，
+随后按三个不超过 90 个自然日的分段执行幂等回填。CifangQuant 的历史
+接口实际不提供 `amount` / `prev_close`，因此不能把其原始行直接视为六列
+都有值；AkShare（新浪优先、东财回退）随后以完整字段版本写入 revision 2。
+
+| 项目 | 结果 |
+|---|---:|
+| CifangQuant raw 日线证据 | 2,256 条 |
+| AkShare 完整版本 | 2,256 条 |
+| `core.latest_daily_bars` | 2,256 条 / 16 个标的 |
+| 每标的记录数 | 141 条 |
+| 日期范围 | 2026-01-05 — 2026-08-04（交易日） |
+| 最新版本字段缺失 | 0 条 |
+| 业务重复 | 0 条 |
+
+OHLCV 五项跨源一致；`amount` 使用 AkShare 版本补齐。CifangQuant revision 1
+仍保留作为原始证据，AkShare revision 2 由幂等 ETL 生成并被 latest view 选中。

@@ -57,6 +57,7 @@ from invest_pipeline.adapters.errors import (
     ProviderUnavailableError,
     RealProviderRequiresExplicitEnablementError,
 )
+from invest_pipeline.request_keys import make_daily_bars_request_key
 
 _PROVIDER_KEY = "cifangquant"
 _INSTRUMENTS_DATASET_KEY = "etf_instruments"
@@ -220,10 +221,7 @@ class CifangQuantInstrumentProvider:
         request = ProviderRequest(
             provider_key=self.provider_key,
             dataset_key=_DAILY_BARS_DATASET_KEY,
-            request_key=(
-                f"daily-bars-{start_date.isoformat()}-{end_date.isoformat()}-"
-                f"{'-'.join(symbols)}"
-            ),
+            request_key=make_daily_bars_request_key(start_date, end_date, symbols),
             params={
                 "symbols": list(symbols),
                 "start_date": start_date.isoformat(),

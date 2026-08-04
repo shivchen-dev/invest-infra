@@ -42,6 +42,7 @@ from invest_pipeline.personal_universe import (
     resolve_personal_universe,
 )
 from invest_pipeline.provider_factory import build_provider
+from invest_pipeline.request_keys import make_daily_bars_request_key
 
 _ETF_INPUT_SNAPSHOT_PARTITIONS = dg.DailyPartitionsDefinition(
     start_date="2026-07-23"
@@ -428,10 +429,7 @@ def etf_daily_bars(
     end = trade_date
     universe = load_personal_universe(settings.personal_universe_path)
     symbols = list(universe.symbols)
-    request_key = (
-        f"daily-bars-{start.isoformat()}-{end.isoformat()}-"
-        f"{'-'.join(symbols)}"
-    )
+    request_key = make_daily_bars_request_key(start, end, symbols)
 
     engine = build_engine(get_settings().database_url)
     factory = session_factory(engine)

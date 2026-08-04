@@ -2,9 +2,19 @@ version: 1
 
 groups:
   broad_market:
+    - "159901"
+    - "159905"
     - "510300"
     - "510500"
     - "159915"
+
+  dividend_and_broad:
+    - "510050"
+    - "510180"
+    - "510330"
+    - "510880"
+    - "512000"
+    - "512880"
 
   technology:
     - "588000"
@@ -14,7 +24,12 @@ groups:
     - "513050"
     - "513100"
 
+  commodities:
+    - "518880"
+
 enabled_groups:
   - broad_market
+  - dividend_and_broad
   - technology
   - overseas
+  - commodities
