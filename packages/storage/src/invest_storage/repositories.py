@@ -934,6 +934,82 @@ class SqlAlchemyDailyBarRepository:
         ).scalars().all()
         return [_row_to_stored_daily_bar(row) for row in rows]
 
+    def list_latest_by_instruments_and_range(
+        self,
+        *,
+        instrument_ids: Sequence[UUID | InstrumentId],
+        start_date: date,
+        end_date: date,
+        adjustment: Adjust,
+    ) -> Sequence[StoredDailyBar]:
+        """Return the highest revision per ``(instrument_id, trade_date)`` in range.
+
+        Batch counterpart of :meth:`list_latest_by_instrument_and_range`. The
+        ``[start_date, end_date]`` interval is inclusive on both ends. The
+        result is ordered by ``instrument_id`` ascending then ``trade_date``
+        ascending so the caller can chunk the output by instrument in a
+        single pass without re-sorting.
+
+        ``instrument_ids`` accepts both :class:`UUID` and
+        :class:`invest_domain.instruments.InstrumentId`; duplicates are
+        de-duplicated before the SQL is built so the ``IN`` clause stays
+        small. An empty input sequence returns an empty sequence without
+        touching the session - the common "no items" path stays
+        branch-free in the caller.
+        """
+
+        if end_date < start_date:
+            raise ValueError(
+                f"end_date {end_date.isoformat()} must be on or after "
+                f"start_date {start_date.isoformat()}"
+            )
+        if not instrument_ids:
+            return []
+        normalised: dict[UUID, None] = {}
+        for value in instrument_ids:
+            if isinstance(value, InstrumentId):
+                normalised[value.value] = None
+            elif isinstance(value, UUID):
+                normalised[value] = None
+            else:
+                raise TypeError(
+                    "list_latest_by_instruments_and_range expects UUID or "
+                    f"InstrumentId, got {type(value).__name__}"
+                )
+        latest_revisions = (
+            select(
+                DailyBarRow.instrument_id.label("instrument_id"),
+                DailyBarRow.trade_date.label("trade_date"),
+                func.max(DailyBarRow.revision).label("revision"),
+            )
+            .where(
+                DailyBarRow.instrument_id.in_(normalised.keys()),
+                DailyBarRow.trade_date >= start_date,
+                DailyBarRow.trade_date <= end_date,
+                DailyBarRow.adjustment == adjustment.value,
+            )
+            .group_by(DailyBarRow.instrument_id, DailyBarRow.trade_date)
+            .subquery()
+        )
+        rows = self._session.execute(
+            select(DailyBarRow)
+            .join(
+                latest_revisions,
+                (DailyBarRow.instrument_id == latest_revisions.c.instrument_id)
+                & (DailyBarRow.trade_date == latest_revisions.c.trade_date)
+                & (DailyBarRow.revision == latest_revisions.c.revision),
+            )
+            .where(
+                DailyBarRow.instrument_id.in_(normalised.keys()),
+                DailyBarRow.adjustment == adjustment.value,
+            )
+            .order_by(
+                DailyBarRow.instrument_id.asc(),
+                DailyBarRow.trade_date.asc(),
+            )
+        ).scalars().all()
+        return [_row_to_stored_daily_bar(row) for row in rows]
+
     def upsert_many(self, bars: Sequence[NewDailyBar | DailyBar]) -> list[StoredDailyBar]:
         """Persist ``bars`` into ``core.daily_bars`` under ADR-0006 revision rules.
 

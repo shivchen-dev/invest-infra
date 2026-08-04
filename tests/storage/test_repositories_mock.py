@@ -248,6 +248,176 @@ class SqlAlchemyDailyBarRepositoryMockTests(unittest.TestCase):
             self.assertIn(raw_id, statement.compile().params.values())
 
 
+class SqlAlchemyDailyBarRepositoryListLatestByInstrumentsMockTests(unittest.TestCase):
+    """Focused coverage for the batch
+    :meth:`SqlAlchemyDailyBarRepository.list_latest_by_instruments_and_range`.
+    """
+
+    def setUp(self) -> None:
+        self._session = MagicMock(name="Session")
+        self._repo = SqlAlchemyDailyBarRepository(self._session)
+
+    def test_returns_empty_sequence_without_touching_session(self) -> None:
+        for empty in ([], (), (uuid4(),)[:0]):
+            result = self._repo.list_latest_by_instruments_and_range(
+                instrument_ids=empty,
+                start_date=date(2024, 1, 1),
+                end_date=date(2024, 1, 31),
+                adjustment=Adjust.NONE,
+            )
+
+            self.assertEqual(result, [])
+            self.assertIsInstance(result, list)
+            self._session.execute.assert_not_called()
+            self._session.scalars.assert_not_called()
+
+    def test_rejects_reversed_range_without_querying(self) -> None:
+        with self.assertRaisesRegex(ValueError, "must be on or after"):
+            self._repo.list_latest_by_instruments_and_range(
+                instrument_ids=[uuid4()],
+                start_date=date(2024, 2, 1),
+                end_date=date(2024, 1, 31),
+                adjustment=Adjust.NONE,
+            )
+
+        self._session.execute.assert_not_called()
+
+    def test_groups_by_instrument_and_trade_date_with_max_revision(self) -> None:
+        first_id = uuid4()
+        second_id = uuid4()
+        rows = [
+            _make_daily_bar_row(
+                instrument_id=first_id,
+                trade_date=date(2024, 1, 2),
+                revision=3,
+            ),
+            _make_daily_bar_row(
+                instrument_id=first_id,
+                trade_date=date(2024, 1, 3),
+                revision=2,
+            ),
+            _make_daily_bar_row(
+                instrument_id=second_id,
+                trade_date=date(2024, 1, 2),
+                revision=5,
+            ),
+            _make_daily_bar_row(
+                instrument_id=second_id,
+                trade_date=date(2024, 1, 3),
+                revision=4,
+            ),
+        ]
+        self._session.execute.return_value.scalars.return_value.all.return_value = rows
+
+        result = self._repo.list_latest_by_instruments_and_range(
+            instrument_ids=[first_id, second_id],
+            start_date=date(2024, 1, 1),
+            end_date=date(2024, 1, 31),
+            adjustment=Adjust.NONE,
+        )
+
+        self.assertEqual(
+            [(item.instrument_id, item.revision) for item in result],
+            [
+                (first_id, 3),
+                (first_id, 2),
+                (second_id, 5),
+                (second_id, 4),
+            ],
+        )
+        self.assertTrue(all(isinstance(item, StoredDailyBar) for item in result))
+        self.assertIsInstance(result, list)
+
+        statement = self._session.execute.call_args.args[0]
+        sql = str(statement.compile(compile_kwargs={"literal_binds": True})).lower()
+        self.assertIn("max(core.daily_bars.revision)", sql)
+        self.assertIn("group by core.daily_bars.instrument_id, core.daily_bars.trade_date", sql)
+        self.assertIn("order by core.daily_bars.instrument_id asc", sql)
+        self.assertIn("core.daily_bars.trade_date asc", sql)
+
+    def test_filters_by_instrument_and_date_and_adjustment(self) -> None:
+        self._session.execute.return_value.scalars.return_value.all.return_value = []
+        instrument_id = uuid4()
+
+        self._repo.list_latest_by_instruments_and_range(
+            instrument_ids=[instrument_id],
+            start_date=date(2024, 1, 5),
+            end_date=date(2024, 2, 5),
+            adjustment=Adjust.NONE,
+        )
+
+        statement = self._session.execute.call_args.args[0]
+        sql = str(statement.compile(compile_kwargs={"literal_binds": True})).lower()
+        self.assertIn("core.daily_bars.instrument_id", sql)
+        self.assertIn("core.daily_bars.trade_date >=", sql)
+        self.assertIn("core.daily_bars.trade_date <=", sql)
+        self.assertIn("core.daily_bars.adjustment =", sql)
+        self.assertIn("'none'", sql)
+        self.assertIn("2024-01-05", sql)
+        self.assertIn("2024-02-05", sql)
+
+    def test_accepts_uuid_and_instrument_id_inputs(self) -> None:
+        raw_id = uuid4()
+        other_id = uuid4()
+        self._session.execute.return_value.scalars.return_value.all.return_value = []
+
+        for instrument_ids in (
+            [raw_id, other_id],
+            [InstrumentId(raw_id), InstrumentId(other_id)],
+            [raw_id, InstrumentId(other_id)],
+        ):
+            self._session.execute.reset_mock()
+            self._repo.list_latest_by_instruments_and_range(
+                instrument_ids=instrument_ids,
+                start_date=date(2024, 1, 1),
+                end_date=date(2024, 1, 31),
+                adjustment=Adjust.NONE,
+            )
+            statement = self._session.execute.call_args.args[0]
+            flattened = []
+            for value in statement.compile().params.values():
+                if isinstance(value, list):
+                    flattened.extend(value)
+                else:
+                    flattened.append(value)
+            self.assertIn(raw_id, flattened)
+            self.assertIn(other_id, flattened)
+
+    def test_rejects_non_uuid_non_instrument_id_input(self) -> None:
+        with self.assertRaisesRegex(TypeError, "UUID or InstrumentId"):
+            self._repo.list_latest_by_instruments_and_range(
+                instrument_ids=["not-a-uuid"],  # type: ignore[list-item]
+                start_date=date(2024, 1, 1),
+                end_date=date(2024, 1, 31),
+                adjustment=Adjust.NONE,
+            )
+
+        self._session.execute.assert_not_called()
+
+    def test_dedupes_repeated_instrument_ids(self) -> None:
+        instrument_id = uuid4()
+        self._session.execute.return_value.scalars.return_value.all.return_value = []
+
+        self._repo.list_latest_by_instruments_and_range(
+            instrument_ids=[instrument_id, instrument_id, InstrumentId(instrument_id)],
+            start_date=date(2024, 1, 1),
+            end_date=date(2024, 1, 31),
+            adjustment=Adjust.NONE,
+        )
+
+        statement = self._session.execute.call_args.args[0]
+        # the IN clause appears twice in the SQL (subquery + outer WHERE);
+        # after dedup each occurrence must contain exactly one UUID.
+        in_clauses = [
+            value
+            for value in statement.compile().params.values()
+            if isinstance(value, list)
+        ]
+        self.assertEqual(len(in_clauses), 2)
+        for items in in_clauses:
+            self.assertEqual(items, [instrument_id])
+
+
 class SqlAlchemyInstrumentRepositoryMockTests(unittest.TestCase):
     """Mock-based tests for :class:`SqlAlchemyInstrumentRepository`."""
 

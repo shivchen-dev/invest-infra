@@ -206,6 +206,9 @@ class DailyBarRepositoryPort(Protocol):
     def list_latest_by_instrument_and_range(
         self, *, instrument_id, start_date, end_date, adjustment
     ): ...
+    def list_latest_by_instruments_and_range(
+        self, *, instrument_ids, start_date, end_date, adjustment
+    ): ...
 
 
 @runtime_checkable
