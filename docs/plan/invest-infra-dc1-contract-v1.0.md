@@ -78,3 +78,20 @@ quality_score =
 - 质量评估能覆盖完整、缺失、错误、过期和 SLA 为零的路径；
 - 所有结果稳定排序、可重复计算；
 - focused tests、Ruff 和相关 pipeline 回归通过。
+
+## 5. 当前验收状态（2026-08-04）
+
+DC-1 代码级契约已完成：
+
+- Provider Registry、Catalog 能力校验和稳定排序已实现；
+- 覆盖率、字段完整率、新鲜度和综合质量分已实现；
+- 完整、缺失、错误、过期及 SLA=0 路径已有 focused tests；
+- AkShare 与 CifangQuant 已完成 16 个 active ETF 的近期真实取数复测，字段完整且无错误；
+- Storage 已支持单标的和批量最新 revision 日线读取。
+
+以下项目不作为 DC-1 完成门槛，继续留在后续工作：
+
+- Coverage CLI 接入；
+- 跨 Provider 数值一致性入口（DC1-C）；
+- 历史全量覆盖、回填排序和幂等回填；
+- 10 个交易日 Shadow Run 及生产授权验收。
