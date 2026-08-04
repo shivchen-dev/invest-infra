@@ -30,7 +30,7 @@ Key invariants:
 
 - **Python continues to own financial-data and computation work**, but
   the API and the pipeline do not share dependencies
-  ([README §设计目标](../README.md)).
+  ([README §设计目标](../../README.md)).
 - **Modular monolith first.** No microservices, Kafka, Redis or
   Kubernetes are introduced in v2 (ADR-0001).
 - **PostgreSQL is the only persistence layer in v2** (ADR-0002).
@@ -43,7 +43,7 @@ Key invariants:
 
 ## 2. Layers
 
-Per [`/docs/ARCHITECTURE.md`](../docs/ARCHITECTURE.md):
+Per [`/docs/ARCHITECTURE.md`](../../docs/ARCHITECTURE.md):
 
 ### Domain (`packages/domain`)
 
@@ -103,43 +103,42 @@ adapter:
   commit transactions and does **not** insert into `raw.provider_batches`.
 - The pipeline-side application service, not the adapter, owns the
   three-layer evidence write inside a single `UnitOfWork`.
-- **Two** adapter packages ship today: `fixture_dev` (deterministic
-  fixture data — see [Pipeline overview §4](../pipeline/overview.md#4-fixture_dev-adapter))
-  and `cifang` (a fully wired httpx-backed adapter that is
-  disabled by default — both `fetch_*` methods raise
-  `RealProviderRequiresExplicitEnablementError` until
-  `CifangSettings.enabled=True`; real calls additionally require a
-  non-empty `INVEST_PIPELINE_CIFANG_API_KEY` and the explicit
-  `--confirm-network` CLI gate — see
-  [Pipeline overview §5](../pipeline/overview.md#5-cifang-adapter-adr-0011-phase-1-first--second-increments)).
+- **Three** runtime ETF adapter packages ship today: `fixture_dev`
+  (deterministic fixture data — see [Pipeline overview §4](../pipeline/overview.md#4-fixture_dev-adapter)),
+  `cifang` and `akshare`. `fixture_dev` is enabled by default; the
+  real-data adapters require explicit enablement and preserve the
+  upstream provider key in their output. See [Pipeline overview §5](../pipeline/overview.md#5-cifang-adapter-adr-0011-phase-1-first--second-increments)
+  and [§5b](../pipeline/overview.md#5b-akshare-adapter-pr-02).
+  The QuickTiny and RssCast packages are separate research-only MCP
+  transports and do not implement the ETF daily-bars port.
 
 The boundary is enforced two ways: the
-[`scripts/check_architecture.py`](../scripts/check_architecture.py)
+[`scripts/check_architecture.py`](../../scripts/check_architecture.py)
 import-graph scan and a Testcontainers-backed integration suite.
 
 ## 5. Architecture decision records
 
-All eleven ADRs are in [`/docs/adr/`](../docs/adr/):
+All eleven ADRs are in [`/docs/adr/`](../../docs/adr/):
 
-- [ADR-0001 — Greenfield modular monolith](../docs/adr/0001-greenfield-modular-monolith.md)
-- [ADR-0002 — Postgres-first](../docs/adr/0002-postgres-first.md)
-- [ADR-0003 — Provider selection and adapter boundary](../docs/adr/0003-provider-selection-and-adapter-boundary.md) *(accepted in PR-04)*
-- [ADR-0004 — ETF market calendar / timezone / range](../docs/adr/0004-etf-market-calendar-timezone-range.md) (SSE / SZSE, Asia/Shanghai, versioned calendar)
-- [ADR-0005 — Daily-bar adjustment contract](../docs/adr/0005-daily-bar-adjustment-contract.md) (`adjustment='none'` only)
-- [ADR-0006 — Daily-bar revision / latest policy](../docs/adr/0006-daily-bar-revision-latest-policy.md) (revision semantics + the `core.latest_daily_bars` view)
-- [ADR-0007 — Input snapshot binding hash](../docs/adr/0007-input-snapshot-binding-hash.md) (SHA-256 over sorted UUID bytes)
-- [ADR-0008 — Candidate pool state machine](../docs/adr/0008-candidate-pool-state-machine.md) (`calculated → validated → published|rejected`)
-- [ADR-0009 — Python core dependency baseline](../docs/adr/0009-python-core-dependency-baseline.md) (3.12.x, `<3.13`)
-- [ADR-0010 — Production deployment / secrets / backup recovery](../docs/adr/0010-production-deployment-secrets-backup-recovery.md)
-- [ADR-0011 — CifangQuant primary ETF provider (Phase 1 first + second increments)](../docs/adr/0011-cifangquant-primary-etf-provider.md) (Status: Proposed; the adapter is wired but disabled by default and remains gated on O-1 / O-3 / O-4 for production use)
+- [ADR-0001 — Greenfield modular monolith](../../docs/adr/0001-greenfield-modular-monolith.md)
+- [ADR-0002 — Postgres-first](../../docs/adr/0002-postgres-first.md)
+- [ADR-0003 — Provider selection and adapter boundary](../../docs/adr/0003-provider-selection-and-adapter-boundary.md) *(accepted in PR-04)*
+- [ADR-0004 — ETF market calendar / timezone / range](../../docs/adr/0004-etf-market-calendar-timezone-range.md) (SSE / SZSE, Asia/Shanghai, versioned calendar)
+- [ADR-0005 — Daily-bar adjustment contract](../../docs/adr/0005-daily-bar-adjustment-contract.md) (`adjustment='none'` only)
+- [ADR-0006 — Daily-bar revision / latest policy](../../docs/adr/0006-daily-bar-revision-latest-policy.md) (revision semantics + the `core.latest_daily_bars` view)
+- [ADR-0007 — Input snapshot binding hash](../../docs/adr/0007-input-snapshot-binding-hash.md) (SHA-256 over sorted UUID bytes)
+- [ADR-0008 — Candidate pool state machine](../../docs/adr/0008-candidate-pool-state-machine.md) (`calculated → validated → published|rejected`)
+- [ADR-0009 — Python core dependency baseline](../../docs/adr/0009-python-core-dependency-baseline.md) (3.12.x, `<3.13`)
+- [ADR-0010 — Production deployment / secrets / backup recovery](../../docs/adr/0010-production-deployment-secrets-backup-recovery.md)
+- [ADR-0011 — CifangQuant primary ETF provider (Phase 1 first + second increments)](../../docs/adr/0011-cifangquant-primary-etf-provider.md) (Status: Proposed; the adapter is wired but disabled by default and remains gated on O-1 / O-3 / O-4 for production use)
 
 The underlying planning documents live under
-[`/docs/plan/`](../docs/plan/) — Stage 1's
-[`invest-infra-v2-stage1-execution-plan.md`](../docs/plan/invest-infra-v2-stage1-execution-plan.md)
+[`/docs/plan/`](../../docs/plan/) — the current
+[`invest-infra-stage4a-merged-implementation-plan-v1.1.md`](../../docs/plan/invest-infra-stage4a-merged-implementation-plan-v1.1.md)
 and
-[`invest-infra-v2-personal-mvp-matrix-plan.md`](../docs/plan/invest-infra-v2-personal-mvp-matrix-plan.md)
+[`invest-infra-v2-all-data-sources-integration-plan.md`](../../docs/plan/invest-infra-v2-all-data-sources-integration-plan.md)
 plus
-[`/docs/implementation/`](../docs/implementation/M0-DECISIONS.md)
+[`/docs/implementation/`](../../docs/implementation/M0-DECISIONS.md)
 (M0 brief, decisions, acceptance). The pre-Stage-1 ETF vertical-slice
 and Phase 1 data-ingestion plans are archived under
-[`docs/archive/2026-08-02-stage1/`](../docs/archive/2026-08-02-stage1/).
+[`docs/archive/2026-08-02-stage1/`](../../docs/archive/2026-08-02-stage1/).

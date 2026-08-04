@@ -50,7 +50,7 @@ Read these pages in order:
 1. [Architecture overview](architecture/overview.md) — modular monolith
    layers, four PostgreSQL schemas, layered rules and ADR index.
 2. [Migrations overview](migrations/overview.md) — how
-   `apps/migrations` owns the schema and the six-revision chain.
+   `apps/migrations` owns the schema and the seven-revision chain.
 3. [Domain overview](domain/overview.md) — bounded contexts and the
    canonical hashing scheme.
 4. [Candidate pool](domain/candidate-pool.md) — the pure-function
@@ -130,6 +130,12 @@ The full list is in [`/Makefile`](../Makefile); the canonical ones are:
 - `make personal-backfill START_DATE=YYYY-MM-DD END_DATE=YYYY-MM-DD` —
   chronological weekday-only replay for an inclusive range of at most 90
   natural days; weekends are skipped and the first failed weekday aborts.
+- `make historical-daily-bars-backfill START_DATE=YYYY-MM-DD END_DATE=YYYY-MM-DD [UNIVERSE=path] [CONFIRM_NETWORK=1]` —
+  guarded historical ETF daily-bars backfill (≤90-day chunks, no Dagster
+  job, no input-snapshot / candidate-pool / evidence-pack / AI-research
+  assets). Provider opt-in is scoped to `fixture_dev` or `cifangquant`
+  in this slice; the [Pipeline overview](pipeline/overview.md#11-personal-clis)
+  documents the exit-code contract.
 - `make lock` — regenerate `uv.lock` for every Python project.
 
 ## 5. Layer rules (at a glance)
@@ -193,7 +199,7 @@ resolve the provider through the factory instead of constructing
 `FixtureDevInstrumentProvider` directly).
 
 Stage 1 lands the personal daily pipeline:
-[`personal_universe.py`](apps/pipeline/src/invest_pipeline/personal_universe.py)
+[`personal_universe.py`](../apps/pipeline/src/invest_pipeline/personal_universe.py)
 loads `config/personal-universe.yaml`, `candidate_pool_service.py`
 loads `config/candidate-pool-personal.yaml`, and the new
 `personal_etf_daily_job` Dagster job + `personal_candidate_pool`
@@ -204,9 +210,18 @@ personal-daily-run` is the manual CLI driver; the Section 9
 ("Personal universe & config"), Section 10 ("Candidate pool
 service"), Section 11 ("Personal CLIs") and Section 12 ("Provider
 factory") of the [pipeline overview](pipeline/overview.md) describe
-the new surfaces. The `provider_catalog.py` declarative registry is
-unchanged (only `QUICKTINY_MCP` is registered today, `cifangquant`
-is exercised through the runtime factory rather than the catalog).
+the new surfaces. The `provider_catalog.py` declarative registry now registers
+**eight** frozen `ProviderDeclaration` rows (`akshare` /
+`cifangquant` / `eastmoney` / `fixture_dev` / `quicktiny_mcp` /
+`rsscast` / `sina` / `tonghuashun`); the catalog is the
+single source of truth for the role / capability set every
+provider must respect. Only `fixture_dev` is enabled by default;
+every other declaration stays `enabled_by_default=False` per
+the matrix §6 default-off rule. The [Pipeline overview](pipeline/overview.md#7-provider-catalog)
+documents the eight declarations and the negative-capability
+contract, and the [Pipeline overview §7A](pipeline/overview.md)
+introduces the deterministic dataset × capability
+`provider_routing` layer PR-05 adds on top.
 
 Stage 2 aligns all six job assets to the same daily partition, registers a
 weekday `16:10 Asia/Shanghai` schedule, and adds preflight checks for future
@@ -216,6 +231,27 @@ or running work. Automatic scheduling remains default-off unless
 pipeline-run, candidate-pool diff, and data-freshness endpoints described in
 the [API overview](api/overview.md), and use the replay/backfill procedures in
 [Testing & operations](testing-and-ops/overview.md#7-operational-runbooks-and-validation).
+
+Stage 4A ships the V2 multi-source catalog and evidence foundation: the
+provider catalog grew to eight `ProviderDeclaration` rows with frozen
+`role` / `capability` / `enabled_by_default` triples; the
+`provider_routing` layer exposes the deterministic
+`select_providers` selection rules plus the read-only
+`CoverageReportModel` (sortable, hash-stable) that the
+`provider_coverage_cli` driver serialises to JSON. The AkShare,
+QuickTiny MCP and RssCast MCP adapters land as gated, opt-in
+research and market-data transports; the historical ETF backfill
+CLI plus the `make historical-daily-bars-backfill` target let
+operators replay raw + core.daily_bars over ≤90-day chunks
+without invoking the personal daily Dagster job. The
+`domain.research` bounded context defines the Stage 4A evidence
+contract (`EvidencePack` + 8-factor v1.0.0 set + canonical
+hashing) and `domain.candidate_pool.{universe,v1_adapter}`
+provide the pure dynamic ETF universe qualification and the
+V1→V2 pure adapter. Migration `20260803_0007_research_evidence_packs`
+adds the `analytics.research_evidence_packs` table — schema only;
+no repository, UoW property, or API router writes or reads it in
+this slice.
 
 ## 7. Web data workbench
 

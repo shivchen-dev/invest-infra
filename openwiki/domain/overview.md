@@ -25,9 +25,10 @@ outside that surface.
 |---------|--------|--------------|
 | `instruments` | `invest_domain.instruments.{models,values}` | `Instrument`, `InstrumentId`, `InstrumentType`, `InstrumentStatus`, `Currency`, `Exchange`. |
 | `market_data` | `invest_domain.market_data.{models,values,ports}` | `DailyBar`, `BarSource`, `Adjust`, `TradingStatus`, `ProviderRequest`, `ProviderAttempt`, `ProviderBatch`, the `ProviderFailureStage` vocabulary and the `EtfMarketDataProvider` / `InstrumentProvider` ports. |
-| `candidate_pool` | `invest_domain.candidate_pool.{models,calculator,ports}` | The candidate-pool state machine + calculation contracts and the PR-08 minimum calculator. Detailed in [Candidate pool](candidate-pool.md). |
+| `candidate_pool` | `invest_domain.candidate_pool.{models,calculator,ports,universe,v1_adapter}` | The candidate-pool state machine + calculation contracts, the PR-08 minimum calculator, the pure dynamic ETF universe qualification (`build_etf_universe`), and the V1→V2 pure adapter (`adapt_v1_target_selection`). Detailed in [Candidate pool](candidate-pool.md). |
 | `input_snapshot` | `invest_domain.input_snapshot.models` | The hash-pinned `InputSnapshot` membership record. |
 | `pipeline` | `invest_domain.pipeline.models` | `PipelineRun`, `PipelineRunStatus` (six-value vocabulary). |
+| `research` | `invest_domain.research.{models,factor_set,factor_calculators,quality_gate,canonical}` | Stage 4A evidence-pipeline foundation: `EvidencePack`, `FactorObservation`, `FactorSetMetadata` (v1.0.0 fixed 8-factor set), the `calculate_market_state_factors` pure function, the `evaluate_quality_gate` rule set, and the SHA-256 canonical projection that produces `evi:{pack_hash[:12]}:factor.{key}:{item_hash[:12]}` evidence ids. |
 | `shared` | `invest_domain.shared.{canonical,values}` | `canonical_json`, `canonical_sha256`, `content_hash`, `CANONICAL_HASH_SCHEMA_VERSION`. |
 
 Every context exposes its public surface through a single
@@ -63,7 +64,7 @@ guarantee:
 > FastAPI-, Dagster- and Provider-SDK-free.
 
 This is enforced mechanically — see
-[Architecture overview](../architecture/overview.md#layer-rules-at-a-glance).
+[Architecture overview](../architecture/overview.md#2-layers).
 Domain code:
 
 - does not read the wall clock (`datetime.now()` is only used as a
@@ -82,11 +83,10 @@ Ports are declared as `@runtime_checkable` Protocols so both adapters
 and tests can satisfy them structurally. The currently shipped ports:
 
 - `EtfMarketDataProvider` (market_data.ports) — `fetch_instruments` and
-  `fetch_daily_bars`; today the only adapter with real data is
-  `fixture_dev`, with the `cifang` placeholder
-  (see [Pipeline overview §5](../pipeline/overview.md#cifang-adapter-placeholder-adr-0011-phase-1-first-increment))
-  satisfying the port shape but raising
-  `ProviderAdapterNotImplementedError`.
+  `fetch_daily_bars`; `fixture_dev` is enabled by default, while the
+  fully wired `cifang` and `akshare` adapters require explicit
+  enablement (see [Pipeline overview §5](../pipeline/overview.md#5-cifang-adapter-adr-0011-phase-1-first--second-increments)
+  and [§5b](../pipeline/overview.md#5b-akshare-adapter-pr-02)).
 - `InstrumentProvider` — narrower surface used by the
   `seed_instruments` asset.
 - `MinimumCandidatePoolCalculator` (candidate_pool.calculator) — the
