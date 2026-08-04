@@ -1,5 +1,9 @@
 # V2 全数据源接入清单
 
+> 当前进度（2026-08-04）：DC-1 代码级契约已完成；AkShare 与 CifangQuant
+> 近期真实取数均已恢复并通过 16 个 active ETF 覆盖复测。剩余工作属于
+> 历史全量覆盖/回填、DC1-C 跨源数值验收和 Stage 2 Shadow Run。
+
 - [x] PR-01：统一 Provider Contract / Catalog
 - [x] PR-02：AkShare Adapter 与历史覆盖探测（首个 ETF master/OHLCV 切片）
   - [x] 惰性导入，可选依赖缺失时返回 typed failure
@@ -42,4 +46,4 @@
 - [x] 完成 AkShare/QuickTiny/RssCast 三个适配器首个切片
 - [x] 补齐 AkShare NAV/交易日历 Adapter（只读 + 不映射为 OHLCV；真实网络验收仍待 O-1）
 - [x] 提供纯函数覆盖率探针输入构造器（无网络 / DB 写入；真实覆盖率报告仍待 PR-05 后续切片）
-- [x] 按 dataset/capability 建立 Provider Routing（仅 routing + coverage 模型；真实覆盖率报告仍待 PR-05 后续切片）
+- [x] 按 dataset/capability 建立 Provider Routing（真实近期覆盖报告已完成；历史覆盖与回填仍待 PR-05 后续切片）
