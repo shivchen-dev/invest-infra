@@ -21,6 +21,11 @@
   - [x] 覆盖矩阵：source × symbol × date-range × field 的只读 / 确定性模型与计算器（无网络 / DB 写入）
   - [x] 聚焦离线测试：路由安全、能力不匹配、确定性覆盖、空 / 部分覆盖
   - [ ] 幂等回填：真实网络验收 + 各源真实覆盖率报告（不在本切片）
+  - [x] Coverage CLI：fixture 离线验收 + Cifang 单 ETF 代表性真实探测
+  - [x] 代表性结果记录：`docs/implementation/PROVIDER-COVERAGE-2026-08-04.md`
+  - [x] Fixture active-universe matrix：7 symbols / 2026-07-23..2026-07-30 / 6 fields
+  - [x] Fixture matrix result：`docs/implementation/PROVIDER-COVERAGE-FIXTURE-2026-08-04.md`
+  - [ ] 全量 active ETF 覆盖矩阵与回填排序
   - [x] AkShare NAV/交易日历 Adapter：只读 fetch_nav + fetch_trading_calendar；mapper 不把 NAV 映射为 OHLCV；聚焦离线测试
   - [x] 覆盖率探针输入构造器：纯函数把成功 ProviderBatch/响应 metadata 转成 calculate_coverage 输入；无网络 / DB 写入
 
