@@ -1149,6 +1149,28 @@ Fixture Universe
 
 ## 23. Shadow 验收
 
+### 23.1 2026-08-04 真实数据只读 Smoke
+
+已使用正确的开发 PostgreSQL `invest` 数据库，对 2026-01-01 至
+2026-08-04 的 latest daily bars 重建领域对象并调用
+`route_candidate_pool_shadow`。本次仅执行只读查询和内存计算，不写入
+Candidate Pool 生产表。
+
+| 项目 | 结果 |
+|---|---:|
+| Personal Universe ETF | 16 |
+| latest daily bars | 2,256 |
+| `FULL` | 16 |
+| `PARTIAL` | 0 |
+| `INELIGIBLE` | 0 |
+| Shadow InputSnapshot | 16 个标的 |
+| Shadow Candidate Pool items | 16 |
+
+结果表明当前 Shadow MVP 已能消费真实回填数据并完成
+`latest_daily_bars → ETF Universe → InputSnapshot → Candidate Pool` 的
+内存闭环。该结果不等同于多渠道融合、Shadow 持久化、API 或 10 个交易日
+运行验收；这些 Definition of Done 项仍保持未完成。
+
 至少执行五个有效交易日或五组固定历史日期。
 
 对比：
