@@ -24,6 +24,7 @@ network, no ``akshare``, no ``pandas``. The tests cover:
 
 from __future__ import annotations
 
+import dataclasses
 import unittest
 from datetime import UTC, date, datetime
 from decimal import Decimal
@@ -1627,6 +1628,58 @@ class MapEtfProfileToFieldEvidenceTest(unittest.TestCase):
                 confidence_score=Decimal("1.5"),
             )
         self.assertIn("confidence_score", str(ctx.exception))
+
+    def test_result_is_frozen_and_slotted(self) -> None:
+        # The mapper result is the immutable seam between the pure
+        # mapper and the adapter that consumes its tuple output, so
+        # the dataclass surface must be both frozen (mutation cannot
+        # silently rewrite the audit chain) and slotted (no
+        # ``__dict__`` allocation per instance, so the dataclass is
+        # hashable and ``tuple``-friendly).
+        from invest_pipeline.adapters.akshare.mapper import (
+            AkshareFieldEvidenceMappingResult,
+        )
+
+        record = AkshareProfileRecord(
+            symbol="510300",
+            exchange="SSE",
+            fund_type="ETF",
+            category="Equity",
+            shares=Decimal("1000000000"),
+        )
+        profile_mapping = self._build_profile_mapping([record])
+        result = map_etf_profile_to_field_evidence(
+            profile_mapping,
+            instrument_id_resolver=self._confident_resolver(),
+            source_batch_id=uuid4(),
+            observed_at=_observed_at(),
+            confidence_score=Decimal("0.9"),
+        )
+        with self.assertRaises(dataclasses.FrozenInstanceError):
+            result.evidence = ()
+        with self.assertRaises(dataclasses.FrozenInstanceError):
+            result.warnings = ("mutation",)
+        self.assertNotIn(
+            "__dict__",
+            AkshareFieldEvidenceMappingResult.__slots__,
+            "the result dataclass must use slots to avoid per-instance dicts",
+        )
+
+    def test_empty_input_yields_empty_evidence_and_no_warnings(self) -> None:
+        # An empty ``AkshareProfileMappingResult`` (no records to
+        # promote) must yield an empty evidence tuple and an empty
+        # warnings tuple so the upstream batch never carries a phantom
+        # ``FieldEvidence`` row from a zero-record input.
+        profile_mapping = self._build_profile_mapping([])
+        result = map_etf_profile_to_field_evidence(
+            profile_mapping,
+            instrument_id_resolver=self._confident_resolver(),
+            source_batch_id=uuid4(),
+            observed_at=_observed_at(),
+            confidence_score=Decimal("0.9"),
+        )
+        self.assertEqual(result.evidence, ())
+        self.assertEqual(result.warnings, ())
 
 
 if __name__ == "__main__":
