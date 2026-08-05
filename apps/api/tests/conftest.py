@@ -17,11 +17,10 @@ from uuid import UUID, uuid4
 
 import pytest
 from fastapi.testclient import TestClient
-from invest_api.dependencies import get_db_session
+from invest_api.dependencies import get_db_session, get_pipeline_run_query_service
 from invest_api.main import app
 from invest_api.routers import candidate_pool as candidate_pool_router
 from invest_api.routers import etf as etf_router
-from invest_api.routers import pipeline_runs as pipeline_runs_router
 from invest_domain.candidate_pool.models import (
     CandidatePoolItem,
     CandidatePoolRun,
@@ -135,16 +134,23 @@ def candidate_pool_instrument_repo(monkeypatch: pytest.MonkeyPatch) -> MagicMock
 
 
 @pytest.fixture()
-def pipeline_run_repo(monkeypatch: pytest.MonkeyPatch) -> MagicMock:
-    """Patch ``SqlAlchemyPipelineRunRepository`` in the pipeline-runs router."""
+def pipeline_run_service(monkeypatch: pytest.MonkeyPatch) -> MagicMock:
+    """Inject a mock :class:`PipelineRunQueryService` into the pipeline-runs router.
 
-    mock = MagicMock(name="PipelineRunRepository")
-    monkeypatch.setattr(
-        pipeline_runs_router,
-        "SqlAlchemyPipelineRunRepository",
-        lambda session: mock,
-    )
-    return mock
+    Overrides :func:`invest_api.dependencies.get_pipeline_run_query_service`
+    so the router receives a ``MagicMock`` that quacks like the
+    application service. Endpoint tests configure return values and
+    side effects on this mock; the service-level tests bypass the
+    HTTP layer and construct the real service against a mock
+    repository instead.
+    """
+
+    mock = MagicMock(name="PipelineRunQueryService")
+    app.dependency_overrides[get_pipeline_run_query_service] = lambda: mock
+    try:
+        yield mock
+    finally:
+        app.dependency_overrides.pop(get_pipeline_run_query_service, None)
 
 
 def make_instrument(
@@ -380,5 +386,5 @@ __all__ = [
     "make_pipeline_run",
     "make_pool_item",
     "mock_session",
-    "pipeline_run_repo",
+    "pipeline_run_service",
 ]

@@ -80,6 +80,17 @@ Rules:
 - Document Factory and Dataset Registry as adapters/readers of that authority.
 - Record missing `experimental` and reliability-score fields without inventing runtime behavior.
 
+### GOV-05 — API/Application boundary
+
+- Move `pipeline_runs` query orchestration from the Router into
+  `invest_api.application.pipeline_runs.PipelineRunQueryService`.
+- Keep HTTP response mapping and status-code translation in the Router.
+- Wire the service through a dependency factory and cover fixed job-key
+  scoping, pagination, latest selection, by-id scoping, and repository-error
+  translation with focused tests.
+- Treat this as the first API slice; do not claim that all Routers have been
+  migrated until the remaining slices are completed.
+
 ## Definition of Done
 
 - [x] Domain ownership is documented and mapped to actual modules.

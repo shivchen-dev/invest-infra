@@ -174,7 +174,7 @@ AI Research
 | Context Pack | `invest_domain.research.context` + storage repository | 限定为可重建 projection |
 | ETF field evidence | `invest_domain.etf_profile` + `etf_profile_fields` | 保留为 canonical provenance |
 | Provider declarations | `invest_pipeline.provider_catalog` | 作为声明权威；Factory/Router 只消费 |
-| API use cases | API routers 直接调用 Repository | 记录为后续独立收敛项，不与本轮 Evidence 变更混合 |
+| API use cases | `pipeline_runs` router -> `PipelineRunQueryService` -> Repository；其余 Router 仍有直接访问 | GOV-05 已完成首个垂直切片；其余 Router 按相同边界逐步收敛 |
 
 ## 7. Explicit non-goals
 
