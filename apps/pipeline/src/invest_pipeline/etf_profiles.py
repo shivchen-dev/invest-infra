@@ -89,6 +89,7 @@ from invest_pipeline.etf_instruments import (
     UnitOfWorkFactory,
     _coerce_session_factory,
 )
+from invest_pipeline.etf_profile_context import build_etf_profile_context_pack
 
 __all__ = [
     "PROFILE_RECORDS_SCHEMA_VERSION",
@@ -555,17 +556,17 @@ def upsert_etf_profiles(
             inserted += 1
 
         evidence_rows = 0
+        observed_at: datetime = (
+            succeeded_attempt.finished_at
+            if succeeded_attempt.finished_at is not None
+            else _now()
+        )
         if evidence_records:
             profile_mapping = AkshareProfileMappingResult(
                 records=tuple(evidence_records),
                 warnings=(),
             )
             source_batch_id = _resolve_source_batch_id(uow, attempt_id=succeeded_attempt.id)
-            observed_at = (
-                succeeded_attempt.finished_at
-                if succeeded_attempt.finished_at is not None
-                else _now()
-            )
 
             def _instrument_id_resolver(symbol: str, exchange: str) -> InstrumentId:
                 key = (symbol, exchange)
@@ -591,6 +592,21 @@ def upsert_etf_profiles(
             uow.etf_profiles.upsert(
                 _profile_from_resolution(instrument_id=instrument_id, resolution=resolution)
             )
+            # Task C3: persist the immutable ``ResearchContextPack``
+            # snapshot through the storage layer's
+            # ``research_context_packs`` repository. The pack is the
+            # canonical projection of the resolved profile evidence;
+            # missing fields stay missing, conflict fields stay null,
+            # AUM never aliases MARKET_VALUE / TURNOVER_VALUE. The
+            # pack is anchored to the same ``observed_at`` as the
+            # upstream ``FieldEvidence`` rows so the audit chain stays
+            # continuous.
+            context_pack = build_etf_profile_context_pack(
+                evidence,
+                instrument_id=instrument_id,
+                observed_at=observed_at,
+            )
+            uow.research_context_packs.add(context_pack)
 
         return UpsertSummary(
             inserted=inserted,

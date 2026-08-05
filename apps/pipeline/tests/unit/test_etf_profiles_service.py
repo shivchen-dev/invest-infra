@@ -49,6 +49,7 @@ from uuid import UUID, uuid4
 from invest_domain.etf_profile import EtfProfile
 from invest_domain.etf_profile.models import FieldEvidence
 from invest_domain.instruments.models import InstrumentId
+from invest_domain.research import ResearchContextPack
 from invest_pipeline.adapters.akshare.mapper import (
     AkshareProfileMappingResult,
     AkshareProfileRecord,
@@ -111,6 +112,7 @@ class _FakeUnitOfWork:
         field_evidence_add_calls: list[FieldEvidence] | None = None,
         batches_by_attempt: dict[UUID, list[StoredProviderBatch]] | None = None,
         field_evidence_rows: list[FieldEvidence] | None = None,
+        context_pack_add_calls: list[ResearchContextPack] | None = None,
     ) -> None:
         self._session = session
         self._request_log = request_log
@@ -132,6 +134,9 @@ class _FakeUnitOfWork:
         )
         self._batches_by_attempt = batches_by_attempt or {}
         self._field_evidence_rows = list(field_evidence_rows or [])
+        self._context_pack_add_calls = (
+            context_pack_add_calls if context_pack_add_calls is not None else []
+        )
 
     def _get_or_create(self, request: NewProviderRequest) -> StoredProviderRequest:
         for row in self._request_log:
@@ -255,6 +260,10 @@ class _FakeUnitOfWork:
             if evidence.instrument_id == instrument_id
         ]
 
+    def _context_packs_add(self, pack: ResearchContextPack) -> ResearchContextPack:
+        self._context_pack_add_calls.append(pack)
+        return pack
+
     def _list_batches_by_attempt(
         self, attempt_id: UUID, *, limit: int = 10, offset: int = 0
     ) -> list[StoredProviderBatch]:
@@ -338,6 +347,21 @@ class _FakeUnitOfWork:
 
         return _EtfProfileFieldsView()
 
+    @property
+    def research_context_packs(self) -> Any:
+        uow = self
+
+        class _ResearchContextPacksView:
+            @staticmethod
+            def add(pack: ResearchContextPack) -> ResearchContextPack:
+                return uow._context_packs_add(pack)
+
+            @staticmethod
+            def upsert(pack: ResearchContextPack) -> ResearchContextPack:
+                return uow._context_packs_add(pack)
+
+        return _ResearchContextPacksView()
+
     def commit(self) -> None:
         self._session.commit()
 
@@ -399,6 +423,7 @@ def _make_uow_factory(
     field_evidence_add_calls: list[FieldEvidence] | None = None,
     batches_by_attempt: dict[UUID, list[StoredProviderBatch]] | None = None,
     field_evidence_rows: list[FieldEvidence] | None = None,
+    context_pack_add_calls: list[ResearchContextPack] | None = None,
 ) -> MagicMock:
     log: list[ProviderRequestRow] = []
 
@@ -413,6 +438,7 @@ def _make_uow_factory(
             field_evidence_add_calls=field_evidence_add_calls,
             batches_by_attempt=batches_by_attempt,
             field_evidence_rows=field_evidence_rows,
+            context_pack_add_calls=context_pack_add_calls,
         )
 
     return MagicMock(name="UnitOfWorkFactory", side_effect=_factory)
@@ -1679,6 +1705,224 @@ class UpsertEtfProfileFieldEvidenceTest(unittest.TestCase):
                 _make_session_factory(session),
                 unit_of_work_factory=uow_factory,
             )
+
+
+class UpsertEtfProfilesContextPackTest(unittest.TestCase):
+    """Task C3: ``upsert_etf_profiles`` must persist a
+    :class:`ResearchContextPack` per instrument through
+    ``uow.research_context_packs.add`` after the resolved profile
+    upsert. The pack is the immutable, hash-stable projection of the
+    resolved FieldEvidence; missing fields stay missing, conflict
+    fields stay null, AUM never aliases MARKET_VALUE / TURNOVER_VALUE.
+    """
+
+    def setUp(self) -> None:
+        self._provider_key = "akshare"
+        self._provider_request_id = uuid4()
+        self._stored_request = StoredProviderRequest(
+            id=self._provider_request_id,
+            provider_key=self._provider_key,
+            dataset_key="etf_profile",
+            request_key="etf-profile",
+            request_params={},
+            status="succeeded",
+        )
+        self._instrument_id_510300 = uuid4()
+        self._instrument_id_159919 = uuid4()
+        self._finished_at = datetime(2026, 7, 30, 8, 0, 5, tzinfo=UTC)
+        self._started_at = datetime(2026, 7, 30, 8, 0, 0, tzinfo=UTC)
+
+    def _instrument_lookup(self, *, exchange: str, symbol: str) -> _StubInstrument | None:
+        if symbol == "510300" and exchange == "SSE":
+            return _StubInstrument(instrument_id=self._instrument_id_510300)
+        if symbol == "159919" and exchange == "SZSE":
+            return _StubInstrument(instrument_id=self._instrument_id_159919)
+        return None
+
+    def _build_sidecar(self, records: list[dict[str, Any]]) -> str:
+        return json.dumps(
+            {"schema_version": 1, "records": records},
+            ensure_ascii=False,
+            sort_keys=True,
+        )
+
+    def _stored_attempt(
+        self,
+        *,
+        attempt_id: UUID,
+        attempt_no: int = 1,
+        sidecar_json: str | None,
+        finished_at: datetime,
+    ) -> StoredProviderAttempt:
+        return StoredProviderAttempt(
+            id=attempt_id,
+            provider_request_id=self._provider_request_id,
+            attempt_no=attempt_no,
+            started_at=self._started_at,
+            finished_at=finished_at,
+            status="succeeded",
+            error_stage=None,
+            error_code=None,
+            error_message=None,
+            response_payload_sha256="0" * 64,
+            response_payload_json=sidecar_json,
+        )
+
+    def _stored_batch(
+        self, *, attempt_id: UUID, batch_id: UUID | None = None
+    ) -> StoredProviderBatch:
+        return StoredProviderBatch(
+            id=batch_id or uuid4(),
+            provider_request_id=self._provider_request_id,
+            provider_attempt_id=attempt_id,
+            provider_key=self._provider_key,
+            dataset_key="etf_profile",
+            record_count=1,
+            payload_sha256="0" * 64,
+            warnings=[],
+            status="succeeded",
+        )
+
+    def _run_upsert_with_context_packs(
+        self,
+        *,
+        sidecar: str,
+        batch: StoredProviderBatch | None,
+        context_pack_add_calls: list[ResearchContextPack] | None = None,
+    ) -> tuple[UpsertSummary, list[ResearchContextPack]]:
+        attempt_id = uuid4()
+        attempts = [
+            self._stored_attempt(
+                attempt_id=attempt_id,
+                sidecar_json=sidecar,
+                finished_at=self._finished_at,
+            ),
+        ]
+        batches_by_attempt: dict[UUID, list[StoredProviderBatch]] = {}
+        if batch is not None:
+            batches_by_attempt[attempt_id] = [batch]
+        context_pack_calls: list[ResearchContextPack] = (
+            context_pack_add_calls if context_pack_add_calls is not None else []
+        )
+        session = _build_session()
+        uow_factory = _make_uow_factory(
+            session,
+            stored_request=self._stored_request,
+            attempts=attempts,
+            instrument_lookup=self._instrument_lookup,
+            profile_upsert_calls=[],
+            field_evidence_add_calls=[],
+            batches_by_attempt=batches_by_attempt,
+            context_pack_add_calls=context_pack_calls,
+        )
+        summary = upsert_etf_profiles(
+            _make_session_factory(session),
+            unit_of_work_factory=uow_factory,
+        )
+        return summary, context_pack_calls
+
+    def test_upsert_writes_a_research_context_pack_per_instrument(self) -> None:
+        # Task C3 acceptance: each successfully resolved instrument
+        # produces exactly one ``ResearchContextPack`` ``add`` call.
+        sidecar = self._build_sidecar(
+            [
+                {
+                    "symbol": "510300",
+                    "exchange": "SSE",
+                    "fund_type": "ETF",
+                    "category": "Equity",
+                    "shares": "1000000000",
+                },
+                {
+                    "symbol": "159919",
+                    "exchange": "SZSE",
+                    "fund_type": "ETF",
+                    "category": "Equity",
+                    "shares": "500000000",
+                },
+            ]
+        )
+        attempt_id = uuid4()
+        batch = self._stored_batch(attempt_id=attempt_id)
+        summary, packs = self._run_upsert_with_context_packs(
+            sidecar=sidecar, batch=batch
+        )
+        self.assertEqual(summary.inserted, 2)
+        self.assertEqual(len(packs), 2)
+        for pack in packs:
+            self.assertIsInstance(pack, ResearchContextPack)
+            self.assertIn(
+                pack.instrument_id.value,
+                (self._instrument_id_510300, self._instrument_id_159919),
+            )
+
+    def test_upsert_persisted_pack_carries_etf_profile_items_with_canonical_keys(
+        self,
+    ) -> None:
+        # The pack emitted by the upsert is the canonical
+        # ``etf_profile.<field>`` projection: ``context_type`` is
+        # ``etf_profile`` and one ``ContextItem`` is emitted per
+        # field key observed in the resolver output.
+        sidecar = self._build_sidecar(
+            [
+                {
+                    "symbol": "510300",
+                    "exchange": "SSE",
+                    "fund_type": "ETF",
+                    "category": "Equity",
+                    "shares": "1000000000",
+                },
+            ]
+        )
+        attempt_id = uuid4()
+        batch = self._stored_batch(attempt_id=attempt_id)
+        _summary, packs = self._run_upsert_with_context_packs(
+            sidecar=sidecar, batch=batch
+        )
+        self.assertEqual(len(packs), 1)
+        pack = packs[0]
+        self.assertEqual(pack.instrument_id.value, self._instrument_id_510300)
+        keys = {item.key for item in pack.items}
+        expected_keys = {
+            "etf_profile.manager",
+            "etf_profile.benchmark_index",
+            "etf_profile.inception_date",
+            "etf_profile.fund_type",
+            "etf_profile.category",
+            "etf_profile.management_fee",
+            "etf_profile.custody_fee",
+            "etf_profile.aum",
+            "etf_profile.shares",
+        }
+        self.assertEqual(keys, expected_keys)
+        for item in pack.items:
+            self.assertEqual(item.context_type, "etf_profile")
+
+    def test_upsert_does_not_write_pack_when_no_instrument_resolves(self) -> None:
+        # When the sidecar has no record resolving to a known
+        # ``core.instruments`` row, the core upsert short-circuits
+        # and the context pack pass is skipped; ``add`` is never
+        # invoked. This matches the slice's "no silent zero-row
+        # upsert" contract.
+        sidecar = self._build_sidecar(
+            [
+                {
+                    "symbol": "999999",
+                    "exchange": "SSE",
+                    "fund_type": "ETF",
+                    "category": "Equity",
+                    "shares": "1000",
+                },
+            ]
+        )
+        attempt_id = uuid4()
+        batch = self._stored_batch(attempt_id=attempt_id)
+        summary, packs = self._run_upsert_with_context_packs(
+            sidecar=sidecar, batch=batch
+        )
+        self.assertEqual(summary.inserted, 0)
+        self.assertEqual(summary.skipped, 1)
+        self.assertEqual(packs, [])
 
 
 if __name__ == "__main__":
