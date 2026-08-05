@@ -51,9 +51,7 @@ class InstrumentRow(Base):
         {"schema": "core"},
     )
 
-    id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
-    )
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     symbol: Mapped[str] = mapped_column(String(32), nullable=False)
     exchange: Mapped[str] = mapped_column(String(32), nullable=False)
     name: Mapped[str] = mapped_column(String(160), nullable=False)
@@ -86,6 +84,7 @@ class InstrumentRow(Base):
         server_default=func.now(),
         onupdate=func.now(),
     )
+
 
 class ProviderRequestRow(Base):
     """A logical Provider request, independent of any single network attempt.
@@ -125,25 +124,19 @@ class ProviderRequestRow(Base):
         {"schema": "raw"},
     )
 
-    id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
-    )
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     provider_key: Mapped[str] = mapped_column(String(64), nullable=False)
     dataset_key: Mapped[str] = mapped_column(String(64), nullable=False)
     request_key: Mapped[str] = mapped_column(String(128), nullable=False)
     request_params: Mapped[dict[str, Any]] = mapped_column(
         JSONB, nullable=False, server_default=text("'{}'::jsonb"), default=dict
     )
-    requested_by_run_id: Mapped[uuid.UUID | None] = mapped_column(
-        UUID(as_uuid=True), nullable=True
-    )
+    requested_by_run_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
     status: Mapped[str] = mapped_column(String(24), nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
-    completed_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), nullable=True
-    )
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
 class ProviderAttemptRow(Base):
@@ -170,8 +163,7 @@ class ProviderAttemptRow(Base):
             name="ck_provider_attempts_succeeded_has_hash",
         ),
         CheckConstraint(
-            "(status <> 'failed' OR (error_stage IS NOT NULL "
-            "AND error_code IS NOT NULL))",
+            "(status <> 'failed' OR (error_stage IS NOT NULL AND error_code IS NOT NULL))",
             name="ck_provider_attempts_failed_has_error",
         ),
         CheckConstraint(
@@ -189,9 +181,7 @@ class ProviderAttemptRow(Base):
         {"schema": "raw"},
     )
 
-    id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
-    )
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     provider_request_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
         ForeignKey(
@@ -201,23 +191,15 @@ class ProviderAttemptRow(Base):
         nullable=False,
     )
     attempt_no: Mapped[int] = mapped_column(Integer, nullable=False)
-    provider_request_id_text: Mapped[str | None] = mapped_column(
-        String(128), nullable=True
-    )
-    started_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False
-    )
-    finished_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), nullable=True
-    )
+    provider_request_id_text: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     status: Mapped[str] = mapped_column(String(32), nullable=False)
     http_status: Mapped[int | None] = mapped_column(Integer, nullable=True)
     error_stage: Mapped[str | None] = mapped_column(String(32), nullable=True)
     error_code: Mapped[str | None] = mapped_column(String(64), nullable=True)
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
-    response_payload_sha256: Mapped[str | None] = mapped_column(
-        String(64), nullable=True
-    )
+    response_payload_sha256: Mapped[str | None] = mapped_column(String(64), nullable=True)
     response_payload_json: Mapped[Any | None] = mapped_column(JSONB, nullable=True)
     response_payload_uri: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
@@ -256,9 +238,7 @@ class RawProviderBatchRow(Base):
             name="ck_provider_batches_payload_sha256_nonempty",
         ),
         Index("ix_provider_batches_provider_attempt_id", "provider_attempt_id"),
-        Index(
-            "ix_provider_batches_provider_request_id", "provider_request_id"
-        ),
+        Index("ix_provider_batches_provider_request_id", "provider_request_id"),
         Index(
             "ix_provider_batches_provider_dataset",
             "provider_key",
@@ -269,9 +249,7 @@ class RawProviderBatchRow(Base):
         {"schema": "raw"},
     )
 
-    id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
-    )
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     provider_request_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
         ForeignKey(
@@ -428,9 +406,7 @@ class CandidatePoolRunRow(Base):
         {"schema": "analytics"},
     )
 
-    id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
-    )
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     trade_date: Mapped[date] = mapped_column(Date, nullable=False)
     algorithm_key: Mapped[str] = mapped_column(String(80), nullable=False)
     algorithm_version: Mapped[str] = mapped_column(String(80), nullable=False)
@@ -450,15 +426,9 @@ class CandidatePoolRunRow(Base):
     started_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
-    finished_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), nullable=True
-    )
-    published_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), nullable=True
-    )
-    rejected_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), nullable=True
-    )
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    published_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    rejected_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     rejection_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
     quality_summary: Mapped[dict[str, Any]] = mapped_column(
         JSONB,
@@ -521,15 +491,9 @@ class CandidatePoolItemRow(Base):
         {"schema": "analytics"},
     )
 
-    id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), nullable=False, default=uuid.uuid4
-    )
-    run_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), primary_key=True
-    )
-    instrument_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), primary_key=True
-    )
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False, default=uuid.uuid4)
+    run_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True)
+    instrument_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True)
     included: Mapped[bool] = mapped_column(Boolean, nullable=False)
     rank: Mapped[int | None] = mapped_column(Integer, nullable=True)
     total_score: Mapped[Any | None] = mapped_column(Numeric(38, 18), nullable=True)
@@ -647,12 +611,8 @@ class DailyBarRow(Base):
         {"schema": "core"},
     )
 
-    id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
-    )
-    instrument_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), primary_key=True
-    )
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    instrument_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True)
     trade_date: Mapped[date] = mapped_column(Date, primary_key=True)
     open: Mapped[Any | None] = mapped_column(Numeric(38, 18), nullable=True)
     high: Mapped[Any | None] = mapped_column(Numeric(38, 18), nullable=True)
@@ -664,12 +624,8 @@ class DailyBarRow(Base):
     adjustment: Mapped[str] = mapped_column(String(16), primary_key=True)
     trading_status: Mapped[str] = mapped_column(String(16), nullable=False)
     source_provider: Mapped[str] = mapped_column(String(64), nullable=False)
-    source_batch_id: Mapped[uuid.UUID | None] = mapped_column(
-        UUID(as_uuid=True), nullable=True
-    )
-    observed_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False
-    )
+    source_batch_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
+    observed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     revision: Mapped[int] = mapped_column(Integer, primary_key=True)
     row_hash: Mapped[str] = mapped_column(String(64), nullable=False)
     created_at: Mapped[datetime] = mapped_column(
@@ -698,9 +654,7 @@ class InputSnapshotRow(Base):
         {"schema": "analytics"},
     )
 
-    id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
-    )
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     snapshot_date: Mapped[date] = mapped_column(Date, nullable=False)
     instrument_ids: Mapped[list[str]] = mapped_column(JSONB, nullable=False)
     content_hash: Mapped[str] = mapped_column(String(64), nullable=False)
@@ -753,19 +707,13 @@ class ResearchEvidencePackRow(Base):
         {"schema": "analytics"},
     )
 
-    id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
-    )
-    instrument_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), nullable=False
-    )
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    instrument_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
     as_of_date: Mapped[date] = mapped_column(Date, nullable=False)
     schema_version: Mapped[str] = mapped_column(String(32), nullable=False)
     factor_set_key: Mapped[str] = mapped_column(String(80), nullable=False)
     factor_set_version: Mapped[str] = mapped_column(String(32), nullable=False)
-    input_snapshot_id: Mapped[uuid.UUID | None] = mapped_column(
-        UUID(as_uuid=True), nullable=True
-    )
+    input_snapshot_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
     candidate_pool_run_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), nullable=True
     )
@@ -846,9 +794,7 @@ class EtfProfileRow(Base):
         {"schema": "core"},
     )
 
-    instrument_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), primary_key=True
-    )
+    instrument_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True)
     manager: Mapped[str | None] = mapped_column(String(120), nullable=True)
     benchmark_index: Mapped[str | None] = mapped_column(String(120), nullable=True)
     category: Mapped[str | None] = mapped_column(String(80), nullable=True)
@@ -866,6 +812,76 @@ class EtfProfileRow(Base):
         nullable=False,
         server_default=func.now(),
         onupdate=func.now(),
+    )
+
+
+class ResearchContextPackRow(Base):
+    __tablename__ = "research_context_packs"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["instrument_id"],
+            ["core.instruments.id"],
+            name="fk_research_context_packs_instrument_id_core_instruments",
+        ),
+        UniqueConstraint("content_hash", name="uq_research_context_packs_content_hash"),
+        CheckConstraint(
+            "length(content_hash) = 64", name="ck_research_context_packs_content_hash_len64"
+        ),
+        CheckConstraint(
+            "context_version >= 1", name="ck_research_context_packs_context_version_positive"
+        ),
+        Index("ix_research_context_packs_instrument_version", "instrument_id", "context_version"),
+        Index("ix_research_context_packs_instrument_created_at", "instrument_id", "created_at"),
+        {"schema": "analytics"},
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    instrument_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    schema_version: Mapped[str] = mapped_column(String(32), nullable=False)
+    context_version: Mapped[int] = mapped_column(Integer, nullable=False)
+    content_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    missing_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
+class ResearchContextItemRow(Base):
+    __tablename__ = "research_context_items"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["pack_id"],
+            ["analytics.research_context_packs.id"],
+            name="fk_research_context_items_pack_id_analytics_research_context_packs",
+            ondelete="CASCADE",
+        ),
+        UniqueConstraint("pack_id", "item_hash", name="uq_research_context_items_pack_item_hash"),
+        CheckConstraint(
+            "value_type IN ('text', 'decimal', 'date', 'json')",
+            name="ck_research_context_items_value_type_valid",
+        ),
+        Index("ix_research_context_items_pack_id", "pack_id"),
+        Index("ix_research_context_items_context_type_key", "context_type", "key"),
+        {"schema": "analytics"},
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    pack_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    context_type: Mapped[str] = mapped_column(String(64), nullable=False)
+    key: Mapped[str] = mapped_column(String(128), nullable=False)
+    value_type: Mapped[str] = mapped_column(String(16), nullable=False)
+    value: Mapped[Any | None] = mapped_column(JSONB, nullable=True)
+    evidence_refs: Mapped[list[str]] = mapped_column(JSONB, nullable=False, default=list)
+    source_provider: Mapped[str] = mapped_column(String(64), nullable=False)
+    source_dataset: Mapped[str] = mapped_column(String(64), nullable=False)
+    source_batch_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
+    source_revision: Mapped[int] = mapped_column(Integer, nullable=False)
+    observed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    quality_status: Mapped[str] = mapped_column(String(24), nullable=False)
+    confidence_score: Mapped[Any] = mapped_column(Numeric(38, 18), nullable=False)
+    item_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
     )
 
 
@@ -966,27 +982,17 @@ class EtfProfileFieldRow(Base):
         {"schema": "analytics"},
     )
 
-    id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
-    )
-    instrument_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), nullable=False
-    )
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    instrument_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
     field_key: Mapped[str] = mapped_column(String(64), nullable=False)
     value_type: Mapped[str] = mapped_column(String(16), nullable=False)
     field_value_text: Mapped[str | None] = mapped_column(Text, nullable=True)
-    field_value_numeric: Mapped[Any | None] = mapped_column(
-        Numeric(38, 18), nullable=True
-    )
+    field_value_numeric: Mapped[Any | None] = mapped_column(Numeric(38, 18), nullable=True)
     field_value_date: Mapped[date | None] = mapped_column(Date, nullable=True)
     source_provider: Mapped[str] = mapped_column(String(64), nullable=False)
     source_dataset: Mapped[str] = mapped_column(String(64), nullable=False)
-    observed_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False
-    )
-    source_batch_id: Mapped[uuid.UUID | None] = mapped_column(
-        UUID(as_uuid=True), nullable=True
-    )
+    observed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    source_batch_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
     source_revision: Mapped[int] = mapped_column(Integer, nullable=False)
     quality_status: Mapped[str] = mapped_column(String(24), nullable=False)
     confidence_score: Mapped[Any] = mapped_column(Numeric(38, 18), nullable=False)

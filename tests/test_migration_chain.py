@@ -290,7 +290,7 @@ class MigrationChainTest(unittest.TestCase):
         head_ids = all_revision_ids - referenced_down_revisions
         self.assertEqual(
             head_ids,
-            {"20260805_0009"},
+            {"20260805_0010"},
             "expected exactly one unreferenced chain head, "
             f"got {sorted(head_ids)}",
         )
@@ -402,7 +402,7 @@ class MigrationChainTest(unittest.TestCase):
         head_ids = all_revision_ids - referenced_down_revisions
         self.assertEqual(
             head_ids,
-            {"20260805_0009"},
+            {"20260805_0010"},
             "expected exactly one unreferenced chain head, "
             f"got {sorted(head_ids)}",
         )
@@ -470,6 +470,45 @@ class MigrationChainTest(unittest.TestCase):
             "ix_etf_profile_fields_source_provider",
         ):
             self.assertIn(index_name, source)
+
+    def test_research_context_packs_migration_is_current_head(self) -> None:
+        repository_root = Path(__file__).resolve().parents[1]
+        versions_directory = repository_root / "apps" / "migrations" / "migrations" / "versions"
+        revisions: dict[Path, tuple[str, object]] = {}
+        for revision_file in sorted(versions_directory.glob("*.py")):
+            tree = ast.parse(revision_file.read_text(encoding="utf-8"))
+            assignments: dict[str, object] = {}
+            for node in tree.body:
+                if isinstance(node, ast.Assign):
+                    value = _try_literal_eval(node.value)
+                    if value is not _NOT_LITERAL:
+                        for target in node.targets:
+                            if isinstance(target, ast.Name):
+                                assignments[target.id] = value
+                elif isinstance(node, ast.AnnAssign) and node.value is not None:
+                    value = _try_literal_eval(node.value)
+                    if value is not _NOT_LITERAL and isinstance(node.target, ast.Name):
+                        assignments[node.target.id] = value
+            revisions[revision_file] = (assignments["revision"], assignments["down_revision"])
+        heads = {revision for revision, _ in revisions.values()} - {
+            down_revision for _, down_revision in revisions.values() if down_revision is not None
+        }
+        self.assertEqual(heads, {"20260805_0010"})
+        source = (versions_directory / "20260805_0010_research_context_packs.py").read_text()
+        self.assertIn('revision: str = "20260805_0010"', source)
+        self.assertIn('down_revision: str | None = "20260805_0009"', source)
+        for table_name in ("research_context_packs", "research_context_items"):
+            self.assertIn(f'"{table_name}"', source)
+        for token in (
+            "uq_research_context_packs_content_hash",
+            "uq_research_context_items_pack_item_hash",
+            "value_type IN ('text', 'decimal', 'date', 'json')",
+            "JSONB",
+            "missing_reason",
+            "source_provider",
+            "evidence_refs",
+        ):
+            self.assertIn(token, source)
 
 
 def _first_string_literal(call_node: ast.Call) -> str | None:

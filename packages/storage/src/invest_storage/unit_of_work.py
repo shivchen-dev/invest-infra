@@ -42,6 +42,7 @@ from invest_storage.repositories import (
     SqlAlchemyProviderAttemptRepository,
     SqlAlchemyProviderBatchRepository,
     SqlAlchemyProviderRequestRepository,
+    SqlAlchemyResearchContextPackRepository,
 )
 
 
@@ -258,6 +259,15 @@ class EtfProfileFieldRepositoryPort(Protocol):
 
 
 @runtime_checkable
+class ResearchContextPackRepositoryPort(Protocol):
+    def add(self, pack): ...
+    def upsert(self, pack): ...
+    def get_by_id(self, pack_id): ...
+    def get_by_instrument_and_version(self, instrument_id, context_version): ...
+    def list_by_instrument(self, instrument_id): ...
+
+
+@runtime_checkable
 class SessionProvider(Protocol):
     """Anything that can hand out a SQLAlchemy ``Session``.
 
@@ -292,6 +302,7 @@ class UnitOfWork(Protocol):
     daily_bars: DailyBarRepositoryPort
     etf_profiles: EtfProfileRepositoryPort
     etf_profile_fields: EtfProfileFieldRepositoryPort
+    research_context_packs: ResearchContextPackRepositoryPort
 
     def commit(self) -> None:
         """Persist the current transaction to the database."""
@@ -334,6 +345,7 @@ class SqlAlchemyUnitOfWork:
         self._daily_bars: SqlAlchemyDailyBarRepository | None = None
         self._etf_profiles: SqlAlchemyEtfProfileRepository | None = None
         self._etf_profile_fields: SqlAlchemyEtfProfileFieldRepository | None = None
+        self._research_context_packs: SqlAlchemyResearchContextPackRepository | None = None
         self._closed = True
         self._user_committed = False
 
@@ -414,6 +426,14 @@ class SqlAlchemyUnitOfWork:
             )
         return self._etf_profile_fields
 
+    @property
+    def research_context_packs(self) -> SqlAlchemyResearchContextPackRepository:
+        if self._research_context_packs is None:
+            self._research_context_packs = SqlAlchemyResearchContextPackRepository(
+                self.session
+            )
+        return self._research_context_packs
+
     def commit(self) -> None:
         self.session.commit()
         self._user_committed = True
@@ -458,6 +478,7 @@ class SqlAlchemyUnitOfWork:
             self._daily_bars = None
             self._etf_profiles = None
             self._etf_profile_fields = None
+            self._research_context_packs = None
             self._user_committed = False
             self._closed = True
 
@@ -471,6 +492,7 @@ __all__ = [
     "CandidatePoolRunRepositoryPort",
     "DailyBarRepositoryPort",
     "EtfProfileFieldRepositoryPort",
+    "ResearchContextPackRepositoryPort",
     "EtfProfileRepositoryPort",
     "InputSnapshotRepositoryPort",
     "InstrumentRepositoryPort",

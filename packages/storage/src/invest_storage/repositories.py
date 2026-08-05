@@ -77,7 +77,12 @@ from invest_domain.instruments import (
 from invest_domain.market_data.models import DailyBar
 from invest_domain.market_data.values import Adjust, TradingStatus
 from invest_domain.pipeline import PipelineRun, PipelineRunStatus
-from invest_domain.research import QualityStatus
+from invest_domain.research import (
+    ContextItem,
+    ContextValueType,
+    QualityStatus,
+    ResearchContextPack,
+)
 from invest_domain.shared.values import Currency
 from sqlalchemy import func, select
 from sqlalchemy.dialects.postgresql import insert
@@ -95,6 +100,8 @@ from invest_storage.models import (
     ProviderAttemptRow,
     ProviderRequestRow,
     RawProviderBatchRow,
+    ResearchContextItemRow,
+    ResearchContextPackRow,
 )
 
 
@@ -399,17 +406,14 @@ class SqlAlchemyInstrumentRepository:
                 normalised[value] = None
             else:
                 raise TypeError(
-                    "get_many_by_ids expects UUID or InstrumentId, "
-                    f"got {type(value).__name__}"
+                    f"get_many_by_ids expects UUID or InstrumentId, got {type(value).__name__}"
                 )
         rows = self._session.scalars(
             select(InstrumentRow).where(InstrumentRow.id.in_(normalised.keys()))
         ).all()
         return {row.id: _row_to_instrument(row) for row in rows}
 
-    def get_by_business_key(
-        self, *, exchange: str, symbol: str
-    ) -> Instrument | None:
+    def get_by_business_key(self, *, exchange: str, symbol: str) -> Instrument | None:
         """Return the active instrument carrying the given business key.
 
         Uses the partial unique index on ``(symbol, exchange) WHERE
@@ -580,9 +584,7 @@ class SqlAlchemyProviderRequestRepository:
     ) -> StoredProviderRequest:
         row = self._session.get(ProviderRequestRow, request_id)
         if row is None:
-            raise LookupError(
-                f"ProviderRequest {request_id!s} not found; cannot update status"
-            )
+            raise LookupError(f"ProviderRequest {request_id!s} not found; cannot update status")
         row.status = status
         if completed_at is not None:
             row.completed_at = completed_at
@@ -674,14 +676,10 @@ class SqlAlchemyProviderAttemptRepository:
         """
 
         if not response_payload_sha256 or not response_payload_sha256.strip():
-            raise ValueError(
-                "mark_succeeded requires a non-empty response_payload_sha256"
-            )
+            raise ValueError("mark_succeeded requires a non-empty response_payload_sha256")
         row = self._session.get(ProviderAttemptRow, attempt_id)
         if row is None:
-            raise LookupError(
-                f"ProviderAttempt {attempt_id!s} not found; cannot mark succeeded"
-            )
+            raise LookupError(f"ProviderAttempt {attempt_id!s} not found; cannot mark succeeded")
         row.status = "succeeded"
         row.finished_at = finished_at
         row.response_payload_sha256 = response_payload_sha256
@@ -715,9 +713,7 @@ class SqlAlchemyProviderAttemptRepository:
             raise ValueError("mark_failed requires a non-empty error_code")
         row = self._session.get(ProviderAttemptRow, attempt_id)
         if row is None:
-            raise LookupError(
-                f"ProviderAttempt {attempt_id!s} not found; cannot mark failed"
-            )
+            raise LookupError(f"ProviderAttempt {attempt_id!s} not found; cannot mark failed")
         row.status = "failed"
         row.finished_at = finished_at
         row.error_stage = error_stage
@@ -875,11 +871,7 @@ class SqlAlchemyDailyBarRepository:
         :meth:`get_exact` to pin a specific revision for replay.
         """
 
-        raw_id = (
-            instrument_id.value
-            if isinstance(instrument_id, InstrumentId)
-            else instrument_id
-        )
+        raw_id = instrument_id.value if isinstance(instrument_id, InstrumentId) else instrument_id
         row = self._session.execute(
             select(DailyBarRow)
             .where(
@@ -904,11 +896,7 @@ class SqlAlchemyDailyBarRepository:
 
         if revision < 1:
             raise ValueError(f"revision must be >= 1, got {revision}")
-        raw_id = (
-            instrument_id.value
-            if isinstance(instrument_id, InstrumentId)
-            else instrument_id
-        )
+        raw_id = instrument_id.value if isinstance(instrument_id, InstrumentId) else instrument_id
         row = self._session.execute(
             select(DailyBarRow)
             .where(
@@ -945,24 +933,24 @@ class SqlAlchemyDailyBarRepository:
                 f"end_date {end_date.isoformat()} must be on or after "
                 f"start_date {start_date.isoformat()}"
             )
-        raw_id = (
-            instrument_id.value
-            if isinstance(instrument_id, InstrumentId)
-            else instrument_id
+        raw_id = instrument_id.value if isinstance(instrument_id, InstrumentId) else instrument_id
+        rows = (
+            self._session.execute(
+                select(DailyBarRow)
+                .where(
+                    DailyBarRow.instrument_id == raw_id,
+                    DailyBarRow.trade_date >= start_date,
+                    DailyBarRow.trade_date <= end_date,
+                    DailyBarRow.adjustment == adjustment.value,
+                )
+                .order_by(
+                    DailyBarRow.trade_date.asc(),
+                    DailyBarRow.revision.asc(),
+                )
+            )
+            .scalars()
+            .all()
         )
-        rows = self._session.execute(
-            select(DailyBarRow)
-            .where(
-                DailyBarRow.instrument_id == raw_id,
-                DailyBarRow.trade_date >= start_date,
-                DailyBarRow.trade_date <= end_date,
-                DailyBarRow.adjustment == adjustment.value,
-            )
-            .order_by(
-                DailyBarRow.trade_date.asc(),
-                DailyBarRow.revision.asc(),
-            )
-        ).scalars().all()
         return [_row_to_stored_daily_bar(row) for row in rows]
 
     def list_latest_by_instrument_and_range(
@@ -980,11 +968,7 @@ class SqlAlchemyDailyBarRepository:
                 f"end_date {end_date.isoformat()} must be on or after "
                 f"start_date {start_date.isoformat()}"
             )
-        raw_id = (
-            instrument_id.value
-            if isinstance(instrument_id, InstrumentId)
-            else instrument_id
-        )
+        raw_id = instrument_id.value if isinstance(instrument_id, InstrumentId) else instrument_id
         latest_revisions = (
             select(
                 DailyBarRow.trade_date.label("trade_date"),
@@ -999,19 +983,23 @@ class SqlAlchemyDailyBarRepository:
             .group_by(DailyBarRow.trade_date)
             .subquery()
         )
-        rows = self._session.execute(
-            select(DailyBarRow)
-            .join(
-                latest_revisions,
-                (DailyBarRow.trade_date == latest_revisions.c.trade_date)
-                & (DailyBarRow.revision == latest_revisions.c.revision),
+        rows = (
+            self._session.execute(
+                select(DailyBarRow)
+                .join(
+                    latest_revisions,
+                    (DailyBarRow.trade_date == latest_revisions.c.trade_date)
+                    & (DailyBarRow.revision == latest_revisions.c.revision),
+                )
+                .where(
+                    DailyBarRow.instrument_id == raw_id,
+                    DailyBarRow.adjustment == adjustment.value,
+                )
+                .order_by(DailyBarRow.trade_date.asc())
             )
-            .where(
-                DailyBarRow.instrument_id == raw_id,
-                DailyBarRow.adjustment == adjustment.value,
-            )
-            .order_by(DailyBarRow.trade_date.asc())
-        ).scalars().all()
+            .scalars()
+            .all()
+        )
         return [_row_to_stored_daily_bar(row) for row in rows]
 
     def list_latest_by_instruments_and_range(
@@ -1071,23 +1059,27 @@ class SqlAlchemyDailyBarRepository:
             .group_by(DailyBarRow.instrument_id, DailyBarRow.trade_date)
             .subquery()
         )
-        rows = self._session.execute(
-            select(DailyBarRow)
-            .join(
-                latest_revisions,
-                (DailyBarRow.instrument_id == latest_revisions.c.instrument_id)
-                & (DailyBarRow.trade_date == latest_revisions.c.trade_date)
-                & (DailyBarRow.revision == latest_revisions.c.revision),
+        rows = (
+            self._session.execute(
+                select(DailyBarRow)
+                .join(
+                    latest_revisions,
+                    (DailyBarRow.instrument_id == latest_revisions.c.instrument_id)
+                    & (DailyBarRow.trade_date == latest_revisions.c.trade_date)
+                    & (DailyBarRow.revision == latest_revisions.c.revision),
+                )
+                .where(
+                    DailyBarRow.instrument_id.in_(normalised.keys()),
+                    DailyBarRow.adjustment == adjustment.value,
+                )
+                .order_by(
+                    DailyBarRow.instrument_id.asc(),
+                    DailyBarRow.trade_date.asc(),
+                )
             )
-            .where(
-                DailyBarRow.instrument_id.in_(normalised.keys()),
-                DailyBarRow.adjustment == adjustment.value,
-            )
-            .order_by(
-                DailyBarRow.instrument_id.asc(),
-                DailyBarRow.trade_date.asc(),
-            )
-        ).scalars().all()
+            .scalars()
+            .all()
+        )
         return [_row_to_stored_daily_bar(row) for row in rows]
 
     def upsert_many(self, bars: Sequence[NewDailyBar | DailyBar]) -> list[StoredDailyBar]:
@@ -1152,6 +1144,156 @@ class SqlAlchemyDailyBarRepository:
             self._session.flush()
             written.append(_row_to_stored_daily_bar(row))
         return written
+
+
+class SqlAlchemyResearchContextPackRepository:
+    def __init__(self, session: Session) -> None:
+        self._session = session
+
+    def add(self, pack: ResearchContextPack) -> ResearchContextPack:
+        pack_values: dict[str, Any] = {
+            "id": uuid.uuid4(),
+            "instrument_id": pack.instrument_id.value,
+            "schema_version": pack.schema_version,
+            "context_version": pack.context_version,
+            "content_hash": pack.content_hash,
+            "missing_reason": pack.missing_reason,
+        }
+        if pack.created_at is not None:
+            pack_values["created_at"] = pack.created_at
+        statement = (
+            insert(ResearchContextPackRow)
+            .values(**pack_values)
+            .on_conflict_do_nothing(index_elements=[ResearchContextPackRow.content_hash])
+            .returning(ResearchContextPackRow.id)
+        )
+        inserted_id = self._session.execute(statement).scalar_one_or_none()
+        if inserted_id is None:
+            existing = self._find_by_hash(pack.content_hash)
+            if existing is None:
+                raise RuntimeError("research context pack conflict row was not found")
+            return existing
+        self._session.flush()
+        for item in pack.items:
+            self._session.execute(
+                insert(ResearchContextItemRow)
+                .values(**_context_item_to_row(item, inserted_id))
+                .on_conflict_do_nothing(constraint="uq_research_context_items_pack_item_hash")
+            )
+        self._session.flush()
+        return pack
+
+    def upsert(self, pack: ResearchContextPack) -> ResearchContextPack:
+        existing = self._find_by_hash(pack.content_hash)
+        return existing if existing is not None else self.add(pack)
+
+    def get_by_id(self, pack_id: UUID) -> ResearchContextPack | None:
+        row = self._session.get(ResearchContextPackRow, pack_id)
+        return self._row_to_pack(row) if row is not None else None
+
+    def get_by_instrument_and_version(
+        self, instrument_id: UUID | InstrumentId, context_version: int
+    ) -> ResearchContextPack | None:
+        raw_id = instrument_id.value if isinstance(instrument_id, InstrumentId) else instrument_id
+        row = self._session.scalars(
+            select(ResearchContextPackRow)
+            .where(
+                ResearchContextPackRow.instrument_id == raw_id,
+                ResearchContextPackRow.context_version == context_version,
+            )
+            .order_by(ResearchContextPackRow.created_at.desc())
+            .limit(1)
+        ).first()
+        return self._row_to_pack(row) if row is not None else None
+
+    def list_by_instrument(self, instrument_id: UUID | InstrumentId) -> list[ResearchContextPack]:
+        raw_id = instrument_id.value if isinstance(instrument_id, InstrumentId) else instrument_id
+        rows = self._session.scalars(
+            select(ResearchContextPackRow)
+            .where(ResearchContextPackRow.instrument_id == raw_id)
+            .order_by(
+                ResearchContextPackRow.context_version.asc(),
+                ResearchContextPackRow.created_at.asc(),
+            )
+        ).all()
+        return [self._row_to_pack(row) for row in rows]
+
+    def _find_by_hash(self, content_hash: str) -> ResearchContextPack | None:
+        row = self._session.scalars(
+            select(ResearchContextPackRow)
+            .where(ResearchContextPackRow.content_hash == content_hash)
+            .limit(1)
+        ).first()
+        return self._row_to_pack(row) if row is not None else None
+
+    def _row_to_pack(self, row: ResearchContextPackRow) -> ResearchContextPack:
+        item_rows = self._session.scalars(
+            select(ResearchContextItemRow)
+            .where(ResearchContextItemRow.pack_id == row.id)
+            .order_by(ResearchContextItemRow.context_type, ResearchContextItemRow.key)
+        ).all()
+        items = tuple(
+            ContextItem(
+                context_type=item.context_type,
+                key=item.key,
+                value=_context_value_from_json(item.value, item.value_type),
+                value_type=ContextValueType(item.value_type),
+                source_provider=item.source_provider,
+                source_dataset=item.source_dataset,
+                observed_at=item.observed_at,
+                source_batch_id=item.source_batch_id,
+                source_revision=item.source_revision,
+                quality_status=QualityStatus(item.quality_status),
+                confidence_score=_as_decimal(item.confidence_score) or Decimal("1"),
+                evidence_refs=tuple(item.evidence_refs or ()),
+                item_hash=item.item_hash,
+            )
+            for item in item_rows
+        )
+        return ResearchContextPack(
+            instrument_id=InstrumentId(row.instrument_id),
+            items=items,
+            schema_version=row.schema_version,
+            context_version=row.context_version,
+            content_hash=row.content_hash,
+            created_at=row.created_at,
+            missing_reason=row.missing_reason,
+        )
+
+
+def _context_item_to_row(item: ContextItem, pack_id: UUID) -> dict[str, Any]:
+    value: Any = item.value
+    if item.value_type is ContextValueType.DECIMAL and isinstance(value, Decimal):
+        value = str(value)
+    elif item.value_type is ContextValueType.DATE and isinstance(value, date):
+        value = value.isoformat()
+    return {
+        "id": uuid.uuid4(),
+        "pack_id": pack_id,
+        "context_type": item.context_type,
+        "key": item.key,
+        "value_type": item.value_type.value,
+        "value": value,
+        "evidence_refs": list(item.evidence_refs),
+        "source_provider": item.source_provider,
+        "source_dataset": item.source_dataset,
+        "source_batch_id": item.source_batch_id,
+        "source_revision": item.source_revision,
+        "observed_at": item.observed_at,
+        "quality_status": item.quality_status.value,
+        "confidence_score": item.confidence_score,
+        "item_hash": item.item_hash,
+    }
+
+
+def _context_value_from_json(value: Any, value_type: str) -> Any:
+    if value is None:
+        return None
+    if value_type == ContextValueType.DECIMAL.value:
+        return Decimal(str(value))
+    if value_type == ContextValueType.DATE.value:
+        return date.fromisoformat(str(value))
+    return value
 
 
 def _normalise_bar(
@@ -1350,8 +1492,7 @@ def _row_to_input_snapshot(row: InputSnapshotRow) -> InputSnapshot:
         id=row.id,
         snapshot_date=row.snapshot_date,
         instrument_ids=tuple(
-            value if isinstance(value, UUID) else UUID(str(value))
-            for value in row.instrument_ids
+            value if isinstance(value, UUID) else UUID(str(value)) for value in row.instrument_ids
         ),
         content_hash=row.content_hash,
         row_count=row.row_count,
@@ -1413,9 +1554,7 @@ class SqlAlchemyPipelineRunRepository:
         self._session.flush()
         return _row_to_pipeline_run(row)
 
-    def mark_succeeded(
-        self, run_id: UUID, *, finished_at: datetime
-    ) -> PipelineRun:
+    def mark_succeeded(self, run_id: UUID, *, finished_at: datetime) -> PipelineRun:
         """Transition a run into the ``succeeded`` terminal state.
 
         Updates ``status='succeeded'`` and ``finished_at``; ``error_summary``
@@ -1431,9 +1570,7 @@ class SqlAlchemyPipelineRunRepository:
 
         row = self._session.get(PipelineRunRow, run_id)
         if row is None:
-            raise LookupError(
-                f"PipelineRun {run_id!s} not found; cannot mark succeeded"
-            )
+            raise LookupError(f"PipelineRun {run_id!s} not found; cannot mark succeeded")
         if row.status == PipelineRunStatus.SUCCEEDED.value:
             return _row_to_pipeline_run(row)
         row.status = PipelineRunStatus.SUCCEEDED.value
@@ -1442,9 +1579,7 @@ class SqlAlchemyPipelineRunRepository:
         self._session.flush()
         return _row_to_pipeline_run(row)
 
-    def mark_failed(
-        self, run_id: UUID, *, error: str, finished_at: datetime
-    ) -> PipelineRun:
+    def mark_failed(self, run_id: UUID, *, error: str, finished_at: datetime) -> PipelineRun:
         """Transition a run into the ``failed`` terminal state.
 
         Updates ``status='failed'``, ``finished_at`` and ``error_summary``.
@@ -1462,14 +1597,11 @@ class SqlAlchemyPipelineRunRepository:
 
         if not isinstance(error, str) or not error.strip():
             raise ValueError(
-                "SqlAlchemyPipelineRunRepository.mark_failed requires a "
-                "non-empty error message"
+                "SqlAlchemyPipelineRunRepository.mark_failed requires a non-empty error message"
             )
         row = self._session.get(PipelineRunRow, run_id)
         if row is None:
-            raise LookupError(
-                f"PipelineRun {run_id!s} not found; cannot mark failed"
-            )
+            raise LookupError(f"PipelineRun {run_id!s} not found; cannot mark failed")
         if row.status == PipelineRunStatus.SUCCEEDED.value:
             raise ValueError(
                 f"PipelineRun {run_id!s} is already in 'succeeded' state; "
@@ -1492,12 +1624,8 @@ class SqlAlchemyPipelineRunRepository:
         """Lock the logical run key and return any non-retryable run."""
 
         if not isinstance(job_key, str) or not job_key.strip():
-            raise ValueError(
-                "get_blocking_by_job_and_partition requires a non-empty job_key"
-            )
-        lock_material = (
-            f"{len(job_key)}:{job_key}:{partition_key!r}"
-        ).encode()
+            raise ValueError("get_blocking_by_job_and_partition requires a non-empty job_key")
+        lock_material = (f"{len(job_key)}:{job_key}:{partition_key!r}").encode()
         lock_key = int.from_bytes(
             hashlib.blake2b(lock_material, digest_size=8).digest(),
             byteorder="big",
@@ -1531,9 +1659,7 @@ class SqlAlchemyPipelineRunRepository:
         row = self._session.get(PipelineRunRow, run_id)
         return _row_to_pipeline_run(row) if row is not None else None
 
-    def list_recent(
-        self, *, limit: int = 50, offset: int = 0
-    ) -> list[PipelineRun]:
+    def list_recent(self, *, limit: int = 50, offset: int = 0) -> list[PipelineRun]:
         """Return runs ordered by ``started_at`` descending.
 
         The descending ``started_at`` order matches the dashboard use
@@ -1583,9 +1709,7 @@ class SqlAlchemyPipelineRunRepository:
     def count_by_job_key(self, job_key: str) -> int:
         """Return the number of runs for ``job_key``."""
 
-        stmt = select(func.count(PipelineRunRow.id)).where(
-            PipelineRunRow.job_key == job_key
-        )
+        stmt = select(func.count(PipelineRunRow.id)).where(PipelineRunRow.job_key == job_key)
         return int(self._session.scalar(stmt) or 0)
 
     def count_by_status(self, status: str) -> int:
@@ -1598,10 +1722,7 @@ class SqlAlchemyPipelineRunRepository:
         probed safely from operational dashboards.
         """
 
-        stmt = (
-            select(PipelineRunRow.id)
-            .where(PipelineRunRow.status == status)
-        )
+        stmt = select(PipelineRunRow.id).where(PipelineRunRow.status == status)
         return len(self._session.scalars(stmt).all())
 
 
@@ -1795,9 +1916,7 @@ class SqlAlchemyCandidatePoolRunRepository:
             raise ValueError(f"limit must be >= 0, got {limit}")
         if offset < 0:
             raise ValueError(f"offset must be >= 0, got {offset}")
-        status_value = (
-            status.value if isinstance(status, CandidatePoolStatus) else str(status)
-        )
+        status_value = status.value if isinstance(status, CandidatePoolStatus) else str(status)
         stmt = (
             select(CandidatePoolRunRow)
             .where(CandidatePoolRunRow.status == status_value)
@@ -1864,13 +1983,9 @@ class SqlAlchemyCandidatePoolRunRepository:
 
         row = self._session.get(CandidatePoolRunRow, run_id)
         if row is None:
-            raise LookupError(
-                f"CandidatePoolRun {run_id!s} not found; cannot transition status"
-            )
+            raise LookupError(f"CandidatePoolRun {run_id!s} not found; cannot transition status")
         current = _row_to_candidate_pool_run(row)
-        transitioned = current.transition_to(
-            new_status, at=at, rejection_reason=rejection_reason
-        )
+        transitioned = current.transition_to(new_status, at=at, rejection_reason=rejection_reason)
         row.status = transitioned.status.value
         row.published_at = transitioned.published_at
         row.rejected_at = transitioned.rejected_at
@@ -1925,9 +2040,7 @@ class SqlAlchemyCandidatePoolItemRepository:
                 total_score=item.total_score,
                 metrics=_metrics_to_json(item.metrics),
                 rule_results=[_rule_outcome_to_json(r) for r in item.rule_results],
-                exclusion_reasons=[
-                    _exclusion_reason_to_json(r) for r in item.exclusion_reasons
-                ],
+                exclusion_reasons=[_exclusion_reason_to_json(r) for r in item.exclusion_reasons],
             )
             for item in items
         ]
@@ -2011,9 +2124,7 @@ def _row_to_candidate_pool_run(row: CandidatePoolRunRow) -> CandidatePoolRun:
 
 def _row_to_candidate_pool_item(row: CandidatePoolItemRow) -> CandidatePoolItem:
     metrics = _metrics_from_json(row.metrics)
-    rule_results = tuple(
-        _rule_outcome_from_json(entry) for entry in (row.rule_results or [])
-    )
+    rule_results = tuple(_rule_outcome_from_json(entry) for entry in (row.rule_results or []))
     exclusion_reasons = tuple(
         _exclusion_reason_from_json(entry) for entry in (row.exclusion_reasons or [])
     )
@@ -2021,9 +2132,7 @@ def _row_to_candidate_pool_item(row: CandidatePoolItemRow) -> CandidatePoolItem:
         instrument_id=InstrumentId(row.instrument_id),
         included=row.included,
         rank=row.rank,
-        total_score=(
-            Decimal(row.total_score) if row.total_score is not None else None
-        ),
+        total_score=(Decimal(row.total_score) if row.total_score is not None else None),
         metrics=metrics,
         rule_results=rule_results,
         exclusion_reasons=exclusion_reasons,
@@ -2078,9 +2187,7 @@ def _rule_outcome_from_json(value: Any) -> RuleOutcome:
     """Decode a JSONB-encoded rule outcome into a :class:`RuleOutcome`."""
 
     if not isinstance(value, dict):
-        raise TypeError(
-            f"rule_results entry must be a dict, got {type(value).__name__}"
-        )
+        raise TypeError(f"rule_results entry must be a dict, got {type(value).__name__}")
     rule_key = value.get("rule_key")
     if not rule_key:
         raise ValueError("rule_results entry missing non-empty 'rule_key'")
@@ -2104,9 +2211,7 @@ def _exclusion_reason_to_json(reason: ExclusionReason) -> dict[str, str]:
 
 def _exclusion_reason_from_json(value: Any) -> ExclusionReason:
     if not isinstance(value, dict):
-        raise TypeError(
-            f"exclusion_reasons entry must be a dict, got {type(value).__name__}"
-        )
+        raise TypeError(f"exclusion_reasons entry must be a dict, got {type(value).__name__}")
     code = value.get("code")
     message = value.get("message")
     if not code:
@@ -2195,11 +2300,7 @@ class SqlAlchemyEtfProfileRepository:
         return stored
 
     def get_by_id(self, instrument_id: UUID | InstrumentId) -> EtfProfile | None:
-        raw_id = (
-            instrument_id.value
-            if isinstance(instrument_id, InstrumentId)
-            else instrument_id
-        )
+        raw_id = instrument_id.value if isinstance(instrument_id, InstrumentId) else instrument_id
         row = self._session.get(EtfProfileRow, raw_id)
         return _row_to_etf_profile(row) if row is not None else None
 
@@ -2242,9 +2343,7 @@ class SqlAlchemyEtfProfileRepository:
             offset=offset,
         )
 
-    def list_all(
-        self, *, limit: int = 100, offset: int = 0
-    ) -> list[EtfProfile]:
+    def list_all(self, *, limit: int = 100, offset: int = 0) -> list[EtfProfile]:
         return self._list_filtered(filters=[], limit=limit, offset=offset)
 
     def count_all(self) -> int:
@@ -2387,9 +2486,7 @@ class SqlAlchemyEtfProfileFieldRepository:
             return existing
         return self.add(evidence)
 
-    def get_by_instrument(
-        self, instrument_id: UUID | InstrumentId
-    ) -> list[FieldEvidence]:
+    def get_by_instrument(self, instrument_id: UUID | InstrumentId) -> list[FieldEvidence]:
         """Return every evidence row for ``instrument_id`` ordered by ``created_at``.
 
         The ``created_at`` ascending order matches the conflict-aware
@@ -2398,11 +2495,7 @@ class SqlAlchemyEtfProfileFieldRepository:
         pass.
         """
 
-        raw_id = (
-            instrument_id.value
-            if isinstance(instrument_id, InstrumentId)
-            else instrument_id
-        )
+        raw_id = instrument_id.value if isinstance(instrument_id, InstrumentId) else instrument_id
         stmt = (
             select(EtfProfileFieldRow)
             .where(EtfProfileFieldRow.instrument_id == raw_id)
@@ -2427,11 +2520,7 @@ class SqlAlchemyEtfProfileFieldRepository:
         access O(log n) on the lookup columns.
         """
 
-        raw_id = (
-            instrument_id.value
-            if isinstance(instrument_id, InstrumentId)
-            else instrument_id
-        )
+        raw_id = instrument_id.value if isinstance(instrument_id, InstrumentId) else instrument_id
         stmt = (
             select(EtfProfileFieldRow)
             .where(
@@ -2446,9 +2535,7 @@ class SqlAlchemyEtfProfileFieldRepository:
         rows = self._session.scalars(stmt).all()
         return [_row_to_field_evidence(row) for row in rows]
 
-    def _find_by_content_hash(
-        self, content_hash: str
-    ) -> FieldEvidence | None:
+    def _find_by_content_hash(self, content_hash: str) -> FieldEvidence | None:
         stmt = (
             select(EtfProfileFieldRow)
             .where(EtfProfileFieldRow.content_hash == content_hash)
@@ -2471,17 +2558,11 @@ def _evidence_to_row(evidence: FieldEvidence) -> dict[str, Any]:
     text_value: str | None = None
     numeric_value: Decimal | None = None
     date_value: date | None = None
-    if evidence.value_type is FieldValueType.TEXT and isinstance(
-        evidence.value, str
-    ):
+    if evidence.value_type is FieldValueType.TEXT and isinstance(evidence.value, str):
         text_value = evidence.value
-    elif evidence.value_type is FieldValueType.DECIMAL and isinstance(
-        evidence.value, Decimal
-    ):
+    elif evidence.value_type is FieldValueType.DECIMAL and isinstance(evidence.value, Decimal):
         numeric_value = evidence.value
-    elif evidence.value_type is FieldValueType.DATE and isinstance(
-        evidence.value, date
-    ):
+    elif evidence.value_type is FieldValueType.DATE and isinstance(evidence.value, date):
         date_value = evidence.value
 
     return {
