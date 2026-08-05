@@ -7,6 +7,13 @@ function that must never write to PostgreSQL, invoke Dagster, call a
 provider, or replace the personal candidate pool.
 """
 
+from invest_pipeline.candidate_routing.custom_strategy_loader import (
+    CustomStrategyLoaderError,
+    CustomStrategyLoaderFileError,
+    CustomStrategyLoaderStructureError,
+    LoadedCustomStrategy,
+    load_custom_strategy,
+)
 from invest_pipeline.candidate_routing.shadow import (
     DEFAULT_MAX_STALE_DAYS,
     DEFAULT_MINIMUM_FULL_HISTORY_DAYS,
@@ -20,9 +27,14 @@ from invest_pipeline.candidate_routing.shadow import (
 __all__ = [
     "CandidatePoolShadowError",
     "CandidatePoolShadowResult",
+    "CustomStrategyLoaderError",
+    "CustomStrategyLoaderFileError",
+    "CustomStrategyLoaderStructureError",
     "DEFAULT_MAX_STALE_DAYS",
     "DEFAULT_MINIMUM_FULL_HISTORY_DAYS",
     "DEFAULT_MINIMUM_PARTIAL_HISTORY_DAYS",
     "InvalidUniverseThresholdsError",
+    "LoadedCustomStrategy",
+    "load_custom_strategy",
     "route_candidate_pool_shadow",
 ]

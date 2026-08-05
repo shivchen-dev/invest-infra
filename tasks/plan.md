@@ -1,55 +1,65 @@
-# Implementation Plan: Dynamic ETF Candidate Pool — PR-03 institutional channel
+# Implementation Plan: Dynamic ETF Candidate Pool — PR-04 custom strategy channel
 
 ## Overview
 
-Implement the first external-opinion channel for the dynamic ETF pool. The
-increment accepts validated structured recommendation records, applies source,
-time, symbol, and Universe constraints, and emits deterministic auditable
-proposals without persistence, network access, or report-text ingestion.
+Implement the first declarative custom-strategy channel for the dynamic ETF
+pool. YAML is parsed at the pipeline boundary with `yaml.safe_load`; the
+domain receives a validated mapping/definition and evaluates only the
+allow-listed shared factors. The slice remains deterministic and has no
+Python, SQL, network, persistence, or arbitrary expression execution.
 
 ## Architecture decisions
 
-- Keep the domain slice pure: JSON/CSV adapters and CLI file I/O are deferred
-  to a later pipeline increment; domain receives structured records.
-- Do not reuse the V1 FQIR adapter contract: its channel key is intentionally
-  restricted to `fqir`. Define the smallest institutional proposal contract
-  needed by the future fusion layer.
-- Treat institution recommendations as `external_opinion`; source, publish
-  time, expiry, confidence, summary, and citation remain explicit metadata.
-- Apply the existing `build_etf_universe` hard gate. An external opinion can
-  never promote an ineligible ETF into an included result.
-- Use the fixed rating mapping from the plan and stable canonical input/output
-  hashes. No historical hit-rate calculation or parameter optimisation.
+- Keep YAML/file I/O in `apps/pipeline`; keep strategy validation and
+  evaluation in `packages/domain`.
+- Reuse the existing eight-factor `calculate_market_state_factors` output;
+  do not duplicate factor formulas.
+- Allow only the plan's factor keys and operators: `gt`, `gte`, `lt`, `lte`,
+  `eq`, `in`, `all`, and `any`.
+- Require filter rules to pass before scoring. Missing factors fail closed and
+  produce an auditable warning/reason.
+- Score only finite Decimal factor values, normalize each factor by its
+  direction against the observed eligible set, then apply stable Top-N and
+  Watch-N selection. Partial Universe entries can reach Watch only; ineligible
+  entries always remain Excluded.
+- Include normalized configuration/content hashes in the result for audit.
 
 ## Task list
 
-### Phase 1: Domain contract and pure evaluator
+### Phase 1: Domain contract and evaluator
 
-- [x] Define validated recommendation/batch/proposal/result value objects.
-- [x] Implement rating mapping, source whitelist, expiry, deduplication, and
-      unknown-symbol handling.
-- [x] Apply Universe eligibility and emit deterministic proposals with audit
-      metadata and hashes.
-- [x] Add focused tests for valid, expired, duplicate, unknown, conflicting,
-      invalid, and ineligible recommendations.
+- [x] Define validated strategy, filter, score, and result value objects.
+- [x] Implement factor/operator allow-list and deterministic filter evaluation.
+- [x] Implement direction-aware weighted scoring, hard Universe gate, stable
+      Top-N/Watch-N output, and hashes.
+- [x] Add focused tests for valid config, invalid config, filters, missing
+      factors, direction, ranking ties, partial/ineligible Universe, and hash
+      stability.
 
-### Checkpoint: PR-03 domain slice
+### Phase 2: YAML boundary
 
-- [x] Focused and full domain tests pass.
+- [x] Add `yaml.safe_load` loader with path/type/error validation.
+- [x] Add a representative `custom-trend.yaml` fixture/config.
+- [x] Add loader tests proving unsafe YAML tags and unsupported fields/rules
+      are rejected.
+
+### Checkpoint: PR-04 domain/pipeline slice
+
+- [x] Focused and full relevant tests pass.
 - [x] Architecture boundary check passes.
-- [x] No database, API, provider, network, or filesystem side effects.
+- [x] Ruff and `git diff --check` pass.
+- [x] No Python/SQL/network execution or persistence side effects.
 
 ## Deferred phases
 
-- JSON/CSV file adapter and `recommendation-import` CLI.
-- PR-04 declarative custom strategy channel.
-- PR-05 fusion, persistence, API, Shadow, and E2E acceptance.
+- PR-05 `weighted_union_v1` fusion and publication.
+- Strategy validation CLI and API/E2E integration.
 
 ## Risks and mitigations
 
 | Risk | Impact | Mitigation |
 |---|---|---|
-| External opinion bypasses quality gates | High | Reuse `build_etf_universe`; ineligible always emits `exclude`. |
-| Stale or duplicate recommendation | High | Aware timestamps, explicit expiry, deterministic source/ref dedup. |
-| Untrusted report content enters the system | Medium | Store only bounded summary and citation fields; no full report text. |
-| Channel contract diverges before fusion | High | Keep field names aligned with plan §7 and version the channel. |
+| Config executes arbitrary code | Critical | `safe_load`, strict schema, factor/operator allow-list, no eval/exec. |
+| Strategy bypasses data quality | High | Reuse Universe eligibility; missing factor fails closed. |
+| Ranking is not reproducible | High | Decimal arithmetic, canonical hashes, explicit tie-break by instrument ID. |
+| YAML schema drifts from domain | Medium | Loader delegates to the domain mapping parser and tests both boundaries. |

@@ -1,0 +1,48 @@
+# Stage 4A-0 PR-04 representative custom-strategy configuration.
+#
+# The keys below are the only keys the custom-strategy channel accepts;
+# any additional top-level key, filter key, score key or output key
+# is rejected eagerly by
+# ``invest_domain.candidate_pool.parse_custom_strategy_mapping``. The
+# channel does NOT execute arbitrary code, does NOT run SQL, and does
+# NOT make network calls. Filter operators are limited to
+# ``gt``/``gte``/``lt``/``lte``/``eq``/``in``; score directions are
+# limited to ``higher``/``lower``. The factor allow-list is the eight
+# v1.0.0 shared market-state factors.
+
+strategy_key: custom_trend
+version: 1.0.0
+enabled: true
+
+universe:
+  minimum_history_days: 60
+
+filters:
+  all:
+    - factor: data_completeness_60d
+      op: gte
+      value: 0.90
+    - factor: avg_turnover_amount_20d
+      op: gte
+      value: 10000000
+    - factor: distance_ma60
+      op: gt
+      value: 0
+
+score:
+  - factor: return_20d
+    weight: 0.35
+    direction: higher
+  - factor: return_60d
+    weight: 0.35
+    direction: higher
+  - factor: realized_volatility_20d
+    weight: 0.15
+    direction: lower
+  - factor: max_drawdown_60d
+    weight: 0.15
+    direction: higher
+
+output:
+  include_top_n: 10
+  watch_next_n: 10
