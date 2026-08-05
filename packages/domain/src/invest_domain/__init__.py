@@ -44,7 +44,14 @@ from invest_domain.candidate_pool import (
     UniverseEligibility,
     build_etf_universe,
 )
-from invest_domain.etf_profile import EtfProfile
+from invest_domain.etf_profile import (
+    EtfProfile,
+    FieldEvidence,
+    FieldEvidenceSource,
+    FieldKey,
+    FieldValueType,
+    compute_field_evidence_hash,
+)
 
 from invest_domain.instruments import (
     Instrument,
@@ -161,6 +168,10 @@ __all__ = [
     "EtfProfile",
     "Exchange",
     "ExclusionReason",
+    "FieldEvidence",
+    "FieldEvidenceSource",
+    "FieldKey",
+    "FieldValueType",
     "Instrument",
     "InstrumentId",
     "InstrumentProvider",
@@ -189,6 +200,7 @@ __all__ = [
     "canonical_json",
     "canonical_pack_json",
     "canonical_sha256",
+    "compute_field_evidence_hash",
     "compute_item_hash",
     "compute_pack_hash",
     "content_hash",
