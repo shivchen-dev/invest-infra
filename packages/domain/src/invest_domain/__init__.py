@@ -44,6 +44,10 @@ from invest_domain.candidate_pool import (
     normalise_codes,
     utc_now,
 )
+from invest_domain.analytics.factor_calculators import (
+    FactorCalculationResult,
+    calculate_market_state_factors,
+)
 from invest_domain.etf_profile import (
     DEFAULT_PROVIDER_PRIORITY_POLICY,
     EtfProfile,
@@ -95,7 +99,6 @@ from invest_domain.research import (
     CaseContext,
     DataQuality,
     EvidencePack,
-    FactorCalculationResult,
     FactorDefinition,
     FactorObservation,
     FactorSetMetadata,
@@ -106,7 +109,6 @@ from invest_domain.research import (
     QualityGateStatus,
     QualityStatus,
     SourceReference,
-    calculate_market_state_factors,
     canonical_pack_json,
     compute_item_hash,
     compute_pack_hash,

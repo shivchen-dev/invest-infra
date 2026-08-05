@@ -740,7 +740,7 @@ def _quantize_score(score: float) -> Decimal:
     """Return a finite ``Decimal`` V1 score, rounded to 8 fractional digits.
 
     The 8-digit quantum mirrors the rounding used by the V2 research
-    factor calculators in :mod:`invest_domain.research.factor_calculators`
+    factor calculators in :mod:`invest_domain.analytics.factor_calculators`
     so downstream ``Decimal`` arithmetic never silently drops precision.
     """
 

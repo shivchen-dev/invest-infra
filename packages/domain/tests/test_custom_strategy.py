@@ -69,7 +69,7 @@ from invest_domain.instruments.models import (
 )
 from invest_domain.market_data.models import BarSource, DailyBar
 from invest_domain.market_data.values import Adjust, TradingStatus
-from invest_domain.research.factor_calculators import (
+from invest_domain.analytics.factor_calculators import (
     FactorCalculationResult,
     calculate_market_state_factors,
 )

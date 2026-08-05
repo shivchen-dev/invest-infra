@@ -6,7 +6,7 @@ candidate-routing plan (see
 particularly §6 / §7 / §10 / §13). It composes the existing
 :class:`invest_domain.candidate_pool.universe.build_etf_universe`
 classifier with the shared
-:func:`invest_domain.research.factor_calculators.calculate_market_state_factors`
+:func:`invest_domain.analytics.factor_calculators.calculate_market_state_factors`
 calculator to emit one auditable ``Candidate Proposal`` per input
 instrument — no second factor implementation, no database, no Provider,
 no network and no filesystem access.
@@ -19,7 +19,7 @@ Hard guarantees (every behaviour is unit-tested):
   order (stable tie-breaker on the raw :class:`UUID` bytes of the
   :class:`InstrumentId`).
 * No copy of the eight factor formulas — every factor used here comes
-  out of :class:`invest_domain.research.factor_calculators.FactorCalculationResult`,
+  out of :class:`invest_domain.analytics.factor_calculators.FactorCalculationResult`,
   and the sub-scoring routines only normalise those factor values into
   ``0..100`` axes (clip + log scale). Plan §9 forbids duplicating
   factor formulas between routing and research.
@@ -66,12 +66,12 @@ from invest_domain.candidate_pool.universe import (
     UniverseEligibility,
     build_etf_universe,
 )
-from invest_domain.instruments.models import Instrument, InstrumentId
-from invest_domain.market_data.models import DailyBar
-from invest_domain.research.factor_calculators import (
+from invest_domain.analytics.factor_calculators import (
     FactorCalculationResult,
     calculate_market_state_factors,
 )
+from invest_domain.instruments.models import Instrument, InstrumentId
+from invest_domain.market_data.models import DailyBar
 from invest_domain.research.models import (
     FACTOR_SET_KEY,
     FACTOR_SET_VERSION,

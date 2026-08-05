@@ -18,10 +18,6 @@ from invest_domain.research.context import (
     context_item_projection,
     context_pack_projection,
 )
-from invest_domain.research.factor_calculators import (
-    FactorCalculationResult,
-    calculate_market_state_factors,
-)
 from invest_domain.research.factor_set import (
     FACTOR_DEFINITIONS,
     FACTOR_KEYS,
@@ -49,6 +45,29 @@ from invest_domain.research.quality_gate import (
     QualityGateStatus,
     evaluate_quality_gate,
 )
+
+
+def __getattr__(name: str):
+    """Lazily re-export the Analytics-owned factor calculator.
+
+    The implementation moved to :mod:`invest_domain.analytics.factor_calculators`
+    (GOV-03). Importing it eagerly here would create a circular import
+    because the calculator pulls in :mod:`invest_domain.research.factor_set`,
+    which is re-exported by this same ``__init__``. Deferring the
+    resolution to attribute access breaks the cycle while still
+    preserving ``invest_domain.research.FactorCalculationResult`` /
+    ``invest_domain.research.calculate_market_state_factors`` for
+    existing callers and tests.
+    """
+
+    if name in {"FactorCalculationResult", "calculate_market_state_factors"}:
+        from invest_domain.analytics import factor_calculators as _analytics_fc
+
+        value = getattr(_analytics_fc, name)
+        globals()[name] = value
+        return value
+    raise AttributeError(f"module 'invest_domain.research' has no attribute {name!r}")
+
 
 __all__ = [
     "FACTOR_DEFINITIONS",
