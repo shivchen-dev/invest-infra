@@ -3,7 +3,7 @@
 Selects an :class:`invest_domain.market_data.ports.EtfMarketDataProvider`
 implementation from the pipeline-level ``INVEST_PIPELINE_PROVIDER_KEY``
 setting and constructs it. The factory owns the runtime selection
-surface; it has three branches and three explicit failure modes:
+surface; it has four provider branches and explicit failure modes:
 
 * ``fixture_dev`` -> :class:`FixtureDevInstrumentProvider`.
 * ``cifangquant`` -> :class:`CifangQuantInstrumentProvider` constructed
@@ -21,6 +21,10 @@ surface; it has three branches and three explicit failure modes:
   raises :class:`ProviderUnavailableError` from ``fetch_*`` calls;
   factory construction succeeds, but operators see the dependency
   error at fetch time, not at construction time.
+* ``tushare`` -> :class:`TushareInstrumentProvider` constructed with a
+  :class:`TushareSettings` object; construction is rejected until the
+  provider is explicitly enabled. The client reads the operator-managed
+  token file lazily when the first request is made.
 * Anything else -> :class:`UnknownProviderError` carrying the offending
   key as the ``KeyError`` argument so callers (and operators reading
   logs) can identify the request without parsing the message string.
@@ -51,6 +55,7 @@ from invest_pipeline.adapters.errors import (
     UnknownProviderError,
 )
 from invest_pipeline.adapters.fixture_dev import FixtureDevInstrumentProvider
+from invest_pipeline.adapters.tushare import TushareInstrumentProvider, TushareSettings
 from invest_pipeline.config import Settings, get_settings
 
 _FIXTURE_DEV_KEY = "fixture_dev"
@@ -60,6 +65,7 @@ _KNOWN_PROVIDER_KEYS: tuple[str, ...] = (
     _FIXTURE_DEV_KEY,
     _CIFANG_KEY,
     _AKSHARE_KEY,
+    "tushare",
 )
 
 
@@ -68,6 +74,7 @@ def build_provider(
     *,
     cifang_settings: CifangSettings | None = None,
     akshare_settings: AkshareSettings | None = None,
+    tushare_settings: TushareSettings | None = None,
 ) -> EtfMarketDataProvider:
     """Return the provider selected by ``INVEST_PIPELINE_PROVIDER_KEY``.
 
@@ -93,15 +100,16 @@ def build_provider(
     -------
     EtfMarketDataProvider
         A :class:`FixtureDevInstrumentProvider`,
-        :class:`CifangQuantInstrumentProvider` or
-        :class:`AkshareInstrumentProvider`, depending on
+        :class:`CifangQuantInstrumentProvider`,
+        :class:`AkshareInstrumentProvider` or
+        :class:`TushareInstrumentProvider`, depending on
         ``settings.provider_key``.
 
     Raises
     ------
     UnknownProviderError
         When ``settings.provider_key`` is not in
-        ``("fixture_dev", "cifangquant", "akshare")``. The exception
+        ``("fixture_dev", "cifangquant", "akshare", "tushare")``. The exception
         carries the offending key as its ``KeyError`` argument.
     RealProviderRequiresExplicitEnablementError
         When ``provider_key in {"cifangquant", "akshare"}`` but the
@@ -127,7 +135,7 @@ def build_provider(
                 "(INVEST_PIPELINE_CIFANG_ENABLED); "
                 "see ADR-0011 §3 / O-1 / O-3 / O-4 blockers"
             )
-        if cfg.api_key.get_secret_value() == "":
+        if not cfg.resolved_api_key():
             raise ProviderAuthenticationError(
                 key,
                 "cifangquant provider requires a non-empty "
@@ -137,11 +145,7 @@ def build_provider(
         return CifangQuantInstrumentProvider(cfg)
 
     if key == _AKSHARE_KEY:
-        cfg = (
-            akshare_settings
-            if akshare_settings is not None
-            else AkshareSettings()
-        )
+        cfg = akshare_settings if akshare_settings is not None else AkshareSettings()
         if not cfg.enabled:
             raise RealProviderRequiresExplicitEnablementError(
                 "akshare provider requires AkshareSettings.enabled=True "
@@ -150,6 +154,17 @@ def build_provider(
                 "/ O-4 blockers (PR-02)"
             )
         return AkshareInstrumentProvider(cfg)
+
+    if key == "tushare":
+        cfg = tushare_settings if tushare_settings is not None else TushareSettings()
+        if not cfg.enabled:
+            raise RealProviderRequiresExplicitEnablementError(
+                "tushare provider requires TushareSettings.enabled=True "
+                "(INVEST_PIPELINE_TUSHARE_ENABLED)"
+            )
+        if not cfg.resolved_token():
+            raise ProviderAuthenticationError(key, "tushare provider credential is missing")
+        return TushareInstrumentProvider(cfg)
 
     raise UnknownProviderError(key)
 

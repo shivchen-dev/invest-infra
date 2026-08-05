@@ -29,6 +29,8 @@ from __future__ import annotations
 from pydantic import SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from invest_pipeline.credentials import CredentialStore
+
 _ADJUSTMENT_NONE = "none"
 
 
@@ -80,6 +82,11 @@ class CifangSettings(BaseSettings):
             "api_key": "***" if self.api_key.get_secret_value() else "",
             "adjustment": self.adjustment,
         }
+
+    def resolved_api_key(self) -> str:
+        """Resolve the explicit API key or the centralized secret file."""
+
+        return CredentialStore().resolve("cifangquant", self.api_key.get_secret_value())
 
     def __repr__(self) -> str:
         return (

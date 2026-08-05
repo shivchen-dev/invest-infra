@@ -667,7 +667,7 @@ def _scrub_message(message: str, settings: AkshareSettings) -> str:
     test / offline-mode error messages.
     """
 
-    token = settings.token.get_secret_value()
+    token = settings.resolved_token()
     if not token:
         return message
     return message.replace(token, "***")

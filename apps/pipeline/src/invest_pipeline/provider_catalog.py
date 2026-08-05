@@ -5,7 +5,8 @@ It records the ``provider_key``, ``role``, ``capabilities`` and
 ``enabled_by_default`` flag of every provider the V2 codebase references
 by name. PR-01 (see
 ``docs/plan/invest-infra-v2-all-data-sources-integration-plan.md``)
-freezes the original five-entry catalog. The historical V2
+freezes the original catalog; this slice adds the opt-in Tushare ETF
+source. The historical V2
 three-provider plan (see ``tasks/plan-data-source-three-provider.md``)
 proposed three additional aggregator sources (``eastmoney``,
 ``sina``, ``tonghuashun``) but has been **de-scoped** in this slice:
@@ -16,7 +17,7 @@ endpoints remain internal upstreams of the AkShare aggregator
 is therefore:
 
 ```text
-fixture_dev   cifangquant   akshare   rsscast   quicktiny_mcp
+fixture_dev   cifangquant   akshare   tushare   rsscast   quicktiny_mcp
 ```
 
 The module is intentionally small:
@@ -26,8 +27,8 @@ The module is intentionally small:
 * No runtime provider selection, factory or registry is implemented in
   this module. The runtime factory
   (:mod:`invest_pipeline.provider_factory`) owns construction and keeps
-  its own three-key surface (``fixture_dev`` / ``cifangquant`` /
-  ``akshare``).
+  its own four-key surface (``fixture_dev`` / ``cifangquant`` /
+  ``akshare`` / ``tushare``).
 * No Dagster asset, schedule or database migration is added.
 * No external network call is issued.
 
@@ -50,7 +51,9 @@ The entries mirror ``docs/implementation/DATA-SOURCE-MIGRATION-MATRIX.md``
   advertises the three capabilities matrix §2 observed (ETF master
   data, ETF daily bars, indirect index daily bars) but matrix §5.4
   forbids it from being treated as a production SLA source, so the
-  default stays off.
+  default stays off. ``tushare`` is an opt-in secondary ETF source;
+  its token is read lazily from the operator-managed token file and
+  its ``adjust`` mode is fixed to ``none``.
 * ``rsscast`` is the MCP research / index source; matrix §3 pins its
   role as ``out_of_scope_for_etf`` and matrix §5.4 explicitly forbids
   it from claiming ``ETF_DAILY_BARS`` (the plan PR-01 "do not claim ETF
@@ -73,7 +76,7 @@ The entries mirror ``docs/implementation/DATA-SOURCE-MIGRATION-MATRIX.md``
   ``ak.fund_etf_hist_em``) and surface only as ``source_key``
   values on :class:`BarSource` rows produced by the AkShare
   adapter. A future ADR may revisit the plan, but the current
-  catalog intentionally stops at the five runtime providers.
+  catalog intentionally stops at the six runtime providers.
 
 Every real provider stays ``enabled_by_default=False`` per matrix §6.
 The negative-capability assertions for RssCast and Quicktiny are part
@@ -263,6 +266,13 @@ RSSCAST = ProviderDeclaration(
     ),
     enabled_by_default=False,
 )
+
+TUSHARE = ProviderDeclaration(
+    provider_key="tushare",
+    role=ProviderRole.SECONDARY,
+    capabilities=(ProviderCapability.ETF_DAILY_BARS, ProviderCapability.ETF_MASTER_DATA),
+    enabled_by_default=False,
+)
 """RssCast provider declaration.
 
 Matrix §3 pins the role to ``out_of_scope_for_etf`` and matrix §5.4
@@ -282,6 +292,7 @@ _PROVIDER_CATALOG: dict[str, ProviderDeclaration] = {
     FIXTURE_DEV.provider_key: FIXTURE_DEV,
     QUICKTINY_MCP.provider_key: QUICKTINY_MCP,
     RSSCAST.provider_key: RSSCAST,
+    TUSHARE.provider_key: TUSHARE,
 }
 
 _ALL_DECLARATIONS: tuple[ProviderDeclaration, ...] = (
@@ -290,6 +301,7 @@ _ALL_DECLARATIONS: tuple[ProviderDeclaration, ...] = (
     FIXTURE_DEV,
     QUICKTINY_MCP,
     RSSCAST,
+    TUSHARE,
 )
 
 _ALL_PROVIDER_KEYS: tuple[str, ...] = tuple(
@@ -344,6 +356,7 @@ __all__ = [
     "ProviderRole",
     "QUICKTINY_MCP",
     "RSSCAST",
+    "TUSHARE",
     "iter_provider_declarations",
     "lookup_provider",
 ]

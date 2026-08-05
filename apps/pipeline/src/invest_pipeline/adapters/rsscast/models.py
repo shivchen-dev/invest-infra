@@ -236,7 +236,7 @@ class RssCastMcpResearchResponse:
         (tool name + arguments) rather than just the tool name.
         """
 
-        token = settings.token.get_secret_value() or None
+        token = settings.resolved_token() or None
         params_mapping: dict[str, Any]
         if tool_name is None:
             params_mapping = {}

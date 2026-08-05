@@ -244,7 +244,7 @@ class CifangClient:
     ) -> CifangResponse:
         params_tuple = tuple(params)
         headers = _build_auth_headers(self._settings)
-        token = self._settings.api_key.get_secret_value() or None
+        token = self._settings.resolved_api_key() or None
         attempts = 0
         last_error: ProviderError | None = None
         while attempts < self._max_attempts:
@@ -342,7 +342,7 @@ def _build_auth_headers(settings: CifangSettings) -> dict[str, str]:
     a literal ``"None"`` token.
     """
 
-    token = settings.api_key.get_secret_value()
+    token = settings.resolved_api_key()
     if not token:
         return {}
     return {_API_KEY_HEADER: token}

@@ -76,7 +76,7 @@ class DefaultBehaviorTest(unittest.TestCase):
         # ``test_provider_factory_runtime.py`` /
         # ``test_akshare_adapter.py``.
         self.assertEqual(
-            KNOWN_PROVIDER_KEYS, ("fixture_dev", "cifangquant", "akshare")
+            KNOWN_PROVIDER_KEYS, ("fixture_dev", "cifangquant", "akshare", "tushare")
         )
 
 

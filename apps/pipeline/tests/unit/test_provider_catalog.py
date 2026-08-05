@@ -50,6 +50,7 @@ from invest_pipeline.provider_catalog import (
     FIXTURE_DEV,
     QUICKTINY_MCP,
     RSSCAST,
+    TUSHARE,
     ProviderCapability,
     ProviderDeclaration,
     ProviderRole,
@@ -63,6 +64,7 @@ _ALL_FIVE_PROVIDER_KEYS: tuple[str, ...] = (
     "fixture_dev",
     "quicktiny_mcp",
     "rsscast",
+    "tushare",
 )
 
 
@@ -494,6 +496,7 @@ class IterProviderDeclarationsTest(unittest.TestCase):
                 FIXTURE_DEV.provider_key,
                 QUICKTINY_MCP.provider_key,
                 RSSCAST.provider_key,
+                TUSHARE.provider_key,
             },
         )
 

@@ -34,6 +34,8 @@ from __future__ import annotations
 from pydantic import SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from invest_pipeline.credentials import CredentialStore
+
 _DEFAULT_TIMEOUT_SECONDS = 30.0
 _TIMEOUT_FLOOR_SECONDS = 0.0
 _TIMEOUT_CEILING_SECONDS = 300.0
@@ -85,14 +87,10 @@ class RssCastMcpSettings(BaseSettings):
 
         if not isinstance(self.base_url, str):
             raise ValueError(
-                "RssCastMcpSettings.base_url must be a string "
-                f"(got {type(self.base_url).__name__})"
+                f"RssCastMcpSettings.base_url must be a string (got {type(self.base_url).__name__})"
             )
         if self.base_url:
-            if not (
-                self.base_url.startswith("http://")
-                or self.base_url.startswith("https://")
-            ):
+            if not (self.base_url.startswith("http://") or self.base_url.startswith("https://")):
                 raise ValueError(
                     "RssCastMcpSettings.base_url must start with "
                     f"http:// or https://; got {self.base_url!r}"
@@ -100,11 +98,7 @@ class RssCastMcpSettings(BaseSettings):
             normalised = self.base_url.rstrip("/")
             if normalised != self.base_url:
                 object.__setattr__(self, "base_url", normalised)
-        if not (
-            _TIMEOUT_FLOOR_SECONDS
-            < float(self.timeout_seconds)
-            <= _TIMEOUT_CEILING_SECONDS
-        ):
+        if not (_TIMEOUT_FLOOR_SECONDS < float(self.timeout_seconds) <= _TIMEOUT_CEILING_SECONDS):
             raise ValueError(
                 "RssCastMcpSettings.timeout_seconds must be in "
                 f"({_TIMEOUT_FLOOR_SECONDS}, {_TIMEOUT_CEILING_SECONDS}]; "
@@ -127,6 +121,11 @@ class RssCastMcpSettings(BaseSettings):
             "token": "***" if self.token.get_secret_value() else "",
             "timeout_seconds": str(self.timeout_seconds),
         }
+
+    def resolved_token(self) -> str:
+        """Resolve the explicit bearer token or the centralized secret file."""
+
+        return CredentialStore().resolve("rsscast", self.token.get_secret_value())
 
     def __repr__(self) -> str:
         return (

@@ -34,6 +34,8 @@ from __future__ import annotations
 from pydantic import SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from invest_pipeline.credentials import CredentialStore
+
 _ADJUST_NONE = ""
 
 
@@ -78,8 +80,7 @@ class AkshareSettings(BaseSettings):
             )
         if self.timeout_seconds <= 0:
             raise ValueError(
-                "AkshareSettings.timeout_seconds must be > 0; "
-                f"got {self.timeout_seconds!r}"
+                f"AkshareSettings.timeout_seconds must be > 0; got {self.timeout_seconds!r}"
             )
 
     def redacted_dict(self) -> dict[str, str]:
@@ -97,6 +98,11 @@ class AkshareSettings(BaseSettings):
             "adjust": repr(self.adjust),
             "timeout_seconds": str(self.timeout_seconds),
         }
+
+    def resolved_token(self) -> str:
+        """Resolve the explicit SDK token or the centralized secret file."""
+
+        return CredentialStore().resolve("akshare", self.token.get_secret_value())
 
     def __repr__(self) -> str:
         return (

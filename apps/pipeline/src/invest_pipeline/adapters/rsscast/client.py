@@ -279,7 +279,7 @@ class RssCastMcpClient:
         }
         body = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
         headers = _build_auth_headers(self._settings)
-        token = self._settings.token.get_secret_value() or None
+        token = self._settings.resolved_token() or None
         attempts = 0
         last_error: ProviderError | None = None
         while attempts < self._max_attempts:
@@ -340,7 +340,7 @@ def _build_auth_headers(settings: RssCastMcpSettings) -> dict[str, str]:
     literal ``"Bearer None"`` header.
     """
 
-    token = settings.token.get_secret_value()
+    token = settings.resolved_token()
     if not token:
         return {}
     return {f"{_AUTH_HEADER}": f"{_AUTH_SCHEME} {token}"}
