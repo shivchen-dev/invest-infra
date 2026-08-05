@@ -1,52 +1,55 @@
-# Implementation Plan: Dynamic ETF Candidate Pool — PR-02 baseline channel
+# Implementation Plan: Dynamic ETF Candidate Pool — PR-03 institutional channel
 
 ## Overview
 
-Add the first formal Stage 4A-0 routing slice: a deterministic baseline-factor
-channel that consumes the existing ETF universe classifier and shared market
-factor calculator, then emits auditable candidate proposals. This increment
-does not publish to PostgreSQL, add APIs, or implement institution/custom
-channels.
+Implement the first external-opinion channel for the dynamic ETF pool. The
+increment accepts validated structured recommendation records, applies source,
+time, symbol, and Universe constraints, and emits deterministic auditable
+proposals without persistence, network access, or report-text ingestion.
 
 ## Architecture decisions
 
-- Reuse `build_etf_universe` and `calculate_market_state_factors`; do not create
-  a second factor implementation.
-- Keep the channel pure and side-effect free. Persistence remains owned by the
-  existing Candidate Pool service until the fusion contract is ready.
-- Use a small, typed proposal interface with deterministic ordering, explicit
-  `include/watch/exclude` decisions, quality-gate reasons, and a versioned
-  policy hash.
-- Default thresholds are conservative and configurable; no parameter
-  optimisation or backtest logic is introduced.
+- Keep the domain slice pure: JSON/CSV adapters and CLI file I/O are deferred
+  to a later pipeline increment; domain receives structured records.
+- Do not reuse the V1 FQIR adapter contract: its channel key is intentionally
+  restricted to `fqir`. Define the smallest institutional proposal contract
+  needed by the future fusion layer.
+- Treat institution recommendations as `external_opinion`; source, publish
+  time, expiry, confidence, summary, and citation remain explicit metadata.
+- Apply the existing `build_etf_universe` hard gate. An external opinion can
+  never promote an ineligible ETF into an included result.
+- Use the fixed rating mapping from the plan and stable canonical input/output
+  hashes. No historical hit-rate calculation or parameter optimisation.
 
 ## Task list
 
-### Phase 1: Baseline channel
+### Phase 1: Domain contract and pure evaluator
 
-- [x] Define the baseline-channel policy and proposal output contract.
-- [x] Score eligible candidates from the existing eight-factor result.
-- [x] Emit deterministic proposals for full, partial, and ineligible inputs.
-- [x] Add focused tests for scoring, gates, missing factors, stable ordering,
-      hash stability, and fail-closed behaviour.
+- [x] Define validated recommendation/batch/proposal/result value objects.
+- [x] Implement rating mapping, source whitelist, expiry, deduplication, and
+      unknown-symbol handling.
+- [x] Apply Universe eligibility and emit deterministic proposals with audit
+      metadata and hashes.
+- [x] Add focused tests for valid, expired, duplicate, unknown, conflicting,
+      invalid, and ineligible recommendations.
 
-### Checkpoint: PR-02 baseline channel
+### Checkpoint: PR-03 domain slice
 
-- [x] Focused domain/pipeline tests pass.
-- [x] Existing candidate-pool and factor tests pass.
-- [x] No database, API, provider-network, or filesystem side effects.
+- [x] Focused and full domain tests pass.
+- [x] Architecture boundary check passes.
+- [x] No database, API, provider, network, or filesystem side effects.
 
 ## Deferred phases
 
-- PR-03: institution recommendation adapter.
-- PR-04: safe YAML custom-strategy adapter.
-- PR-05: fusion, Shadow persistence, API, and E2E acceptance.
+- JSON/CSV file adapter and `recommendation-import` CLI.
+- PR-04 declarative custom strategy channel.
+- PR-05 fusion, persistence, API, Shadow, and E2E acceptance.
 
 ## Risks and mitigations
 
 | Risk | Impact | Mitigation |
 |---|---|---|
-| Duplicate factor formulas | High | Call the existing shared factor calculator only. |
-| Missing or conflicted data becomes a recommendation | High | Hard-gate incomplete/invalid/conflicted factor results. |
-| Non-reproducible ranking | High | Decimal arithmetic, pinned policy version, stable tie-breakers. |
-| Premature production impact | High | Pure output only; no publish path in this increment. |
+| External opinion bypasses quality gates | High | Reuse `build_etf_universe`; ineligible always emits `exclude`. |
+| Stale or duplicate recommendation | High | Aware timestamps, explicit expiry, deterministic source/ref dedup. |
+| Untrusted report content enters the system | Medium | Store only bounded summary and citation fields; no full report text. |
+| Channel contract diverges before fusion | High | Keep field names aligned with plan §7 and version the channel. |
