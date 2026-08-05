@@ -60,7 +60,6 @@ The module is the single source of truth for the ``etf_profile``
 from __future__ import annotations
 
 from collections.abc import Sequence
-from dataclasses import dataclass
 from datetime import datetime
 from decimal import Decimal
 from uuid import UUID
@@ -85,7 +84,6 @@ from invest_domain.research.models import QualityStatus
 
 __all__ = [
     "ETF_PROFILE_CONTEXT_TYPE",
-    "ResolvedContextItem",
     "build_etf_profile_context_pack",
 ]
 
@@ -97,8 +95,8 @@ ETF_PROFILE_CONTEXT_TYPE: str = "etf_profile"
 #: to anchor a missing field to. Surfaced on the ``ContextItem`` so the
 #: audit chain still has a stable source reference for a ``MISSING``
 #: outcome; the builder never fabricates a Provider identifier here.
-_RESOLVER_PROVIDER_KEY: str = "etf_profile.resolver"
-_RESOLVER_DATASET_KEY: str = "etf_profile"
+_RESOLVER_PROVIDER_KEY: str = "resolver"
+_RESOLVER_DATASET_KEY: str = "etf_profile_resolution"
 
 _CANONICAL_FIELDS: tuple[FieldKey, ...] = (
     FieldKey.MANAGER,
@@ -123,20 +121,6 @@ _CANONICAL_VALUE_TYPES: dict[FieldKey, ContextValueType] = {
     FieldKey.AUM: ContextValueType.DECIMAL,
     FieldKey.SHARES: ContextValueType.DECIMAL,
 }
-
-
-@dataclass(frozen=True, slots=True)
-class ResolvedContextItem:
-    """Intermediate per-field projection.
-
-    Wraps the constructed :class:`ContextItem` together with the
-    canonical key string used on the wire (``etf_profile.<field>``).
-    The dataclass is internal: the public API of this module returns
-    a :class:`ResearchContextPack` directly.
-    """
-
-    key: str
-    item: ContextItem
 
 
 def _context_value_type_for(value_type: FieldValueType) -> ContextValueType:
@@ -285,11 +269,9 @@ def build_etf_profile_context_pack(
     ResearchContextPack
         An immutable, hash-stable pack ready for persistence through
         :class:`invest_storage.repositories.SqlAlchemyResearchContextPackRepository`.
-        The pack carries one ``ContextItem`` per ``FieldKey`` observed
-        in the input plus the missing-fields-with-candidates subset
-        (the resolver already collapses all-``None`` candidate bags into
-        a true ``MISSING`` outcome, so the per-field ``ContextItem``
-        count is exactly one per ``ResolvedField`` in the resolution).
+        The pack carries exactly one ``ContextItem`` for each canonical
+        ETF Profile field. Fields without evidence are emitted as
+        ``MISSING``; non-canonical evidence is not projected.
     """
 
     resolver_instrument_id: UUID | None
