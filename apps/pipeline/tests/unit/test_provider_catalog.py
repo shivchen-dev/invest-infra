@@ -56,6 +56,8 @@ from invest_pipeline.provider_catalog import (
     ProviderRole,
     iter_provider_declarations,
     lookup_provider,
+    runtime_supported_provider_declarations,
+    runtime_supported_provider_keys,
 )
 
 _ALL_FIVE_PROVIDER_KEYS: tuple[str, ...] = (
@@ -93,6 +95,28 @@ class DeclarationShapeTest(unittest.TestCase):
         for declaration in iter_provider_declarations():
             with self.subTest(provider_key=declaration.provider_key):
                 self.assertIsInstance(declaration.enabled_by_default, bool)
+
+    def test_has_runtime_factory_adapter_is_a_boolean(self) -> None:
+        # GOV-04: every declaration must expose the
+        # ``has_runtime_factory_adapter`` flag as a boolean so the
+        # catalog/runtime-supported helpers can filter on it
+        # deterministically.
+        for declaration in iter_provider_declarations():
+            with self.subTest(provider_key=declaration.provider_key):
+                self.assertIsInstance(declaration.has_runtime_factory_adapter, bool)
+
+    def test_has_runtime_factory_adapter_defaults_to_false(self) -> None:
+        # Tests (for example ``test_provider_routing_selection``)
+        # construct :class:`ProviderDeclaration` locally without
+        # passing the new flag. Pin the default to ``False`` so the
+        # historical / third-party call sites keep working unchanged.
+        declaration = ProviderDeclaration(
+            provider_key="synthetic",
+            role=ProviderRole.RESEARCH_ONLY,
+            capabilities=(ProviderCapability.RESEARCH,),
+            enabled_by_default=False,
+        )
+        self.assertFalse(declaration.has_runtime_factory_adapter)
 
 
 class FixtureDevDeclarationTest(unittest.TestCase):
@@ -408,6 +432,125 @@ class AllRealProvidersDisabledByDefaultTest(unittest.TestCase):
                         f"{declaration.provider_key!r} is a real provider "
                         "and must default to False per matrix §6",
                     )
+
+
+class RuntimeFactoryAdapterDeclarationTest(unittest.TestCase):
+    """GOV-04: the ``has_runtime_factory_adapter`` flag is the catalog's
+    declaration of whether a provider has a runtime factory adapter.
+
+    The flag is the single source of truth for the runtime-supported
+    set; the provider factory derives ``KNOWN_PROVIDER_KEYS`` from
+    :func:`runtime_supported_provider_keys`. These tests pin the
+    catalog/runtime-key parity so a future maintainer cannot
+    silently widen or narrow the runtime surface.
+    """
+
+    def test_runtime_supported_keys_are_exactly_the_four_expected(self) -> None:
+        # Pin the exact membership. The four keys are the historical
+        # factory surface (``fixture_dev`` / ``cifangquant`` /
+        # ``akshare``) plus the opt-in Tushare ETF source; ``rsscast``
+        # and ``quicktiny_mcp`` are catalog-only MCP research sources
+        # and must stay out of the runtime surface per matrix §3 / §5.4
+        # and the PR-01 plan.
+        self.assertEqual(
+            runtime_supported_provider_keys(),
+            ("akshare", "cifangquant", "fixture_dev", "tushare"),
+        )
+
+    def test_runtime_supported_keys_are_alphabetical(self) -> None:
+        # Stable order so the factory's derived ``KNOWN_PROVIDER_KEYS``
+        # and downstream snapshot tests stay deterministic.
+        keys = runtime_supported_provider_keys()
+        self.assertEqual(keys, tuple(sorted(keys)))
+
+    def test_runtime_supported_declarations_match_runtime_supported_keys(self) -> None:
+        # The declarations tuple and the keys tuple must stay in
+        # lock-step — a future regression that drops a key from one
+        # helper surfaces here.
+        keys = tuple(
+            declaration.provider_key
+            for declaration in runtime_supported_provider_declarations()
+        )
+        self.assertEqual(keys, runtime_supported_provider_keys())
+
+    def test_runtime_supported_keys_exclude_research_only_mcp_sources(self) -> None:
+        # ``rsscast`` and ``quicktiny_mcp`` are declared in the catalog
+        # but must stay catalog-only: they have no runtime factory
+        # adapter, so picking them up at runtime would silently fall
+        # through to an unknown-key error and break the routing layer
+        # contract.
+        runtime_keys = set(runtime_supported_provider_keys())
+        self.assertNotIn("rsscast", runtime_keys)
+        self.assertNotIn("quicktiny_mcp", runtime_keys)
+
+    def test_runtime_supported_set_is_strict_subset_of_catalog_set(self) -> None:
+        # The runtime surface is intentionally a strict subset of the
+        # catalog surface — every runtime provider must first be a
+        # catalog declaration so the routing layer can find it.
+        catalog_keys = {
+            declaration.provider_key for declaration in iter_provider_declarations()
+        }
+        runtime_keys = set(runtime_supported_provider_keys())
+        self.assertTrue(runtime_keys.issubset(catalog_keys))
+        self.assertLess(runtime_keys, catalog_keys)
+
+    def test_each_runtime_supported_declaration_advertises_the_flag(self) -> None:
+        # The membership helper must agree with the per-declaration
+        # flag — if either drifts, the upfront runtime gate in
+        # ``provider_factory.build_provider`` will leak a
+        # catalog-only provider into the runtime path or hide a real
+        # adapter from it.
+        for declaration in runtime_supported_provider_declarations():
+            with self.subTest(provider_key=declaration.provider_key):
+                self.assertTrue(declaration.has_runtime_factory_adapter)
+
+    def test_each_runtime_supported_declaration_is_known_to_lookup(self) -> None:
+        # ``lookup_provider`` is the catalog's identity map; every
+        # runtime-supported declaration must round-trip through it.
+        for declaration in runtime_supported_provider_declarations():
+            with self.subTest(provider_key=declaration.provider_key):
+                self.assertIs(lookup_provider(declaration.provider_key), declaration)
+
+    def test_module_constants_match_runtime_supported_keys(self) -> None:
+        # Pin the contract that the four module-level constants
+        # (``FIXTURE_DEV`` / ``CIFANGQUANT`` / ``AKSHARE`` / ``TUSHARE``)
+        # are exactly the runtime-supported declarations. Adding a new
+        # runtime provider without updating this test will fail here
+        # before it fails anywhere else.
+        runtime_constants = (
+            AKSHARE,
+            CIFANGQUANT,
+            FIXTURE_DEV,
+            TUSHARE,
+        )
+        self.assertEqual(
+            tuple(
+                sorted(
+                    (declaration.provider_key for declaration in runtime_constants),
+                    key=str,
+                )
+            ),
+            tuple(sorted(runtime_supported_provider_keys(), key=str)),
+        )
+        for declaration in runtime_constants:
+            with self.subTest(provider_key=declaration.provider_key):
+                self.assertTrue(declaration.has_runtime_factory_adapter)
+
+    def test_research_only_mcp_declarations_keep_flag_false(self) -> None:
+        # The MCP research sources stay catalog-only; their
+        # ``has_runtime_factory_adapter`` flag must stay ``False`` so a
+        # future regression that adds a real runtime adapter surfaces
+        # here rather than silently widening the runtime surface.
+        for declaration in (QUICKTINY_MCP, RSSCAST):
+            with self.subTest(provider_key=declaration.provider_key):
+                self.assertFalse(declaration.has_runtime_factory_adapter)
+
+    def test_runtime_supported_keys_is_a_tuple(self) -> None:
+        # Public API contract: the helper returns a tuple so callers
+        # (and the factory's derived ``KNOWN_PROVIDER_KEYS`` alias)
+        # can rely on immutability.
+        self.assertIsInstance(runtime_supported_provider_keys(), tuple)
+        self.assertIsInstance(runtime_supported_provider_declarations(), tuple)
 
 
 class LookupProviderTest(unittest.TestCase):

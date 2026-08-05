@@ -29,6 +29,19 @@ surface; it has four provider branches and explicit failure modes:
   key as the ``KeyError`` argument so callers (and operators reading
   logs) can identify the request without parsing the message string.
 
+The factory consults :func:`invest_pipeline.provider_catalog.
+runtime_supported_provider_keys` as the single source of truth for
+which provider keys have a runtime factory adapter. ``KNOWN_PROVIDER_KEYS``
+is derived from that helper rather than re-declaring the literals
+inline, so the catalog (``provider_catalog``) remains the declaration
+authority and the factory is an adapter/reader of that authority per
+GOV-04. Catalog-only entries that do not advertise
+``has_runtime_factory_adapter=True`` (currently ``rsscast`` and
+``quicktiny_mcp``) therefore fail the upfront runtime gate with the
+same :class:`UnknownProviderError` the factory raises for completely
+unknown keys — preventing a regression where a research-only MCP
+source silently re-enters the runtime selection surface.
+
 Construction never reaches out to the network: the fixture provider
 loads its deterministic JSON from disk, the CifangQuant adapter only
 constructs its httpx client (which itself is inert until its first
@@ -57,16 +70,11 @@ from invest_pipeline.adapters.errors import (
 from invest_pipeline.adapters.fixture_dev import FixtureDevInstrumentProvider
 from invest_pipeline.adapters.tushare import TushareInstrumentProvider, TushareSettings
 from invest_pipeline.config import Settings, get_settings
+from invest_pipeline.provider_catalog import runtime_supported_provider_keys
 
 _FIXTURE_DEV_KEY = "fixture_dev"
 _CIFANG_KEY = "cifangquant"
 _AKSHARE_KEY = "akshare"
-_KNOWN_PROVIDER_KEYS: tuple[str, ...] = (
-    _FIXTURE_DEV_KEY,
-    _CIFANG_KEY,
-    _AKSHARE_KEY,
-    "tushare",
-)
 
 
 def build_provider(
@@ -124,6 +132,18 @@ def build_provider(
     pipeline = settings if settings is not None else get_settings()
     key = pipeline.provider_key
 
+    if key not in KNOWN_PROVIDER_KEYS:
+        # The catalog is the declaration authority for which providers
+        # have a runtime factory adapter. Validating against
+        # ``KNOWN_PROVIDER_KEYS`` (derived from the catalog) before any
+        # adapter branch runs turns catalog-only entries such as
+        # ``rsscast`` / ``quicktiny_mcp`` (and any future
+        # non-runtime declaration) into the same
+        # :class:`UnknownProviderError` the factory already raises for
+        # completely unknown keys — keeping the runtime surface
+        # auditable without re-declaring the literals in two places.
+        raise UnknownProviderError(key)
+
     if key == _FIXTURE_DEV_KEY:
         return FixtureDevInstrumentProvider()
 
@@ -173,8 +193,9 @@ __all__ = ["KNOWN_PROVIDER_KEYS", "build_provider"]
 
 
 # Public, frozen alias of the supported provider-key tuple so callers
-# (and tests) can introspect the supported set without re-declaring the
-# literals. The factory itself never reads this — it pattern-matches
-# the string — but the value is exported for documentation / testing
-# purposes.
-KNOWN_PROVIDER_KEYS: tuple[str, ...] = _KNOWN_PROVIDER_KEYS
+# (and tests) can introspect the supported set without re-declaring
+# the literals. Derived from the catalog's
+# ``runtime_supported_provider_keys`` helper so the catalog remains the
+# single declaration authority (GOV-04); the factory is an
+# adapter/reader of that authority, not a parallel source of truth.
+KNOWN_PROVIDER_KEYS: tuple[str, ...] = runtime_supported_provider_keys()

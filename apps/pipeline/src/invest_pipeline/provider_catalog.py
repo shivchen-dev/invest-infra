@@ -26,9 +26,13 @@ The module is intentionally small:
 * No API key, token or credential handling is wired in.
 * No runtime provider selection, factory or registry is implemented in
   this module. The runtime factory
-  (:mod:`invest_pipeline.provider_factory`) owns construction and keeps
-  its own four-key surface (``fixture_dev`` / ``cifangquant`` /
-  ``akshare`` / ``tushare``).
+  (:mod:`invest_pipeline.provider_factory`) owns construction and
+  consumes the catalog's declaration of the *runtime* provider surface.
+  The catalog records that surface via the :attr:`ProviderDeclaration.has_runtime_factory_adapter`
+  flag, and the factory derives
+  :data:`invest_pipeline.provider_factory.KNOWN_PROVIDER_KEYS` from
+  :func:`runtime_supported_provider_keys` so the two modules cannot
+  drift (GOV-04).
 * No Dagster asset, schedule or database migration is added.
 * No external network call is issued.
 
@@ -163,12 +167,27 @@ class ProviderDeclaration:
         Whether the provider is enabled by default. Real providers in
         V2 default to ``False`` per the migration matrix §6; only
         ``fixture_dev`` defaults to ``True``.
+    has_runtime_factory_adapter:
+        Whether the catalog declares a runtime factory adapter for
+        this provider. Defaults to ``False`` so historical and
+        third-party :class:`ProviderDeclaration` constructions that
+        omit the field keep working unchanged. Only the four
+        declarations backed by a real runtime factory
+        (``fixture_dev`` / ``cifangquant`` / ``akshare`` / ``tushare``)
+        set this to ``True``; MCP research sources and the
+        historical three-provider plan entries stay ``False``.
+        Exposed via :func:`runtime_supported_provider_declarations`
+        and :func:`runtime_supported_provider_keys`, which the
+        runtime factory (:mod:`invest_pipeline.provider_factory`)
+        consults as the single source of truth for its supported
+        key tuple.
     """
 
     provider_key: str
     role: ProviderRole
     capabilities: tuple[ProviderCapability, ...]
     enabled_by_default: bool
+    has_runtime_factory_adapter: bool = False
 
 
 QUICKTINY_MCP = ProviderDeclaration(
@@ -198,6 +217,7 @@ FIXTURE_DEV = ProviderDeclaration(
         ProviderCapability.ETF_MASTER_DATA,
     ),
     enabled_by_default=True,
+    has_runtime_factory_adapter=True,
 )
 """``fixture_dev`` provider declaration.
 
@@ -219,6 +239,7 @@ CIFANGQUANT = ProviderDeclaration(
         ProviderCapability.INDEX_DAILY_BARS,
     ),
     enabled_by_default=False,
+    has_runtime_factory_adapter=True,
 )
 """CifangQuant provider declaration.
 
@@ -243,6 +264,7 @@ AKSHARE = ProviderDeclaration(
         ProviderCapability.INDEX_DAILY_BARS,
     ),
     enabled_by_default=False,
+    has_runtime_factory_adapter=True,
 )
 """AkShare provider declaration.
 
@@ -272,6 +294,7 @@ TUSHARE = ProviderDeclaration(
     role=ProviderRole.SECONDARY,
     capabilities=(ProviderCapability.ETF_DAILY_BARS, ProviderCapability.ETF_MASTER_DATA),
     enabled_by_default=False,
+    has_runtime_factory_adapter=True,
 )
 """RssCast provider declaration.
 
@@ -346,6 +369,52 @@ _PROVIDER_CATALOG_SORTED: tuple[ProviderDeclaration, ...] = tuple(
     sorted(_ALL_DECLARATIONS, key=lambda declaration: declaration.provider_key)
 )
 
+_RUNTIME_SUPPORTED_DECLARATIONS: tuple[ProviderDeclaration, ...] = tuple(
+    sorted(
+        (
+            declaration
+            for declaration in _ALL_DECLARATIONS
+            if declaration.has_runtime_factory_adapter
+        ),
+        key=lambda declaration: declaration.provider_key,
+    )
+)
+
+_RUNTIME_SUPPORTED_KEYS: tuple[str, ...] = tuple(
+    declaration.provider_key for declaration in _RUNTIME_SUPPORTED_DECLARATIONS
+)
+
+
+def runtime_supported_provider_declarations() -> tuple[ProviderDeclaration, ...]:
+    """Return catalog declarations backed by a runtime factory adapter.
+
+    The returned tuple is filtered by ``has_runtime_factory_adapter=True`` and
+    sorted alphabetically by ``provider_key`` so the runtime factory
+    (:mod:`invest_pipeline.provider_factory`) can derive its public
+    ``KNOWN_PROVIDER_KEYS`` tuple from a single, stable source of
+    truth. Catalog-only entries (``rsscast`` / ``quicktiny_mcp`` and
+    any future non-runtime declarations) are excluded by design so a
+    caller cannot accidentally treat a research-only MCP source as a
+    selectable runtime provider.
+    """
+
+    return _RUNTIME_SUPPORTED_DECLARATIONS
+
+
+def runtime_supported_provider_keys() -> tuple[str, ...]:
+    """Return provider keys backed by a runtime factory adapter.
+
+    The returned tuple mirrors
+    :func:`runtime_supported_provider_declarations` and preserves the
+    same alphabetical ordering so the two helpers can be cross-checked
+    by tests. The runtime factory uses this helper to derive its
+    ``KNOWN_PROVIDER_KEYS`` tuple; downstream callers (coverage
+    reports, routing, etc.) can introspect the runtime-supported set
+    without re-declaring the literals.
+    """
+
+    return _RUNTIME_SUPPORTED_KEYS
+
 
 __all__ = [
     "AKSHARE",
@@ -359,4 +428,6 @@ __all__ = [
     "TUSHARE",
     "iter_provider_declarations",
     "lookup_provider",
+    "runtime_supported_provider_declarations",
+    "runtime_supported_provider_keys",
 ]

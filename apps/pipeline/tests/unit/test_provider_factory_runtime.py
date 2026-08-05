@@ -9,6 +9,11 @@ cover every branch documented in
 * ``cifangquant`` (disabled) -> :class:`RealProviderRequiresExplicitEnablementError`.
 * ``cifangquant`` (empty key) -> :class:`ProviderAuthenticationError`.
 * Unknown key -> :class:`UnknownProviderError` carrying the offending key.
+* Catalog-declared but non-runtime providers (for example ``rsscast``
+  / ``quicktiny_mcp``) also raise :class:`UnknownProviderError`
+  because the factory validates the selected key against the
+  catalog-derived :data:`KNOWN_PROVIDER_KEYS` *before* any adapter
+  branch runs (GOV-04).
 * Construction never reaches the network.
 
 Tests always pass an explicit :class:`Settings` (and, for cifang,
@@ -33,6 +38,7 @@ from invest_pipeline.adapters.cifang import (
 )
 from invest_pipeline.adapters.errors import ProviderAuthenticationError
 from invest_pipeline.config import Settings
+from invest_pipeline.provider_catalog import runtime_supported_provider_keys
 from invest_pipeline.provider_factory import KNOWN_PROVIDER_KEYS, build_provider
 
 # Sentinel token used to verify construction succeeds with a populated
@@ -66,18 +72,39 @@ class DefaultBehaviorTest(unittest.TestCase):
             AliasChoices("INVEST_PIPELINE_PROVIDER_KEY", "provider_key"),
         )
 
-    def test_known_provider_keys_are_exactly_fixture_dev_cifang_and_akshare(self) -> None:
-        # The factory now supports three keys: the legacy
-        # ``fixture_dev`` / ``cifangquant`` pair plus the ``akshare``
-        # branch added in PR-02 behind the ``AkshareSettings.enabled``
-        # gate (matrix §6). This pins the public tuple so a future
-        # addition cannot slip through unnoticed; the runtime
-        # behaviour for each branch is verified in
-        # ``test_provider_factory_runtime.py`` /
+    def test_known_provider_keys_match_catalog_runtime_support(self) -> None:
+        # The factory now derives its public ``KNOWN_PROVIDER_KEYS``
+        # tuple from the catalog's
+        # :func:`invest_pipeline.provider_catalog.runtime_supported_provider_keys`
+        # helper so the catalog is the single declaration authority
+        # (GOV-04). This test pins the public tuple's *contents* (the
+        # four runtime-backed providers) without depending on the
+        # historical declaration order — a future alphabetical
+        # re-sort or catalog re-order must not silently drift the
+        # factory's supported set. The runtime behaviour for each
+        # branch is verified in this file and in
         # ``test_akshare_adapter.py``.
-        self.assertEqual(
-            KNOWN_PROVIDER_KEYS, ("fixture_dev", "cifangquant", "akshare", "tushare")
+        from invest_pipeline.provider_catalog import (
+            AKSHARE,
+            CIFANGQUANT,
+            FIXTURE_DEV,
+            TUSHARE,
+            runtime_supported_provider_keys,
         )
+
+        self.assertEqual(
+            set(KNOWN_PROVIDER_KEYS),
+            {
+                FIXTURE_DEV.provider_key,
+                CIFANGQUANT.provider_key,
+                AKSHARE.provider_key,
+                TUSHARE.provider_key,
+            },
+        )
+        # The factory tuple must mirror the catalog helper
+        # exactly — both as a set and as an ordered tuple — so any
+        # future helper-side reorder surfaces here immediately.
+        self.assertEqual(KNOWN_PROVIDER_KEYS, runtime_supported_provider_keys())
 
 
 class FixtureDevBranchTest(unittest.TestCase):
@@ -194,7 +221,7 @@ class CifangBranchGateTest(unittest.TestCase):
 
 
 class UnknownKeyTest(unittest.TestCase):
-    """Anything outside ``fixture_dev`` / ``cifangquant`` is rejected."""
+    """Anything outside the runtime-supported set is rejected."""
 
     def test_unknown_provider_key_raises_unknown_provider_error(self) -> None:
         settings = Settings(provider_key="not_a_real_provider")
@@ -229,6 +256,74 @@ class UnknownKeyTest(unittest.TestCase):
         settings = Settings(provider_key="totally_made_up")
         with self.assertRaises(UnknownProviderError):
             build_provider(settings)
+
+
+class CatalogDeclaredNonRuntimeProviderRejectionTest(unittest.TestCase):
+    """GOV-04: catalog-declared but non-runtime providers are rejected.
+
+    The provider catalog (PR-01) declares six providers so the routing
+    layer and coverage reports can reason about every V2 data source.
+    Two of those declarations (``rsscast`` and ``quicktiny_mcp``) are
+    MCP research sources with no runtime factory adapter: they must
+    not enter the runtime selection surface. The factory validates
+    the selected key against
+    :data:`invest_pipeline.provider_catalog.runtime_supported_provider_keys`
+    before any adapter branch runs, so picking one of them raises the
+    same :class:`UnknownProviderError` a completely unknown key does.
+    """
+
+    def test_rsscast_provider_key_raises_unknown_provider_error(self) -> None:
+        settings = Settings(provider_key="rsscast")
+        with self.assertRaises(UnknownProviderError) as ctx:
+            build_provider(settings)
+        self.assertEqual(ctx.exception.args[0], "rsscast")
+
+    def test_quicktiny_mcp_provider_key_raises_unknown_provider_error(self) -> None:
+        settings = Settings(provider_key="quicktiny_mcp")
+        with self.assertRaises(UnknownProviderError) as ctx:
+            build_provider(settings)
+        self.assertEqual(ctx.exception.args[0], "quicktiny_mcp")
+
+    def test_every_catalog_declared_non_runtime_key_is_rejected(self) -> None:
+        # Drive the factory with every key that exists in the catalog
+        # but is **not** part of the runtime-supported set. None of
+        # them should reach an adapter branch — they all fail the
+        # upfront runtime gate.
+        from invest_pipeline.provider_catalog import (
+            QUICKTINY_MCP,
+            RSSCAST,
+            iter_provider_declarations,
+            runtime_supported_provider_keys,
+        )
+
+        runtime_keys = set(runtime_supported_provider_keys())
+        non_runtime_keys = [
+            declaration.provider_key
+            for declaration in iter_provider_declarations()
+            if declaration.provider_key not in runtime_keys
+        ]
+        # The catalog currently has two non-runtime declarations
+        # (``rsscast`` / ``quicktiny_mcp``); the assertion protects
+        # against a future regression that adds a third without a
+        # test covering it.
+        self.assertEqual(
+            sorted(non_runtime_keys),
+            sorted([QUICKTINY_MCP.provider_key, RSSCAST.provider_key]),
+        )
+        for key in non_runtime_keys:
+            with self.subTest(provider_key=key):
+                settings = Settings(provider_key=key)
+                with self.assertRaises(UnknownProviderError) as ctx:
+                    build_provider(settings)
+                self.assertEqual(ctx.exception.args[0], key)
+
+    def test_known_provider_keys_alias_is_the_catalog_helper(self) -> None:
+        # GOV-04 guardrail: the factory's public ``KNOWN_PROVIDER_KEYS``
+        # must be the *same object* the catalog helper returns, not a
+        # copy. A future regression that re-introduces a hand-written
+        # literal here would lose the identity and surface in this
+        # assertion.
+        self.assertIs(KNOWN_PROVIDER_KEYS, runtime_supported_provider_keys())
 
 
 class ConstructionSideEffectsTest(unittest.TestCase):
