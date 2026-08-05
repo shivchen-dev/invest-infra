@@ -867,3 +867,130 @@ class EtfProfileRow(Base):
         server_default=func.now(),
         onupdate=func.now(),
     )
+
+
+class EtfProfileFieldRow(Base):
+    """One piece of evidence for one ETF-profile field.
+
+    Stage DC-2 ``PR-ETF-PROFILE-04`` introduces
+    ``analytics.etf_profile_fields`` (Alembic migration
+    ``20260805_0009_etf_profile_fields``) as the persistent record of
+    every :class:`invest_domain.etf_profile.models.FieldEvidence`
+    observation. The natural idempotency key is ``content_hash`` (the
+    deterministic digest computed by the domain layer over the
+    business content) so re-collects of the same observation from the
+    same provider / revision are a no-op. A different provider /
+    revision produces a different ``content_hash`` and is stored as a
+    coexisting row, preserving the full evidence history per the
+    PR-ETF-PROFILE-01 conflict rules.
+
+    The runtime value is stored in three discriminated columns
+    (``field_value_text`` / ``field_value_numeric`` / ``field_value_date``)
+    so the SQLAlchemy layer can preserve the exact ``Decimal`` precision
+    and the exact ``date`` calendar semantics without forcing a single
+    JSONB-typed envelope. The ``value_type`` column tells the
+    repository which column carries the canonical value; the other two
+    stay ``NULL`` for any given row. ``None`` is the carrier for
+    ``unknown`` / ``not disclosed`` and is allowed for every
+    ``value_type`` (the ``MISSING`` ``quality_status`` keeps the value
+    ``NULL`` by contract).
+
+    The ``source_*`` columns mirror :class:`FieldEvidenceSource` so the
+    full provider provenance is preserved per row; the combination
+    ``(source_provider, source_dataset, source_revision, content_hash)``
+    is therefore unique per business observation. The instrument
+    foreign key points at ``core.instruments.id`` so the storage layer
+    rejects writes that reference an unknown instrument.
+    """
+
+    __tablename__ = "etf_profile_fields"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["instrument_id"],
+            ["core.instruments.id"],
+            name="fk_etf_profile_fields_instrument_id_core_instruments",
+        ),
+        CheckConstraint(
+            "value_type IN ('text', 'decimal', 'date')",
+            name="ck_etf_profile_fields_value_type_valid",
+        ),
+        CheckConstraint(
+            "length(content_hash) = 64",
+            name="ck_etf_profile_fields_content_hash_len64",
+        ),
+        CheckConstraint(
+            "length(field_key) > 0",
+            name="ck_etf_profile_fields_field_key_nonempty",
+        ),
+        CheckConstraint(
+            "length(source_provider) > 0",
+            name="ck_etf_profile_fields_source_provider_nonempty",
+        ),
+        CheckConstraint(
+            "length(source_dataset) > 0",
+            name="ck_etf_profile_fields_source_dataset_nonempty",
+        ),
+        CheckConstraint(
+            "source_revision >= 1",
+            name="ck_etf_profile_fields_source_revision_positive",
+        ),
+        CheckConstraint(
+            "confidence_score >= 0 AND confidence_score <= 1",
+            name="ck_etf_profile_fields_confidence_score_range",
+        ),
+        CheckConstraint(
+            "((value_type = 'text' AND field_value_numeric IS NULL "
+            "AND field_value_date IS NULL) OR "
+            "(value_type = 'decimal' AND field_value_text IS NULL "
+            "AND field_value_date IS NULL) OR "
+            "(value_type = 'date' AND field_value_text IS NULL "
+            "AND field_value_numeric IS NULL))",
+            name="ck_etf_profile_fields_value_columns_match",
+        ),
+        Index(
+            "uq_etf_profile_fields_content_hash",
+            "content_hash",
+            unique=True,
+        ),
+        Index(
+            "ix_etf_profile_fields_instrument_id",
+            "instrument_id",
+        ),
+        Index(
+            "ix_etf_profile_fields_instrument_field_key",
+            "instrument_id",
+            "field_key",
+        ),
+        Index("ix_etf_profile_fields_field_key", "field_key"),
+        Index("ix_etf_profile_fields_source_provider", "source_provider"),
+        {"schema": "analytics"},
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    instrument_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), nullable=False
+    )
+    field_key: Mapped[str] = mapped_column(String(64), nullable=False)
+    value_type: Mapped[str] = mapped_column(String(16), nullable=False)
+    field_value_text: Mapped[str | None] = mapped_column(Text, nullable=True)
+    field_value_numeric: Mapped[Any | None] = mapped_column(
+        Numeric(38, 18), nullable=True
+    )
+    field_value_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    source_provider: Mapped[str] = mapped_column(String(64), nullable=False)
+    source_dataset: Mapped[str] = mapped_column(String(64), nullable=False)
+    observed_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    source_batch_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), nullable=True
+    )
+    source_revision: Mapped[int] = mapped_column(Integer, nullable=False)
+    quality_status: Mapped[str] = mapped_column(String(24), nullable=False)
+    confidence_score: Mapped[Any] = mapped_column(Numeric(38, 18), nullable=False)
+    content_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )

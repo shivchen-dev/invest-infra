@@ -32,6 +32,9 @@ module cover:
 - :class:`SqlAlchemyCandidatePoolItemRepository` — per-instrument
   judgments belonging to a run, persisted in
   ``analytics.candidate_pool_items``.
+- :class:`SqlAlchemyEtfProfileFieldRepository` — per-field evidence
+  rows persisted in ``analytics.etf_profile_fields`` with the
+  ``content_hash`` natural key as the idempotency contract.
 
 Each domain-side dataclass is free of SQLAlchemy machinery, so
 application / domain code can pass them around without importing the
@@ -57,7 +60,13 @@ from invest_domain.candidate_pool.models import (
     RuleOutcome,
     RuleSeverity,
 )
-from invest_domain.etf_profile import EtfProfile
+from invest_domain.etf_profile import (
+    EtfProfile,
+    FieldEvidence,
+    FieldEvidenceSource,
+    FieldKey,
+    FieldValueType,
+)
 from invest_domain.input_snapshot import InputSnapshot
 from invest_domain.instruments import (
     Instrument,
@@ -68,6 +77,7 @@ from invest_domain.instruments import (
 from invest_domain.market_data.models import DailyBar
 from invest_domain.market_data.values import Adjust, TradingStatus
 from invest_domain.pipeline import PipelineRun, PipelineRunStatus
+from invest_domain.research import QualityStatus
 from invest_domain.shared.values import Currency
 from sqlalchemy import func, select
 from sqlalchemy.dialects.postgresql import insert
@@ -77,6 +87,7 @@ from invest_storage.models import (
     CandidatePoolItemRow,
     CandidatePoolRunRow,
     DailyBarRow,
+    EtfProfileFieldRow,
     EtfProfileRow,
     InputSnapshotRow,
     InstrumentRow,
@@ -251,6 +262,74 @@ class NewDailyBar:
     source_batch_id: UUID | None
     observed_at: datetime
     row_hash: str
+
+
+@dataclass(frozen=True, slots=True)
+class NewEtfProfileField:
+    """Input shape for :meth:`SqlAlchemyEtfProfileFieldRepository.add`.
+
+    ``PR-ETF-PROFILE-04`` lifts the domain-side
+    :class:`invest_domain.etf_profile.models.FieldEvidence` into a
+    storage-aware transport dataclass so the application service can
+    build one without depending on the SQLAlchemy ORM row. The
+    ``content_hash`` field is the deterministic business-content digest
+    computed by the domain dataclass; the repository treats it as the
+    natural idempotency key so re-collects of the same observation are
+    a no-op while a different provider / revision (different
+    ``content_hash``) is stored as a coexisting row.
+
+    The runtime value is stored in one of three discriminated columns
+    depending on ``value_type``: ``TEXT`` ↔ ``field_value_text``,
+    ``DECIMAL`` ↔ ``field_value_numeric``, ``DATE`` ↔
+    ``field_value_date``. Callers MUST populate exactly the column
+    matching ``value_type`` and leave the other two ``None``; the
+    database CHECK constraints flag any mismatch.
+    """
+
+    instrument_id: UUID
+    field_key: FieldKey
+    value_type: FieldValueType
+    field_value_text: str | None = None
+    field_value_numeric: Decimal | None = None
+    field_value_date: date | None = None
+    source_provider: str = ""
+    source_dataset: str = ""
+    observed_at: datetime | None = None
+    source_batch_id: UUID | None = None
+    source_revision: int = 1
+    quality_status: str = "complete"
+    confidence_score: Decimal | None = None
+    content_hash: str = ""
+
+
+@dataclass(frozen=True, slots=True)
+class StoredEtfProfileField:
+    """Domain-side view of a persisted ``analytics.etf_profile_fields`` row.
+
+    Returns the same :class:`FieldEvidence` shape the domain layer
+    expects so callers can use the field-evidence vocabulary end to
+    end without re-mapping column names. ``id`` is the storage-assigned
+    UUID, ``created_at`` is the server-generated audit timestamp and
+    the three value columns are collapsed into the single ``value``
+    slot on ``FieldEvidence`` based on ``value_type``.
+    """
+
+    id: UUID
+    instrument_id: UUID
+    field_key: FieldKey
+    value_type: FieldValueType
+    field_value_text: str | None
+    field_value_numeric: Decimal | None
+    field_value_date: date | None
+    source_provider: str
+    source_dataset: str
+    observed_at: datetime
+    source_batch_id: UUID | None
+    source_revision: int
+    quality_status: str
+    confidence_score: Decimal | None
+    content_hash: str
+    created_at: datetime | None = None
 
 
 class SqlAlchemyInstrumentRepository:
@@ -2206,4 +2285,253 @@ def _row_to_etf_profile(row: EtfProfileRow) -> EtfProfile:
         custody_fee=_as_decimal(row.custody_fee),
         aum=_as_decimal(row.aum),
         shares=_as_decimal(row.shares),
+    )
+
+
+class SqlAlchemyEtfProfileFieldRepository:
+    """Read/write access to ``analytics.etf_profile_fields``.
+
+    ``PR-ETF-PROFILE-04`` introduces the persistent record of every
+    :class:`invest_domain.etf_profile.models.FieldEvidence`
+    observation. The repository owns the natural-key idempotency
+    contract: ``content_hash`` is the deterministic digest of the
+    business content so a re-collect of the same observation from the
+    same provider / revision is a no-op while a different
+    provider / revision (different ``content_hash``) is stored as a
+    coexisting row, preserving the full evidence history per the
+    PR-ETF-PROFILE-01 conflict rules.
+
+    Three write paths are exposed:
+
+    - :meth:`add` — INSERT with ``ON CONFLICT (content_hash) DO
+      NOTHING``; returns the persisted
+      :class:`invest_domain.etf_profile.models.FieldEvidence` (or the
+      existing one when the hash is already present).
+    - :meth:`upsert` — INSERT-or-no-op on ``content_hash``; the
+      repository never rewrites a row that already carries the same
+      business content.
+
+    Read paths mirror the application-service access patterns:
+
+    - :meth:`get_by_instrument` — every evidence row for one
+      ``instrument_id`` ordered by ``created_at`` ascending.
+    - :meth:`get_by_instrument_field` — every evidence row for
+      ``(instrument_id, field_key)`` ordered by ``created_at``
+      ascending (the read surface that the conflict-aware resolver
+      uses to compare two providers' observations of the same field).
+
+    The instrument FK is enforced by the database; an application
+    that references an unknown ``instrument_id`` gets
+    :class:`sqlalchemy.exc.IntegrityError` from the engine.
+    """
+
+    def __init__(self, session: Session) -> None:
+        self._session = session
+
+    def add(self, evidence: FieldEvidence) -> FieldEvidence:
+        """Persist ``evidence`` and return the canonical domain object.
+
+        Uses ``INSERT ... ON CONFLICT (content_hash) DO NOTHING`` so the
+        unique constraint on ``content_hash`` is the idempotency guard.
+        When the insert returns the new row id the repository refetches
+        the row by ``content_hash`` and maps it back to a
+        :class:`FieldEvidence`; when the insert is a no-op the
+        repository fetches the existing row by ``content_hash`` and
+        returns it instead. A ``RuntimeError`` is raised when the
+        conflict path loses the existing row (defensive contract so a
+        silent disappearance cannot be papered over).
+        """
+
+        payload = _evidence_to_row(evidence)
+        statement = (
+            insert(EtfProfileFieldRow)
+            .values(**payload)
+            .on_conflict_do_nothing(
+                index_elements=[EtfProfileFieldRow.content_hash],
+            )
+            .returning(EtfProfileFieldRow.id)
+        )
+        inserted_id = self._session.execute(statement).scalar_one_or_none()
+        self._session.flush()
+        if inserted_id is not None:
+            stored = self._find_by_content_hash(evidence.content_hash)
+            if stored is None:
+                raise RuntimeError(
+                    "etf_profile_fields insert succeeded but the "
+                    "row was not found on the subsequent read; this "
+                    "indicates a session/transaction misconfiguration"
+                )
+            return stored
+
+        existing = self._find_by_content_hash(evidence.content_hash)
+        if existing is None:
+            raise RuntimeError(
+                "etf_profile_fields insert conflicted but the "
+                "existing row was not found by content_hash"
+            )
+        return existing
+
+    def upsert(self, evidence: FieldEvidence) -> FieldEvidence:
+        """No-op when ``content_hash`` already exists; otherwise INSERT.
+
+        The repository never rewrites a row that already carries the
+        same business content: when the conflict-target is matched the
+        existing row is returned without a write. This is the
+        "additive" idempotency contract defined by PR-ETF-PROFILE-01
+        (preserve all evidence history; a duplicate observation is a
+        no-op).
+        """
+
+        existing = self._find_by_content_hash(evidence.content_hash)
+        if existing is not None:
+            return existing
+        return self.add(evidence)
+
+    def get_by_instrument(
+        self, instrument_id: UUID | InstrumentId
+    ) -> list[FieldEvidence]:
+        """Return every evidence row for ``instrument_id`` ordered by ``created_at``.
+
+        The ``created_at`` ascending order matches the conflict-aware
+        resolver's expectation: the oldest surviving observation comes
+        first so the resolver can choose the most recent in a single
+        pass.
+        """
+
+        raw_id = (
+            instrument_id.value
+            if isinstance(instrument_id, InstrumentId)
+            else instrument_id
+        )
+        stmt = (
+            select(EtfProfileFieldRow)
+            .where(EtfProfileFieldRow.instrument_id == raw_id)
+            .order_by(
+                EtfProfileFieldRow.created_at.asc(),
+                EtfProfileFieldRow.id.asc(),
+            )
+        )
+        rows = self._session.scalars(stmt).all()
+        return [_row_to_field_evidence(row) for row in rows]
+
+    def get_by_instrument_field(
+        self,
+        instrument_id: UUID | InstrumentId,
+        field_key: FieldKey,
+    ) -> list[FieldEvidence]:
+        """Return every evidence row for ``(instrument_id, field_key)``.
+
+        Ordered by ``created_at`` ascending so the resolver can pick
+        the freshest observation and surface any conflict rows
+        alongside it. The (instrument_id, field_key) index makes the
+        access O(log n) on the lookup columns.
+        """
+
+        raw_id = (
+            instrument_id.value
+            if isinstance(instrument_id, InstrumentId)
+            else instrument_id
+        )
+        stmt = (
+            select(EtfProfileFieldRow)
+            .where(
+                EtfProfileFieldRow.instrument_id == raw_id,
+                EtfProfileFieldRow.field_key == field_key.value,
+            )
+            .order_by(
+                EtfProfileFieldRow.created_at.asc(),
+                EtfProfileFieldRow.id.asc(),
+            )
+        )
+        rows = self._session.scalars(stmt).all()
+        return [_row_to_field_evidence(row) for row in rows]
+
+    def _find_by_content_hash(
+        self, content_hash: str
+    ) -> FieldEvidence | None:
+        stmt = (
+            select(EtfProfileFieldRow)
+            .where(EtfProfileFieldRow.content_hash == content_hash)
+            .limit(1)
+        )
+        row = self._session.scalars(stmt).first()
+        return _row_to_field_evidence(row) if row is not None else None
+
+
+def _evidence_to_row(evidence: FieldEvidence) -> dict[str, Any]:
+    """Translate a :class:`FieldEvidence` into a ``values`` dict for INSERT.
+
+    The shape mirrors the :class:`EtfProfileFieldRow` column layout:
+    the ``value`` is routed to the column that matches ``value_type``
+    and the other two value columns stay ``NULL``. The CHECK
+    constraints guard against any mismatch between ``value_type`` and
+    the populated column.
+    """
+
+    text_value: str | None = None
+    numeric_value: Decimal | None = None
+    date_value: date | None = None
+    if evidence.value_type is FieldValueType.TEXT and isinstance(
+        evidence.value, str
+    ):
+        text_value = evidence.value
+    elif evidence.value_type is FieldValueType.DECIMAL and isinstance(
+        evidence.value, Decimal
+    ):
+        numeric_value = evidence.value
+    elif evidence.value_type is FieldValueType.DATE and isinstance(
+        evidence.value, date
+    ):
+        date_value = evidence.value
+
+    return {
+        "instrument_id": evidence.instrument_id,
+        "field_key": evidence.field_key.value,
+        "value_type": evidence.value_type.value,
+        "field_value_text": text_value,
+        "field_value_numeric": numeric_value,
+        "field_value_date": date_value,
+        "source_provider": evidence.source.provider_key,
+        "source_dataset": evidence.source.dataset_key,
+        "observed_at": evidence.source.observed_at,
+        "source_batch_id": evidence.source.source_batch_id,
+        "source_revision": evidence.source.revision,
+        "quality_status": evidence.quality_status.value,
+        "confidence_score": evidence.confidence_score,
+        "content_hash": evidence.content_hash,
+    }
+
+
+def _row_to_field_evidence(row: EtfProfileFieldRow) -> FieldEvidence:
+    """Translate an ORM row into the domain :class:`FieldEvidence`."""
+
+    value_type = FieldValueType(row.value_type)
+    if value_type is FieldValueType.TEXT:
+        value: str | Decimal | date | None = row.field_value_text
+    elif value_type is FieldValueType.DECIMAL:
+        value = _as_decimal(row.field_value_numeric)
+    elif value_type is FieldValueType.DATE:
+        value = _as_date(row.field_value_date)
+    else:
+        raise ValueError(f"unsupported value_type: {row.value_type!r}")
+    source = FieldEvidenceSource(
+        provider_key=row.source_provider,
+        dataset_key=row.source_dataset,
+        observed_at=row.observed_at,
+        source_batch_id=row.source_batch_id,
+        revision=row.source_revision,
+    )
+    confidence_score = _as_decimal(row.confidence_score)
+    if confidence_score is None:
+        raise ValueError("etf_profile_fields.confidence_score must not be NULL")
+    return FieldEvidence(
+        instrument_id=row.instrument_id,
+        field_key=FieldKey(row.field_key),
+        value=value,
+        value_type=value_type,
+        source=source,
+        quality_status=QualityStatus(row.quality_status),
+        confidence_score=confidence_score,
+        content_hash=row.content_hash,
+        created_at=row.created_at,
     )

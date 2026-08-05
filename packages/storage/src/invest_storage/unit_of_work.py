@@ -35,6 +35,7 @@ from invest_storage.repositories import (
     SqlAlchemyCandidatePoolItemRepository,
     SqlAlchemyCandidatePoolRunRepository,
     SqlAlchemyDailyBarRepository,
+    SqlAlchemyEtfProfileFieldRepository,
     SqlAlchemyEtfProfileRepository,
     SqlAlchemyInstrumentRepository,
     SqlAlchemyPipelineRunRepository,
@@ -236,6 +237,27 @@ class EtfProfileRepositoryPort(Protocol):
 
 
 @runtime_checkable
+class EtfProfileFieldRepositoryPort(Protocol):
+    """Subset of the EtfProfileField repository surface the UoW exposes.
+
+    ``PR-ETF-PROFILE-04`` introduces
+    ``analytics.etf_profile_fields`` and the
+    :class:`SqlAlchemyEtfProfileFieldRepository` that wraps it; the
+    Protocol mirrors the same public surface so application code can
+    type-hint against ``uow.etf_profile_fields`` without importing the
+    SQLAlchemy adapter. ``add`` and ``upsert`` are the idempotent write
+    paths keyed on ``content_hash``; ``get_by_instrument`` and
+    ``get_by_instrument_field`` are the read paths the
+    conflict-aware resolver needs.
+    """
+
+    def add(self, evidence): ...
+    def upsert(self, evidence): ...
+    def get_by_instrument(self, instrument_id): ...
+    def get_by_instrument_field(self, instrument_id, field_key): ...
+
+
+@runtime_checkable
 class SessionProvider(Protocol):
     """Anything that can hand out a SQLAlchemy ``Session``.
 
@@ -269,6 +291,7 @@ class UnitOfWork(Protocol):
     candidate_pool_items: CandidatePoolItemRepositoryPort
     daily_bars: DailyBarRepositoryPort
     etf_profiles: EtfProfileRepositoryPort
+    etf_profile_fields: EtfProfileFieldRepositoryPort
 
     def commit(self) -> None:
         """Persist the current transaction to the database."""
@@ -310,6 +333,7 @@ class SqlAlchemyUnitOfWork:
         self._candidate_pool_items: SqlAlchemyCandidatePoolItemRepository | None = None
         self._daily_bars: SqlAlchemyDailyBarRepository | None = None
         self._etf_profiles: SqlAlchemyEtfProfileRepository | None = None
+        self._etf_profile_fields: SqlAlchemyEtfProfileFieldRepository | None = None
         self._closed = True
         self._user_committed = False
 
@@ -382,6 +406,14 @@ class SqlAlchemyUnitOfWork:
             self._etf_profiles = SqlAlchemyEtfProfileRepository(self.session)
         return self._etf_profiles
 
+    @property
+    def etf_profile_fields(self) -> SqlAlchemyEtfProfileFieldRepository:
+        if self._etf_profile_fields is None:
+            self._etf_profile_fields = SqlAlchemyEtfProfileFieldRepository(
+                self.session
+            )
+        return self._etf_profile_fields
+
     def commit(self) -> None:
         self.session.commit()
         self._user_committed = True
@@ -425,6 +457,7 @@ class SqlAlchemyUnitOfWork:
             self._candidate_pool_items = None
             self._daily_bars = None
             self._etf_profiles = None
+            self._etf_profile_fields = None
             self._user_committed = False
             self._closed = True
 
@@ -437,6 +470,7 @@ __all__ = [
     "CandidatePoolItemRepositoryPort",
     "CandidatePoolRunRepositoryPort",
     "DailyBarRepositoryPort",
+    "EtfProfileFieldRepositoryPort",
     "EtfProfileRepositoryPort",
     "InputSnapshotRepositoryPort",
     "InstrumentRepositoryPort",
