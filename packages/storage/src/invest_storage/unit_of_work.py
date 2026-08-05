@@ -35,6 +35,7 @@ from invest_storage.repositories import (
     SqlAlchemyCandidatePoolItemRepository,
     SqlAlchemyCandidatePoolRunRepository,
     SqlAlchemyDailyBarRepository,
+    SqlAlchemyEtfProfileRepository,
     SqlAlchemyInstrumentRepository,
     SqlAlchemyPipelineRunRepository,
     SqlAlchemyProviderAttemptRepository,
@@ -212,6 +213,29 @@ class DailyBarRepositoryPort(Protocol):
 
 
 @runtime_checkable
+class EtfProfileRepositoryPort(Protocol):
+    """Subset of the EtfProfile repository surface the UoW exposes.
+
+    Stage DC-2 introduces ``core.etf_profiles`` and the
+    ``SqlAlchemyEtfProfileRepository`` that wraps it; the Protocol
+    mirrors the same public surface so application code can type-hint
+    against ``uow.etf_profiles`` without importing the SQLAlchemy
+    adapter. ``upsert`` is the idempotent write path keyed on
+    ``instrument_id``; ``get_by_id``, ``list_by_manager``,
+    ``list_by_category``, ``list_by_fund_type`` and ``list_all`` are
+    the read paths needed by the Stage DC-2 dashboards.
+    """
+
+    def upsert(self, profile): ...
+    def get_by_id(self, instrument_id): ...
+    def list_by_manager(self, manager, *, limit: int = 100, offset: int = 0): ...
+    def list_by_category(self, category, *, limit: int = 100, offset: int = 0): ...
+    def list_by_fund_type(self, fund_type, *, limit: int = 100, offset: int = 0): ...
+    def list_all(self, *, limit: int = 100, offset: int = 0): ...
+    def count_all(self) -> int: ...
+
+
+@runtime_checkable
 class SessionProvider(Protocol):
     """Anything that can hand out a SQLAlchemy ``Session``.
 
@@ -244,6 +268,7 @@ class UnitOfWork(Protocol):
     candidate_pool_runs: CandidatePoolRunRepositoryPort
     candidate_pool_items: CandidatePoolItemRepositoryPort
     daily_bars: DailyBarRepositoryPort
+    etf_profiles: EtfProfileRepositoryPort
 
     def commit(self) -> None:
         """Persist the current transaction to the database."""
@@ -284,6 +309,7 @@ class SqlAlchemyUnitOfWork:
         self._candidate_pool_runs: SqlAlchemyCandidatePoolRunRepository | None = None
         self._candidate_pool_items: SqlAlchemyCandidatePoolItemRepository | None = None
         self._daily_bars: SqlAlchemyDailyBarRepository | None = None
+        self._etf_profiles: SqlAlchemyEtfProfileRepository | None = None
         self._closed = True
         self._user_committed = False
 
@@ -350,6 +376,12 @@ class SqlAlchemyUnitOfWork:
             self._daily_bars = SqlAlchemyDailyBarRepository(self.session)
         return self._daily_bars
 
+    @property
+    def etf_profiles(self) -> SqlAlchemyEtfProfileRepository:
+        if self._etf_profiles is None:
+            self._etf_profiles = SqlAlchemyEtfProfileRepository(self.session)
+        return self._etf_profiles
+
     def commit(self) -> None:
         self.session.commit()
         self._user_committed = True
@@ -392,6 +424,7 @@ class SqlAlchemyUnitOfWork:
             self._candidate_pool_runs = None
             self._candidate_pool_items = None
             self._daily_bars = None
+            self._etf_profiles = None
             self._user_committed = False
             self._closed = True
 
@@ -404,6 +437,7 @@ __all__ = [
     "CandidatePoolItemRepositoryPort",
     "CandidatePoolRunRepositoryPort",
     "DailyBarRepositoryPort",
+    "EtfProfileRepositoryPort",
     "InputSnapshotRepositoryPort",
     "InstrumentRepositoryPort",
     "PipelineRunRepositoryPort",

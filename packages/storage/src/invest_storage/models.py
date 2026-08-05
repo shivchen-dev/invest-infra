@@ -22,7 +22,7 @@ from sqlalchemy import (
     text,
 )
 from sqlalchemy.dialects.postgresql import JSONB, UUID
-from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, synonym, synonym
+from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 NAMING_CONVENTION = {
     "ix": "ix_%(column_0_label)s",
@@ -86,7 +86,6 @@ class InstrumentRow(Base):
         server_default=func.now(),
         onupdate=func.now(),
     )
-
 
 class ProviderRequestRow(Base):
     """A logical Provider request, independent of any single network attempt.
@@ -776,4 +775,95 @@ class ResearchEvidencePackRow(Base):
     payload: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
+class EtfProfileRow(Base):
+    """One static ETF metadata record, 1-1 with ``core.instruments``.
+
+    Stage DC-2 introduces ``core.etf_profiles`` (migration
+    ``20260804_0008_etf_profiles``). The table mirrors the
+    :class:`invest_domain.etf_profile.models.EtfProfile` field set;
+    the storage layer treats it as an opaque audit row and the domain
+    validator runs on every domain-side construction. ``instrument_id``
+    is BOTH the storage primary key and the foreign key to
+    ``core.instruments.id``, so any ``core.instruments`` row can have
+    at most one ``core.etf_profiles`` row.
+
+    The textual fields ``manager``, ``benchmark_index``, ``category``
+    and ``fund_type`` carry ``CHECK (length(...) > 0)`` so the
+    database never persists a meaningless empty string. The fee /
+    amount fields use ``NUMERIC(38, 18)`` to keep ``Decimal`` precision
+    end-to-end; the domain contract (``management_fee`` and
+    ``custody_fee`` in ``[0, 1)``, ``aum`` and ``shares`` strictly
+    positive) is the source of truth and the storage layer reflects it
+    as defensive ``range`` checks so a buggy application-service path
+    cannot smuggle an out-of-contract value past the domain validator.
+    """
+
+    __tablename__ = "etf_profiles"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["instrument_id"],
+            ["core.instruments.id"],
+            name="fk_etf_profiles_instrument_id_core_instruments",
+        ),
+        CheckConstraint(
+            "manager IS NULL OR length(manager) > 0",
+            name="ck_etf_profiles_manager_nonempty",
+        ),
+        CheckConstraint(
+            "benchmark_index IS NULL OR length(benchmark_index) > 0",
+            name="ck_etf_profiles_benchmark_index_nonempty",
+        ),
+        CheckConstraint(
+            "category IS NULL OR length(category) > 0",
+            name="ck_etf_profiles_category_nonempty",
+        ),
+        CheckConstraint(
+            "fund_type IS NULL OR length(fund_type) > 0",
+            name="ck_etf_profiles_fund_type_nonempty",
+        ),
+        CheckConstraint(
+            "management_fee IS NULL OR (management_fee >= 0 AND management_fee < 1)",
+            name="ck_etf_profiles_management_fee_range",
+        ),
+        CheckConstraint(
+            "custody_fee IS NULL OR (custody_fee >= 0 AND custody_fee < 1)",
+            name="ck_etf_profiles_custody_fee_range",
+        ),
+        CheckConstraint(
+            "aum IS NULL OR aum > 0",
+            name="ck_etf_profiles_aum_positive",
+        ),
+        CheckConstraint(
+            "shares IS NULL OR shares > 0",
+            name="ck_etf_profiles_shares_positive",
+        ),
+        Index("ix_etf_profiles_manager", "manager"),
+        Index("ix_etf_profiles_category", "category"),
+        Index("ix_etf_profiles_fund_type", "fund_type"),
+        {"schema": "core"},
+    )
+
+    instrument_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True
+    )
+    manager: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    benchmark_index: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    category: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    inception_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    fund_type: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    management_fee: Mapped[Any | None] = mapped_column(Numeric(38, 18), nullable=True)
+    custody_fee: Mapped[Any | None] = mapped_column(Numeric(38, 18), nullable=True)
+    aum: Mapped[Any | None] = mapped_column(Numeric(38, 18), nullable=True)
+    shares: Mapped[Any | None] = mapped_column(Numeric(38, 18), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+        onupdate=func.now(),
     )

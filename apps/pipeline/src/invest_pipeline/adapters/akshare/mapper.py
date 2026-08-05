@@ -22,8 +22,16 @@ Validation rules are taken from the Phase-1 contract documents:
   不映射为 OHLCV，不填充成交额"); NAV rows carry
   ``unit_nav`` / ``accumulated_nav`` / ``daily_growth_rate`` only and
   ride on a dedicated :class:`ProviderBatch` record type.
+- The DC-2 ETF Profile slice is **conservative**: the
+  ``fund_name_em`` / ``fund_etf_spot_em`` endpoints are joined by
+  ``基金代码`` / ``代码`` (symbol) in a pure mapper
+  (:func:`merge_etf_profile`). Only the verified fields
+  (``fund_type`` / ``category`` / ``shares``) are populated;
+  everything else stays ``None``. The total-market-value column from
+  ``fund_etf_spot_em`` is **never** mapped to ``aum`` — AUM is a
+  Provider-disclosed figure, not a market-cap calculation.
 
-The mapper is implemented as four pure helpers (matching the existing
+The mapper is implemented as five pure helpers (matching the existing
 Cifang mappers in :mod:`invest_pipeline.adapters.cifang.mapper`):
 
 - :func:`map_fund_etf_fund_info_em` for the ETF master-data endpoint.
@@ -33,6 +41,9 @@ Cifang mappers in :mod:`invest_pipeline.adapters.cifang.mapper`):
   endpoint (read-only, never coerces to OHLCV).
 - :func:`map_tool_trade_date_hist_sina` for the SSE / SZSE
   trading-calendar endpoint (read-only date-only surface).
+- :func:`map_fund_name_em` / :func:`map_fund_etf_spot_em` /
+  :func:`merge_etf_profile` for the DC-2 ETF Profile surface
+  (conservative static metadata).
 """
 
 from __future__ import annotations
@@ -137,6 +148,40 @@ _AKSHARE_CALENDAR_DATE_ALIASES = (
     "日期",
     "date",
 )
+
+_AKSHARE_FUND_NAME_CODE_ALIASES = (
+    "基金代码",
+    "code",
+    "symbol",
+    "代码",
+)
+_AKSHARE_FUND_NAME_TYPE_ALIASES = (
+    "基金类型",
+    "type",
+    "fund_type",
+)
+_AKSHARE_FUND_NAME_CATEGORY_ALIASES = (
+    "基金类型",
+    "category",
+    "type",
+    "fund_type",
+)
+
+_AKSHARE_FUND_ETF_SPOT_CODE_ALIASES = (
+    "代码",
+    "code",
+    "symbol",
+)
+_AKSHARE_FUND_ETF_SPOT_SHARES_ALIASES = (
+    "最新份额",
+    "shares",
+    "基金份额",
+)
+_AKSHARE_FUND_ETF_SPOT_TOTAL_MARKET_VALUE_ALIASES = (
+    "总市值",
+    "total_market_value",
+)
+_AKSHARE_EXCLUDED_FUND_TYPE_MARKERS = ("ETF联接", "ETF连接")
 
 
 @dataclass(frozen=True, slots=True)
@@ -525,6 +570,337 @@ def map_tool_trade_date_hist_sina(
 
 
 # ----------------------------------------------------------------------
+# ETF Profile mapper (DC-2 — conservative static metadata)
+# ----------------------------------------------------------------------
+
+
+@dataclass(frozen=True, slots=True)
+class AkshareProfileRecord:
+    """A single ETF Profile row produced by the join of ``fund_name_em``
+    and ``fund_etf_spot_em``.
+
+    The DC-2 slice is **conservative**: only the verified fields
+    ``fund_type`` / ``category`` (from ``fund_name_em`` 基金类型) and
+    ``shares`` (from ``fund_etf_spot_em`` 最新份额) are populated.
+    Everything else stays ``None`` — the domain contract does not
+    accept a ``name`` field in this slice and a fabricated value
+    would silently violate the data-source trust rule. The total
+    market value surfaced by ``fund_etf_spot_em`` is **never**
+    populated on :attr:`aum`; AUM is a Provider-disclosed figure
+    that the upstream snapshot does not carry.
+
+    The record does not carry an ``instrument_id`` placeholder —
+    the adapter assigns a placeholder per ``(symbol, exchange)``
+    pair (mirroring the daily-bars placeholder table) so the
+    application service can re-resolve the real
+    ``core.instruments.id`` at upsert time.
+    """
+
+    symbol: str
+    exchange: str
+    fund_type: str | None
+    category: str | None
+    shares: Decimal | None
+
+
+@dataclass(frozen=True, slots=True)
+class AkshareProfileMappingResult:
+    """Result of an ETF Profile mapping pass.
+
+    Carries the merged :class:`AkshareProfileRecord` rows plus a
+    tuple of non-fatal warnings. The mapper never raises on
+    row-level issues so a single malformed row cannot block the
+    whole batch.
+    """
+
+    records: tuple[AkshareProfileRecord, ...]
+    warnings: tuple[str, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class AkshareFundNameRecord:
+    """One row of ``ak.fund_name_em()`` reduced to the fields the
+    ETF Profile slice needs.
+
+    The mapper exposes this intermediate shape so the merge step
+    can be exercised against hermetic test fixtures without
+    re-running the upstream pandas normalisation. The fields
+    are immutable and ``slots=True`` so a frozenset of fields
+    can feed the PR-05 coverage probe.
+    """
+
+    symbol: str
+    fund_type: str | None
+    category: str | None
+
+
+@dataclass(frozen=True, slots=True)
+class AkshareFundNameMappingResult:
+    """Result of a ``fund_name_em`` mapping pass."""
+
+    records: tuple[AkshareFundNameRecord, ...]
+    warnings: tuple[str, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class AkshareFundEtfSpotRecord:
+    """One row of ``ak.fund_etf_spot_em()`` reduced to the fields the
+    ETF Profile slice needs.
+
+    The mapper exposes this intermediate shape so the merge step
+    can be exercised against hermetic test fixtures without
+    re-running the upstream pandas normalisation. The total
+    market value column is intentionally NOT extracted: per the
+    DC-2 slice rule it must never be mapped to ``aum``.
+    """
+
+    symbol: str
+    shares: Decimal | None
+
+
+@dataclass(frozen=True, slots=True)
+class AkshareFundEtfSpotMappingResult:
+    """Result of a ``fund_etf_spot_em`` mapping pass."""
+
+    records: tuple[AkshareFundEtfSpotRecord, ...]
+    warnings: tuple[str, ...]
+
+
+def map_fund_name_em(
+    response: AkshareResponse,
+) -> AkshareFundNameMappingResult:
+    """Translate ``ak.fund_name_em()`` rows into :class:`AkshareFundNameRecord`.
+
+    The mapper applies the documented ETF filter (``InstrumentType.ETF``
+    via the ``基金类型`` field) and accepts both Chinese and English
+    field aliases. The mapper is deliberately **shallow** — it only
+    extracts ``symbol`` / ``fund_type`` / ``category`` so the
+    downstream :func:`merge_etf_profile` can combine the payload with
+    the matching ``fund_etf_spot_em`` snapshot. Rows missing a
+    six-digit ``symbol`` downgraded to a warning; rows that are not
+    ETFs are silently skipped (the slice only collects ETF profiles).
+    """
+
+    records: list[AkshareFundNameRecord] = []
+    warnings: list[str] = []
+    for index, entry in enumerate(response.raw_payload):
+        if not isinstance(entry, dict):
+            warnings.append(
+                f"row {index} is not a JSON object; skipped"
+            )
+            continue
+        symbol = _alias_str(entry, _AKSHARE_FUND_NAME_CODE_ALIASES)
+        if symbol is None:
+            warnings.append(
+                f"row {index} missing 基金代码/code field; skipped"
+            )
+            continue
+        if not _looks_like_etf_symbol(symbol):
+            warnings.append(
+                f"row {index} (symbol={symbol!r}) is not an ETF row "
+                "(six-digit SSE/SZSE code required); skipped"
+            )
+            continue
+        fund_type = _alias_str(entry, _AKSHARE_FUND_NAME_TYPE_ALIASES)
+        if fund_type is not None and not _is_etf_fund_type(fund_type):
+            warnings.append(
+                f"row {index} (symbol={symbol!r}) is not an ETF row "
+                f"(fund_type={fund_type!r}); skipped"
+            )
+            continue
+        category = _alias_str(entry, _AKSHARE_FUND_NAME_CATEGORY_ALIASES)
+        records.append(
+            AkshareFundNameRecord(
+                symbol=symbol,
+                fund_type=fund_type,
+                category=category,
+            )
+        )
+    return AkshareFundNameMappingResult(
+        records=tuple(records), warnings=tuple(warnings)
+    )
+
+
+def map_fund_etf_spot_em(
+    response: AkshareResponse,
+) -> AkshareFundEtfSpotMappingResult:
+    """Translate ``ak.fund_etf_spot_em()`` rows into :class:`AkshareFundEtfSpotRecord`.
+
+    The mapper applies the documented ETF filter (six-digit SSE/SZSE
+    code rule) and accepts both Chinese and English field aliases. The
+    mapper is deliberately **shallow** — it only extracts ``symbol``
+    and ``shares`` so the downstream :func:`merge_etf_profile` can
+    combine the payload with the matching ``fund_name_em`` profile.
+    The ``总市值`` column is intentionally NOT extracted: per the
+    DC-2 slice rule it must never be mapped to ``aum``.
+
+    Rows missing a six-digit ``symbol`` downgrade to a warning; a
+    present-but-non-numeric ``shares`` value downgrades to a warning
+    so the surviving rows still ship.
+    """
+
+    records: list[AkshareFundEtfSpotRecord] = []
+    warnings: list[str] = []
+    for index, entry in enumerate(response.raw_payload):
+        if not isinstance(entry, dict):
+            warnings.append(
+                f"row {index} is not a JSON object; skipped"
+            )
+            continue
+        symbol = _alias_str(entry, _AKSHARE_FUND_ETF_SPOT_CODE_ALIASES)
+        if symbol is None:
+            warnings.append(
+                f"row {index} missing 代码/code field; skipped"
+            )
+            continue
+        if not _looks_like_etf_symbol(symbol):
+            warnings.append(
+                f"row {index} (symbol={symbol!r}) is not an ETF row "
+                "(six-digit SSE/SZSE code required); skipped"
+            )
+            continue
+        try:
+            shares_value = _optional_decimal(
+                entry, _AKSHARE_FUND_ETF_SPOT_SHARES_ALIASES
+            )
+        except _SkippedRow as exc:
+            warnings.append(
+                f"row {index} (symbol={symbol!r}): {exc}"
+            )
+            continue
+        records.append(
+            AkshareFundEtfSpotRecord(
+                symbol=symbol,
+                shares=shares_value,
+            )
+        )
+    return AkshareFundEtfSpotMappingResult(
+        records=tuple(records), warnings=tuple(warnings)
+    )
+
+
+def merge_etf_profile(
+    name_mapping: AkshareFundNameMappingResult,
+    spot_mapping: AkshareFundEtfSpotMappingResult,
+) -> AkshareProfileMappingResult:
+    """Join ``fund_name_em`` and ``fund_etf_spot_em`` by symbol.
+
+    The join is an **inner join** so the slice only assembles a
+    profile row when the upstream response has confirmed both the
+    :class:`InstrumentType.ETF` classification (``fund_name_em`` 基金
+    类型 starts with ``ETF``) and the matching spot snapshot. The
+    exchange is inferred from the six-digit ETF code via the existing
+    prefix rule (matrix §4.1); the explicit ``exchange`` field from
+    ``fund_etf_spot_em`` is not honoured because the upstream payload
+    does not carry it.
+
+    Only the verified fields are populated:
+
+    - ``fund_type`` / ``category`` from the ``fund_name_em`` 基金类型
+      field.
+    - ``shares`` from ``fund_etf_spot_em`` 最新份额.
+
+    The domain contract does not currently accept a ``name`` field
+    on :class:`invest_domain.etf_profile.models.EtfProfile`, so the
+    ``基金简称`` value is intentionally dropped (it lives on
+    :class:`invest_domain.instruments.models.Instrument` instead).
+    ``manager``, ``benchmark_index``, ``inception_date``,
+    ``management_fee``, ``custody_fee`` and ``aum`` stay ``None``;
+    the upstream snapshot does not disclose them and the slice
+    follow-ups will populate them from the dedicated
+    ``fund_etf_fund_info_em`` master-data path.
+
+    Rows that appear in only one of the two payloads emit a warning
+    so the operator can audit the upstream response for partial
+    coverage; the slice is intentionally no-throw so a half-empty
+    payload still ships the verified rows.
+    """
+
+    name_by_symbol: dict[str, AkshareFundNameRecord] = {
+        record.symbol: record for record in name_mapping.records
+    }
+    spot_by_symbol: dict[str, AkshareFundEtfSpotRecord] = {
+        record.symbol: record for record in spot_mapping.records
+    }
+
+    merged_symbols = sorted(
+        set(name_by_symbol) & set(spot_by_symbol)
+    )
+    records: list[AkshareProfileRecord] = []
+    for symbol in merged_symbols:
+        name_record = name_by_symbol[symbol]
+        spot_record = spot_by_symbol[symbol]
+        exchange = _exchange_for_etf_symbol(symbol)
+        records.append(
+            AkshareProfileRecord(
+                symbol=symbol,
+                exchange=exchange,
+                fund_type=name_record.fund_type,
+                category=name_record.category,
+                shares=spot_record.shares,
+            )
+        )
+
+    warnings: list[str] = []
+    name_only = set(name_by_symbol) - set(spot_by_symbol)
+    spot_only = set(spot_by_symbol) - set(name_by_symbol)
+    for symbol in sorted(name_only):
+        warnings.append(
+            f"symbol={symbol!r} present in fund_name_em but missing "
+            "from fund_etf_spot_em; no profile row produced"
+        )
+    for symbol in sorted(spot_only):
+        warnings.append(
+            f"symbol={symbol!r} present in fund_etf_spot_em but "
+            "missing from fund_name_em; no profile row produced"
+        )
+    return AkshareProfileMappingResult(
+        records=tuple(records), warnings=tuple(warnings)
+    )
+
+
+def _looks_like_etf_symbol(symbol: str) -> bool:
+    """Return ``True`` when ``symbol`` is a six-digit SSE/SZSE ETF code.
+
+    The check is intentionally permissive — the merge step re-runs
+    :func:`_exchange_for_etf_symbol` so a one-off prefix mismatch
+    surfaces as a hard :class:`ProviderDataContractError` rather than
+    silently dropping the row. The check exists only to filter
+    obvious non-ETF rows (``FundNameEm`` includes LOFs / closed-end
+    funds / bond funds) so the inner join is bounded.
+    """
+
+    if not isinstance(symbol, str):
+        return False
+    text = symbol.strip()
+    if len(text) != 6 or not text.isdigit():
+        return False
+    return text[0] in {"1", "2", "5", "6"}
+
+
+def _is_etf_fund_type(fund_type: str) -> bool:
+    """Return ``True`` when ``fund_type`` describes an ETF row.
+
+    The AkShare ``基金类型`` field is a free-form string; the upstream
+    payload uses ``"ETF"`` for plain ETFs and ``"ETF联接"`` /
+    ``"ETF联接基金"`` for ETF feeder (LOF) variants. The conservative
+    slice keeps only plain ETF rows; ETF联接 rows are excluded from
+    the join so the downstream repository never sees a phantom
+    ``core.instruments`` miss for a feeder fund that is not in the
+    A-share ETF universe.
+    """
+
+    if not isinstance(fund_type, str):
+        return False
+    text = fund_type.strip()
+    if not text:
+        return False
+    if any(marker in text for marker in _AKSHARE_EXCLUDED_FUND_TYPE_MARKERS):
+        return False
+    return text == "ETF" or text.startswith("ETF")
+
+
+# ----------------------------------------------------------------------
 # Row-level helpers
 # ----------------------------------------------------------------------
 
@@ -858,11 +1234,20 @@ __all__ = [
     "AkshareCalendarMappingResult",
     "AkshareCalendarRecord",
     "AkshareDailyBarsMappingResult",
+    "AkshareFundEtfSpotMappingResult",
+    "AkshareFundEtfSpotRecord",
+    "AkshareFundNameMappingResult",
+    "AkshareFundNameRecord",
     "AkshareMappingResult",
     "AkshareNavMappingResult",
     "AkshareNavRecord",
+    "AkshareProfileMappingResult",
+    "AkshareProfileRecord",
     "map_fund_etf_fund_daily_em",
     "map_fund_etf_fund_info_em",
     "map_fund_etf_hist_em",
+    "map_fund_etf_spot_em",
+    "map_fund_name_em",
     "map_tool_trade_date_hist_sina",
+    "merge_etf_profile",
 ]

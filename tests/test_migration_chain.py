@@ -224,6 +224,123 @@ class MigrationChainTest(unittest.TestCase):
         ):
             self.assertIn(f'"{foreign_key_target}"', source)
 
+    def test_etf_profiles_migration_is_current_head(self) -> None:
+        """The DC-2 ETF profile migration must be the new chain head.
+
+        Pins the contract that ``20260804_0008_etf_profiles`` chains
+        on top of ``20260803_0007_research_evidence_packs`` and is the
+        sole current head across all revisions. The migration-chain
+        uniqueness test below covers the same property generically, but
+        this explicit test pins the specific revision id so a future
+        branch merge that introduces an unexpected head surfaces as a
+        focused failure rather than a generic chain-shape complaint.
+        """
+
+        repository_root = Path(__file__).resolve().parents[1]
+        versions_directory = (
+            repository_root / "apps" / "migrations" / "migrations" / "versions"
+        )
+
+        revisions: dict[Path, tuple[str, object]] = {}
+        for revision_file in sorted(versions_directory.glob("*.py")):
+            source = revision_file.read_text(encoding="utf-8")
+            tree = ast.parse(source, filename=str(revision_file))
+            assignments: dict[str, object] = {}
+            for node in tree.body:
+                if isinstance(node, ast.Assign):
+                    literal_value = _try_literal_eval(node.value)
+                    if literal_value is _NOT_LITERAL:
+                        continue
+                    for target in node.targets:
+                        if isinstance(target, ast.Name):
+                            assignments[target.id] = literal_value
+                elif (
+                    isinstance(node, ast.AnnAssign)
+                    and isinstance(node.target, ast.Name)
+                    and node.value is not None
+                ):
+                    literal_value = _try_literal_eval(node.value)
+                    if literal_value is not _NOT_LITERAL:
+                        assignments[node.target.id] = literal_value
+            self.assertIn("revision", assignments, f"{revision_file}")
+            self.assertIn("down_revision", assignments, f"{revision_file}")
+            revisions[revision_file] = (
+                assignments["revision"],
+                assignments["down_revision"],
+            )
+
+        # The chain head is the single revision id that nobody else
+        # declares as their ``down_revision`` (mirrors the calculation
+        # in ``test_initial_migration_chain``). The initial migration
+        # ``20260731_0001`` also carries ``down_revision=None`` but it
+        # MUST be referenced by the next revision so it is not a head.
+        all_revision_ids = {revision for revision, _ in revisions.values()}
+        referenced_down_revisions = {
+            down_revision
+            for _, down_revision in revisions.values()
+            if down_revision is not None
+        }
+        head_ids = all_revision_ids - referenced_down_revisions
+        self.assertEqual(
+            head_ids,
+            {"20260804_0008"},
+            "expected exactly one unreferenced chain head, "
+            f"got {sorted(head_ids)}",
+        )
+
+        new_migration_file = (
+            repository_root
+            / "apps"
+            / "migrations"
+            / "migrations"
+            / "versions"
+            / "20260804_0008_etf_profiles.py"
+        )
+        source = new_migration_file.read_text(encoding="utf-8")
+
+        # Revision pinning: the new migration declares its identity and
+        # chains exactly on top of the existing PR-4A research evidence
+        # packs head.
+        self.assertIn('revision: str = "20260804_0008"', source)
+        self.assertIn('down_revision: str | None = "20260803_0007"', source)
+
+        # Schema-level pins: the table lives in ``core``, the natural
+        # key is the 1-1 ``instrument_id`` foreign key to
+        # ``core.instruments.id``.
+        self.assertIn('"etf_profiles"', source)
+        self.assertIn('schema="core"', source)
+        self.assertIn('"core.instruments.id"', source)
+        self.assertIn(
+            'name="fk_etf_profiles_instrument_id_core_instruments"', source
+        )
+        self.assertIn('sa.PrimaryKeyConstraint("instrument_id"', source)
+        self.assertIn('name="pk_etf_profiles"', source)
+
+        # Defensive CHECK constraints mirror the domain contract so a
+        # buggy application-service path cannot smuggle an
+        # out-of-contract value past the validator.
+        for check_constraint_name in (
+            "ck_etf_profiles_manager_nonempty",
+            "ck_etf_profiles_benchmark_index_nonempty",
+            "ck_etf_profiles_category_nonempty",
+            "ck_etf_profiles_fund_type_nonempty",
+            "ck_etf_profiles_management_fee_range",
+            "ck_etf_profiles_custody_fee_range",
+            "ck_etf_profiles_aum_positive",
+            "ck_etf_profiles_shares_positive",
+        ):
+            self.assertIn(check_constraint_name, source)
+
+        # The dashboard-filter indexes must be present in the upgrade
+        # path; the downgrade path must drop them before the table so
+        # ``downgrade()`` is reversible on a clean database.
+        for index_name in (
+            "ix_etf_profiles_manager",
+            "ix_etf_profiles_category",
+            "ix_etf_profiles_fund_type",
+        ):
+            self.assertIn(index_name, source)
+
 
 def _first_string_literal(call_node: ast.Call) -> str | None:
     for argument in call_node.args:

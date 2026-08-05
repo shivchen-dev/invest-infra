@@ -44,6 +44,7 @@ from invest_domain.candidate_pool import (
     UniverseEligibility,
     build_etf_universe,
 )
+from invest_domain.etf_profile import EtfProfile
 
 from invest_domain.instruments import (
     Instrument,
@@ -157,6 +158,7 @@ __all__ = [
     "DailyBar",
     "EligibilityCriteria",
     "EtfMarketDataProvider",
+    "EtfProfile",
     "Exchange",
     "ExclusionReason",
     "Instrument",

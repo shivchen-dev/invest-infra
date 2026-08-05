@@ -29,6 +29,17 @@ trading calendar additions:
 
 - :meth:`AkshareClient.fetch_fund_etf_fund_info_em` powers the ETF
   master-data path (``ak.fund_etf_fund_info_em()`` per official docs).
+- :meth:`AkshareClient.fetch_fund_name_em` powers the public-fund
+  profile path (``ak.fund_name_em()`` per official docs). The DC-2
+  ETF Profile slice joins this payload on ``基金代码`` against the
+  matching ``fund_etf_spot_em`` snapshot to populate the
+  ``fund_type`` / ``category`` fields.
+- :meth:`AkshareClient.fetch_fund_etf_spot_em` powers the ETF spot
+  snapshot path (``ak.fund_etf_spot_em()`` per official docs). The
+  DC-2 ETF Profile slice reads ``最新份额`` to populate the
+  ``shares`` field; the response's ``总市值`` is **never** mapped to
+  ``aum`` (AUM is a Provider-disclosed figure, not a market-cap
+  calculation).
 - :meth:`AkshareClient.fetch_fund_etf_hist_em` powers the daily-bars
   path (``ak.fund_etf_hist_em(symbol=..., period='daily',
   start_date=..., end_date=..., adjust=...)`` per official docs).
@@ -146,6 +157,79 @@ class AkshareClient:
 
         module = self._resolve_module()
         operation = "fund_etf_fund_info_em"
+        if not hasattr(module, operation):
+            raise ProviderUnavailableError(
+                _PROVIDER_KEY,
+                f"akshare module exposes no '{operation}' function; "
+                "the installed SDK version may have removed or renamed "
+                f"it (akshare.__version__={getattr(module, '__version__', 'unknown')!r})",
+            )
+        try:
+            dataframe = getattr(module, operation)()
+        except Exception as exc:
+            raise ProviderBadResponseError(
+                _PROVIDER_KEY,
+                f"akshare.{operation}() raised {type(exc).__name__}: "
+                f"{_scrub_message(str(exc), self._settings)}",
+            ) from exc
+        records = _dataframe_to_records(dataframe, operation)
+        return AkshareResponse(
+            operation=operation,
+            raw_payload=records,
+            raw_payload_hash=_canonical_payload_hash(records),
+        )
+
+    def fetch_fund_name_em(self) -> AkshareResponse:
+        """Return the canonical public-fund profile payload.
+
+        Calls ``ak.fund_name_em()`` (per official docs) and normalises
+        the ``DataFrame`` into a list of plain ``dict`` records. The
+        upstream function returns DataFrames with Chinese column names
+        (``基金代码`` / ``基金简称`` / ``基金类型`` / ...). The
+        ETF Profile mapper reads ``基金类型`` to populate
+        ``EtfProfile.fund_type`` / ``category`` and uses ``基金代码``
+        as the join key against the matching ``fund_etf_spot_em``
+        snapshot.
+        """
+
+        module = self._resolve_module()
+        operation = "fund_name_em"
+        if not hasattr(module, operation):
+            raise ProviderUnavailableError(
+                _PROVIDER_KEY,
+                f"akshare module exposes no '{operation}' function; "
+                "the installed SDK version may have removed or renamed "
+                f"it (akshare.__version__={getattr(module, '__version__', 'unknown')!r})",
+            )
+        try:
+            dataframe = getattr(module, operation)()
+        except Exception as exc:
+            raise ProviderBadResponseError(
+                _PROVIDER_KEY,
+                f"akshare.{operation}() raised {type(exc).__name__}: "
+                f"{_scrub_message(str(exc), self._settings)}",
+            ) from exc
+        records = _dataframe_to_records(dataframe, operation)
+        return AkshareResponse(
+            operation=operation,
+            raw_payload=records,
+            raw_payload_hash=_canonical_payload_hash(records),
+        )
+
+    def fetch_fund_etf_spot_em(self) -> AkshareResponse:
+        """Return the canonical ETF spot snapshot payload.
+
+        Calls ``ak.fund_etf_spot_em()`` (per official docs) and
+        normalises the ``DataFrame`` into a list of plain ``dict``
+        records. The upstream function returns DataFrames with Chinese
+        column names (``代码`` / ``名称`` / ``最新份额`` / ...). The
+        ETF Profile mapper reads ``最新份额`` to populate
+        ``EtfProfile.shares`` and uses ``代码`` as the join key against
+        the matching ``fund_name_em`` payload.
+        """
+
+        module = self._resolve_module()
+        operation = "fund_etf_spot_em"
         if not hasattr(module, operation):
             raise ProviderUnavailableError(
                 _PROVIDER_KEY,

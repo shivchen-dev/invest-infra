@@ -57,6 +57,7 @@ from invest_domain.candidate_pool.models import (
     RuleOutcome,
     RuleSeverity,
 )
+from invest_domain.etf_profile import EtfProfile
 from invest_domain.input_snapshot import InputSnapshot
 from invest_domain.instruments import (
     Instrument,
@@ -64,10 +65,9 @@ from invest_domain.instruments import (
     InstrumentStatus,
     InstrumentType,
 )
-from invest_domain.market_data.models import BarSource, DailyBar
+from invest_domain.market_data.models import DailyBar
 from invest_domain.market_data.values import Adjust, TradingStatus
 from invest_domain.pipeline import PipelineRun, PipelineRunStatus
-from invest_domain.shared.canonical import CANONICAL_HASH_SCHEMA_VERSION
 from invest_domain.shared.values import Currency
 from sqlalchemy import func, select
 from sqlalchemy.dialects.postgresql import insert
@@ -77,6 +77,7 @@ from invest_storage.models import (
     CandidatePoolItemRow,
     CandidatePoolRunRow,
     DailyBarRow,
+    EtfProfileRow,
     InputSnapshotRow,
     InstrumentRow,
     PipelineRunRow,
@@ -2034,3 +2035,175 @@ def _exclusion_reason_from_json(value: Any) -> ExclusionReason:
     if not message:
         raise ValueError("exclusion_reasons entry missing non-empty 'message'")
     return ExclusionReason(code=str(code), message=str(message))
+
+
+class SqlAlchemyEtfProfileRepository:
+    """Read/write access to ``core.etf_profiles``.
+
+    Stage DC-2 introduces a 1-1 ``core.etf_profiles`` table keyed by
+    ``instrument_id`` (which is also the foreign key to
+    ``core.instruments.id``). The repository owns the upsert-by-id
+    idempotency contract: a re-write of the same profile overwrites
+    every column except ``created_at`` and returns the freshly-mapped
+    domain :class:`invest_domain.etf_profile.models.EtfProfile`. New
+    profiles are inserted when no row exists yet.
+
+    Callers MUST run the domain validator
+    (:class:`invest_domain.etf_profile.models.EtfProfile.__post_init__`)
+    on every input through the dataclass itself; the storage layer
+    re-asserts the same defensive CHECK constraints as a last line of
+    defence but never performs its own domain validation.
+    """
+
+    def __init__(self, session: Session) -> None:
+        self._session = session
+
+    def upsert(self, profile: EtfProfile) -> EtfProfile:
+        """Idempotent write keyed by ``profile.instrument_id``.
+
+        When a row for ``instrument_id`` already exists the call
+        rewrites every mutable column (``manager``, ``benchmark_index``,
+        ``category``, ``inception_date``, ``fund_type``,
+        ``management_fee``, ``custody_fee``, ``aum``, ``shares`` and
+        ``updated_at``) without touching ``created_at``. When no row
+        exists yet the call INSERTs one with the database-default
+        ``created_at`` / ``updated_at``.
+
+        The unique constraint is the primary-key uniqueness on
+        ``instrument_id`` itself; an application that races two upserts
+        on the same id will see one INSERT and one UPDATE after the
+        loser replays through ``ON CONFLICT``.
+        """
+
+        values = {
+            "instrument_id": profile.instrument_id,
+            "manager": profile.manager,
+            "benchmark_index": profile.benchmark_index,
+            "category": profile.category,
+            "inception_date": profile.inception_date,
+            "fund_type": profile.fund_type,
+            "management_fee": profile.management_fee,
+            "custody_fee": profile.custody_fee,
+            "aum": profile.aum,
+            "shares": profile.shares,
+        }
+        excluded = insert(EtfProfileRow).excluded
+        statement = insert(EtfProfileRow).values(values)
+        statement = statement.on_conflict_do_update(
+            index_elements=[EtfProfileRow.instrument_id],
+            set_={
+                "manager": excluded.manager,
+                "benchmark_index": excluded.benchmark_index,
+                "category": excluded.category,
+                "inception_date": excluded.inception_date,
+                "fund_type": excluded.fund_type,
+                "management_fee": excluded.management_fee,
+                "custody_fee": excluded.custody_fee,
+                "aum": excluded.aum,
+                "shares": excluded.shares,
+                "updated_at": func.now(),
+            },
+        )
+        self._session.execute(statement)
+        self._session.flush()
+        stored = self.get_by_id(profile.instrument_id)
+        if stored is None:
+            raise RuntimeError(
+                "etf_profiles upsert succeeded but the row was not "
+                "found on the subsequent read; this indicates a "
+                "session/transaction misconfiguration"
+            )
+        return stored
+
+    def get_by_id(self, instrument_id: UUID | InstrumentId) -> EtfProfile | None:
+        raw_id = (
+            instrument_id.value
+            if isinstance(instrument_id, InstrumentId)
+            else instrument_id
+        )
+        row = self._session.get(EtfProfileRow, raw_id)
+        return _row_to_etf_profile(row) if row is not None else None
+
+    def list_by_manager(
+        self,
+        manager: str,
+        *,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> list[EtfProfile]:
+        return self._list_filtered(
+            filters=[EtfProfileRow.manager == manager],
+            limit=limit,
+            offset=offset,
+        )
+
+    def list_by_category(
+        self,
+        category: str,
+        *,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> list[EtfProfile]:
+        return self._list_filtered(
+            filters=[EtfProfileRow.category == category],
+            limit=limit,
+            offset=offset,
+        )
+
+    def list_by_fund_type(
+        self,
+        fund_type: str,
+        *,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> list[EtfProfile]:
+        return self._list_filtered(
+            filters=[EtfProfileRow.fund_type == fund_type],
+            limit=limit,
+            offset=offset,
+        )
+
+    def list_all(
+        self, *, limit: int = 100, offset: int = 0
+    ) -> list[EtfProfile]:
+        return self._list_filtered(filters=[], limit=limit, offset=offset)
+
+    def count_all(self) -> int:
+        stmt = select(func.count(EtfProfileRow.instrument_id))
+        return int(self._session.scalar(stmt) or 0)
+
+    def _list_filtered(
+        self,
+        *,
+        filters: list[Any],
+        limit: int,
+        offset: int,
+    ) -> list[EtfProfile]:
+        if limit < 0:
+            raise ValueError(f"limit must be >= 0, got {limit}")
+        if offset < 0:
+            raise ValueError(f"offset must be >= 0, got {offset}")
+        stmt = (
+            select(EtfProfileRow)
+            .where(*filters)
+            .order_by(EtfProfileRow.instrument_id.asc())
+            .limit(limit)
+            .offset(offset)
+        )
+        rows = self._session.scalars(stmt).all()
+        return [_row_to_etf_profile(row) for row in rows]
+
+
+def _row_to_etf_profile(row: EtfProfileRow) -> EtfProfile:
+    return EtfProfile(
+        instrument_id=row.instrument_id,
+        manager=row.manager,
+        benchmark_index=row.benchmark_index,
+        category=row.category,
+        inception_date=_as_date(row.inception_date),
+        fund_type=row.fund_type,
+        management_fee=_as_decimal(row.management_fee),
+        custody_fee=_as_decimal(row.custody_fee),
+        aum=_as_decimal(row.aum),
+        shares=_as_decimal(row.shares),
+    )

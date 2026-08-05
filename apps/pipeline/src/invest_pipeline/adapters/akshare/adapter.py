@@ -38,6 +38,19 @@ AkshareNavRecord` and the calendar entries on
 ``"etf_nav"`` and ``"trading_calendar"`` keep the three-layer evidence
 rows segregated from the daily-bars / master-data evidence.
 
+The DC-2 ETF Profile surface follows plan §5 Task 2 ("ETF 基础研究
+数据 / ETF Profile"): the adapter exposes ``fetch_etf_profile`` that
+routes through the lazy AkShare SDK and stamps
+:class:`AkshareProfileRecord` rows into a dedicated ``ProviderBatch``
+with ``dataset_key="etf_profile"``. The slice is **conservative**:
+the ``fund_name_em`` (fund code / name / type) and
+``fund_etf_spot_em`` (ETF code / latest shares) payloads are joined
+by symbol in a pure mapper (``merge_etf_profile``); the
+``fund_etf_spot_em`` ``总市值`` (total market value) column is
+**never** mapped to ``aum`` and the unfunded fields (manager,
+benchmark_index, inception_date, management_fee, custody_fee) stay
+``None`` until a dedicated profile endpoint is verified.
+
 The AkShare adapter is the canonical research/secondary ETF source
 that matrix §3 pins to the ``research_only`` role; the default
 ``enabled=False`` keeps the slice safe in CI and local dev until the
@@ -70,12 +83,19 @@ from invest_pipeline.adapters.akshare.config import AkshareSettings
 from invest_pipeline.adapters.akshare.mapper import (
     AkshareCalendarMappingResult,
     AkshareCalendarRecord,
+    AkshareFundEtfSpotMappingResult,
+    AkshareFundNameMappingResult,
     AkshareNavMappingResult,
     AkshareNavRecord,
+    AkshareProfileMappingResult,
+    AkshareProfileRecord,
     map_fund_etf_fund_daily_em,
     map_fund_etf_fund_info_em,
     map_fund_etf_hist_em,
+    map_fund_etf_spot_em,
+    map_fund_name_em,
     map_tool_trade_date_hist_sina,
+    merge_etf_profile,
 )
 from invest_pipeline.adapters.errors import (
     ProviderAuthenticationError,
@@ -94,6 +114,7 @@ _INSTRUMENTS_DATASET_KEY = "etf_instruments"
 _DAILY_BARS_DATASET_KEY = "etf_daily_bars"
 _NAV_DATASET_KEY = "etf_nav"
 _CALENDAR_DATASET_KEY = "trading_calendar"
+_ETF_PROFILE_DATASET_KEY = "etf_profile"
 
 
 class AkshareInstrumentProvider:
@@ -536,6 +557,129 @@ class AkshareInstrumentProvider:
             {"adjust": self._settings.adjust, "rows": response.raw_payload}
         )
         batch = ProviderBatch[AkshareCalendarRecord](
+            attempt_id=attempt_id,
+            records=mapping.records,
+            raw_payload_hash=raw_hash,
+            warnings=mapping.warnings,
+            status=ProviderBatchStatus.SUCCEEDED,
+        )
+        return request, attempt, batch
+
+    # ------------------------------------------------------------------
+    # ETF Profile surface (DC-2 — conservative static metadata)
+    # ------------------------------------------------------------------
+
+    def fetch_etf_profile(
+        self,
+    ) -> tuple[
+        ProviderRequest,
+        ProviderAttempt,
+        ProviderBatch[AkshareProfileRecord] | None,
+    ]:
+        """Return the evidence bundle for the DC-2 ETF Profile call.
+
+        The slice is **conservative**: AkShare exposes no single
+        "ETF Profile" endpoint, so the adapter fans out to two
+        verified snapshot endpoints and joins the payloads by symbol
+        in a pure mapper (:func:`merge_etf_profile`).
+
+        - ``ak.fund_name_em()`` returns the public-fund profile with
+          ``基金代码`` / ``基金简称`` / ``基金类型``. The mapper
+          extracts ``基金代码`` / ``基金类型`` and silently drops
+          non-ETF rows.
+        - ``ak.fund_etf_spot_em()`` returns the ETF spot snapshot with
+          ``代码`` / ``名称`` / ``最新份额`` / ``总市值``. The
+          mapper extracts ``代码`` / ``最新份额`` and intentionally
+          drops ``总市值`` (it must never be mapped to ``aum``).
+
+        The merged records carry a placeholder
+        :class:`InstrumentId` per ``(symbol, exchange)`` pair; the
+        application service re-resolves the real
+        ``core.instruments.id`` at upsert time, mirroring the
+        daily-bars pattern. Records are emitted as
+        :class:`AkshareProfileRecord` so a downstream pipeline
+        cannot accidentally coerce them into ``Instrument`` or
+        :class:`DailyBar`. A failed client call short-circuits to a
+        single failed attempt with no batch.
+
+        The current :class:`invest_domain.etf_profile.models.EtfProfile`
+        contract does not accept a ``name`` field, so the
+        ``基金简称`` / ``名称`` values are intentionally dropped in
+        this slice. The total market value is intentionally NOT
+        mapped to ``aum``. See the mapper docstring for the full
+        field-by-field rationale.
+        """
+
+        request_id = uuid4()
+        attempt_id = uuid4()
+        started_at = self._now()
+        request = ProviderRequest(
+            provider_key=self.provider_key,
+            dataset_key=_ETF_PROFILE_DATASET_KEY,
+            request_key="etf-profile",
+            params={},
+            created_at=started_at,
+        )
+        self._guard_enabled("fetch_etf_profile")
+
+        try:
+            name_response = self._client.fetch_fund_name_em()
+        except ProviderError as exc:
+            return self._build_failure(
+                request=request,
+                request_id=request_id,
+                started_at=started_at,
+                error=exc,
+                context_symbol="fund_name_em",
+            )
+
+        try:
+            spot_response = self._client.fetch_fund_etf_spot_em()
+        except ProviderError as exc:
+            return self._build_failure(
+                request=request,
+                request_id=request_id,
+                started_at=started_at,
+                error=exc,
+                context_symbol="fund_etf_spot_em",
+            )
+
+        finished_at = self._now()
+        try:
+            name_mapping: AkshareFundNameMappingResult = map_fund_name_em(name_response)
+            spot_mapping: AkshareFundEtfSpotMappingResult = map_fund_etf_spot_em(
+                spot_response
+            )
+            mapping: AkshareProfileMappingResult = merge_etf_profile(
+                name_mapping, spot_mapping
+            )
+        except ProviderDataContractError as exc:
+            return self._build_failure(
+                request=request,
+                request_id=request_id,
+                started_at=started_at,
+                finished_at=finished_at,
+                error=exc,
+                context_symbol="merge_etf_profile",
+            )
+
+        duration_ms = self._duration_ms(started_at, finished_at)
+        attempt = ProviderAttempt(
+            request_id=request_id,
+            attempt_number=1,
+            status=ProviderAttemptStatus.SUCCEEDED,
+            started_at=started_at,
+            finished_at=finished_at,
+            duration_ms=duration_ms,
+        )
+        raw_hash = _canonical_payload_hash(
+            {
+                "adjust": self._settings.adjust,
+                "fund_name_em": name_response.raw_payload,
+                "fund_etf_spot_em": spot_response.raw_payload,
+            }
+        )
+        batch = ProviderBatch[AkshareProfileRecord](
             attempt_id=attempt_id,
             records=mapping.records,
             raw_payload_hash=raw_hash,

@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import unittest
 from datetime import UTC, date, datetime
+from decimal import Decimal
 from typing import Any
 from uuid import uuid4
 
@@ -39,7 +40,10 @@ from invest_pipeline.adapters.akshare.mapper import (
     map_fund_etf_fund_daily_em,
     map_fund_etf_fund_info_em,
     map_fund_etf_hist_em,
+    map_fund_etf_spot_em,
+    map_fund_name_em,
     map_tool_trade_date_hist_sina,
+    merge_etf_profile,
 )
 from invest_pipeline.adapters.errors import ProviderDataContractError
 
@@ -813,6 +817,356 @@ class MapToolTradeDateHistSinaTest(unittest.TestCase):
         result = map_tool_trade_date_hist_sina(response)
         self.assertEqual(result.records, ())
         self.assertEqual(len(result.warnings), 1)
+
+
+# ----------------------------------------------------------------------
+# ETF Profile mapper (DC-2 — conservative static metadata)
+# ----------------------------------------------------------------------
+
+
+class MapFundNameEmTest(unittest.TestCase):
+    """Mapping rules for ``ak.fund_name_em()``."""
+
+    def test_maps_chinese_aliases_to_fund_name_records(self) -> None:
+        payload = [
+            {
+                "基金代码": "510300",
+                "基金简称": "华泰柏瑞沪深300ETF",
+                "基金类型": "ETF",
+            },
+            {
+                "基金代码": "159919",
+                "基金简称": "嘉实沪深300ETF",
+                "基金类型": "ETF",
+            },
+        ]
+        response = _make_response(payload, operation="fund_name_em")
+        result = map_fund_name_em(response)
+        self.assertEqual(result.warnings, ())
+        self.assertEqual(len(result.records), 2)
+        self.assertEqual(result.records[0].symbol, "510300")
+        self.assertEqual(result.records[0].fund_type, "ETF")
+        self.assertEqual(result.records[0].category, "ETF")
+        self.assertEqual(result.records[1].symbol, "159919")
+
+    def test_maps_english_aliases_to_fund_name_records(self) -> None:
+        payload = [
+            {"symbol": "510300", "name": "ETF-A", "type": "ETF"},
+        ]
+        response = _make_response(payload)
+        result = map_fund_name_em(response)
+        self.assertEqual(len(result.records), 1)
+        self.assertEqual(result.records[0].symbol, "510300")
+        self.assertEqual(result.records[0].fund_type, "ETF")
+        self.assertEqual(result.records[0].category, "ETF")
+
+    def test_non_etf_row_is_skipped_with_warning(self) -> None:
+        # ``fund_name_em`` includes LOFs / closed-end funds / bond
+        # funds. The mapper is ETF-only; non-ETF rows downgrade to a
+        # warning so the downstream merge is bounded to confirmed ETFs.
+        payload = [
+            {"基金代码": "510300", "基金类型": "ETF"},
+            {"基金代码": "163406", "基金类型": "LOF"},
+            {"基金代码": "000001", "基金类型": "OpenEnd"},
+        ]
+        response = _make_response(payload)
+        result = map_fund_name_em(response)
+        self.assertEqual(len(result.records), 1)
+        self.assertEqual(result.records[0].symbol, "510300")
+        self.assertEqual(len(result.warnings), 2)
+        for warning in result.warnings:
+            self.assertIn("not an ETF row", warning)
+
+    def test_non_six_digit_symbol_is_skipped_with_warning(self) -> None:
+        payload = [
+            {"基金代码": "510300", "基金类型": "ETF"},
+            {"基金代码": "ABC123", "基金类型": "ETF"},
+            {"基金代码": "12345", "基金类型": "ETF"},
+        ]
+        response = _make_response(payload)
+        result = map_fund_name_em(response)
+        self.assertEqual(len(result.records), 1)
+        self.assertEqual(result.records[0].symbol, "510300")
+        self.assertEqual(len(result.warnings), 2)
+
+    def test_missing_symbol_downgrades_to_warning(self) -> None:
+        payload = [
+            {"基金简称": "ETF-A", "基金类型": "ETF"},
+        ]
+        response = _make_response(payload)
+        result = map_fund_name_em(response)
+        self.assertEqual(result.records, ())
+        self.assertEqual(len(result.warnings), 1)
+
+    def test_non_dict_row_downgrades_to_warning(self) -> None:
+        payload = [["基金代码", "基金类型"]]
+        response = _make_response(payload)
+        result = map_fund_name_em(response)
+        self.assertEqual(result.records, ())
+        self.assertEqual(len(result.warnings), 1)
+
+
+class MapFundEtfSpotEmTest(unittest.TestCase):
+    """Mapping rules for ``ak.fund_etf_spot_em()``."""
+
+    def test_maps_chinese_aliases_to_spot_records(self) -> None:
+        payload = [
+            {
+                "代码": "510300",
+                "名称": "华泰柏瑞沪深300ETF",
+                "最新份额": "1000000000",
+                "总市值": "1234567890.00",
+            },
+            {
+                "代码": "159919",
+                "名称": "嘉实沪深300ETF",
+                "最新份额": "500000000",
+                "总市值": "987654321.00",
+            },
+        ]
+        response = _make_response(payload, operation="fund_etf_spot_em")
+        result = map_fund_etf_spot_em(response)
+        self.assertEqual(result.warnings, ())
+        self.assertEqual(len(result.records), 2)
+        self.assertEqual(result.records[0].symbol, "510300")
+        self.assertEqual(
+            result.records[0].shares, Decimal("1000000000")
+        )
+        # The total market value column is intentionally NOT extracted
+        # — verify it never appears on the sidecar record.
+        self.assertFalse(
+            hasattr(result.records[0], "total_market_value")
+        )
+        self.assertFalse(
+            hasattr(result.records[0], "aum")
+        )
+
+    def test_maps_english_aliases_to_spot_records(self) -> None:
+        payload = [
+            {"symbol": "510300", "shares": "1000000000"},
+        ]
+        response = _make_response(payload)
+        result = map_fund_etf_spot_em(response)
+        self.assertEqual(len(result.records), 1)
+        self.assertEqual(result.records[0].symbol, "510300")
+        self.assertEqual(result.records[0].shares, Decimal("1000000000"))
+
+    def test_non_six_digit_symbol_is_skipped_with_warning(self) -> None:
+        payload = [
+            {"代码": "510300", "最新份额": "1000000000"},
+            {"代码": "ABC123", "最新份额": "500000000"},
+        ]
+        response = _make_response(payload)
+        result = map_fund_etf_spot_em(response)
+        self.assertEqual(len(result.records), 1)
+        self.assertEqual(result.records[0].symbol, "510300")
+        self.assertEqual(len(result.warnings), 1)
+
+    def test_missing_symbol_downgrades_to_warning(self) -> None:
+        payload = [{"最新份额": "1000000000"}]
+        response = _make_response(payload)
+        result = map_fund_etf_spot_em(response)
+        self.assertEqual(result.records, ())
+        self.assertEqual(len(result.warnings), 1)
+
+    def test_non_numeric_shares_downgrades_to_warning(self) -> None:
+        payload = [
+            {"代码": "510300", "最新份额": "1000000000"},
+            {"代码": "159919", "最新份额": "not-a-number"},
+        ]
+        response = _make_response(payload)
+        result = map_fund_etf_spot_em(response)
+        self.assertEqual(len(result.records), 1)
+        self.assertEqual(result.records[0].symbol, "510300")
+        self.assertEqual(len(result.warnings), 1)
+        self.assertIn("159919", result.warnings[0])
+        self.assertIn("non-decimal", result.warnings[0])
+
+    def test_missing_shares_is_acceptable(self) -> None:
+        # A row with no ``shares`` is acceptable: ``shares`` is an
+        # optional field on the domain contract. The mapper yields
+        # ``None`` so the application service can still upsert the
+        # profile row with verified fields only.
+        payload = [
+            {"代码": "510300", "总市值": "1234567890.00"},
+        ]
+        response = _make_response(payload)
+        result = map_fund_etf_spot_em(response)
+        self.assertEqual(len(result.records), 1)
+        self.assertIsNone(result.records[0].shares)
+
+    def test_non_dict_row_downgrades_to_warning(self) -> None:
+        payload = [["代码", "最新份额"]]
+        response = _make_response(payload)
+        result = map_fund_etf_spot_em(response)
+        self.assertEqual(result.records, ())
+        self.assertEqual(len(result.warnings), 1)
+
+
+class MergeEtfProfileTest(unittest.TestCase):
+    """Inner-join rules for the static ETF Profile merge."""
+
+    def test_joins_on_symbol_and_populates_verified_fields(self) -> None:
+        name_payload = [
+            {
+                "基金代码": "510300",
+                "基金简称": "华泰柏瑞沪深300ETF",
+                "基金类型": "ETF",
+            },
+            {
+                "基金代码": "159919",
+                "基金简称": "嘉实沪深300ETF",
+                "基金类型": "ETF",
+            },
+        ]
+        spot_payload = [
+            {
+                "代码": "510300",
+                "名称": "华泰柏瑞沪深300ETF",
+                "最新份额": "1000000000",
+                "总市值": "1234567890.00",
+            },
+            {
+                "代码": "159919",
+                "名称": "嘉实沪深300ETF",
+                "最新份额": "500000000",
+                "总市值": "987654321.00",
+            },
+        ]
+        name_mapping = map_fund_name_em(
+            _make_response(name_payload, operation="fund_name_em")
+        )
+        spot_mapping = map_fund_etf_spot_em(
+            _make_response(spot_payload, operation="fund_etf_spot_em")
+        )
+        result = merge_etf_profile(name_mapping, spot_mapping)
+        self.assertEqual(result.warnings, ())
+        self.assertEqual(len(result.records), 2)
+        # The merge step sorts symbols deterministically so the
+        # output order is independent from the input order.
+        records_by_symbol = {entry.symbol: entry for entry in result.records}
+        sse = records_by_symbol["510300"]
+        self.assertEqual(sse.exchange, "SSE")
+        self.assertEqual(sse.fund_type, "ETF")
+        self.assertEqual(sse.category, "ETF")
+        self.assertEqual(sse.shares, Decimal("1000000000"))
+        szse = records_by_symbol["159919"]
+        self.assertEqual(szse.exchange, "SZSE")
+        self.assertEqual(szse.shares, Decimal("500000000"))
+
+    def test_total_market_value_is_never_mapped_to_aum(self) -> None:
+        # The total market value column from ``fund_etf_spot_em``
+        # is intentionally NOT extracted by the spot mapper; the
+        # merge step therefore cannot leak it onto the profile
+        # record. Verify the dataclass surface stays minimal.
+        name_payload = [
+            {"基金代码": "510300", "基金类型": "ETF"},
+        ]
+        spot_payload = [
+            {
+                "代码": "510300",
+                "最新份额": "1000000000",
+                "总市值": "1234567890.00",
+            },
+        ]
+        name_mapping = map_fund_name_em(
+            _make_response(name_payload, operation="fund_name_em")
+        )
+        spot_mapping = map_fund_etf_spot_em(
+            _make_response(spot_payload, operation="fund_etf_spot_em")
+        )
+        result = merge_etf_profile(name_mapping, spot_mapping)
+        self.assertEqual(len(result.records), 1)
+        record = result.records[0]
+        # The EtfProfile contract does not include aum from this
+        # slice; verify the dataclass surface does not even expose
+        # ``total_market_value``.
+        self.assertFalse(hasattr(record, "aum"))
+        self.assertFalse(hasattr(record, "total_market_value"))
+        self.assertFalse(hasattr(record, "manager"))
+
+    def test_name_only_symbols_yield_warning(self) -> None:
+        name_payload = [
+            {"基金代码": "510300", "基金类型": "ETF"},
+            {"基金代码": "159919", "基金类型": "ETF"},
+        ]
+        spot_payload = [
+            {"代码": "510300", "最新份额": "1000000000"},
+        ]
+        name_mapping = map_fund_name_em(
+            _make_response(name_payload, operation="fund_name_em")
+        )
+        spot_mapping = map_fund_etf_spot_em(
+            _make_response(spot_payload, operation="fund_etf_spot_em")
+        )
+        result = merge_etf_profile(name_mapping, spot_mapping)
+        self.assertEqual(len(result.records), 1)
+        self.assertEqual(result.records[0].symbol, "510300")
+        self.assertEqual(len(result.warnings), 1)
+        self.assertIn("159919", result.warnings[0])
+        self.assertIn("fund_etf_spot_em", result.warnings[0])
+
+    def test_spot_only_symbols_yield_warning(self) -> None:
+        name_payload = [
+            {"基金代码": "510300", "基金类型": "ETF"},
+        ]
+        spot_payload = [
+            {"代码": "510300", "最新份额": "1000000000"},
+            {"代码": "159919", "最新份额": "500000000"},
+        ]
+        name_mapping = map_fund_name_em(
+            _make_response(name_payload, operation="fund_name_em")
+        )
+        spot_mapping = map_fund_etf_spot_em(
+            _make_response(spot_payload, operation="fund_etf_spot_em")
+        )
+        result = merge_etf_profile(name_mapping, spot_mapping)
+        self.assertEqual(len(result.records), 1)
+        self.assertEqual(result.records[0].symbol, "510300")
+        self.assertEqual(len(result.warnings), 1)
+        self.assertIn("159919", result.warnings[0])
+        self.assertIn("fund_name_em", result.warnings[0])
+
+    def test_empty_payloads_yield_empty_records(self) -> None:
+        name_mapping = map_fund_name_em(
+            _make_response([], operation="fund_name_em")
+        )
+        spot_mapping = map_fund_etf_spot_em(
+            _make_response([], operation="fund_etf_spot_em")
+        )
+        result = merge_etf_profile(name_mapping, spot_mapping)
+        self.assertEqual(result.records, ())
+        self.assertEqual(result.warnings, ())
+
+    def test_unfunded_fields_stay_none(self) -> None:
+        # The conservative slice leaves the unfunded fields ``None``
+        # on the merged record. Verify the dataclass surface does not
+        # fabricate a value (the production domain contract does not
+        # accept a name field in this slice).
+        name_payload = [
+            {"基金代码": "510300", "基金类型": "ETF"},
+        ]
+        spot_payload = [
+            {"代码": "510300", "最新份额": "1000000000"},
+        ]
+        name_mapping = map_fund_name_em(
+            _make_response(name_payload, operation="fund_name_em")
+        )
+        spot_mapping = map_fund_etf_spot_em(
+            _make_response(spot_payload, operation="fund_etf_spot_em")
+        )
+        result = merge_etf_profile(name_mapping, spot_mapping)
+        record = result.records[0]
+        # Verify the dataclass surface does not expose unfunded
+        # fields at all (they live on the EtfProfile domain contract,
+        # not on the AkShare-shaped mapper record).
+        self.assertFalse(hasattr(record, "manager"))
+        self.assertFalse(hasattr(record, "benchmark_index"))
+        self.assertFalse(hasattr(record, "inception_date"))
+        self.assertFalse(hasattr(record, "management_fee"))
+        self.assertFalse(hasattr(record, "custody_fee"))
+        self.assertFalse(hasattr(record, "aum"))
+        self.assertFalse(hasattr(record, "name"))
 
 
 if __name__ == "__main__":

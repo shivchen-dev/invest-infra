@@ -58,6 +58,7 @@ from invest_pipeline.adapters.akshare.config import AkshareSettings
 from invest_pipeline.adapters.akshare.mapper import (
     AkshareCalendarRecord,
     AkshareNavRecord,
+    AkshareProfileRecord,
 )
 from invest_pipeline.adapters.errors import (
     ProviderBadResponseError,
@@ -142,6 +143,13 @@ class AkshareDisabledGateTest(unittest.TestCase):
             provider.fetch_trading_calendar()
         self.assertIn("akshare", str(ctx.exception))
         self.assertIn("fetch_trading_calendar", str(ctx.exception))
+
+    def test_fetch_etf_profile_raises_real_provider_error(self) -> None:
+        provider = AkshareInstrumentProvider()
+        with self.assertRaises(RealProviderRequiresExplicitEnablementError) as ctx:
+            provider.fetch_etf_profile()
+        self.assertIn("akshare", str(ctx.exception))
+        self.assertIn("fetch_etf_profile", str(ctx.exception))
 
 
 class AkshareConstructionTest(unittest.TestCase):
@@ -746,6 +754,204 @@ class AkshareCalendarSuccessTest(unittest.TestCase):
         second, _, _ = provider.fetch_trading_calendar()
         self.assertEqual(first.request_key, second.request_key)
         self.assertEqual(first.request_key, "trading-calendar")
+
+
+class AkshareProfileSuccessTest(unittest.TestCase):
+    """End-to-end DC-2 ETF Profile success path with an injected stub module."""
+
+    def test_fetch_etf_profile_joins_name_and_spot_payloads(self) -> None:
+        # The stub exposes both ``fund_name_em`` and ``fund_etf_spot_em``
+        # and the adapter produces a single ``ProviderBatch`` of
+        # :class:`AkshareProfileRecord` entries joined by symbol.
+        stub_module = SimpleNamespace(
+            fund_name_em=lambda: [
+                {
+                    "基金代码": "510300",
+                    "基金简称": "华泰柏瑞沪深300ETF",
+                    "基金类型": "ETF",
+                },
+                {
+                    "基金代码": "159919",
+                    "基金简称": "嘉实沪深300ETF",
+                    "基金类型": "ETF",
+                },
+            ],
+            fund_etf_spot_em=lambda: [
+                {
+                    "代码": "510300",
+                    "名称": "华泰柏瑞沪深300ETF",
+                    "最新份额": "1000000000",
+                    "总市值": "1234567890.00",
+                },
+                {
+                    "代码": "159919",
+                    "名称": "嘉实沪深300ETF",
+                    "最新份额": "500000000",
+                    "总市值": "987654321.00",
+                },
+            ],
+        )
+        client = AkshareClient(_enabled_settings(), module=stub_module)
+        provider = AkshareInstrumentProvider(
+            settings=_enabled_settings(), client=client
+        )
+        request, attempt, batch = provider.fetch_etf_profile()
+        self.assertEqual(request.dataset_key, "etf_profile")
+        self.assertEqual(request.request_key, "etf-profile")
+        self.assertEqual(request.params, {})
+        self.assertEqual(attempt.status, ProviderAttemptStatus.SUCCEEDED)
+        assert batch is not None
+        self.assertEqual(batch.status, ProviderBatchStatus.SUCCEEDED)
+        self.assertEqual(len(batch.records), 2)
+        self.assertEqual(len(batch.raw_payload_hash), 64)
+        for entry in batch.records:
+            self.assertIsInstance(entry, AkshareProfileRecord)
+
+    def test_fetch_etf_profile_never_maps_total_market_value_to_aum(self) -> None:
+        # The ``总市值`` (total market value) column from
+        # ``fund_etf_spot_em`` must never be mapped to ``aum``.
+        # The AkShareProfileRecord dataclass surface does not
+        # expose ``aum`` at all (the production domain contract
+        # rejects fabricated AUM values).
+        stub_module = SimpleNamespace(
+            fund_name_em=lambda: [
+                {"基金代码": "510300", "基金类型": "ETF"},
+            ],
+            fund_etf_spot_em=lambda: [
+                {
+                    "代码": "510300",
+                    "最新份额": "1000000000",
+                    "总市值": "1234567890.00",
+                },
+            ],
+        )
+        client = AkshareClient(_enabled_settings(), module=stub_module)
+        provider = AkshareInstrumentProvider(
+            settings=_enabled_settings(), client=client
+        )
+        _, _, batch = provider.fetch_etf_profile()
+        assert batch is not None
+        self.assertEqual(len(batch.records), 1)
+        record = batch.records[0]
+        self.assertFalse(hasattr(record, "aum"))
+        self.assertFalse(hasattr(record, "total_market_value"))
+
+    def test_fetch_etf_profile_emits_merge_warnings(self) -> None:
+        # A symbol that appears in only one of the two payloads
+        # yields a warning so the operator can audit the upstream
+        # response for partial coverage.
+        stub_module = SimpleNamespace(
+            fund_name_em=lambda: [
+                {"基金代码": "510300", "基金类型": "ETF"},
+                {"基金代码": "159919", "基金类型": "ETF"},
+            ],
+            fund_etf_spot_em=lambda: [
+                {"代码": "510300", "最新份额": "1000000000"},
+            ],
+        )
+        client = AkshareClient(_enabled_settings(), module=stub_module)
+        provider = AkshareInstrumentProvider(
+            settings=_enabled_settings(), client=client
+        )
+        _, _, batch = provider.fetch_etf_profile()
+        assert batch is not None
+        self.assertEqual(len(batch.records), 1)
+        self.assertEqual(len(batch.warnings), 1)
+        self.assertIn("159919", batch.warnings[0])
+
+    def test_fetch_etf_profile_empty_payloads_yield_empty_batch(self) -> None:
+        stub_module = SimpleNamespace(
+            fund_name_em=lambda: [],
+            fund_etf_spot_em=lambda: [],
+        )
+        client = AkshareClient(_enabled_settings(), module=stub_module)
+        provider = AkshareInstrumentProvider(
+            settings=_enabled_settings(), client=client
+        )
+        _, _, batch = provider.fetch_etf_profile()
+        assert batch is not None
+        self.assertEqual(batch.records, ())
+        self.assertEqual(batch.warnings, ())
+        self.assertEqual(batch.status, ProviderBatchStatus.SUCCEEDED)
+
+    def test_fetch_etf_profile_request_key_is_deterministic(self) -> None:
+        stub_module = SimpleNamespace(
+            fund_name_em=lambda: [],
+            fund_etf_spot_em=lambda: [],
+        )
+        client = AkshareClient(_enabled_settings(), module=stub_module)
+        provider = AkshareInstrumentProvider(
+            settings=_enabled_settings(), client=client
+        )
+        first, _, _ = provider.fetch_etf_profile()
+        second, _, _ = provider.fetch_etf_profile()
+        self.assertEqual(first.request_key, second.request_key)
+        self.assertEqual(first.request_key, "etf-profile")
+
+    def test_fetch_etf_profile_fund_name_failure_short_circuits(self) -> None:
+        # A client-side failure on ``fund_name_em`` short-circuits
+        # to a single failed attempt with no batch.
+        def _name_em() -> list[dict[str, Any]]:
+            raise ProviderBadResponseError(
+                "akshare", "fund_name_em() raised ValueError: bad"
+            )
+
+        stub_module = SimpleNamespace(
+            fund_name_em=_name_em,
+            fund_etf_spot_em=lambda: [],
+        )
+        client = AkshareClient(_enabled_settings(), module=stub_module)
+        provider = AkshareInstrumentProvider(
+            settings=_enabled_settings(), client=client
+        )
+        request, attempt, batch = provider.fetch_etf_profile()
+        self.assertEqual(request.dataset_key, "etf_profile")
+        self.assertEqual(attempt.status, ProviderAttemptStatus.FAILED)
+        self.assertEqual(attempt.error_code, "ProviderBadResponseError")
+        self.assertEqual(attempt.error_stage, ProviderFailureStage.DECODE)
+        self.assertIn("fund_name_em", attempt.error_message)
+        self.assertIsNone(batch)
+
+    def test_fetch_etf_profile_fund_spot_failure_short_circuits(self) -> None:
+        # A client-side failure on ``fund_etf_spot_em`` short-circuits
+        # to a single failed attempt with no batch.
+        def _spot_em() -> list[dict[str, Any]]:
+            raise ProviderBadResponseError(
+                "akshare", "fund_etf_spot_em() raised ValueError: bad"
+            )
+
+        stub_module = SimpleNamespace(
+            fund_name_em=lambda: [],
+            fund_etf_spot_em=_spot_em,
+        )
+        client = AkshareClient(_enabled_settings(), module=stub_module)
+        provider = AkshareInstrumentProvider(
+            settings=_enabled_settings(), client=client
+        )
+        request, attempt, batch = provider.fetch_etf_profile()
+        self.assertEqual(request.dataset_key, "etf_profile")
+        self.assertEqual(attempt.status, ProviderAttemptStatus.FAILED)
+        self.assertEqual(attempt.error_code, "ProviderBadResponseError")
+        self.assertIn("fund_etf_spot_em", attempt.error_message)
+        self.assertIsNone(batch)
+
+    def test_fetch_etf_profile_missing_sdk_returns_failed_attempt(self) -> None:
+        def _missing_resolver() -> ModuleType:
+            raise ModuleNotFoundError("akshare is not installed")
+
+        client = AkshareClient(
+            _enabled_settings(),
+            module_resolver=_missing_resolver,
+        )
+        provider = AkshareInstrumentProvider(
+            settings=_enabled_settings(), client=client
+        )
+        request, attempt, batch = provider.fetch_etf_profile()
+        self.assertEqual(request.dataset_key, "etf_profile")
+        self.assertEqual(attempt.status, ProviderAttemptStatus.FAILED)
+        self.assertEqual(attempt.error_code, "ProviderUnavailableError")
+        self.assertIn("pip install akshare", attempt.error_message)
+        self.assertIsNone(batch)
 
 
 class AkshareMalformedRowsTest(unittest.TestCase):

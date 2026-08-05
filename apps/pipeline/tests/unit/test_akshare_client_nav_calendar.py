@@ -254,5 +254,82 @@ class AkshareClientModuleResolutionTest(unittest.TestCase):
         self.assertIn("pip install akshare", str(ctx.exception))
 
 
+class AkshareClientFundNameEmFetchTest(unittest.TestCase):
+    """:meth:`AkshareClient.fetch_fund_name_em` happy path."""
+
+    def test_returns_normalised_records(self) -> None:
+        # The stub returns a list-of-dicts (already-normalised shape).
+        # The client passes through unchanged and stamps a hex hash.
+        stub_module = SimpleNamespace(
+            fund_name_em=lambda: [
+                {"基金代码": "510300", "基金简称": "华泰柏瑞沪深300ETF", "基金类型": "ETF"},
+                {"基金代码": "159919", "基金简称": "嘉实沪深300ETF", "基金类型": "ETF"},
+            ]
+        )
+        client = AkshareClient(_enabled_settings(), module=stub_module)
+        response = client.fetch_fund_name_em()
+        assert isinstance(response, AkshareResponse)
+        self.assertEqual(response.operation, "fund_name_em")
+        self.assertEqual(len(response.raw_payload), 2)
+        self.assertEqual(len(response.raw_payload_hash), 64)
+
+    def test_missing_sdk_function_raises_unavailable(self) -> None:
+        # A stub that lacks ``fund_name_em`` simulates an SDK upgrade
+        # that renamed the function. The client must raise the typed
+        # ``ProviderUnavailableError`` carrying the install hint so
+        # the adapter surfaces a clean failure.
+        stub_module = SimpleNamespace(__version__="99.0.0")
+        client = AkshareClient(_enabled_settings(), module=stub_module)
+        with self.assertRaises(ProviderUnavailableError) as ctx:
+            client.fetch_fund_name_em()
+        self.assertIn("fund_name_em", str(ctx.exception))
+        self.assertIn("99.0.0", str(ctx.exception))
+
+    def test_upstream_exception_is_wrapped_as_bad_response(self) -> None:
+        def _raise() -> list[dict[str, Any]]:
+            raise RuntimeError("upstream 503")
+
+        stub_module = SimpleNamespace(fund_name_em=_raise)
+        client = AkshareClient(_enabled_settings(), module=stub_module)
+        with self.assertRaises(ProviderBadResponseError) as ctx:
+            client.fetch_fund_name_em()
+        self.assertIn("upstream 503", str(ctx.exception))
+
+
+class AkshareClientFundEtfSpotEmFetchTest(unittest.TestCase):
+    """:meth:`AkshareClient.fetch_fund_etf_spot_em` happy path."""
+
+    def test_returns_normalised_records(self) -> None:
+        stub_module = SimpleNamespace(
+            fund_etf_spot_em=lambda: [
+                {"代码": "510300", "名称": "华泰柏瑞沪深300ETF", "最新份额": "1000000000"},
+                {"代码": "159919", "名称": "嘉实沪深300ETF", "最新份额": "500000000"},
+            ]
+        )
+        client = AkshareClient(_enabled_settings(), module=stub_module)
+        response = client.fetch_fund_etf_spot_em()
+        assert isinstance(response, AkshareResponse)
+        self.assertEqual(response.operation, "fund_etf_spot_em")
+        self.assertEqual(len(response.raw_payload), 2)
+        self.assertEqual(len(response.raw_payload_hash), 64)
+
+    def test_missing_sdk_function_raises_unavailable(self) -> None:
+        stub_module = SimpleNamespace(__version__="99.0.0")
+        client = AkshareClient(_enabled_settings(), module=stub_module)
+        with self.assertRaises(ProviderUnavailableError) as ctx:
+            client.fetch_fund_etf_spot_em()
+        self.assertIn("fund_etf_spot_em", str(ctx.exception))
+
+    def test_upstream_exception_is_wrapped_as_bad_response(self) -> None:
+        def _raise() -> list[dict[str, Any]]:
+            raise RuntimeError("upstream 503")
+
+        stub_module = SimpleNamespace(fund_etf_spot_em=_raise)
+        client = AkshareClient(_enabled_settings(), module=stub_module)
+        with self.assertRaises(ProviderBadResponseError) as ctx:
+            client.fetch_fund_etf_spot_em()
+        self.assertIn("upstream 503", str(ctx.exception))
+
+
 if __name__ == "__main__":
     unittest.main()
