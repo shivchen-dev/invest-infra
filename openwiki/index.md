@@ -6,7 +6,7 @@ description: "Files and subdirectories in OpenWiki."
 
 # Files
 
-- [OpenWiki Quickstart](quickstart.md) - Entry point for the invest-infra OpenWiki knowledge base. Describes the modular-monolith layout, links every major concept page, and summarizes local startup, migrations, personal daily scheduling and replay/backfill operations, testing, and opt-in CifangQuant validation.
+- [OpenWiki Quickstart](quickstart.md) - Entry point for the invest-infra OpenWiki knowledge base. Describes the modular-monolith layout, links every major concept page, and summarizes local startup, migrations, personal daily scheduling and replay/backfill operations, testing, opt-in CifangQuant / Tushare validation, the DC-2 ETF profile and Stage 4A research context slices, and the centralized provider credential store.
 
 # Directories
 

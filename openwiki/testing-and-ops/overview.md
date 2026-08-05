@@ -1,9 +1,9 @@
 ---
 type: Concept
 title: Testing & operations
-description: CI jobs (architecture, domain, storage unit/integration, migrations, pipeline, API, personal-daily PostgreSQL e2e, and web), the AST-based architecture and migration-chain gates, mock vs integration tests, compose runtime, and the Cifang/replay/shadow-run operating procedures.
+description: CI jobs (architecture, domain, storage unit/integration, migrations, pipeline, API, personal-daily PostgreSQL e2e, and web), the AST-based architecture and migration-chain gates, mock vs integration tests, the DC-2 / Stage 4A evidence + context unit suites, compose runtime, and the Cifang/replay/shadow-run operating procedures.
 resource: /openwiki/testing-and-ops/overview.md
-tags: [ci, testing, alembic, compose, openwiki]
+tags: [ci, testing, alembic, compose, openwiki, etf-profile, research-context]
 ---
 
 # Testing & operations
@@ -159,12 +159,13 @@ the asset-level integration paths against fixture data:
   `candidate_pool_service.calculate_and_publish_candidate_pool`.
 - `test_etf_assets_provider_wiring.py` and
   `test_provider_factory_runtime.py` pin `build_provider()`'s
-  four branches (fixture_dev / cifangquant / akshare / unknown) and
-  the `INVEST_PIPELINE_PROVIDER_KEY` env wiring. The runtime
-  factory test asserts
-  `KNOWN_PROVIDER_KEYS == ("fixture_dev", "cifangquant", "akshare")`
-  so a future branch cannot land without an explicit test update.
-- `test_provider_catalog.py` (≈626 LOC) pins the eight catalog
+  four branches (fixture_dev / cifangquant / akshare / tushare /
+  unknown) and the `INVEST_PIPELINE_PROVIDER_KEY` env wiring. The
+  runtime factory test asserts
+  `KNOWN_PROVIDER_KEYS == ("fixture_dev", "cifangquant", "akshare",
+  "tushare")` so a future branch cannot land without an explicit
+  test update.
+- `test_provider_catalog.py` (≈626 LOC) pins the six catalog
   declarations, the alphabetical iteration order, and the
   `KeyError(key)` behaviour of `lookup_provider`. The
   `test_provider_routing_selection.py` /
@@ -181,11 +182,17 @@ the asset-level integration paths against fixture data:
   / `test_akshare_config.py` / `test_akshare_mapping.py` cover the
   AkShare adapter end-to-end (Sina-preference + Eastmoney-fallback
   loop, NAV / calendar read-only surfaces, lazy SDK import seam,
-  adjustment lock). `test_quicktiny_mcp_adapter.py` and
-  `test_rsscast_adapter.py` cover the MCP research transports
-  using `httpx.MockTransport` so CI never opens a socket, and
-  `test_{eastmoney,sina,tonghuashun}_config.py` cover the
-  three-provider plan Phase-1 configuration-only stubs.
+  adjustment lock, the conservative DC-2 `fetch_etf_profile`
+  surface that joins `fund_name_em` and `fund_etf_spot_em` and
+  the `map_etf_profile_to_field_evidence` mapper). `test_tushare_integration.py`
+  pins the Tushare Pro bounded slice (POST-JSON client, mapper,
+  adapter, credentials store), and `test_credentials.py` pins the
+  centralized `CredentialStore` lookup contract. `test_quicktiny_mcp_adapter.py`
+  and `test_rsscast_adapter.py` cover the MCP research transports
+  using `httpx.MockTransport` so CI never opens a socket. The
+  historical three-provider plan Phase-1 stubs (`eastmoney` /
+  `sina` / `tonghuashun`) were removed alongside the adapter
+  packages; the matching test files were deleted as well.
 - `test_historical_daily_bars_cli.py` (≈1154 LOC) covers the
   guarded historical ETF backfill CLI: ISO date parsing, range
   validation, ≤90-day chunking, the `KNOWN_PROVIDER_KEYS`-scoped
@@ -213,6 +220,19 @@ the asset-level integration paths against fixture data:
 - `test_daily_preflight.py` covers the ordered run/skip/fail guard
   decisions and the default-off schedule flag; the schedule remains
   manually exercised rather than reaching a real provider in CI.
+- `test_etf_profiles_service.py` / `test_etf_profile_context.py`
+  cover the DC-2 `etf_profiles` ETL service and the Stage 4A
+  `build_etf_profile_context_pack` builder (resolver → `ContextItem`
+  projection, missing / conflict / resolved outcomes, AUM /
+  market_value separation). The matching pure-domain tests live
+  in `packages/domain/tests/test_etf_profile.py` /
+  `test_etf_profile_resolver.py` /
+  `test_research_context.py`; the storage mock tests
+  `tests/storage/test_etf_profile_repository_mock.py` /
+  `test_etf_profile_fields_repository_mock.py` /
+  `test_research_context_pack_repository_mock.py` pin the
+  `core.etf_profiles` / `analytics.etf_profile_fields` /
+  `analytics.research_context_packs` repository contracts.
 - [`tests/e2e/test_personal_daily_pipeline_postgres.py`](../../tests/e2e/test_personal_daily_pipeline_postgres.py)
   runs the fixture provider through migrations, raw evidence, core data,
   snapshot and published candidate-pool tables against PostgreSQL 16. It

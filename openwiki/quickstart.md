@@ -1,9 +1,9 @@
 ---
 type: Reference
 title: OpenWiki Quickstart
-description: Entry point for the invest-infra OpenWiki knowledge base. Describes the modular-monolith layout, links every major concept page, and summarizes local startup, migrations, personal daily scheduling and replay/backfill operations, testing, and opt-in CifangQuant validation.
+description: Entry point for the invest-infra OpenWiki knowledge base. Describes the modular-monolith layout, links every major concept page, and summarizes local startup, migrations, personal daily scheduling and replay/backfill operations, testing, opt-in CifangQuant / Tushare validation, the DC-2 ETF profile and Stage 4A research context slices, and the centralized provider credential store.
 resource: /openwiki/quickstart.md
-tags: [quickstart, navigation, invest-infra]
+tags: [quickstart, navigation, invest-infra, etf-profile, research-context]
 ---
 
 # OpenWiki quickstart — invest-infra v2
@@ -52,16 +52,21 @@ Read these pages in order:
 2. [Migrations overview](migrations/overview.md) — how
    `apps/migrations` owns the schema and the seven-revision chain.
 3. [Domain overview](domain/overview.md) — bounded contexts and the
-   canonical hashing scheme.
+   canonical hashing scheme (now including the DC-2 `etf_profile`
+   context and the Stage 4A `research.context` vocabulary).
 4. [Candidate pool](domain/candidate-pool.md) — the pure-function
    calculator and the state machine that governs one calculation.
 5. [Storage overview](storage/overview.md) — repositories, the
-   `UnitOfWork` and the three-layer Provider evidence model.
+   `UnitOfWork` and the three-layer Provider evidence model (now
+   including the DC-2 `etf_profiles` / `etf_profile_fields`
+   repositories and the `research_context_packs` repository).
 6. [API overview](api/overview.md) — FastAPI routers (legacy + ETF +
    candidate-pool latest/diff + pipeline-run status/history + data freshness),
    Pydantic response shapes.
 7. [Pipeline overview](pipeline/overview.md) — Dagster `Definitions`, the
-   `etf_*` assets, adapter boundaries, the declarative provider catalog,
+   `etf_*` assets, adapter boundaries (now including Tushare and the
+   centralized credential store), the DC-2 ETF Profile and research
+   context builder services, the declarative provider catalog,
    guarded personal scheduling, and replay/backfill operations.
 8. [Testing & operations](testing-and-ops/overview.md) — CI jobs, the
    migration-chain AST gate, mock vs integration tests, the PostgreSQL e2e,
@@ -211,17 +216,22 @@ personal-daily-run` is the manual CLI driver; the Section 9
 service"), Section 11 ("Personal CLIs") and Section 12 ("Provider
 factory") of the [pipeline overview](pipeline/overview.md) describe
 the new surfaces. The `provider_catalog.py` declarative registry now registers
-**eight** frozen `ProviderDeclaration` rows (`akshare` /
-`cifangquant` / `eastmoney` / `fixture_dev` / `quicktiny_mcp` /
-`rsscast` / `sina` / `tonghuashun`); the catalog is the
-single source of truth for the role / capability set every
-provider must respect. Only `fixture_dev` is enabled by default;
-every other declaration stays `enabled_by_default=False` per
-the matrix §6 default-off rule. The [Pipeline overview](pipeline/overview.md#7-provider-catalog)
-documents the eight declarations and the negative-capability
+**six** frozen `ProviderDeclaration` rows (`akshare` /
+`cifangquant` / `fixture_dev` / `quicktiny_mcp` / `rsscast` /
+`tushare`); the catalog is the single source of truth for the role /
+capability set every provider must respect. Only `fixture_dev` is
+enabled by default; every other declaration stays
+`enabled_by_default=False` per the matrix §6 default-off rule. The
+[Pipeline overview](pipeline/overview.md#7-provider-catalog)
+documents the six declarations and the negative-capability
 contract, and the [Pipeline overview §7A](pipeline/overview.md)
 introduces the deterministic dataset × capability
-`provider_routing` layer PR-05 adds on top.
+`provider_routing` layer PR-05 adds on top. Provider credentials
+flow through the centralized
+[`invest_pipeline.credentials.CredentialStore`](../apps/pipeline/src/invest_pipeline/credentials.py)
+helper; the runtime `provider_factory.build_provider()` exposes
+`fixture_dev` / `cifangquant` / `akshare` / `tushare` as its four
+branches — see [Pipeline overview §12](pipeline/overview.md#12-provider-factory).
 
 Stage 2 aligns all six job assets to the same daily partition, registers a
 weekday `16:10 Asia/Shanghai` schedule, and adds preflight checks for future
@@ -233,25 +243,53 @@ the [API overview](api/overview.md), and use the replay/backfill procedures in
 [Testing & operations](testing-and-ops/overview.md#7-operational-runbooks-and-validation).
 
 Stage 4A ships the V2 multi-source catalog and evidence foundation: the
-provider catalog grew to eight `ProviderDeclaration` rows with frozen
-`role` / `capability` / `enabled_by_default` triples; the
+provider catalog now holds **six** frozen `ProviderDeclaration` rows
+(`akshare` / `cifangquant` / `fixture_dev` / `quicktiny_mcp` / `rsscast`
+/ `tushare`) with frozen `role` / `capability` / `enabled_by_default`
+triples. The historical three-provider plan (`eastmoney` / `sina` /
+`tonghuashun`) has been **de-scoped** — the three sources are no
+longer selectable runtime providers and the catalog carries no
+declaration for them; their public historical-quotes endpoints
+remain internal upstreams of the AkShare aggregator. The
 `provider_routing` layer exposes the deterministic
 `select_providers` selection rules plus the read-only
 `CoverageReportModel` (sortable, hash-stable) that the
 `provider_coverage_cli` driver serialises to JSON. The AkShare,
-QuickTiny MCP and RssCast MCP adapters land as gated, opt-in
+QuickTiny MCP, RssCast MCP and Tushare adapters land as gated, opt-in
 research and market-data transports; the historical ETF backfill
 CLI plus the `make historical-daily-bars-backfill` target let
 operators replay raw + core.daily_bars over ≤90-day chunks
-without invoking the personal daily Dagster job. The
-`domain.research` bounded context defines the Stage 4A evidence
+without invoking the personal daily Dagster job. Provider credentials
+flow through the centralized
+[`invest_pipeline.credentials.CredentialStore`](../apps/pipeline/src/invest_pipeline/credentials.py)
+helper (default root `/home/claw/invest-secrets`, override via
+`INVEST_PIPELINE_SECRETS_DIR`); the explicit `INVEST_PIPELINE_*_TOKEN`
+env vars remain the highest-priority override.
+
+The `domain.research` bounded context defines the Stage 4A evidence
 contract (`EvidencePack` + 8-factor v1.0.0 set + canonical
-hashing) and `domain.candidate_pool.{universe,v1_adapter}`
-provide the pure dynamic ETF universe qualification and the
-V1→V2 pure adapter. Migration `20260803_0007_research_evidence_packs`
-adds the `analytics.research_evidence_packs` table — schema only;
-no repository, UoW property, or API router writes or reads it in
-this slice.
+hashing); the new `domain.research.context` module adds the
+`ResearchContextPack` / `ContextItem` / `ContextValueType`
+vocabulary that the evidence / context separation plan introduces.
+`domain.candidate_pool.{universe,v1_adapter}` provide the pure
+dynamic ETF universe qualification and the V1→V2 pure adapter.
+`domain.etf_profile` is the DC-2 evidence framework: `EtfProfile`
++ `FieldEvidence` / `FieldKey` / `FieldValueType` /
+`FieldEvidenceSource` (PR-ETF-PROFILE-01) and the `ProfileResolver`
++ `ResolutionStatus` / `ResolvedField` (PR-ETF-PROFILE-03). The
+pipeline-side `etf_profiles` service runs the PR-02 three-layer
+evidence write for the AkShare profile snapshot, persists
+`FieldEvidence` rows through `uow.etf_profile_fields`, and
+upserts the canonical `core.etf_profiles` row. The
+`etf_profile_context` builder projects the resolved evidence into
+the `etf_profile` `ResearchContextPack` (plan §"Task C3") and
+persists the pack through `uow.research_context_packs`. Migrations
+`20260804_0008_etf_profiles` /
+`20260805_0009_etf_profile_fields` /
+`20260805_0010_research_context_packs` add the matching tables;
+the AST migration-chain gate still expects a single head at
+`20260805_0010` and round-trips `upgrade head → downgrade base →
+upgrade head` end-to-end.
 
 ## 7. Web data workbench
 

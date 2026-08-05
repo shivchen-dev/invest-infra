@@ -1,9 +1,9 @@
 ---
 type: Concept
 title: Migrations overview
-description: How apps/migrations owns the PostgreSQL schema as an independent Alembic app, the six-revision chain under apps/migrations/migrations/versions, and the schema-ownership rules across raw/core/analytics/ops.
+description: How apps/migrations owns the PostgreSQL schema as an independent Alembic app, the ten-revision chain under apps/migrations/migrations/versions (baseline + provider evidence + candidate pool + daily bars + input snapshots + DC-2 etf_profiles + PR-ETF-PROFILE-04 etf_profile_fields + Stage 4A research_context_packs), and the schema-ownership rules across raw/core/analytics/ops.
 resource: /openwiki/migrations/overview.md
-tags: [migrations, alembic, postgres, schemas]
+tags: [migrations, alembic, postgres, schemas, etf-profile, research-context]
 ---
 
 # Migrations overview
@@ -31,17 +31,20 @@ apps/migrations/
         ├── 20260731_0004_daily_bars_and_revision.py
         ├── 20260731_0005_input_snapshots.py
         ├── 20260731_0006_candidate_pool_snapshot_fk.py
-        └── 20260803_0007_research_evidence_packs.py
+        ├── 20260803_0007_research_evidence_packs.py
+        ├── 20260804_0008_etf_profiles.py
+        ├── 20260805_0009_etf_profile_fields.py
+        └── 20260805_0010_research_context_packs.py
 ```
 
 The shell entry-point is `cd apps/migrations && uv run alembic ...`,
 which `make migrate` aliases.
 
-## 2. The seven-revision chain
+## 2. The ten-revision chain
 
 Every revision declares its own `revision`, `down_revision` and a
 single `upgrade()` / `downgrade()` pair. The chain currently ends at
-`20260803_0007_research_evidence_packs.py` and is verified by an AST-based
+`20260805_0010_research_context_packs.py` and is verified by an AST-based
 gate — see [Testing & operations](../testing-and-ops/overview.md#migration-chain-ast-gate).
 
 | Revision | Purpose | Key additions |
@@ -53,6 +56,9 @@ gate — see [Testing & operations](../testing-and-ops/overview.md#migration-cha
 | `20260731_0005_input_snapshots` | The PR-07 input snapshot header. | `analytics.input_snapshots` (uuid PK, `(snapshot_date, content_hash)` unique key, jsonb membership list, length-64 content-hash CHECK). |
 | `20260731_0006_candidate_pool_snapshot_fk` | Bind candidate-pool runs to their input snapshots. | Adds `fk_cpool_runs_snapshot_id` from `analytics.candidate_pool_runs.input_snapshot_id` to `analytics.input_snapshots.id`; downgrade drops the constraint. |
 | `20260803_0007_research_evidence_packs` | Stage 4A research evidence persistence. | Creates `analytics.research_evidence_packs` (uuid PK, `instrument_id` FK, `input_snapshot_id` and `candidate_pool_run_id` nullable FKs, `schema_version` / `factor_set_key` / `factor_set_version` / `freshness_status` / `quality_status` / length-64 `content_hash` / JSONB `payload`, plus a five-column `uq_research_evidence_packs_natural_key` unique constraint and two indexes on `(instrument_id, as_of_date)` and `content_hash`). |
+| `20260804_0008_etf_profiles` | DC-2 ETF Profile collection slice. | Creates `core.etf_profiles` (uuid PK `instrument_id` equal to the `core.instruments.id` FK, plus the nine nullable static fields `manager` / `benchmark_index` / `category` / `inception_date` / `fund_type` / `management_fee` / `custody_fee` / `aum` / `shares` and the `created_at` / `updated_at` audit timestamps). The CHECK constraints mirror the domain contract — non-empty textual fields, `management_fee` / `custody_fee` in `[0, 1)`, strictly positive AUM / shares — and three indexes cover the dashboard read paths on `manager` / `category` / `fund_type`. |
+| `20260805_0009_etf_profile_fields` | PR-ETF-PROFILE-04 storage slice. | Creates `analytics.etf_profile_fields` (uuid PK, `instrument_id` FK, `field_key` / `value_type` / source provenance columns, three discriminated value columns `field_value_text` / `field_value_numeric` / `field_value_date`, `confidence_score` in `[0, 1]`, `observed_at` timezone-aware timestamp, the unique `content_hash` index plus the three lookup indexes on `(instrument_id, field_key)` / `(instrument_id)` / `(source_provider)`). The natural idempotency key is `content_hash`; a different provider / revision produces a different `content_hash` and is stored as a coexisting row so the resolver can read every observation of one field. |
+| `20260805_0010_research_context_packs` | Stage 4A evidence / context separation (context layer). | Creates `analytics.research_context_packs` (uuid PK, `instrument_id` FK, `schema_version` / `context_version` / length-64 `content_hash` / optional `missing_reason` / `created_at`, with the unique `content_hash` index plus two indexes on `(instrument_id, context_version)` and `(instrument_id, created_at)`) **and** the child `analytics.research_context_items` (uuid PK, `pack_id` cascade-FK, `context_type` / `key` / `value_type` / JSONB `value` / source provenance columns, `observed_at`, `quality_status`, `confidence_score` in `[0, 1]`, JSONB `evidence_refs`, length-64 `item_hash`; the `value_type IN ('text','decimal','date','json')` CHECK and the `(pack_id, item_hash)` unique constraint anchor the per-item hash stability). |
 
 Older `20260730_0001..0004` revisions are no longer in the chain —
 they were retired when the migrations moved to `apps/migrations/`.
@@ -62,8 +68,8 @@ they were retired when the migrations moved to `apps/migrations/`.
 | Schema | Tables owned by | Pipeline writes via | API reads via |
 |--------|----------------|---------------------|---------------|
 | `raw` | Pipeline adapters + application service | `apps/pipeline/src/invest_pipeline/{etf_instruments,etf_daily_bars}.py` through `SqlAlchemyUnitOfWork` | — (read-only by API not currently surfaced). |
-| `core` | Pipeline; normalised row shapes exposed to API | `etf_instruments` / `etf_daily_bars` assets | `SqlAlchemyInstrumentRepository`, `SqlAlchemyDailyBarRepository`. |
-| `analytics` | Pipeline (input snapshots) + Application (candidate pool) | `etf_input_snapshot` asset; future candidate-pool assets | `InputSnapshotRepository`, `SqlAlchemyCandidatePoolRunRepository`, `SqlAlchemyCandidatePoolItemRepository`. |
+| `core` | Pipeline; normalised row shapes exposed to API | `etf_instruments` / `etf_daily_bars` assets; `etf_profiles` service for the DC-2 static ETF metadata (1-1 with `core.instruments`) | `SqlAlchemyInstrumentRepository`, `SqlAlchemyDailyBarRepository`, `SqlAlchemyEtfProfileRepository`. |
+| `analytics` | Pipeline (input snapshots) + Application (candidate pool) + Research context | `etf_input_snapshot` asset; future candidate-pool assets; `etf_profile_context` / `etf_profiles` service for the per-field evidence and the `etf_profile` `ResearchContextPack` | `InputSnapshotRepository`, `SqlAlchemyCandidatePoolRunRepository`, `SqlAlchemyCandidatePoolItemRepository`, `SqlAlchemyEtfProfileFieldRepository`, `SqlAlchemyResearchContextPackRepository` (plus the child `ResearchContextItemRow` rows). |
 | `ops` | Pipeline | `ops.pipeline_runs` writes via `SqlAlchemyPipelineRunRepository` | Personal-job history and latest status via the read-only `/api/v1/pipeline-runs` endpoints. |
 
 ## 4. Composability rules
@@ -101,4 +107,9 @@ they were retired when the migrations moved to `apps/migrations/`.
   (`ck_research_evidence_packs_content_hash_len64` /
   `ck_research_evidence_packs_payload_object`), and the
   five-column `uq_research_evidence_packs_natural_key` unique
-  constraint.
+  constraint. The DC-2 / PR-ETF-PROFILE-04 / research-context slices
+  add three further revisions (`20260804_0008` / `20260805_0009` /
+  `20260805_0010`); the chain gate now expects a single head at
+  `20260805_0010` and the test suite still round-trips
+  `upgrade head → downgrade base → upgrade head` end-to-end so the
+  full ten-revision chain is exercised.

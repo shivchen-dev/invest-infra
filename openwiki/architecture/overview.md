@@ -1,9 +1,9 @@
 ---
 type: Concept
 title: Architecture overview
-description: Modular-monolith topology, layered rules, four PostgreSQL schemas and ADR index for invest-infra (including ADR-0011 CifangQuant Phase 1 first + second increments). Explains why the codebase stays inside independent Python packages and how the layers interact.
+description: Modular-monolith topology, layered rules, four PostgreSQL schemas and ADR index for invest-infra (including ADR-0011 CifangQuant Phase 1 first + second increments, the DC-2 ETF profile framework, and the Stage 4A evidence / context separation). Explains why the codebase stays inside independent Python packages and how the layers interact.
 resource: /openwiki/architecture/overview.md
-tags: [architecture, layering, schemas, adr, cifang]
+tags: [architecture, layering, schemas, adr, cifang, tushare, etf-profile, research-context]
 ---
 
 # Architecture overview
@@ -103,12 +103,14 @@ adapter:
   commit transactions and does **not** insert into `raw.provider_batches`.
 - The pipeline-side application service, not the adapter, owns the
   three-layer evidence write inside a single `UnitOfWork`.
-- **Three** runtime ETF adapter packages ship today: `fixture_dev`
+- **Four** runtime ETF adapter packages ship today: `fixture_dev`
   (deterministic fixture data — see [Pipeline overview §4](../pipeline/overview.md#4-fixture_dev-adapter)),
-  `cifang` and `akshare`. `fixture_dev` is enabled by default; the
-  real-data adapters require explicit enablement and preserve the
-  upstream provider key in their output. See [Pipeline overview §5](../pipeline/overview.md#5-cifang-adapter-adr-0011-phase-1-first--second-increments)
-  and [§5b](../pipeline/overview.md#5b-akshare-adapter-pr-02).
+  `cifang`, `akshare` and `tushare`. `fixture_dev` is enabled by
+  default; the real-data adapters require explicit enablement and
+  preserve the upstream provider key in their output. See
+  [Pipeline overview §5](../pipeline/overview.md#5-cifang-adapter-adr-0011-phase-1-first--second-increments),
+  [§5b](../pipeline/overview.md#5b-akshare-adapter-pr-02) and
+  [§5d](../pipeline/overview.md#5d-tushare-pro-adapter-phase-1-bounded-increment).
   The QuickTiny and RssCast packages are separate research-only MCP
   transports and do not implement the ETF daily-bars port.
 

@@ -1,9 +1,9 @@
 ---
 type: Concept
 title: Pipeline overview
-description: Dagster assets, the guarded personal daily schedule and preflight, ETL service modules, the fixture_dev, cifang and akshare adapter boundaries, the MCP research transports, the declarative provider_catalog and deterministic provider-routing layer, the read-only provider coverage CLI, and replay/backfill operations wired into the raw / core / analytics / ops PostgreSQL schemas.
+description: Dagster assets, the guarded personal daily schedule and preflight, ETL service modules, the fixture_dev, cifang, akshare and tushare adapter boundaries, the MCP research transports, the DC-2 ETF profile collection and the Stage 4A evidence/context builders, the declarative provider_catalog and deterministic provider-routing layer, the read-only provider coverage CLI, and replay/backfill operations wired into the raw / core / analytics / ops PostgreSQL schemas.
 resource: /openwiki/pipeline/overview.md
-tags: [pipeline, dagster, adapters, etl, fixture_dev, cifang, akshare, provider-catalog, provider-routing, coverage, historical-backfill]
+tags: [pipeline, dagster, adapters, etl, fixture_dev, cifang, akshare, tushare, provider-catalog, provider-routing, coverage, historical-backfill, etf-profile, research-context]
 ---
 
 # Pipeline overview
@@ -32,13 +32,19 @@ apps/pipeline/src/invest_pipeline/
 ├── daily_preflight.py     # pure run/skip/fail decision gate
 ├── config.py              # pydantic-settings Settings (universe + policy paths)
 ├── clock.py               # market_today() — pinned Asia/Shanghai business clock
+├── credentials.py         # centralised, lazy provider-credential lookup
+├── request_keys.py        # deterministic bounded logical request keys
 ├── provider_catalog.py    # declarative provider role / capability registry
-├── provider_factory.py    # build_provider() — runtime fixture_dev / cifangquant / akshare
+├── provider_factory.py    # build_provider() — runtime fixture_dev / cifangquant / akshare / tushare
+├── provider_quality.py    # DC-1 provider registry contract
+├── provider_consistency.py # provider daily-bar consistency comparison
 ├── provider_routing/      # deterministic dataset × capability routing layer (PR-05)
 │   ├── datasets.py        # Dataset StrEnum + DATASET_CAPABILITIES mapping
 │   ├── selection.py       # select_providers() pure function
 │   ├── coverage.py        # calculate_coverage() pure grid
 │   └── probe.py           # build_coverage_samples() input builder
+├── candidate_routing/     # dynamic candidate shadow MVP
+│   └── shadow.py          # shadow run probe
 ├── provider_coverage_report.py   # CoverageReportModel + deterministic content hash
 ├── provider_coverage_plan.py     # select_active_etf_symbols + build_backfill_plan
 ├── provider_coverage_merge.py    # deterministic multi-provider report merge
@@ -62,32 +68,34 @@ apps/pipeline/src/invest_pipeline/
 │   │   ├── mapper.py      # /api/fund/list + /api/fund/hist_em field mappers
 │   │   ├── config.py      # CifangSettings (redacted, disabled by default)
 │   │   └── README.md
-│   ├── akshare/           # AkShare ETF data adapter (PR-02)
-│   │   ├── adapter.py     # AkshareInstrumentProvider (Sina-pref + Eastmoney fallback)
+│   ├── akshare/           # AkShare ETF data adapter (PR-02 + DC-2 ETF Profile)
+│   │   ├── adapter.py     # AkshareInstrumentProvider (Sina-pref + Eastmoney fallback; +fetch_etf_profile)
 │   │   ├── client.py      # lazy akshare SDK resolver + per-symbol ETF calls
-│   │   ├── mapper.py      # fund_etf_fund_info_em + fund_etf_hist_em + NAV/calendar mappers
+│   │   ├── mapper.py      # fund_etf_fund_info_em + fund_etf_hist_em + NAV/calendar + ETF profile mappers
 │   │   ├── config.py      # AkshareSettings (redacted, disabled by default, adjust="")
 │   │   └── README.md
+│   ├── tushare/           # Tushare Pro adapter (Phase 1 bounded increment)
+│   │   ├── __init__.py
+│   │   ├── adapter.py     # TushareInstrumentProvider (evidence-tuple adapter)
+│   │   ├── client.py      # POST-JSON TushareClient (fund_basic / fund_daily)
+│   │   ├── mapper.py      # /api/fund_basic + /api/fund_daily field mappers
+│   │   └── config.py      # TushareSettings (redacted, adjust="none", disabled by default)
 │   ├── quicktiny_mcp/     # QuickTiny MCP read-only transport (PR-03, research_only)
 │   │   ├── client.py      # JSON-RPC 2.0 over httpx (initialize / tools/list / tools/call)
 │   │   ├── config.py      # QuickTinyMcpSettings (redacted, default base_url frozen)
 │   │   ├── models.py      # frozen response / result dataclasses
 │   │   └── README.md
-│   ├── rsscast/           # RssCast MCP read-only transport (PR-04, research / index)
-│   │   ├── client.py      # JSON-RPC 2.0 + ETF-DailyBar-shaped tool name rejection
-│   │   ├── config.py      # RssCastMcpSettings (redacted, base_url NOT frozen)
-│   │   ├── models.py      # is_forbidden_tool_name guard
-│   │   └── README.md
-│   ├── eastmoney/         # three-provider plan Phase 1 — config-only stub
-│   │   └── config.py      # EastmoneySettings (Phase 2 adds client/mapper/adapter)
-│   ├── sina/              # three-provider plan Phase 1 — config-only stub
-│   │   └── config.py      # SinaSettings
-│   └── tonghuashun/       # three-provider plan Phase 1 — config-only stub
-│       └── config.py      # TonghuashunSettings
+│   └── rsscast/           # RssCast MCP read-only transport (PR-04, research / index)
+│       ├── client.py      # JSON-RPC 2.0 + ETF-DailyBar-shaped tool name rejection
+│       ├── config.py      # RssCastMcpSettings (redacted, base_url NOT frozen)
+│       ├── models.py      # is_forbidden_tool_name guard
+│       └── README.md
 ├── etf_instruments.py     # write_etf_instruments_raw / upsert_etf_instruments
 │                         # (owns RawEtlResult + UnitOfWorkFactory helpers)
 ├── etf_daily_bars.py      # write_etf_daily_bars_raw / upsert_etf_daily_bars
 │                         # (re-exports RawEtlResult from etf_instruments)
+├── etf_profiles.py        # write_etf_profiles_raw / upsert_etf_profiles (DC-2)
+├── etf_profile_context.py # build_etf_profile_context_pack (Stage 4A context slice)
 └── input_snapshot.py      # create_input_snapshot (PR-07)
 ```
 
@@ -329,9 +337,12 @@ Real calls require three opt-ins: `CifangSettings.enabled=True` (via
 `INVEST_PIPELINE_CIFANG_API_KEY`, and `--confirm-network` on the
 smoke CLI — see [Personal CLIs](#11-personal-clis). The provider
 remains gated on ADR-0011 O-1 / O-3 / O-4 closure for production use.
-[`akshare`](#5b-akshare-adapter-pr-02) is also fully wired in the
-factory; eastmoney / sina / tonghuashun ship configuration-only
-Phase-1 stubs under the three-provider plan.
+[`akshare`](#5b-akshare-adapter-pr-02) and
+[`tushare`](#5d-tushare-pro-adapter-phase-1-bounded-increment) are
+also fully wired in the factory. The historical three-provider plan
+(`eastmoney` / `sina` / `tonghuashun` Phase-1 stubs) was de-scoped
+in this slice; see [Provider catalog](#7-provider-catalog) for the
+six remaining catalog declarations.
 
 ## 5b. `akshare` adapter (PR-02)
 
@@ -351,24 +362,39 @@ purely because the optional SDK is absent).
   `redacted_dict()` that masks the token.
 - [`adapter.py`](../../apps/pipeline/src/invest_pipeline/adapters/akshare/adapter.py) exposes
   `AkshareInstrumentProvider` with the same
-  `EtfMarketDataProvider` surface as Cifang, plus two read-only
+  `EtfMarketDataProvider` surface as Cifang, plus three read-only
   extensions: `fetch_nav(symbol)` (which rides on
   `AkshareNavRecord` — `unit_nav` / `accumulated_nav` /
   `daily_growth_rate`; **NAV is never coerced to OHLCV** per the
-  V2 plan §5 Task 2 invariant) and `fetch_trading_calendar()` (date-only
-  records).
+  V2 plan §5 Task 2 invariant), `fetch_trading_calendar()` (date-only
+  records), and `fetch_etf_profile()` (the DC-2 ETF Profile surface —
+  fans out to `ak.fund_name_em()` and `ak.fund_etf_spot_em()`,
+  joins the payloads by `基金代码` in `merge_etf_profile`, and stamps
+  the result on a dedicated `ProviderBatch` with
+  `dataset_key="etf_profile"`).
 - [`client.py`](../../apps/pipeline/src/invest_pipeline/adapters/akshare/client.py) lazily resolves the
   optional `akshare` SDK; every call uses `hasattr(module, operation)`
-  and raises `ProviderUnavailableError` on missing operations.
+  and raises `ProviderUnavailableError` on missing operations. The
+  DC-2 Profile slice added `fetch_fund_name_em` and
+  `fetch_fund_etf_spot_em`; the upstream `总市值` column is read
+  but explicitly **not** mapped to `aum` (AUM is a Provider-disclosed
+  figure, not a market-cap calculation).
 - [`mapper.py`](../../apps/pipeline/src/invest_pipeline/adapters/akshare/mapper.py) translates
   `fund_etf_fund_info_em` and `fund_etf_hist_em` responses (plus
-  the NAV / calendar surfaces) into domain
-  `Instrument` / `DailyBar` records. As of `07cfd65` the
+  the NAV / calendar / ETF profile surfaces) into domain
+  `Instrument` / `DailyBar` / `AkshareProfileRecord` rows. As of `07cfd65` the
   `fetch_daily_bars` loop prefers Sina (`fund_etf_hist_sina`) and
   falls back to Eastmoney (`fund_etf_hist_em`); the resulting
   `DailyBar.source.provider_key` records which upstream actually
   served the row, so a Sina-success path is distinguishable from an
-  Eastmoney-fallback path in the raw evidence tables.
+  Eastmoney-fallback path in the raw evidence tables. The DC-2
+  slice adds `merge_etf_profile` (joins the `fund_name_em` /
+  `fund_etf_spot_em` payloads by symbol) and
+  `map_etf_profile_to_field_evidence` (the PR-ETF-PROFILE-02
+  Provider Mapping slice that converts the merged
+  `AkshareProfileRecord` rows into domain `FieldEvidence` rows for
+  `FUND_TYPE` / `CATEGORY` / `SHARES` only — `AUM` and
+  `MARKET_VALUE` are deliberately never emitted here).
 - The `provider_factory` exposes `akshare` as the third runtime
   branch — see [Provider factory](#12-provider-factory) — and
   raises `RealProviderRequiresExplicitEnablementError` when
@@ -419,26 +445,86 @@ participate in the `personal_etf_daily_job` and do not reach the
 Dagster asset graph. CI uses `httpx.MockTransport` so the suite
 never opens a TCP connection.
 
-## 5d. Eastmoney / Sina / Tonghuashun (three-provider plan, Phase 1)
+## 5d. Tushare Pro adapter (Phase 1 bounded increment)
 
-Phase 1 of [`tasks/plan-data-source-three-provider.md`](../../tasks/plan-data-source-three-provider.md)
-freezes the catalog declarations and ships the configuration
-skeleton only:
+[`apps/pipeline/src/invest_pipeline/adapters/tushare/`](../../apps/pipeline/src/invest_pipeline/adapters/tushare/)
+is the read-only Tushare Pro adapter that PR-02 / DC-1 added as a
+secondary ETF source. The package mirrors the Cifang layer
+separation (`client.py` is the only module that may issue
+HTTP/POST-JSON; the mapper is pure):
 
-- [`adapters/eastmoney/config.py`](../../apps/pipeline/src/invest_pipeline/adapters/eastmoney/config.py) — `EastmoneySettings`
-  (`enabled=False`, `adjustment="none"`, `timeout_seconds > 0`).
-- [`adapters/sina/config.py`](../../apps/pipeline/src/invest_pipeline/adapters/sina/config.py) — `SinaSettings`
-  (mirrors Eastmoney).
-- [`adapters/tonghuashun/config.py`](../../apps/pipeline/src/invest_pipeline/adapters/tonghuashun/config.py) — `TonghuashunSettings`
-  (mirrors Eastmoney).
+- [`config.py`](../../apps/pipeline/src/invest_pipeline/adapters/tushare/config.py) ships `TushareSettings`
+  with `enabled=False` default, `adjust` **locked to `"none"`**
+  (ADR-0005 §4), and a `SecretStr` token whose `__repr__` / `__str__`
+  / `redacted_dict()` masks the value. The token is read from the
+  centralized credential store at request time only
+  (`TushareSettings.resolved_token()`) so the settings object is
+  safe to construct in CI without credentials being present.
+- [`client.py`](../../apps/pipeline/src/invest_pipeline/adapters/tushare/client.py) wraps
+  `httpx.Client` against the single `https://api.tushare.pro`
+  endpoint with a `POST` JSON body of
+  `{api_name, token, params, fields}`. The client is inert until
+  the first `fetch_*` call; constructor injection lets tests
+  substitute a `FakeTushareClient` and the suite never opens a
+  real TCP connection.
+- [`mapper.py`](../../apps/pipeline/src/invest_pipeline/adapters/tushare/mapper.py) translates
+  `fund_basic` and `fund_daily` payloads into domain
+  `Instrument` / `DailyBar` instances. The slice is intentionally
+  bounded to the two documented ETF surfaces; the SSE / SZSE
+  allow-list and the `SH → SSE` / `SZ → SZSE` exchange aliasing
+  mirror the Cifang mappers.
+- [`adapter.py`](../../apps/pipeline/src/invest_pipeline/adapters/tushare/adapter.py) exposes
+  `TushareInstrumentProvider` with the same
+  `EtfMarketDataProvider` surface as the Cifang / AkShare adapters
+  (`fetch_instruments` / `fetch_daily_bars`). The provider reads
+  `TushareSettings.enabled` and refuses to reach the network when
+  `False` — both `fetch_*` methods raise
+  `RealProviderRequiresExplicitEnablementError` with a pointer to
+  the centralized credential store. When `enabled=True`, the
+  adapter drives the client and mapper, packages a successful (or
+  failed) evidence bundle, and emits a `ProviderBatch` whose
+  `raw_payload_hash` is the SHA-256 of the parsed payload.
+- The `provider_factory` exposes `tushare` as the fourth runtime
+  branch — see [Provider factory](#12-provider-factory) — and
+  raises `RealProviderRequiresExplicitEnablementError` when
+  `TushareSettings.enabled=False` and `ProviderAuthenticationError`
+  when the token is empty. Construction always succeeds; the
+  token is read lazily on the first request so a CI build can
+  construct the provider without the secret file being present.
 
-Each package is import-safe (`__init__.py` re-exports only the
-settings class, no `httpx` import) so CI can introspect the catalog
-without pulling in any HTTP transport. Phase 2 of the plan adds
-the per-provider `client.py` / `mapper.py` / `adapter.py`; until
-then the catalog entry advertises `research_only` and the runtime
-factory rejects any `INVEST_PIPELINE_PROVIDER_KEY` outside the
-declared `KNOWN_PROVIDER_KEYS` tuple.
+### Centralized credential store
+
+[`apps/pipeline/src/invest_pipeline/credentials.py`](../../apps/pipeline/src/invest_pipeline/credentials.py)
+is the single source of truth for provider credentials:
+
+- `DEFAULT_SECRETS_DIR` is `/home/claw/invest-secrets`; the env
+  variable `INVEST_PIPELINE_SECRETS_DIR` overrides the root.
+- The `_CREDENTIAL_FILES` table maps every supported provider_key
+  to its filename inside the secrets directory
+  (`cifangquant.api_key` / `akshare.token` / `rsscast.token` /
+  `tushare.token`).
+- `CredentialStore.resolve(provider_key, explicit_value="")` returns
+  the explicit value when supplied and otherwise reads and trims
+  the matching file. Unknown provider_keys raise `ValueError`;
+  `OSError` from a malformed file becomes a `RuntimeError` that
+  never embeds the credential value.
+- Per-adapter settings classes (`CifangSettings.api_key` /
+  `AkshareSettings.token` / `RssCastMcpSettings.token` /
+  `TushareSettings.token`) call
+  `CredentialStore().resolve(provider_key, explicit_value)` so the
+  explicit `INVEST_PIPELINE_*` env-var override remains the
+  highest-priority path; the centralized file is the fallback.
+
+The historical V2 three-provider plan
+([`tasks/plan-data-source-three-provider.md`](../../tasks/plan-data-source-three-provider.md))
+once proposed standalone `eastmoney` / `sina` / `tonghuashun`
+adapters. That plan has been **de-scoped** in this slice: the
+three sources are not selectable runtime providers in V2 and the
+catalog carries no declaration for them. Their public
+historical-quotes endpoints remain internal upstreams of the
+AkShare aggregator (`fund_etf_hist_sina` / `fund_etf_hist_em`)
+and surface only as `source_key` values on `BarSource` rows
+produced by the AkShare adapter.
 
 ## 6. ETL service modules
 
@@ -477,6 +563,45 @@ contract tests can drive them without spinning up Dagster:
   snapshot_date, instrument_ids)` that builds an `InputSnapshot`,
   deduplicates IDs, opens a UoW, calls
   `uow.input_snapshot_repository.add(snapshot)` and commits.
+- [`etf_profiles.py`](../../apps/pipeline/src/invest_pipeline/etf_profiles.py)
+  is the DC-2 ETF Profile ETL service. `write_etf_profiles_raw(provider,
+  session_factory, *, unit_of_work_factory=SqlAlchemyUnitOfWork)`
+  drives the `provider.fetch_etf_profile()` call and persists the
+  PR-02 three-layer evidence bundle to `raw.provider_*` with
+  `dataset_key="etf_profile"`, `request_key="etf-profile"` and a
+  single JSONB sidecar that carries every `AkshareProfileRecord`
+  (symbol / exchange / `fund_type` / `category` / `shares`).
+  `upsert_etf_profiles(session_factory, *, ...)` re-opens a fresh
+  UoW, locates the latest successful attempt for the
+  `(provider_key, dataset_key="etf_profile", request_key="etf-profile")`
+  triplet, deserialises the sidecar, resolves the real
+  `core.instruments.id` per `(symbol, exchange)` and upserts the
+  standardised profile records into `core.etf_profiles`. The
+  function also persists the per-field `FieldEvidence` rows through
+  `uow.etf_profile_fields` so the resolver's read path stays
+  pre-populated. The slice stays conservative: `aum` / `manager` /
+  `benchmark_index` / `inception_date` / `management_fee` /
+  `custody_fee` stay `None` until a dedicated profile endpoint is
+  verified, the `total_market_value` column from `fund_etf_spot_em`
+  is never aliased to `aum`, and NAV remains on the dedicated
+  `fund_etf_fund_daily_em` path.
+- [`etf_profile_context.py`](../../apps/pipeline/src/invest_pipeline/etf_profile_context.py)
+  is the pure pipeline builder for the `etf_profile`
+  `ResearchContextPack` (Stage 4A evidence / context separation).
+  `build_etf_profile_context_pack(evidence_rows, *, instrument_id,
+  observed_at, created_at=None, context_version=1)` runs the
+  domain `resolve_etf_profile_evidence` resolver, projects every
+  canonical `FieldKey` (`MANAGER` / `BENCHMARK_INDEX` / `CATEGORY` /
+  `INCEPTION_DATE` / `FUND_TYPE` / `MANAGEMENT_FEE` / `CUSTODY_FEE` /
+  `AUM` / `SHARES`) into a `ContextItem` whose `quality_status`
+  is `COMPLETE` / `CONFLICT` / `MISSING` according to the
+  resolver's `ResolutionStatus`, and returns a hash-stable
+  `ResearchContextPack` ready for `uow.research_context_packs`.
+  The builder never fabricates a Provider identifier for a
+  `MISSING` field; the audit chain is anchored on the resolver-side
+  `"resolver"` / `"etf_profile_resolution"` provenance so the
+  `ContextItem` still has a stable source reference without an
+  invented value.
 
 The services rely on `SqlAlchemyUnitOfWork` as the only transactional
 adapter — the asset-level integration is verified through the test
@@ -507,19 +632,17 @@ Object surface:
 - `lookup_provider(provider_key)` — pure lookup; raises `KeyError`
   with the requested key when the provider is not registered.
 
-The catalog registers **eight** frozen declarations
-(`apps/pipeline/src/invest_pipeline/provider_catalog.py:360-396`):
+The catalog registers **six** frozen declarations
+(`apps/pipeline/src/invest_pipeline/provider_catalog.py`):
 
 | Key | Role | Capabilities | `enabled_by_default` |
 |---|---|---|---|
 | `akshare` | `research_only` | `ETF_DAILY_BARS` / `ETF_MASTER_DATA` / `INDEX_DAILY_BARS` | `False` |
 | `cifangquant` | `secondary` | `ETF_DAILY_BARS` / `ETF_MASTER_DATA` / `INDEX_DAILY_BARS` | `False` |
-| `eastmoney` | `research_only` | `ETF_DAILY_BARS` / `ETF_MASTER_DATA` / `INDEX_DAILY_BARS` | `False` |
 | `fixture_dev` | `fixture_dev` | `ETF_DAILY_BARS` / `ETF_MASTER_DATA` | `True` |
 | `quicktiny_mcp` | `research_only` | `RESEARCH` / `MARKET_SNAPSHOT` | `False` |
 | `rsscast` | `out_of_scope_for_etf` | `INDEX_DAILY_BARS` / `RESEARCH` | `False` |
-| `sina` | `research_only` | `ETF_DAILY_BARS` / `ETF_MASTER_DATA` / `INDEX_DAILY_BARS` | `False` |
-| `tonghuashun` | `research_only` | `ETF_DAILY_BARS` / `ETF_MASTER_DATA` / `INDEX_DAILY_BARS` | `False` |
+| `tushare` | `secondary` | `ETF_DAILY_BARS` / `ETF_MASTER_DATA` | `False` |
 
 The negative-capability contract is part of the public catalog
 contract: `quicktiny_mcp` and `rsscast` must never advertise
@@ -705,10 +828,10 @@ target and:
 - Validates `--provider-key` against the
   `KNOWN_PROVIDER_KEYS` tuple — only `fixture_dev` and
   `cifangquant` are admitted (the Cifang branch additionally
-  requires the documented triple opt-in). AkShare is **not**
-  accepted by the historical backfill CLI in this slice even
-  though the factory wires it; align this gap before any
-  historical run depends on the third provider.
+  requires the documented triple opt-in). AkShare and Tushare are
+  **not** accepted by the historical backfill CLI in this slice even
+  though the factory wires them; align this gap before any
+  historical run depends on the third or fourth runtime provider.
 - Persists through `SqlAlchemyUnitOfWork` and reuses the
   `RawEtlResult` shape from `etf_daily_bars` /
   `etf_instruments` so the rerun idempotency contract
@@ -723,13 +846,14 @@ target and:
 
 [`provider_factory.py`](../../apps/pipeline/src/invest_pipeline/provider_factory.py)
 is the runtime selection surface for the personal pipeline. The
-factory has three branches and four explicit failure modes:
+factory has four branches and four explicit failure modes:
 
 - `fixture_dev` → `FixtureDevInstrumentProvider()`.
 - `cifangquant` → `CifangQuantInstrumentProvider(CifangSettings())`;
   raises `RealProviderRequiresExplicitEnablementError` when
   `CifangSettings.enabled=False` and
-  `ProviderAuthenticationError` when `api_key` is empty.
+  `ProviderAuthenticationError` when the resolved API key (env
+  override or centralized file) is empty.
 - `akshare` → `AkshareInstrumentProvider(AkshareSettings())`;
   raises `RealProviderRequiresExplicitEnablementError` when
   `AkshareSettings.enabled=False`. Construction succeeds even when
@@ -737,15 +861,27 @@ factory has three branches and four explicit failure modes:
   `AkshareClient` surfaces `ProviderUnavailableError` at fetch
   time (not at construction time) so a missing optional
   dependency never silently swaps in another provider.
+- `tushare` → `TushareInstrumentProvider(TushareSettings())`;
+  raises `RealProviderRequiresExplicitEnablementError` when
+  `TushareSettings.enabled=False` and `ProviderAuthenticationError`
+  when the resolved token is empty. The token is read from
+  `TushareSettings.resolved_token()` (env override → centralized
+  `tushare.token` file) lazily on the first request, so the
+  factory can construct the provider without the secret file
+  being present.
 - Anything else → `UnknownProviderError` carrying the offending key.
 
 The factory never silently falls back to the fixture provider, so a
 misconfigured `INVEST_PIPELINE_PROVIDER_KEY` is surfaced at job-start
 time, not at fetch time. `KNOWN_PROVIDER_KEYS = ("fixture_dev",
-"cifangquant", "akshare")` is exported as a frozen tuple for
-documentation and testing, and `test_provider_factory_runtime.py`
-pins that exact tuple so a fourth runtime branch cannot land
-without an explicit test update.
+"cifangquant", "akshare", "tushare")` is exported as a frozen tuple
+for documentation and testing, and `test_provider_factory_runtime.py`
+pins that exact tuple so a fifth runtime branch cannot land
+without an explicit test update. The `cifangquant` /
+`akshare` / `tushare` settings objects accept an injected
+pre-built instance so hermetic tests never have to touch real
+environment variables; the `provider_key` itself is read from
+`Settings.provider_key` (`INVEST_PIPELINE_PROVIDER_KEY`).
 
 ### Provider routing layer (`provider_routing/`)
 
@@ -861,14 +997,19 @@ contract:
   `INVEST_PIPELINE_CANDIDATE_POOL_POLICY_PATH`).
 
 Provider-specific settings (`CifangSettings`,
-`AkshareSettings`, `QuickTinyMcpSettings`, `RssCastMcpSettings`,
-`EastmoneySettings`, `SinaSettings`, `TonghuashunSettings`) live
-next to their adapter and follow the redaction rules in
-ADR-0010 §5 / §6 and ADR-0011 §3. The MCP adapters and the
-three-provider plan Phase-1 stubs (`eastmoney`, `sina`,
-`tonghuashun`) are configuration-only in this slice and do not
-extend `provider_factory`; only `cifangquant` and `akshare` are
-runtime-selectable today.
+`AkshareSettings`, `TushareSettings`, `QuickTinyMcpSettings`,
+`RssCastMcpSettings`) live next to their adapter and follow the
+redaction rules in ADR-0010 §5 / §6 and ADR-0011 §3. Real
+credentials are looked up through the centralized
+[`credentials.py`](#5d-tushare-pro-adapter-phase-1-bounded-increment)
+store; the explicit `INVEST_PIPELINE_CIFANG_API_KEY` /
+`INVEST_PIPELINE_AKSHARE_TOKEN` / `INVEST_PIPELINE_TUSHARE_TOKEN`
+/ `INVEST_PIPELINE_RSSCAST_TOKEN` env-var overrides remain the
+highest-priority path. The MCP adapters (`quicktiny_mcp` /
+`rsscast`) and the catalog-only declarations are configuration-only
+in this slice and do not extend `provider_factory`; only
+`cifangquant`, `akshare` and `tushare` are runtime-selectable
+through `build_provider()` alongside `fixture_dev`.
 
 ## 14. Pipeline run audit
 
