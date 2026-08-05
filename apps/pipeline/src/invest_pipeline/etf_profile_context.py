@@ -42,15 +42,15 @@ per-field ``ContextItem`` shape:
   - ``confidence_score`` = ``0``
   - ``evidence_refs`` = ``()`` (no source row fed the resolver)
   - provenance = the resolver's :class:`FieldEvidenceSource` policy
-    (``"etf_profile.resolver"`` / ``"etf_profile"``) so the audit chain
+    (``"resolver"`` / ``"etf_profile_resolution"``) so the audit chain
     still has a row to anchor to.
 
 The resolver output already enforces the AUM / MARKET_VALUE /
 TURNOVER_VALUE distinction (plan §6). The builder preserves the
-separation by emitting one :class:`ContextItem` per
-:class:`~invest_domain.etf_profile.models.FieldKey` observed in the
-resolution: an ``AUM`` ``FieldEvidence`` row never contributes to a
-``MARKET_VALUE`` or ``TURNOVER_VALUE`` slot and vice-versa.
+separation by emitting exactly one :class:`ContextItem` per canonical
+field. Evidence for non-canonical ``MARKET_VALUE`` and
+``TURNOVER_VALUE`` fields is ignored; an ``AUM`` row never contributes to
+either slot and vice-versa.
 
 The module is the single source of truth for the ``etf_profile``
 ``ContextItem`` taxonomy. Slices 2 onward (persistence through

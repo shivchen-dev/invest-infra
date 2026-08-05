@@ -34,8 +34,8 @@ Plus regression covers:
   ``TEXT`` => ``TEXT``, ``DECIMAL`` => ``DECIMAL``, ``DATE`` => ``DATE``;
 - the pack's ``content_hash`` is stable across two calls over the
   same evidence input (the audit-digest invariant).
-- an empty input (no evidence rows) yields an empty pack rather than
-  crashing.
+- an empty input (no evidence rows) yields nine explicit ``MISSING``
+  canonical items rather than crashing.
 """
 
 from __future__ import annotations
@@ -395,8 +395,8 @@ def test_missing_field_emits_none_value_no_business_placeholder() -> None:
     assert manager_item.confidence_score == Decimal("0")
     assert manager_item.evidence_refs == ()
     # The resolver-side provenance is the only stable source anchor.
-    assert manager_item.source_provider == "etf_profile.resolver"
-    assert manager_item.source_dataset == "etf_profile"
+    assert manager_item.source_provider == "resolver"
+    assert manager_item.source_dataset == "etf_profile_resolution"
     assert manager_item.source_batch_id is None
     # No fabricated business value: ``value`` is exactly ``None``, not
     # ``""`` or ``Decimal("0")`` or any sentinel.
