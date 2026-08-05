@@ -1,61 +1,52 @@
-# DC-2 ETF Profile 第一切片
+# Implementation Plan: Dynamic ETF Candidate Pool — PR-02 baseline channel
 
-## 范围
+## Overview
 
-落地 ETF Profile 的领域契约与 PostgreSQL 持久化基础，不伪造 Provider 数据，
-暂不扩展指数、成分股、持仓、API 或 Web。
+Add the first formal Stage 4A-0 routing slice: a deterministic baseline-factor
+channel that consumes the existing ETF universe classifier and shared market
+factor calculator, then emits auditable candidate proposals. This increment
+does not publish to PostgreSQL, add APIs, or implement institution/custom
+channels.
 
-## 有序任务
+## Architecture decisions
 
-- [x] 定义 `EtfProfile` 领域模型及字段校验。
-- [x] 增加 `core.etf_profiles` 迁移、SQLAlchemy 模型和 Repository upsert/read。
-- [x] 增加领域、存储和迁移链 focused tests。
-- [x] 接入 AkShare Profile 读取、字段映射和三层证据写入。
-- [x] 独立验收真实 Profile 采集切片。
+- Reuse `build_etf_universe` and `calculate_market_state_factors`; do not create
+  a second factor implementation.
+- Keep the channel pure and side-effect free. Persistence remains owned by the
+  existing Candidate Pool service until the fusion contract is ready.
+- Use a small, typed proposal interface with deterministic ordering, explicit
+  `include/watch/exclude` decisions, quality-gate reasons, and a versioned
+  policy hash.
+- Default thresholds are conservative and configurable; no parameter
+  optimisation or backtest logic is introduced.
 
-## 验收
+## Task list
 
-- [x] 必填标识、费率、规模和日期字段按契约校验。
-- [x] 同一 `instrument_id` 幂等 upsert，不产生重复 Profile。
-- [x] migration chain、focused tests 和 architecture check 通过；Ruff 未新增违规（保留既有 baseline I001/E501）。
+### Phase 1: Baseline channel
 
-## 边界说明（替代旧"已验证阻塞"）
+- [x] Define the baseline-channel policy and proposal output contract.
+- [x] Score eligible candidates from the existing eight-factor result.
+- [x] Emit deterministic proposals for full, partial, and ineligible inputs.
+- [x] Add focused tests for scoring, gates, missing factors, stable ordering,
+      hash stability, and fail-closed behaviour.
 
-- 2026-08-05 受控只读冒烟已确认两条静态 Profile 通道作为本切片 Provider：
-  - `fund_name_em` 返回 27,414 行。
-  - `fund_etf_spot_em` 返回 1,565 行。
-- 边界：`fund_etf_fund_info_em(fund=...)` 仍为历史 NAV 通道，不得作为 `EtfProfile` 字段来源；
-  NAV 维持 `fund_etf_fund_daily_em` 专用路径，不回填 `core.etf_profiles`。
-- 未经验证的字段保持 `None`：manager、benchmark、inception、fees、AUM；其中 AUM 不接受用"总市值"（total market value）等价替代。
-- 本切片范围之外：API/Web/Dagster 接线、指数、成分股、持仓暂不扩展。
+### Checkpoint: PR-02 baseline channel
 
----
+- [x] Focused domain/pipeline tests pass.
+- [x] Existing candidate-pool and factor tests pass.
+- [x] No database, API, provider-network, or filesystem side effects.
 
-# Implementation Plan: Stage 3 Completion
+## Deferred phases
 
-## Scope
+- PR-03: institution recommendation adapter.
+- PR-04: safe YAML custom-strategy adapter.
+- PR-05: fusion, Shadow persistence, API, and E2E acceptance.
 
-Close the locally executable remainder of the stability and personal-use stage, while recording external blockers without fabricating acceptance results.
+## Risks and mitigations
 
-## Phase 1: Baseline and test gaps
-
-- [x] Run the full repository test/architecture baseline with the current working tree.
-- [x] Add the smallest useful Web unit-test setup and tests for the implemented read-only pages/API states.
-- [x] Verify Web typecheck and production build after the test setup.
-
-## Phase 2: Database and operational verification
-
-- [x] Run migration-chain and PostgreSQL Fixture E2E checks when Docker/PostgreSQL is available.
-- [x] Verify schedule/preflight behavior and document exact remaining runtime prerequisites.
-- [ ] Refresh current-stage documentation and remove stale acceptance claims.
-
-## Phase 3: External acceptance blockers
-
-- [ ] Perform authorized CifangQuant acceptance only after credentials, contract evidence, and rate-limit/cutoff decisions are supplied.
-- [ ] Run and record the 10-trading-day shadow window.
-
-## Acceptance
-
-- Local tests and builds pass.
-- No external acceptance is marked complete without evidence.
-- Documentation distinguishes implemented code, verified behavior, and blocked external work.
+| Risk | Impact | Mitigation |
+|---|---|---|
+| Duplicate factor formulas | High | Call the existing shared factor calculator only. |
+| Missing or conflicted data becomes a recommendation | High | Hard-gate incomplete/invalid/conflicted factor results. |
+| Non-reproducible ranking | High | Decimal arithmetic, pinned policy version, stable tie-breakers. |
+| Premature production impact | High | Pure output only; no publish path in this increment. |
