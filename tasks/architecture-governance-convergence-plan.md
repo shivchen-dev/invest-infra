@@ -82,10 +82,10 @@ Rules:
 
 ## Definition of Done
 
-- [ ] Domain ownership is documented and mapped to actual modules.
-- [ ] Evidence lifecycle and provenance rules are explicit.
-- [ ] Research does not calculate market factors.
-- [ ] No new parallel evidence persistence model is introduced.
-- [ ] Existing focused tests pass.
-- [ ] Full relevant test suites pass or known blockers are recorded with evidence.
-- [ ] Worktree contains no accidental generated artifacts from this work.
+- [x] Domain ownership is documented and mapped to actual modules.
+- [x] Evidence lifecycle and provenance rules are explicit.
+- [x] Research does not calculate market factors.
+- [x] No new parallel evidence persistence model is introduced.
+- [x] Existing focused tests pass.
+- [x] Full relevant test suites pass or known blockers are recorded with evidence.
+- [x] Worktree contains no accidental generated artifacts from this work.

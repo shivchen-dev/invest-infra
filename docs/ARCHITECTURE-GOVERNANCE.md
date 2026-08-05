@@ -1,6 +1,6 @@
 # invest-infra 架构治理基线
 
-状态：Draft for implementation，适用于 `91929c9` 及后续收敛提交。
+状态：Implementation baseline，适用于 `91929c9` 及后续收敛提交。
 
 本文件是 Domain ownership、Data ownership 和 Repository 准入规则的权威入口。它补充 `docs/ARCHITECTURE.md`，不改变 Provider 的业务选型，也不授权新增数据源。
 

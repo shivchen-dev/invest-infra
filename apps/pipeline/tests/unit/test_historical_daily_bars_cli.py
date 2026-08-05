@@ -777,6 +777,8 @@ class OnlyDailyBarsAssetsInvokedTest(unittest.TestCase):
             seed_instruments=mock.MagicMock(),
         )
 
+        pre_definitions_entry = sys.modules.get("invest_pipeline.definitions")
+
         with (
             mock.patch.dict(os.environ, {}, clear=True),
             _CaptureStdStreams() as (_stdout, _stderr),
@@ -812,8 +814,15 @@ class OnlyDailyBarsAssetsInvokedTest(unittest.TestCase):
         ):
             getattr(assets, asset_name).assert_not_called()
         self.assertEqual(len(runner.calls), 1)
-        # ``invest_pipeline.definitions`` must never be imported.
-        self.assertNotIn("invest_pipeline.definitions", sys.modules)
+        # ``invest_pipeline.definitions`` must not have been newly imported by
+        # this invocation. We snapshot the relevant ``sys.modules`` entry
+        # before the call and assert it is unchanged after — that lets the
+        # test stay order-independent when other suites load
+        # ``invest_pipeline.definitions`` ahead of this one.
+        self.assertIs(
+            sys.modules.get("invest_pipeline.definitions"),
+            pre_definitions_entry,
+        )
 
     def test_run_backfill_does_not_import_dagster(self) -> None:
         runner = _RecorderChunkRunner(
@@ -829,6 +838,7 @@ class OnlyDailyBarsAssetsInvokedTest(unittest.TestCase):
                 )
             ]
         )
+        pre_dagster_entry = sys.modules.get("dagster")
         stdout = io.StringIO()
         stderr = io.StringIO()
         rc = cli.run_backfill(
@@ -841,11 +851,12 @@ class OnlyDailyBarsAssetsInvokedTest(unittest.TestCase):
             stderr=stderr,
         )
         self.assertEqual(rc, 0)
-        # ``run_backfill`` must not pull Dagster asset modules into the
-        # interpreter; the default runner is responsible for any
-        # storage-layer import but dagster is not required for the
-        # orchestrator itself.
-        self.assertNotIn("dagster", sys.modules)
+        # ``run_backfill`` must not pull Dagster into the interpreter as a
+        # side effect of its own orchestration; the default runner is
+        # responsible for any storage-layer import. Snapshot the
+        # ``dagster`` entry of ``sys.modules`` so this assertion stays
+        # order-independent when other suites have already imported it.
+        self.assertIs(sys.modules.get("dagster"), pre_dagster_entry)
 
 
 class EnvStackTest(unittest.TestCase):

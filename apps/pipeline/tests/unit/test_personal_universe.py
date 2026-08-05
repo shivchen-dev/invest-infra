@@ -3,8 +3,10 @@
 The tests cover every loader branch documented in
 :mod:`invest_pipeline.personal_universe`:
 
-* Happy-path loading of the seven-symbol example from
-  ``config/personal-universe.yaml``.
+* Happy-path loading of the checked-in ``config/personal-universe.yaml``
+  fixture (smoke test pins the full current 16-symbol universe; the
+  hermetic ``SEVEN_*`` constants below cover a smaller fixture used by
+  every other happy-path test).
 * Deduplication within a single group and across groups.
 * Deterministic sorted output regardless of YAML declaration order.
 * Stable SHA-256 content hash that survives reordering but changes
@@ -46,9 +48,11 @@ from invest_pipeline.personal_universe import (
     resolve_personal_universe,
 )
 
-# Mirror the seven-symbol example shipped in
-# ``config/personal-universe.yaml``. Used by the happy-path tests to
-# avoid drift if the production file is updated.
+# Intentional hermetic seven-symbol fixture used by the happy-path tests.
+# The production file ``config/personal-universe.yaml`` ships a broader
+# 16-symbol universe; the ``SEVEN_*`` constants keep these tests
+# independent of future expansions — see :func:`test_checked_in_yaml_fixture_parses`
+# for the contract that pins the production file.
 SEVEN_SYMBOL_GROUPS: dict[str, tuple[str, ...]] = {
     "broad_market": ("510300", "510500", "159915"),
     "technology": ("588000", "588080"),
@@ -65,6 +69,29 @@ SEVEN_EXPECTED_SYMBOLS: tuple[str, ...] = (
     "510500",
     "513050",
     "513100",
+    "588000",
+    "588080",
+)
+
+# Sorted, deduplicated symbol list emitted by ``load_personal_universe``
+# against the production ``config/personal-universe.yaml``. The smoke
+# test pins this list to catch drift in the checked-in fixture without
+# re-deriving the symbols on every run.
+CHECKED_IN_FIXTURE_SYMBOLS: tuple[str, ...] = (
+    "159901",
+    "159905",
+    "159915",
+    "510050",
+    "510180",
+    "510300",
+    "510330",
+    "510500",
+    "510880",
+    "512000",
+    "512880",
+    "513050",
+    "513100",
+    "518880",
     "588000",
     "588080",
 )
@@ -136,7 +163,7 @@ def test_checked_in_yaml_fixture_parses() -> None:
     universe = load_personal_universe(fixture)
 
     assert universe.version == 1
-    assert universe.symbols == SEVEN_EXPECTED_SYMBOLS
+    assert universe.symbols == CHECKED_IN_FIXTURE_SYMBOLS
     assert len(universe.content_hash) == 64
 
 

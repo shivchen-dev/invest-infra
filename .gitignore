@@ -24,3 +24,9 @@ dist/
 # Runtime
 *.log
 .dagster/
+.runs/
+
+# apps/web generated build artifacts
+apps/web/*.tsbuildinfo
+apps/web/vite.config.d.ts
+apps/web/vite.config.js
