@@ -44,6 +44,12 @@ Cifang mappers in :mod:`invest_pipeline.adapters.cifang.mapper`):
 - :func:`map_fund_name_em` / :func:`map_fund_etf_spot_em` /
   :func:`merge_etf_profile` for the DC-2 ETF Profile surface
   (conservative static metadata).
+- :func:`map_etf_profile_to_field_evidence` for the
+  ``PR-ETF-PROFILE-02`` Provider Mapping slice: it converts the
+  merged :class:`AkshareProfileRecord` rows into domain
+  :class:`FieldEvidence` rows (``FUND_TYPE`` / ``CATEGORY`` /
+  ``SHARES`` only, in stable order) without ever emitting ``AUM``
+  or ``MARKET_VALUE`` keys.
 """
 
 from __future__ import annotations
@@ -55,6 +61,12 @@ from decimal import Decimal, InvalidOperation
 from typing import Any
 from uuid import UUID
 
+from invest_domain.etf_profile.models import (
+    FieldEvidence,
+    FieldEvidenceSource,
+    FieldKey,
+    FieldValueType,
+)
 from invest_domain.instruments.models import (
     Instrument,
     InstrumentId,
@@ -63,6 +75,7 @@ from invest_domain.instruments.models import (
 )
 from invest_domain.market_data.models import BarSource, DailyBar
 from invest_domain.market_data.values import Adjust, Currency, TradingStatus
+from invest_domain.research.models import QualityStatus
 
 from invest_pipeline.adapters.akshare.client import AkshareResponse
 from invest_pipeline.adapters.errors import ProviderDataContractError
@@ -859,6 +872,146 @@ def merge_etf_profile(
     )
 
 
+# ----------------------------------------------------------------------
+# ETF Profile → FieldEvidence mapper (PR-ETF-PROFILE-02)
+# ----------------------------------------------------------------------
+
+
+@dataclass(frozen=True, slots=True)
+class AkshareFieldEvidenceMappingResult:
+    """Result of an ETF Profile → :class:`FieldEvidence` mapping pass.
+
+    Carries the produced :class:`FieldEvidence` rows plus a tuple of
+    non-fatal warnings. Row-level resolver failures downgrade to a
+    warning so the surviving rows still ship; row-level
+    :class:`FieldEvidence` / :class:`FieldEvidenceSource` validation
+    errors are propagated (the mapper never silently drops malformed
+    field values per the DC-2 contract).
+    """
+
+    evidence: tuple[FieldEvidence, ...]
+    warnings: tuple[str, ...]
+
+
+def map_etf_profile_to_field_evidence(
+    profile_mapping: AkshareProfileMappingResult,
+    *,
+    instrument_id_resolver: Callable[[str, str], InstrumentId],
+    source_batch_id: UUID,
+    observed_at: datetime,
+    confidence_score: Decimal,
+    revision: int = 1,
+) -> AkshareFieldEvidenceMappingResult:
+    """Translate :class:`AkshareProfileRecord` rows into :class:`FieldEvidence`.
+
+    The mapper accepts the output of :func:`merge_etf_profile` and
+    emits exactly three evidence rows per record, in stable field
+    order:
+
+    1. ``FUND_TYPE`` (``TEXT``) — from
+       :attr:`AkshareProfileRecord.fund_type`.
+    2. ``CATEGORY`` (``TEXT``) — from
+       :attr:`AkshareProfileRecord.category`.
+    3. ``SHARES`` (``DECIMAL``) — from
+       :attr:`AkshareProfileRecord.shares`.
+
+    Missing source fields are preserved as
+    :attr:`QualityStatus.MISSING` with ``value=None``; non-None source
+    fields are emitted as :attr:`QualityStatus.COMPLETE`. The mapper
+    deliberately **never** emits ``AUM`` or ``MARKET_VALUE`` rows
+    here — AUM is a Provider-disclosed figure (not in this DC-2
+    slice) and the spot ``总市值`` column is forbidden from being
+    aliased onto AUM per plan §6.
+
+    Every row carries a shared
+    :class:`FieldEvidenceSource(provider_key="akshare",
+    dataset_key="etf_profile", observed_at=observed_at,
+    source_batch_id=source_batch_id, revision=revision)` and the
+    resolved :class:`FieldEvidence.instrument_id`; the
+    :attr:`FieldEvidence.content_hash` digest is computed by
+    :class:`FieldEvidence` itself so the audit chain cannot drift.
+
+    Row-level resolver failures (the upstream
+    ``core.instruments`` row is missing) downgrade to a warning so
+    the surviving records still ship on the upstream batch.
+    Validation errors raised by :class:`FieldEvidence` /
+    :class:`FieldEvidenceSource` propagate so a malformed
+    ``observed_at`` / ``confidence_score`` / source payload cannot
+    silently corrupt the audit chain.
+    """
+
+    source = FieldEvidenceSource(
+        provider_key=_PROVIDER_KEY,
+        dataset_key="etf_profile",
+        observed_at=observed_at,
+        source_batch_id=source_batch_id,
+        revision=revision,
+    )
+    evidence: list[FieldEvidence] = []
+    warnings: list[str] = []
+    for index, record in enumerate(profile_mapping.records):
+        try:
+            instrument_id = instrument_id_resolver(
+                record.symbol, record.exchange
+            )
+        except Exception as exc:
+            warnings.append(
+                f"row {index} (symbol={record.symbol!r}, "
+                f"exchange={record.exchange!r}): instrument_id "
+                f"resolver raised {type(exc).__name__}: {exc}"
+            )
+            continue
+        instrument_uuid = instrument_id.value
+        evidence.append(
+            FieldEvidence(
+                instrument_id=instrument_uuid,
+                field_key=FieldKey.FUND_TYPE,
+                value=record.fund_type,
+                value_type=FieldValueType.TEXT,
+                source=source,
+                quality_status=(
+                    QualityStatus.COMPLETE
+                    if record.fund_type is not None
+                    else QualityStatus.MISSING
+                ),
+                confidence_score=confidence_score,
+            )
+        )
+        evidence.append(
+            FieldEvidence(
+                instrument_id=instrument_uuid,
+                field_key=FieldKey.CATEGORY,
+                value=record.category,
+                value_type=FieldValueType.TEXT,
+                source=source,
+                quality_status=(
+                    QualityStatus.COMPLETE
+                    if record.category is not None
+                    else QualityStatus.MISSING
+                ),
+                confidence_score=confidence_score,
+            )
+        )
+        evidence.append(
+            FieldEvidence(
+                instrument_id=instrument_uuid,
+                field_key=FieldKey.SHARES,
+                value=record.shares,
+                value_type=FieldValueType.DECIMAL,
+                source=source,
+                quality_status=(
+                    QualityStatus.COMPLETE
+                    if record.shares is not None
+                    else QualityStatus.MISSING
+                ),
+                confidence_score=confidence_score,
+            )
+        )
+    return AkshareFieldEvidenceMappingResult(
+        evidence=tuple(evidence), warnings=tuple(warnings)
+    )
+
+
 def _looks_like_etf_symbol(symbol: str) -> bool:
     """Return ``True`` when ``symbol`` is a six-digit SSE/SZSE ETF code.
 
@@ -1234,6 +1387,7 @@ __all__ = [
     "AkshareCalendarMappingResult",
     "AkshareCalendarRecord",
     "AkshareDailyBarsMappingResult",
+    "AkshareFieldEvidenceMappingResult",
     "AkshareFundEtfSpotMappingResult",
     "AkshareFundEtfSpotRecord",
     "AkshareFundNameMappingResult",
@@ -1243,6 +1397,7 @@ __all__ = [
     "AkshareNavRecord",
     "AkshareProfileMappingResult",
     "AkshareProfileRecord",
+    "map_etf_profile_to_field_evidence",
     "map_fund_etf_fund_daily_em",
     "map_fund_etf_fund_info_em",
     "map_fund_etf_hist_em",

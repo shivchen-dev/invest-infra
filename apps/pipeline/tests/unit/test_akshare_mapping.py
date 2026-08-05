@@ -30,13 +30,17 @@ from decimal import Decimal
 from typing import Any
 from uuid import uuid4
 
+from invest_domain.etf_profile.models import FieldEvidence
 from invest_domain.instruments.models import Instrument, InstrumentId, InstrumentType
 from invest_domain.market_data.models import DailyBar
 from invest_domain.market_data.values import Adjust, Currency, TradingStatus
+from invest_domain.research.models import QualityStatus
 from invest_pipeline.adapters.akshare.client import AkshareResponse
 from invest_pipeline.adapters.akshare.mapper import (
     AkshareCalendarRecord,
     AkshareNavRecord,
+    AkshareProfileRecord,
+    map_etf_profile_to_field_evidence,
     map_fund_etf_fund_daily_em,
     map_fund_etf_fund_info_em,
     map_fund_etf_hist_em,
@@ -1167,6 +1171,462 @@ class MergeEtfProfileTest(unittest.TestCase):
         self.assertFalse(hasattr(record, "custody_fee"))
         self.assertFalse(hasattr(record, "aum"))
         self.assertFalse(hasattr(record, "name"))
+
+
+# ----------------------------------------------------------------------
+# ETF Profile → FieldEvidence mapping (PR-ETF-PROFILE-02)
+# ----------------------------------------------------------------------
+
+
+class MapEtfProfileToFieldEvidenceTest(unittest.TestCase):
+    """Mapping rules for :func:`map_etf_profile_to_field_evidence`.
+
+    The PR-ETF-PROFILE-02 slice converts the merged
+    :class:`AkshareProfileRecord` rows into domain
+    :class:`FieldEvidence` rows. Three evidence rows per record, in
+    stable order — ``FUND_TYPE`` (TEXT), ``CATEGORY`` (TEXT),
+    ``SHARES`` (DECIMAL). The mapper never emits ``AUM`` /
+    ``MARKET_VALUE`` keys so the trading-day market value of an ETF
+    cannot be silently rewritten as its assets under management.
+    """
+
+    @staticmethod
+    def _build_profile_mapping(
+        records: list[AkshareProfileRecord],
+    ) -> object:
+        from invest_pipeline.adapters.akshare.mapper import (
+            AkshareProfileMappingResult,
+        )
+
+        return AkshareProfileMappingResult(
+            records=tuple(records), warnings=()
+        )
+
+    @staticmethod
+    def _confident_resolver(
+        mapping: dict[tuple[str, str], InstrumentId] | None = None,
+    ) -> callable:
+        """Stable per-row resolver; defaults to a fresh InstrumentId."""
+
+        table: dict[tuple[str, str], InstrumentId] = mapping or {}
+
+        def _resolve(symbol: str, exchange: str) -> InstrumentId:
+            key = (symbol, exchange)
+            if key in table:
+                return table[key]
+            return InstrumentId.generate()
+
+        return _resolve
+
+    def test_emits_three_field_evidence_rows_per_complete_record(
+        self,
+    ) -> None:
+        # A fully-populated ``AkshareProfileRecord`` produces three
+        # evidence rows. ``fund_type`` / ``category`` ride as TEXT;
+        # ``shares`` rides as DECIMAL; everything else is untouched.
+        from invest_domain.etf_profile.models import (
+            FieldKey,
+            FieldValueType,
+        )
+
+        record = AkshareProfileRecord(
+            symbol="510300",
+            exchange="SSE",
+            fund_type="ETF",
+            category="Equity",
+            shares=Decimal("1000000000"),
+        )
+        profile_mapping = self._build_profile_mapping([record])
+        result = map_etf_profile_to_field_evidence(
+            profile_mapping,
+            instrument_id_resolver=self._confident_resolver(),
+            source_batch_id=uuid4(),
+            observed_at=_observed_at(),
+            confidence_score=Decimal("0.95"),
+        )
+        self.assertEqual(result.warnings, ())
+        self.assertEqual(len(result.evidence), 3)
+        for evidence in result.evidence:
+            assert isinstance(evidence, FieldEvidence)
+            self.assertEqual(
+                evidence.quality_status, QualityStatus.COMPLETE
+            )
+            self.assertEqual(evidence.confidence_score, Decimal("0.95"))
+        keys = [entry.field_key for entry in result.evidence]
+        self.assertEqual(
+            keys,
+            [FieldKey.FUND_TYPE, FieldKey.CATEGORY, FieldKey.SHARES],
+        )
+        value_types = [entry.value_type for entry in result.evidence]
+        self.assertEqual(
+            value_types,
+            [FieldValueType.TEXT, FieldValueType.TEXT, FieldValueType.DECIMAL],
+        )
+        self.assertEqual(result.evidence[0].value, "ETF")
+        self.assertEqual(result.evidence[1].value, "Equity")
+        self.assertEqual(result.evidence[2].value, Decimal("1000000000"))
+
+    def test_missing_source_fields_use_quality_status_missing(
+        self,
+    ) -> None:
+        # ``AkshareProfileRecord`` may legitimately carry ``None`` for
+        # any of the three verified fields. The mapper must preserve
+        # ``None`` as the carrier for ``unknown`` and flag the row
+        # ``MISSING`` so downstream analytics can distinguish
+        # ``unknown`` from a real zero / empty value.
+        from invest_domain.etf_profile.models import (
+            FieldKey,
+            FieldValueType,
+        )
+
+        record = AkshareProfileRecord(
+            symbol="510300",
+            exchange="SSE",
+            fund_type=None,
+            category="Equity",
+            shares=None,
+        )
+        profile_mapping = self._build_profile_mapping([record])
+        result = map_etf_profile_to_field_evidence(
+            profile_mapping,
+            instrument_id_resolver=self._confident_resolver(),
+            source_batch_id=uuid4(),
+            observed_at=_observed_at(),
+            confidence_score=Decimal("0.5"),
+        )
+        self.assertEqual(len(result.evidence), 3)
+        # ``FUND_TYPE`` is missing.
+        self.assertEqual(result.evidence[0].field_key, FieldKey.FUND_TYPE)
+        self.assertIsNone(result.evidence[0].value)
+        self.assertEqual(result.evidence[0].value_type, FieldValueType.TEXT)
+        self.assertEqual(
+            result.evidence[0].quality_status, QualityStatus.MISSING
+        )
+        # ``CATEGORY`` is complete.
+        self.assertEqual(result.evidence[1].field_key, FieldKey.CATEGORY)
+        self.assertEqual(result.evidence[1].value, "Equity")
+        self.assertEqual(
+            result.evidence[1].quality_status, QualityStatus.COMPLETE
+        )
+        # ``SHARES`` is missing.
+        self.assertEqual(result.evidence[2].field_key, FieldKey.SHARES)
+        self.assertIsNone(result.evidence[2].value)
+        self.assertEqual(
+            result.evidence[2].value_type, FieldValueType.DECIMAL
+        )
+        self.assertEqual(
+            result.evidence[2].quality_status, QualityStatus.MISSING
+        )
+
+    def test_field_order_and_count_are_stable(self) -> None:
+        # Two records ⇒ exactly six evidence rows. Order is record
+        # order (i.e. ``merge_etf_profile`` already sorts symbols
+        # deterministically) and within each record the order is
+        # ``FUND_TYPE`` → ``CATEGORY`` → ``SHARES``.
+        from invest_domain.etf_profile.models import FieldKey
+
+        records = [
+            AkshareProfileRecord(
+                symbol="159919",
+                exchange="SZSE",
+                fund_type="ETF",
+                category="Equity",
+                shares=Decimal("500000000"),
+            ),
+            AkshareProfileRecord(
+                symbol="510300",
+                exchange="SSE",
+                fund_type="ETF",
+                category="Bond",
+                shares=Decimal("1000000000"),
+            ),
+        ]
+        profile_mapping = self._build_profile_mapping(records)
+        result = map_etf_profile_to_field_evidence(
+            profile_mapping,
+            instrument_id_resolver=self._confident_resolver(),
+            source_batch_id=uuid4(),
+            observed_at=_observed_at(),
+            confidence_score=Decimal("0.9"),
+        )
+        self.assertEqual(result.warnings, ())
+        self.assertEqual(len(result.evidence), 6)
+        keys = [entry.field_key for entry in result.evidence]
+        self.assertEqual(
+            keys,
+            [
+                FieldKey.FUND_TYPE,
+                FieldKey.CATEGORY,
+                FieldKey.SHARES,
+                FieldKey.FUND_TYPE,
+                FieldKey.CATEGORY,
+                FieldKey.SHARES,
+            ],
+        )
+        # Each record's three rows share a single resolved
+        # ``instrument_id``; the two records resolve to distinct ids.
+        first_record_ids = {entry.instrument_id for entry in result.evidence[:3]}
+        second_record_ids = {
+            entry.instrument_id for entry in result.evidence[3:]
+        }
+        self.assertEqual(
+            len(first_record_ids), 1,
+            "All three rows of the first record must share one instrument_id",
+        )
+        self.assertEqual(
+            len(second_record_ids), 1,
+            "All three rows of the second record must share one instrument_id",
+        )
+        self.assertNotEqual(
+            first_record_ids, second_record_ids,
+            "Distinct records must resolve to distinct instrument ids",
+        )
+
+    def test_source_provenance_is_carried_on_every_row(self) -> None:
+        # The shared ``FieldEvidenceSource`` carries the batch audit
+        # fields. Pin the propagation so a future refactor that drops
+        # the kwargs surfaces immediately.
+        from invest_domain.etf_profile.models import (
+            FieldKey,
+            FieldValueType,
+        )
+
+        batch_id = uuid4()
+        observed = _observed_at()
+        record = AkshareProfileRecord(
+            symbol="510300",
+            exchange="SSE",
+            fund_type="ETF",
+            category="Equity",
+            shares=Decimal("1000000000"),
+        )
+        profile_mapping = self._build_profile_mapping([record])
+        result = map_etf_profile_to_field_evidence(
+            profile_mapping,
+            instrument_id_resolver=self._confident_resolver(),
+            source_batch_id=batch_id,
+            observed_at=observed,
+            confidence_score=Decimal("0.7"),
+            revision=2,
+        )
+        self.assertEqual(len(result.evidence), 3)
+        for evidence in result.evidence:
+            self.assertEqual(evidence.source.provider_key, "akshare")
+            self.assertEqual(evidence.source.dataset_key, "etf_profile")
+            self.assertEqual(evidence.source.observed_at, observed)
+            self.assertEqual(evidence.source.source_batch_id, batch_id)
+            self.assertEqual(evidence.source.revision, 2)
+        # Distinct value_types are also pinned: ``SHARES`` is the only
+        # DECIMAL row, the rest are TEXT.
+        self.assertEqual(
+            [(entry.field_key, entry.value_type) for entry in result.evidence],
+            [
+                (FieldKey.FUND_TYPE, FieldValueType.TEXT),
+                (FieldKey.CATEGORY, FieldValueType.TEXT),
+                (FieldKey.SHARES, FieldValueType.DECIMAL),
+            ],
+        )
+
+    def test_resolver_is_called_with_symbol_and_exchange(self) -> None:
+        # The mapper must thread ``(symbol, exchange)`` from the
+        # :class:`AkshareProfileRecord` into the resolver so the
+        # application service can look up the placeholder table.
+        seen: list[tuple[str, str]] = []
+
+        def _resolver(symbol: str, exchange: str) -> InstrumentId:
+            seen.append((symbol, exchange))
+            return InstrumentId.generate()
+
+        record = AkshareProfileRecord(
+            symbol="159919",
+            exchange="SZSE",
+            fund_type="ETF",
+            category="Equity",
+            shares=Decimal("500000000"),
+        )
+        profile_mapping = self._build_profile_mapping([record])
+        map_etf_profile_to_field_evidence(
+            profile_mapping,
+            instrument_id_resolver=_resolver,
+            source_batch_id=uuid4(),
+            observed_at=_observed_at(),
+            confidence_score=Decimal("0.9"),
+        )
+        self.assertEqual(seen, [("159919", "SZSE")])
+
+    def test_resolver_failure_for_one_record_downgrades_to_warning(
+        self,
+    ) -> None:
+        # The upstream ``core.instruments`` row may be missing for a
+        # partial symbol set. The mapper must downgrade the failing
+        # record to a warning and continue processing the surviving
+        # records so a single missing placeholder never blocks the
+        # whole batch.
+        good_id = InstrumentId.generate()
+
+        def _resolver(symbol: str, exchange: str) -> InstrumentId:
+            if symbol == "159919":
+                raise KeyError(
+                    f"no instrument row for ({symbol!r}, {exchange!r})"
+                )
+            return good_id
+
+        records = [
+            AkshareProfileRecord(
+                symbol="159919",
+                exchange="SZSE",
+                fund_type="ETF",
+                category="Equity",
+                shares=Decimal("500000000"),
+            ),
+            AkshareProfileRecord(
+                symbol="510300",
+                exchange="SSE",
+                fund_type="ETF",
+                category="Equity",
+                shares=Decimal("1000000000"),
+            ),
+        ]
+        profile_mapping = self._build_profile_mapping(records)
+        result = map_etf_profile_to_field_evidence(
+            profile_mapping,
+            instrument_id_resolver=_resolver,
+            source_batch_id=uuid4(),
+            observed_at=_observed_at(),
+            confidence_score=Decimal("0.9"),
+        )
+        # Three rows for ``510300`` survive; ``159919`` is downgraded.
+        self.assertEqual(len(result.evidence), 3)
+        self.assertEqual(len(result.warnings), 1)
+        warning = result.warnings[0]
+        self.assertIn("159919", warning)
+        self.assertIn("SZSE", warning)
+        self.assertIn("KeyError", warning)
+        for evidence in result.evidence:
+            self.assertEqual(evidence.instrument_id, good_id.value)
+
+    def test_aum_and_market_value_are_never_emitted(self) -> None:
+        # The conservative slice never emits ``AUM`` or
+        # ``MARKET_VALUE`` rows so the trading-day market value of an
+        # ETF cannot be silently rewritten as its assets under
+        # management. Pin the closed-set vocabulary at the mapper
+        # boundary.
+        from invest_domain.etf_profile.models import FieldKey
+
+        record = AkshareProfileRecord(
+            symbol="510300",
+            exchange="SSE",
+            fund_type="ETF",
+            category="Equity",
+            shares=Decimal("1000000000"),
+        )
+        profile_mapping = self._build_profile_mapping([record])
+        result = map_etf_profile_to_field_evidence(
+            profile_mapping,
+            instrument_id_resolver=self._confident_resolver(),
+            source_batch_id=uuid4(),
+            observed_at=_observed_at(),
+            confidence_score=Decimal("0.9"),
+        )
+        emitted_keys = {entry.field_key for entry in result.evidence}
+        self.assertEqual(
+            emitted_keys,
+            {FieldKey.FUND_TYPE, FieldKey.CATEGORY, FieldKey.SHARES},
+        )
+        self.assertNotIn(FieldKey.AUM, emitted_keys)
+        self.assertNotIn(FieldKey.MARKET_VALUE, emitted_keys)
+        self.assertNotIn(FieldKey.TURNOVER_VALUE, emitted_keys)
+
+    def test_content_hash_is_deterministic(self) -> None:
+        # Two mapping passes over the same input with the same kwargs
+        # must produce identical ``content_hash`` digests so the audit
+        # chain can identify the same observation across replays. The
+        # resolver must therefore return the same ``InstrumentId``
+        # across both calls — a fresh ``uuid4`` per call would
+        # intentionally invalidate the digest.
+        record = AkshareProfileRecord(
+            symbol="510300",
+            exchange="SSE",
+            fund_type="ETF",
+            category="Equity",
+            shares=Decimal("1000000000"),
+        )
+        batch_id = uuid4()
+        observed = _observed_at()
+        confidence = Decimal("0.95")
+        stable_id = InstrumentId.generate()
+
+        def _stable_resolver(symbol: str, exchange: str) -> InstrumentId:
+            return stable_id
+
+        first = map_etf_profile_to_field_evidence(
+            self._build_profile_mapping([record]),
+            instrument_id_resolver=_stable_resolver,
+            source_batch_id=batch_id,
+            observed_at=observed,
+            confidence_score=confidence,
+        )
+        second = map_etf_profile_to_field_evidence(
+            self._build_profile_mapping([record]),
+            instrument_id_resolver=_stable_resolver,
+            source_batch_id=batch_id,
+            observed_at=observed,
+            confidence_score=confidence,
+        )
+        self.assertEqual(
+            [entry.content_hash for entry in first.evidence],
+            [entry.content_hash for entry in second.evidence],
+        )
+        # Hashes are 64 lowercase hex characters — pin the contract.
+        for entry in first.evidence:
+            self.assertEqual(len(entry.content_hash), 64)
+            int(entry.content_hash, 16)
+
+    def test_naive_observed_at_propagates_validation_error(self) -> None:
+        # The ``FieldEvidenceSource`` validator rejects a naive
+        # ``observed_at`` so the canonical hash stays deterministic
+        # across processes and time zones. The mapper must propagate
+        # the validation error rather than silently fabricating a
+        # timezone.
+        record = AkshareProfileRecord(
+            symbol="510300",
+            exchange="SSE",
+            fund_type="ETF",
+            category="Equity",
+            shares=Decimal("1000000000"),
+        )
+        profile_mapping = self._build_profile_mapping([record])
+        with self.assertRaises(ValueError) as ctx:
+            map_etf_profile_to_field_evidence(
+                profile_mapping,
+                instrument_id_resolver=self._confident_resolver(),
+                source_batch_id=uuid4(),
+                observed_at=datetime(2026, 7, 30, 8, 0, 0),
+                confidence_score=Decimal("0.95"),
+            )
+        self.assertIn("timezone-aware", str(ctx.exception))
+
+    def test_invalid_confidence_propagates_validation_error(self) -> None:
+        # A ``confidence_score`` outside ``[0, 1]`` is a Provider
+        # contract violation. The mapper must propagate the validation
+        # error rather than silently fabricating a default.
+        record = AkshareProfileRecord(
+            symbol="510300",
+            exchange="SSE",
+            fund_type="ETF",
+            category="Equity",
+            shares=Decimal("1000000000"),
+        )
+        profile_mapping = self._build_profile_mapping([record])
+        with self.assertRaises(ValueError) as ctx:
+            map_etf_profile_to_field_evidence(
+                profile_mapping,
+                instrument_id_resolver=self._confident_resolver(),
+                source_batch_id=uuid4(),
+                observed_at=_observed_at(),
+                confidence_score=Decimal("1.5"),
+            )
+        self.assertIn("confidence_score", str(ctx.exception))
 
 
 if __name__ == "__main__":
