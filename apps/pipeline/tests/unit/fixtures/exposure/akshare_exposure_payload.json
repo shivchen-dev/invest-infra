@@ -1,0 +1,38 @@
+{
+  "provider_key": "akshare",
+  "dataset_key": "exposure_bundle",
+  "observed_at": "2026-07-31T12:00:00+00:00",
+  "revision": 1,
+  "confidence": "0.95",
+  "index_profile": {
+    "index_code": "000300",
+    "index_name": "CSI 300",
+    "category": "Broad Market",
+    "as_of_date": "2026-07-31"
+  },
+  "index_constituents": {
+    "index_code": "000300",
+    "as_of_date": "2026-07-31",
+    "constituents": [
+      {"stock_code": "600519", "weight": "0.10", "industry": "白酒"},
+      {"stock_code": "601318", "weight": "0.05", "industry": "金融"},
+      {"stock_code": "000858", "weight": "0.03", "industry": "白酒"},
+      {"stock_code": "300750", "weight": "0.02", "industry": "新能源"}
+    ]
+  },
+  "etf_index_mapping": {
+    "etf_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+    "index_id": "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+    "effective_from": "2024-01-01",
+    "effective_to": "2026-12-31"
+  },
+  "etf_holdings": {
+    "etf_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+    "as_of_date": "2026-07-31",
+    "holdings": [
+      {"stock_code": "600519", "weight": "0.10", "industry": "白酒"},
+      {"stock_code": "601318", "weight": "0.05", "industry": "金融"},
+      {"stock_code": "000858", "weight": "0.03", "industry": "白酒"}
+    ]
+  }
+}
