@@ -47,6 +47,15 @@ trading calendar additions:
   per-symbol NAV path (``ak.fund_etf_fund_daily_em()`` per official
   docs). The mapper does **not** promote NAV rows to OHLCV (plan §5
   Task 2 "明确 NAV 不映射为 OHLCV，不填充成交额").
+- :meth:`AkshareClient.fetch_index_stock_cons_weight_csindex`
+  powers the index constituents / weight surface
+  (``ak.index_stock_cons_weight_csindex(symbol=...)`` per official
+  docs).
+- :meth:`AkshareClient.fetch_fund_overview_em` powers the fund master-
+  data surface (``ak.fund_overview_em(symbol=...)`` per official docs).
+- :meth:`AkshareClient.fetch_fund_portfolio_hold_em` powers the fund
+  reported-holdings surface (``ak.fund_portfolio_hold_em(symbol=...,
+  date=...)`` per official docs).
 - :meth:`AkshareClient.fetch_tool_trade_date_hist_sina` powers the
   read-only trading-calendar surface
   (``ak.tool_trade_date_hist_sina()`` per official docs); the helper
@@ -444,6 +453,165 @@ class AkshareClient:
             raise ProviderBadResponseError(
                 _PROVIDER_KEY,
                 f"akshare.{operation}() raised {type(exc).__name__}: "
+                f"{_scrub_message(str(exc), self._settings)}",
+            ) from exc
+        records = _dataframe_to_records(dataframe, operation)
+        return AkshareResponse(
+            operation=operation,
+            raw_payload=records,
+            raw_payload_hash=_canonical_payload_hash(records),
+        )
+
+    def fetch_index_stock_cons_weight_csindex(
+        self,
+        *,
+        index_code: str,
+    ) -> AkshareResponse:
+        """Return the index constituents and weight payload.
+
+        Calls ``ak.index_stock_cons_weight_csindex(symbol=...)`` per
+        official docs. The ``index_code`` must be a non-empty,
+        stripped 6-digit numeric string understood by the Zhong Zheng
+        (CSIndex) provider.
+
+        Parameters
+        ----------
+        index_code:
+            Six-digit numeric index code (e.g. ``"000300"``).
+        """
+
+        stripped = index_code.strip() if isinstance(index_code, str) else ""
+        if not stripped or not stripped.isdigit() or len(stripped) != 6:
+            raise ValueError(
+                f"index_code must be a non-empty 6-digit numeric string "
+                f"(got {index_code!r})"
+            )
+        module = self._resolve_module()
+        operation = "index_stock_cons_weight_csindex"
+        if not hasattr(module, operation):
+            raise ProviderUnavailableError(
+                _PROVIDER_KEY,
+                f"akshare module exposes no '{operation}' function; "
+                "the installed SDK version may have removed or renamed "
+                f"it (akshare.__version__={getattr(module, '__version__', 'unknown')!r})",
+            )
+        try:
+            dataframe = getattr(module, operation)(symbol=stripped)
+        except Exception as exc:
+            raise ProviderBadResponseError(
+                _PROVIDER_KEY,
+                f"akshare.{operation}(symbol={stripped!r}) raised "
+                f"{type(exc).__name__}: "
+                f"{_scrub_message(str(exc), self._settings)}",
+            ) from exc
+        records = _dataframe_to_records(dataframe, operation)
+        return AkshareResponse(
+            operation=operation,
+            raw_payload=records,
+            raw_payload_hash=_canonical_payload_hash(records),
+        )
+
+    def fetch_fund_overview_em(self, *, etf_code: str) -> AkshareResponse:
+        """Return the fund master-data payload.
+
+        Calls ``ak.fund_overview_em(symbol=...)`` per official docs. The
+        ``etf_code`` must be a non-empty, stripped 6-digit numeric
+        string.
+
+        Parameters
+        ----------
+        etf_code:
+            Six-digit numeric ETF code (e.g. ``"510300"``).
+        """
+
+        stripped = etf_code.strip() if isinstance(etf_code, str) else ""
+        if not stripped or not stripped.isdigit() or len(stripped) != 6:
+            raise ValueError(
+                f"etf_code must be a non-empty 6-digit numeric string "
+                f"(got {etf_code!r})"
+            )
+        module = self._resolve_module()
+        operation = "fund_overview_em"
+        if not hasattr(module, operation):
+            raise ProviderUnavailableError(
+                _PROVIDER_KEY,
+                f"akshare module exposes no '{operation}' function; "
+                "the installed SDK version may have removed or renamed "
+                f"it (akshare.__version__={getattr(module, '__version__', 'unknown')!r})",
+            )
+        try:
+            dataframe = getattr(module, operation)(symbol=stripped)
+        except Exception as exc:
+            raise ProviderBadResponseError(
+                _PROVIDER_KEY,
+                f"akshare.{operation}(symbol={stripped!r}) raised "
+                f"{type(exc).__name__}: "
+                f"{_scrub_message(str(exc), self._settings)}",
+            ) from exc
+        records = _dataframe_to_records(dataframe, operation)
+        return AkshareResponse(
+            operation=operation,
+            raw_payload=records,
+            raw_payload_hash=_canonical_payload_hash(records),
+        )
+
+    def fetch_fund_portfolio_hold_em(
+        self,
+        *,
+        etf_code: str,
+        year: str = "",
+    ) -> AkshareResponse:
+        """Return the fund reported-holdings payload.
+
+        Calls ``ak.fund_portfolio_hold_em(symbol=..., date=...)`` per
+        official docs. Pass an empty ``year`` (the default) to obtain
+        the most recent available snapshot; pass an explicit 4-digit
+        year string to target a specific report period.
+
+        Parameters
+        ----------
+        etf_code:
+            Six-digit numeric ETF code (e.g. ``"510300"``).
+        year:
+            Four-digit year string (e.g. ``"2024"``) or empty string
+            for the latest available period.
+        """
+
+        stripped_code = etf_code.strip() if isinstance(etf_code, str) else ""
+        if not stripped_code or not stripped_code.isdigit() or len(stripped_code) != 6:
+            raise ValueError(
+                f"etf_code must be a non-empty 6-digit numeric string "
+                f"(got {etf_code!r})"
+            )
+        if not isinstance(year, str):
+            raise ValueError(f"year must be a string (got {type(year).__name__})")
+        stripped_year = year.strip()
+        if stripped_year != "" and (
+            not stripped_year.isdigit() or len(stripped_year) != 4
+        ):
+            raise ValueError(
+                f"year must be exactly 4 digits or empty string "
+                f"(got {year!r})"
+            )
+        module = self._resolve_module()
+        operation = "fund_portfolio_hold_em"
+        if not hasattr(module, operation):
+            raise ProviderUnavailableError(
+                _PROVIDER_KEY,
+                f"akshare module exposes no '{operation}' function; "
+                "the installed SDK version may have removed or renamed "
+                f"it (akshare.__version__={getattr(module, '__version__', 'unknown')!r})",
+            )
+        try:
+            dataframe = getattr(module, operation)(
+                symbol=stripped_code,
+                date=stripped_year,
+            )
+        except Exception as exc:
+            raise ProviderBadResponseError(
+                _PROVIDER_KEY,
+                f"akshare.{operation}(symbol={stripped_code!r}, date={stripped_year!r}) "
+                f"raised {type(exc).__name__}: "
                 f"{_scrub_message(str(exc), self._settings)}",
             ) from exc
         records = _dataframe_to_records(dataframe, operation)
