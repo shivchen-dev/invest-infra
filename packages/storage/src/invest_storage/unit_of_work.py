@@ -35,8 +35,13 @@ from invest_storage.repositories import (
     SqlAlchemyCandidatePoolItemRepository,
     SqlAlchemyCandidatePoolRunRepository,
     SqlAlchemyDailyBarRepository,
+    SqlAlchemyEtfHoldingSnapshotRepository,
+    SqlAlchemyEtfIndexMappingRepository,
     SqlAlchemyEtfProfileFieldRepository,
     SqlAlchemyEtfProfileRepository,
+    SqlAlchemyIndexConstituentSnapshotRepository,
+    SqlAlchemyIndexIdentityRepository,
+    SqlAlchemyIndexProfileRepository,
     SqlAlchemyInstrumentRepository,
     SqlAlchemyPipelineRunRepository,
     SqlAlchemyProviderAttemptRepository,
@@ -268,6 +273,99 @@ class ResearchContextPackRepositoryPort(Protocol):
 
 
 @runtime_checkable
+class IndexIdentityRepositoryPort(Protocol):
+    """Subset of the IndexIdentity repository surface the UoW exposes.
+
+    Stage DC-3 introduces ``core.indexes`` and the
+    :class:`SqlAlchemyIndexIdentityRepository` that wraps it; the
+    Protocol mirrors the same public surface so application code can
+    type-hint against ``uow.index_identities`` without importing the
+    SQLAlchemy adapter.
+    """
+
+    def add(self, *, index_code: str, index_name: str, category: str | None = None): ...
+    def get_by_id(self, identity_id): ...
+    def get_by_index_code(self, index_code: str): ...
+    def list_by_index_code(self, index_code: str, *, limit: int = 100, offset: int = 0): ...
+
+
+@runtime_checkable
+class IndexProfileRepositoryPort(Protocol):
+    """Subset of the IndexProfile repository surface the UoW exposes.
+
+    Stage DC-3 introduces ``core.index_profiles`` and the
+    :class:`SqlAlchemyIndexProfileRepository` that wraps it; the
+    Protocol mirrors the same public surface so application code can
+    type-hint against ``uow.index_profiles`` without importing the
+    SQLAlchemy adapter. ``add`` and ``upsert`` are the idempotent
+    write paths keyed on ``content_hash``; ``get_by_id``,
+    ``find_by_content_hash``, ``list_by_index_id`` and
+    ``list_by_provider`` are the read paths the Stage DC-3
+    applications need.
+    """
+
+    def add(self, profile, index_id): ...
+    def upsert(self, profile, index_id): ...
+    def get_by_id(self, profile_id): ...
+    def find_by_content_hash(self, content_hash): ...
+    def list_by_index_id(self, index_id, *, limit: int = 100, offset: int = 0): ...
+    def list_by_provider(
+        self, provider_key, *, limit: int = 100, offset: int = 0
+    ): ...
+
+
+@runtime_checkable
+class IndexConstituentSnapshotRepositoryPort(Protocol):
+    """Subset of the IndexConstituentSnapshot repository surface.
+
+    Children rows are written in the same transaction as the parent
+    snapshot and re-read on every domain-side round-trip so the
+    callers receive a fully-populated
+    :class:`invest_domain.exposure.models.IndexConstituentSnapshot`.
+    """
+
+    def add(self, snapshot, index_id): ...
+    def get_by_id(self, snapshot_id): ...
+    def find_by_content_hash(self, content_hash): ...
+    def list_by_index_id(
+        self, index_id, *, limit: int = 100, offset: int = 0
+    ): ...
+
+
+@runtime_checkable
+class EtfIndexMappingRepositoryPort(Protocol):
+    """Subset of the EtfIndexMapping repository surface.
+
+    The natural idempotency key is ``content_hash``; the repository
+    never rewrites a row that already carries the same business
+    content so a re-collect of the same observation returns the
+    pre-existing ``StoredEtfIndexMapping.id``.
+    """
+
+    def add(self, mapping): ...
+    def upsert(self, mapping): ...
+    def get_by_id(self, mapping_id): ...
+    def list_by_etf_id(self, etf_id, *, limit: int = 100, offset: int = 0): ...
+    def list_by_index_id(self, index_id, *, limit: int = 100, offset: int = 0): ...
+
+
+@runtime_checkable
+class EtfHoldingSnapshotRepositoryPort(Protocol):
+    """Subset of the EtfHoldingSnapshot repository surface.
+
+    Mirrors the snapshot pattern of
+    :class:`IndexConstituentSnapshotRepositoryPort`: the parent row
+    carries the natural idempotency key on ``content_hash`` and the
+    child ``etf_holdings`` rows FK back with ``ON DELETE CASCADE``.
+    """
+
+    def add(self, snapshot): ...
+    def get_by_id(self, snapshot_id): ...
+    def find_by_content_hash(self, content_hash): ...
+    def list_by_etf_id(self, etf_id, *, limit: int = 100, offset: int = 0): ...
+
+
+@runtime_checkable
 class SessionProvider(Protocol):
     """Anything that can hand out a SQLAlchemy ``Session``.
 
@@ -303,6 +401,11 @@ class UnitOfWork(Protocol):
     etf_profiles: EtfProfileRepositoryPort
     etf_profile_fields: EtfProfileFieldRepositoryPort
     research_context_packs: ResearchContextPackRepositoryPort
+    index_identities: IndexIdentityRepositoryPort
+    index_profiles: IndexProfileRepositoryPort
+    index_constituent_snapshots: IndexConstituentSnapshotRepositoryPort
+    etf_index_mappings: EtfIndexMappingRepositoryPort
+    etf_holding_snapshots: EtfHoldingSnapshotRepositoryPort
 
     def commit(self) -> None:
         """Persist the current transaction to the database."""
@@ -346,6 +449,15 @@ class SqlAlchemyUnitOfWork:
         self._etf_profiles: SqlAlchemyEtfProfileRepository | None = None
         self._etf_profile_fields: SqlAlchemyEtfProfileFieldRepository | None = None
         self._research_context_packs: SqlAlchemyResearchContextPackRepository | None = None
+        self._index_identities: SqlAlchemyIndexIdentityRepository | None = None
+        self._index_profiles: SqlAlchemyIndexProfileRepository | None = None
+        self._index_constituent_snapshots: SqlAlchemyIndexConstituentSnapshotRepository | None = (
+            None
+        )
+        self._etf_index_mappings: SqlAlchemyEtfIndexMappingRepository | None = None
+        self._etf_holding_snapshots: SqlAlchemyEtfHoldingSnapshotRepository | None = (
+            None
+        )
         self._closed = True
         self._user_committed = False
 
@@ -434,6 +546,40 @@ class SqlAlchemyUnitOfWork:
             )
         return self._research_context_packs
 
+    @property
+    def index_identities(self) -> SqlAlchemyIndexIdentityRepository:
+        if self._index_identities is None:
+            self._index_identities = SqlAlchemyIndexIdentityRepository(self.session)
+        return self._index_identities
+
+    @property
+    def index_profiles(self) -> SqlAlchemyIndexProfileRepository:
+        if self._index_profiles is None:
+            self._index_profiles = SqlAlchemyIndexProfileRepository(self.session)
+        return self._index_profiles
+
+    @property
+    def index_constituent_snapshots(self) -> SqlAlchemyIndexConstituentSnapshotRepository:
+        if self._index_constituent_snapshots is None:
+            self._index_constituent_snapshots = SqlAlchemyIndexConstituentSnapshotRepository(
+                self.session
+            )
+        return self._index_constituent_snapshots
+
+    @property
+    def etf_index_mappings(self) -> SqlAlchemyEtfIndexMappingRepository:
+        if self._etf_index_mappings is None:
+            self._etf_index_mappings = SqlAlchemyEtfIndexMappingRepository(self.session)
+        return self._etf_index_mappings
+
+    @property
+    def etf_holding_snapshots(self) -> SqlAlchemyEtfHoldingSnapshotRepository:
+        if self._etf_holding_snapshots is None:
+            self._etf_holding_snapshots = SqlAlchemyEtfHoldingSnapshotRepository(
+                self.session
+            )
+        return self._etf_holding_snapshots
+
     def commit(self) -> None:
         self.session.commit()
         self._user_committed = True
@@ -479,6 +625,11 @@ class SqlAlchemyUnitOfWork:
             self._etf_profiles = None
             self._etf_profile_fields = None
             self._research_context_packs = None
+            self._index_identities = None
+            self._index_profiles = None
+            self._index_constituent_snapshots = None
+            self._etf_index_mappings = None
+            self._etf_holding_snapshots = None
             self._user_committed = False
             self._closed = True
 
@@ -491,7 +642,12 @@ __all__ = [
     "CandidatePoolItemRepositoryPort",
     "CandidatePoolRunRepositoryPort",
     "DailyBarRepositoryPort",
+    "EtfHoldingSnapshotRepositoryPort",
+    "EtfIndexMappingRepositoryPort",
     "EtfProfileFieldRepositoryPort",
+    "IndexConstituentSnapshotRepositoryPort",
+    "IndexIdentityRepositoryPort",
+    "IndexProfileRepositoryPort",
     "ResearchContextPackRepositoryPort",
     "EtfProfileRepositoryPort",
     "InputSnapshotRepositoryPort",
@@ -503,4 +659,4 @@ __all__ = [
     "SessionProvider",
     "SqlAlchemyUnitOfWork",
     "UnitOfWork",
-]
+]  # noqa: E501

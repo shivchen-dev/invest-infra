@@ -22,7 +22,7 @@ from sqlalchemy import (
     text,
 )
 from sqlalchemy.dialects.postgresql import JSONB, UUID
-from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
+from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 NAMING_CONVENTION = {
     "ix": "ix_%(column_0_label)s",
@@ -852,7 +852,7 @@ class ResearchContextItemRow(Base):
         ForeignKeyConstraint(
             ["pack_id"],
             ["analytics.research_context_packs.id"],
-            name="fk_research_context_items_pack_id_analytics_research_context_packs",
+            name="fk_research_context_items_pack_context_packs",
             ondelete="CASCADE",
         ),
         UniqueConstraint("pack_id", "item_hash", name="uq_research_context_items_pack_item_hash"),
@@ -997,6 +997,608 @@ class EtfProfileFieldRow(Base):
     quality_status: Mapped[str] = mapped_column(String(24), nullable=False)
     confidence_score: Mapped[Any] = mapped_column(Numeric(38, 18), nullable=False)
     content_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
+class IndexIdentityRow(Base):
+    """Stable index identity row.
+
+    Stage DC-3 introduces ``core.indexes`` (migration
+    ``20260806_0011_dc3_exposure``) as the canonical store of every
+    known market index. ``index_code`` is the natural business key
+    (e.g. ``"000300.SH"``) and is enforced unique at the database
+    boundary; the synthetic ``id`` (``UUID``) is the stable internal
+    identifier that
+    :class:`IndexProfileRow`, :class:`IndexConstituentSnapshotRow` and
+    :class:`EtfIndexMappingRow` all FK back to.
+
+    Plan 1 of the DC-3 design separates **identity** (this row, owned
+    by ``core.indexes``) from **observation** (per-source metadata
+    snapshots in ``core.index_profiles``). The identity table is the
+    canonical join target; observation rows store the as-collected
+    business content (the observed name / category that varies per
+    provider and per revision) and FK to the identity by ``index_id``.
+
+    The ``index_name`` / ``category`` columns here carry the **latest
+    observed** name / category so a join to the identity alone is
+    enough to render an index in dashboards; the per-observation name
+    is still preserved on :class:`IndexProfileRow` for replay.
+    """
+
+    __tablename__ = "indexes"
+    __table_args__ = (
+        CheckConstraint(
+            "length(index_code) > 0",
+            name="ck_indexes_index_code_nonempty",
+        ),
+        CheckConstraint(
+            "length(index_name) > 0",
+            name="ck_indexes_index_name_nonempty",
+        ),
+        UniqueConstraint("index_code", name="uq_indexes_index_code"),
+        Index("ix_indexes_index_code", "index_code"),
+        Index("ix_indexes_category", "category"),
+        {"schema": "core"},
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    index_code: Mapped[str] = mapped_column(String(64), nullable=False)
+    index_name: Mapped[str] = mapped_column(String(160), nullable=False)
+    category: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    first_observed_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    last_observed_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+    profiles: Mapped[list[IndexProfileRow]] = relationship(
+        back_populates="index_identity",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+    )
+    constituent_snapshots: Mapped[list[IndexConstituentSnapshotRow]] = relationship(
+        back_populates="index_identity",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+    )
+    mappings: Mapped[list[EtfIndexMappingRow]] = relationship(
+        back_populates="index_identity",
+        passive_deletes=True,
+    )
+
+
+class IndexProfileRow(Base):
+    """One immutable ``index_profile`` observation.
+
+    Stage DC-3 introduces ``core.index_profiles`` (migration
+    ``20260806_0011_dc3_exposure``) as the persistent record of every
+    :class:`invest_domain.exposure.models.IndexProfile` observation.
+    Per Plan 1, the index identity lives in :class:`IndexIdentityRow`
+    and this row is a **revisioned observation**: multiple rows can
+    coexist for the same ``index_id`` (same underlying market index)
+    with different ``revision`` numbers and ``content_hash`` values so
+    the full observation history is preserved. Re-collects of the same
+    observation are a no-op on ``content_hash`` while a different
+    observation produces a new ``revision`` row.
+
+    The :class:`invest_domain.exposure.models.IndexProfile` dataclass
+    is content-only (carries no ``id`` field); the storage layer
+    provides the synthetic ``id`` (PK) and the
+    ``index_id`` FK to :class:`IndexIdentityRow`. Application code
+    threads one ``index_id`` through both writes — the invariant is
+    verified by :meth:`tests.storage.test_exposure_repositories_mock
+    .CrossRepositoryIndexIdTests.test_index_id_matches_mapping_index_id`.
+
+    ``index_name`` / ``category`` are denormalized onto the observation
+    row so a historical replay sees the **observed** name even when
+    the identity row's canonical name has since drifted. The
+    provenance columns mirror :class:`ExposureProvenance` so the full
+    provider provenance is preserved per row; ``content_hash`` is the
+    natural idempotency key.
+    """
+
+    __tablename__ = "index_profiles"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["index_id"],
+            ["core.indexes.id"],
+            name="fk_index_profiles_index_id_core_indexes",
+        ),
+        ForeignKeyConstraint(
+            ["source_batch_id"],
+            ["raw.provider_batches.id"],
+            name="fk_index_profiles_source_batch_id_raw_provider_batches",
+        ),
+        CheckConstraint(
+            "length(content_hash) = 64",
+            name="ck_index_profiles_content_hash_len64",
+        ),
+        CheckConstraint(
+            "length(index_name) > 0",
+            name="ck_index_profiles_index_name_nonempty",
+        ),
+        CheckConstraint(
+            "length(source_provider) > 0",
+            name="ck_index_profiles_source_provider_nonempty",
+        ),
+        CheckConstraint(
+            "length(source_dataset) > 0",
+            name="ck_index_profiles_source_dataset_nonempty",
+        ),
+        CheckConstraint(
+            "source_revision >= 1",
+            name="ck_index_profiles_source_revision_positive",
+        ),
+        CheckConstraint(
+            "revision >= 1",
+            name="ck_index_profiles_revision_positive",
+        ),
+        CheckConstraint(
+            "confidence >= 0 AND confidence <= 1",
+            name="ck_index_profiles_confidence_range",
+        ),
+        UniqueConstraint(
+            "index_id", "revision", name="uq_index_profiles_index_id_revision"
+        ),
+        Index("uq_index_profiles_content_hash", "content_hash", unique=True),
+        Index("ix_index_profiles_index_id", "index_id"),
+        Index("ix_index_profiles_source_provider", "source_provider"),
+        Index("ix_index_profiles_category", "category"),
+        {"schema": "core"},
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    index_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    index_name: Mapped[str] = mapped_column(String(160), nullable=False)
+    category: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    as_of_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    source_provider: Mapped[str] = mapped_column(String(64), nullable=False)
+    source_dataset: Mapped[str] = mapped_column(String(64), nullable=False)
+    observed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    source_batch_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
+    source_revision: Mapped[int] = mapped_column(Integer, nullable=False)
+    confidence: Mapped[Any] = mapped_column(Numeric(38, 18), nullable=False)
+    revision: Mapped[int] = mapped_column(Integer, nullable=False)
+    content_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+    index_identity: Mapped[IndexIdentityRow] = relationship(back_populates="profiles")
+
+
+class IndexConstituentSnapshotRow(Base):
+    """One immutable snapshot of the constituents of an index.
+
+    Stage DC-3 ``PR-EXPOSURE-03`` introduces
+    ``core.index_constituent_snapshots`` (Alembic migration
+    ``20260806_0011_dc3_exposure``) as the persistent record of every
+    :class:`invest_domain.exposure.models.IndexConstituentSnapshot`
+    observation. Snapshots are immutable per ADR-0006 §3: the same
+    ``(index_id, as_of_date, revision)`` triplet is a no-op; a new
+    observation with a different ``content_hash`` produces a new
+    revision.
+
+    Per Plan 1 the ``index_id`` column FKs to
+    :class:`IndexIdentityRow.id` so the storage layer rejects snapshots
+    that reference an unknown index. The natural idempotency key is
+    ``content_hash``; the ``(index_id, as_of_date, revision)`` UNIQUE
+    constraint is the version-key guard. Child rows
+    (:class:`IndexConstituentRow`) FK back to this table with
+    ``ON DELETE CASCADE`` so a snapshot's constituents are removed
+    when the snapshot is dropped.
+    """
+
+    __tablename__ = "index_constituent_snapshots"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["index_id"],
+            ["core.indexes.id"],
+            name="fk_index_constituent_snapshots_index_id_core_indexes",
+        ),
+        ForeignKeyConstraint(
+            ["source_batch_id"],
+            ["raw.provider_batches.id"],
+            name="fk_index_snapshots_source_batch_raw_provider_batches",
+        ),
+        CheckConstraint(
+            "length(content_hash) = 64",
+            name="ck_index_constituent_snapshots_content_hash_len64",
+        ),
+        CheckConstraint(
+            "length(source_provider) > 0",
+            name="ck_index_constituent_snapshots_source_provider_nonempty",
+        ),
+        CheckConstraint(
+            "length(source_dataset) > 0",
+            name="ck_index_constituent_snapshots_source_dataset_nonempty",
+        ),
+        CheckConstraint(
+            "source_revision >= 1",
+            name="ck_index_constituent_snapshots_source_revision_positive",
+        ),
+        CheckConstraint(
+            "revision >= 1",
+            name="ck_index_constituent_snapshots_revision_positive",
+        ),
+        CheckConstraint(
+            "confidence >= 0 AND confidence <= 1",
+            name="ck_index_constituent_snapshots_confidence_range",
+        ),
+        UniqueConstraint(
+            "index_id", "as_of_date", "revision",
+            name="uq_index_constituent_snapshots_natural_key",
+        ),
+        Index(
+            "uq_index_constituent_snapshots_content_hash",
+            "content_hash",
+            unique=True,
+        ),
+        Index(
+            "ix_index_constituent_snapshots_index_id_as_of_date",
+            "index_id",
+            "as_of_date",
+        ),
+        Index(
+            "ix_index_constituent_snapshots_index_id_observed_at",
+            "index_id",
+            "observed_at",
+        ),
+        {"schema": "core"},
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    index_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    as_of_date: Mapped[date] = mapped_column(Date, nullable=False)
+    source_provider: Mapped[str] = mapped_column(String(64), nullable=False)
+    source_dataset: Mapped[str] = mapped_column(String(64), nullable=False)
+    observed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    source_batch_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
+    source_revision: Mapped[int] = mapped_column(Integer, nullable=False)
+    confidence: Mapped[Any] = mapped_column(Numeric(38, 18), nullable=False)
+    revision: Mapped[int] = mapped_column(Integer, nullable=False)
+    content_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+    index_identity: Mapped[IndexIdentityRow] = relationship(
+        back_populates="constituent_snapshots"
+    )
+    constituents: Mapped[list[IndexConstituentRow]] = relationship(
+        back_populates="snapshot",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+    )
+
+
+class IndexConstituentRow(Base):
+    """One constituent of an :class:`IndexConstituentSnapshotRow`.
+
+    Stage DC-3 ``PR-EXPOSURE-03`` introduces
+    ``core.index_constituents`` (Alembic migration
+    ``20260806_0011_dc3_exposure``). One row per
+    ``(snapshot_id, stock_code)`` pair; the composite uniqueness is
+    enforced at the database level so the same stock cannot appear
+    twice in a snapshot. ``revision`` mirrors the parent snapshot's
+    revision so audit replays can join on the triplet without scanning.
+
+    The ``weight`` column is the deterministic ``Decimal`` weight
+    computed by the domain layer over ``[0, 1]``; the database CHECK
+    constraints mirror the domain contract so a buggy application path
+    cannot smuggle an out-of-range value past the validator. The FK to
+    :class:`IndexConstituentSnapshotRow` carries ``ON DELETE CASCADE``
+    so a snapshot's constituents are removed when the parent is
+    dropped.
+    """
+
+    __tablename__ = "index_constituents"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["snapshot_id"],
+            ["core.index_constituent_snapshots.id"],
+            name="fk_index_constituents_snapshot_core_index_snapshots",
+            ondelete="CASCADE",
+        ),
+        CheckConstraint(
+            "length(stock_code) > 0",
+            name="ck_index_constituents_stock_code_nonempty",
+        ),
+        CheckConstraint(
+            "weight >= 0 AND weight <= 1",
+            name="ck_index_constituents_weight_range",
+        ),
+        CheckConstraint(
+            "revision >= 1",
+            name="ck_index_constituents_revision_positive",
+        ),
+        Index("ix_index_constituents_snapshot_id", "snapshot_id"),
+        Index("ix_index_constituents_stock_code", "stock_code"),
+        {"schema": "core"},
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    snapshot_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    stock_code: Mapped[str] = mapped_column(String(32), nullable=False)
+    weight: Mapped[Any] = mapped_column(Numeric(38, 18), nullable=False)
+    industry: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    revision: Mapped[int] = mapped_column(Integer, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+    snapshot: Mapped[IndexConstituentSnapshotRow] = relationship(
+        back_populates="constituents"
+    )
+
+
+class EtfIndexMappingRow(Base):
+    """One immutable ``(ETF, Index)`` mapping observation.
+
+    Stage DC-3 ``PR-EXPOSURE-03`` introduces
+    ``core.etf_index_mappings`` (Alembic migration
+    ``20260806_0011_dc3_exposure``) as the persistent record of every
+    :class:`invest_domain.exposure.models.EtfIndexMapping`
+    observation. The natural idempotency key is ``content_hash``; the
+    ``(etf_id, index_id, effective_from, revision)`` UNIQUE constraint
+    is the version-key guard so two distinct revisions cannot claim the
+    same effective-date slot.
+
+    Per Plan 1, ``index_id`` FKs to :class:`IndexIdentityRow.id` —
+    the **stable index identity** (not the per-observation profile
+    row's synthetic id). The application layer threads the same
+    ``index_id`` through both :class:`IndexProfileRow` /
+    :class:`IndexConstituentSnapshotRow` writes and the
+    :class:`EtfIndexMappingRow` write so the FK chain stays closed;
+    the storage layer enforces the referential integrity at the
+    database boundary. Violations surface as
+    :class:`sqlalchemy.exc.IntegrityError`.
+
+    ``effective_to`` is nullable so an open-ended mapping (``NULL`` =
+    "this is the current mapping") coexists with closed mappings in
+    the same table; the CHECK constraint rejects ``effective_to <
+    effective_from``.
+    """
+
+    __tablename__ = "etf_index_mappings"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["etf_id"],
+            ["core.instruments.id"],
+            name="fk_etf_index_mappings_etf_id_core_instruments",
+        ),
+        ForeignKeyConstraint(
+            ["index_id"],
+            ["core.indexes.id"],
+            name="fk_etf_index_mappings_index_id_core_indexes",
+        ),
+        ForeignKeyConstraint(
+            ["source_batch_id"],
+            ["raw.provider_batches.id"],
+            name="fk_etf_index_mappings_source_batch_id_raw_provider_batches",
+        ),
+        CheckConstraint(
+            "length(content_hash) = 64",
+            name="ck_etf_index_mappings_content_hash_len64",
+        ),
+        CheckConstraint(
+            "length(source_provider) > 0",
+            name="ck_etf_index_mappings_source_provider_nonempty",
+        ),
+        CheckConstraint(
+            "length(source_dataset) > 0",
+            name="ck_etf_index_mappings_source_dataset_nonempty",
+        ),
+        CheckConstraint(
+            "source_revision >= 1",
+            name="ck_etf_index_mappings_source_revision_positive",
+        ),
+        CheckConstraint(
+            "revision >= 1",
+            name="ck_etf_index_mappings_revision_positive",
+        ),
+        CheckConstraint(
+            "confidence >= 0 AND confidence <= 1",
+            name="ck_etf_index_mappings_confidence_range",
+        ),
+        CheckConstraint(
+            "effective_to IS NULL OR effective_to >= effective_from",
+            name="ck_etf_index_mappings_effective_to_after_from",
+        ),
+        UniqueConstraint(
+            "etf_id", "index_id", "effective_from", "revision",
+            name="uq_etf_index_mappings_natural_key",
+        ),
+        Index(
+            "uq_etf_index_mappings_content_hash",
+            "content_hash",
+            unique=True,
+        ),
+        Index("ix_etf_index_mappings_etf_id", "etf_id"),
+        Index("ix_etf_index_mappings_index_id", "index_id"),
+        Index(
+            "ix_etf_index_mappings_etf_id_effective_from",
+            "etf_id",
+            "effective_from",
+        ),
+        Index("ix_etf_index_mappings_source_provider", "source_provider"),
+        {"schema": "core"},
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    etf_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    index_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    effective_from: Mapped[date] = mapped_column(Date, nullable=False)
+    effective_to: Mapped[date | None] = mapped_column(Date, nullable=True)
+    source_provider: Mapped[str] = mapped_column(String(64), nullable=False)
+    source_dataset: Mapped[str] = mapped_column(String(64), nullable=False)
+    observed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    source_batch_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
+    source_revision: Mapped[int] = mapped_column(Integer, nullable=False)
+    confidence: Mapped[Any] = mapped_column(Numeric(38, 18), nullable=False)
+    revision: Mapped[int] = mapped_column(Integer, nullable=False)
+    content_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+    index_identity: Mapped[IndexIdentityRow] = relationship(
+        back_populates="mappings"
+    )
+
+
+class EtfHoldingSnapshotRow(Base):
+    """One immutable snapshot of the holdings of an ETF.
+
+    Stage DC-3 ``PR-EXPOSURE-03`` introduces
+    ``core.etf_holding_snapshots`` (Alembic migration
+    ``20260806_0011_dc3_exposure``) as the persistent record of every
+    :class:`invest_domain.exposure.models.EtfHoldingSnapshot`
+    observation. Snapshots are immutable per ADR-0006 §3: the same
+    ``(etf_id, as_of_date, revision)`` triplet is a no-op; a new
+    observation with a different ``content_hash`` produces a new
+    revision.
+
+    The natural idempotency key is ``content_hash``; the
+    ``(etf_id, as_of_date, revision)`` UNIQUE constraint is the
+    version-key guard. The ``etf_id`` column FKs to
+    ``core.instruments.id`` so the storage layer rejects snapshots
+    that reference an unknown instrument. Child rows
+    (:class:`EtfHoldingRow`) FK back to this table with
+    ``ON DELETE CASCADE``.
+    """
+
+    __tablename__ = "etf_holding_snapshots"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["etf_id"],
+            ["core.instruments.id"],
+            name="fk_etf_holding_snapshots_etf_id_core_instruments",
+        ),
+        ForeignKeyConstraint(
+            ["source_batch_id"],
+            ["raw.provider_batches.id"],
+            name="fk_etf_holding_snapshots_source_batch_id_raw_provider_batches",
+        ),
+        CheckConstraint(
+            "length(content_hash) = 64",
+            name="ck_etf_holding_snapshots_content_hash_len64",
+        ),
+        CheckConstraint(
+            "length(source_provider) > 0",
+            name="ck_etf_holding_snapshots_source_provider_nonempty",
+        ),
+        CheckConstraint(
+            "length(source_dataset) > 0",
+            name="ck_etf_holding_snapshots_source_dataset_nonempty",
+        ),
+        CheckConstraint(
+            "source_revision >= 1",
+            name="ck_etf_holding_snapshots_source_revision_positive",
+        ),
+        CheckConstraint(
+            "revision >= 1",
+            name="ck_etf_holding_snapshots_revision_positive",
+        ),
+        CheckConstraint(
+            "confidence >= 0 AND confidence <= 1",
+            name="ck_etf_holding_snapshots_confidence_range",
+        ),
+        UniqueConstraint(
+            "etf_id", "as_of_date", "revision",
+            name="uq_etf_holding_snapshots_natural_key",
+        ),
+        Index(
+            "uq_etf_holding_snapshots_content_hash",
+            "content_hash",
+            unique=True,
+        ),
+        Index(
+            "ix_etf_holding_snapshots_etf_id_as_of_date",
+            "etf_id",
+            "as_of_date",
+        ),
+        Index(
+            "ix_etf_holding_snapshots_etf_id_observed_at",
+            "etf_id",
+            "observed_at",
+        ),
+        {"schema": "core"},
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    etf_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    as_of_date: Mapped[date] = mapped_column(Date, nullable=False)
+    source_provider: Mapped[str] = mapped_column(String(64), nullable=False)
+    source_dataset: Mapped[str] = mapped_column(String(64), nullable=False)
+    observed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    source_batch_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
+    source_revision: Mapped[int] = mapped_column(Integer, nullable=False)
+    confidence: Mapped[Any] = mapped_column(Numeric(38, 18), nullable=False)
+    revision: Mapped[int] = mapped_column(Integer, nullable=False)
+    content_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
+class EtfHoldingRow(Base):
+    """One holding of an :class:`EtfHoldingSnapshotRow`.
+
+    Stage DC-3 ``PR-EXPOSURE-03`` introduces ``core.etf_holdings``
+    (Alembic migration ``20260806_0011_dc3_exposure``). One row per
+    ``(snapshot_id, stock_code)`` pair; the composite uniqueness is
+    enforced at the database level so the same stock cannot appear
+    twice in a snapshot. ``revision`` mirrors the parent snapshot's
+    revision so audit replays can join on the triplet without scanning.
+
+    The ``weight`` column is the deterministic ``Decimal`` weight
+    computed by the domain layer over ``[0, 1]``; the database CHECK
+    constraints mirror the domain contract. The FK to
+    :class:`EtfHoldingSnapshotRow` carries ``ON DELETE CASCADE`` so a
+    snapshot's holdings are removed when the parent is dropped.
+    """
+
+    __tablename__ = "etf_holdings"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["snapshot_id"],
+            ["core.etf_holding_snapshots.id"],
+            name="fk_etf_holdings_snapshot_id_core_etf_holding_snapshots",
+            ondelete="CASCADE",
+        ),
+        CheckConstraint(
+            "length(stock_code) > 0",
+            name="ck_etf_holdings_stock_code_nonempty",
+        ),
+        CheckConstraint(
+            "weight >= 0 AND weight <= 1",
+            name="ck_etf_holdings_weight_range",
+        ),
+        CheckConstraint(
+            "revision >= 1",
+            name="ck_etf_holdings_revision_positive",
+        ),
+        Index("ix_etf_holdings_snapshot_id", "snapshot_id"),
+        Index("ix_etf_holdings_stock_code", "stock_code"),
+        {"schema": "core"},
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    snapshot_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    stock_code: Mapped[str] = mapped_column(String(32), nullable=False)
+    weight: Mapped[Any] = mapped_column(Numeric(38, 18), nullable=False)
+    industry: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    revision: Mapped[int] = mapped_column(Integer, nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )

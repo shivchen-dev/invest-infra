@@ -99,7 +99,7 @@ def upgrade() -> None:
         sa.ForeignKeyConstraint(
             ["pack_id"],
             ["analytics.research_context_packs.id"],
-            name="fk_research_context_items_pack_id_analytics_research_context_packs",
+            name="fk_research_context_items_pack_context_packs",
             ondelete="CASCADE",
         ),
         sa.UniqueConstraint(

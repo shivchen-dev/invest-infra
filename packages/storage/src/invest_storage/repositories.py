@@ -67,6 +67,15 @@ from invest_domain.etf_profile import (
     FieldKey,
     FieldValueType,
 )
+from invest_domain.exposure import (
+    EtfHolding,
+    EtfHoldingSnapshot,
+    EtfIndexMapping,
+    ExposureProvenance,
+    IndexConstituent,
+    IndexConstituentSnapshot,
+    IndexProfile,
+)
 from invest_domain.input_snapshot import InputSnapshot
 from invest_domain.instruments import (
     Instrument,
@@ -92,8 +101,15 @@ from invest_storage.models import (
     CandidatePoolItemRow,
     CandidatePoolRunRow,
     DailyBarRow,
+    EtfHoldingRow,
+    EtfHoldingSnapshotRow,
+    EtfIndexMappingRow,
     EtfProfileFieldRow,
     EtfProfileRow,
+    IndexConstituentRow,
+    IndexConstituentSnapshotRow,
+    IndexIdentityRow,
+    IndexProfileRow,
     InputSnapshotRow,
     InstrumentRow,
     PipelineRunRow,
@@ -2613,6 +2629,1038 @@ def _row_to_field_evidence(row: EtfProfileFieldRow) -> FieldEvidence:
         source=source,
         quality_status=QualityStatus(row.quality_status),
         confidence_score=confidence_score,
+        content_hash=row.content_hash,
+        created_at=row.created_at,
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class StoredIndexProfile:
+    """Domain-side view of a persisted ``core.index_profiles`` row.
+
+    Stage DC-3 introduces ``core.index_profiles`` (migration
+    ``20260806_0011_dc3_exposure``) as the persistent record of every
+    :class:`invest_domain.exposure.models.IndexProfile` observation.
+    The domain dataclass carries no ``id`` field - the index profile
+    is a content-only value object and the storage layer owns the
+    synthetic primary key. ``StoredIndexProfile`` carries both the
+    synthetic ``id`` (profile row PK) and the stable ``index_id`` FK
+    to :class:`IndexIdentityRow` so application code can verify the
+    FK chain without a second round-trip.
+
+    ``index_id`` is the stable identity UUID from ``core.indexes`` that
+    all FK-bearing tables (``index_constituent_snapshots``,
+    ``etf_index_mappings``) reference; multiple profile revisions share
+    the same ``index_id`` for the same underlying market index.
+
+    ``revision`` mirrors the domain observation revision: the same
+    index can have multiple rows with the same ``index_code`` and
+    different ``content_hash`` / ``revision`` pairs so the history is
+    preserved. ``created_at`` is the server-generated audit timestamp.
+    """
+
+    id: UUID
+    index_id: UUID
+    index_code: str
+    index_name: str
+    provenance: ExposureProvenance
+    category: str | None
+    as_of_date: date | None
+    source_provider: str
+    source_dataset: str
+    source_batch_id: UUID | None
+    source_revision: int
+    confidence: Decimal
+    revision: int
+    content_hash: str
+    created_at: datetime | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class StoredEtfIndexMapping:
+    """Domain-side view of a persisted ``core.etf_index_mappings`` row.
+
+    The :class:`invest_domain.exposure.models.EtfIndexMapping` domain
+    dataclass is content-only: it carries the business keys
+    (``etf_id``, ``index_id``, ``effective_from``, ``effective_to``)
+    and the observation provenance but no synthetic identity. The
+    storage layer mints a UUID ``id`` on INSERT; ``StoredEtfIndexMapping``
+    carries that id so a downstream reader can re-link the mapping to
+    its parent profile rows.
+    """
+
+    id: UUID
+    etf_id: UUID
+    index_id: UUID
+    effective_from: date
+    effective_to: date | None
+    observed_at: datetime
+    provenance: ExposureProvenance
+    source_provider: str
+    source_dataset: str
+    source_batch_id: UUID | None
+    source_revision: int
+    confidence: Decimal
+    revision: int
+    content_hash: str
+    created_at: datetime | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class StoredIndexIdentity:
+    """Domain-side view of a persisted ``core.indexes`` row.
+
+    Stage DC-3 introduces ``core.indexes`` (migration
+    ``20260806_0011_dc3_exposure``) as the canonical store of every
+    known market index. ``index_code`` is the natural business key
+    (e.g. ``"000300.SH"``) enforced unique at the database boundary;
+    the synthetic ``id`` (UUID) is the stable internal identifier that
+    :class:`IndexProfileRow`, :class:`IndexConstituentSnapshotRow` and
+    :class:`EtfIndexMappingRow` all FK back to.
+    """
+
+    id: UUID
+    index_code: str
+    index_name: str
+    category: str | None
+    first_observed_at: datetime
+    last_observed_at: datetime
+    created_at: datetime | None = None
+
+
+class SqlAlchemyIndexIdentityRepository:
+    """Read/write access to ``core.indexes``.
+
+    The identity table is the canonical join target for all index
+    observations. ``index_code`` is the natural business key enforced
+    unique at the database boundary; the synthetic ``id`` (UUID) is the
+    stable internal identifier threaded through profile and snapshot
+    writes.
+    """
+
+    def __init__(self, session: Session) -> None:
+        self._session = session
+
+    def add(
+        self, *, index_code: str, index_name: str, category: str | None = None
+    ) -> StoredIndexIdentity:
+        """Idempotent get-or-create by ``index_code``.
+
+        Uses ``INSERT ... ON CONFLICT (index_code) DO NOTHING RETURNING id``
+        to atomically attempt insertion; when a conflict is detected the
+        existing row is fetched and returned. This guarantees that the
+        returned :class:`StoredIndexIdentity` carries the stable ``id`` that
+        all FK-bearing tables (``index_profiles``, ``etf_index_mappings``,
+        ``index_constituent_snapshots``) reference.
+
+        Validation: ``index_code`` and ``index_name`` must be non-empty
+        after whitespace stripping; violations raise ``ValueError``.
+        """
+        if not index_code or not index_code.strip():
+            raise ValueError("index_code must be non-empty")
+        if not index_name or not index_name.strip():
+            raise ValueError("index_name must be non-empty")
+
+        now = datetime.now(tz=UTC)
+        index_code = index_code.strip()
+        index_name = index_name.strip()
+        row_id = uuid.uuid4()
+
+        stmt = (
+            insert(IndexIdentityRow)
+            .values(
+                id=row_id,
+                index_code=index_code,
+                index_name=index_name,
+                category=category,
+                first_observed_at=now,
+                last_observed_at=now,
+            )
+            .on_conflict_do_nothing(index_elements=["index_code"])
+            .returning(IndexIdentityRow.id)
+        )
+        returned_id = self._session.execute(stmt).scalar_one_or_none()
+        self._session.flush()
+
+        if returned_id is not None:
+            row = self._session.get(IndexIdentityRow, returned_id)
+            return _row_to_stored_index_identity(row)
+
+        existing = self.get_by_index_code(index_code)
+        if existing is None:
+            raise RuntimeError(
+                "INSERT ON CONFLICT DO NOTHING returned no rows yet "
+                "get_by_index_code found no existing identity; "
+                "possible transaction isolation issue"
+            )
+        return existing
+
+    def get_by_id(self, identity_id: UUID) -> StoredIndexIdentity | None:
+        row = self._session.get(IndexIdentityRow, identity_id)
+        return _row_to_stored_index_identity(row) if row is not None else None
+
+    def get_by_index_code(self, index_code: str) -> StoredIndexIdentity | None:
+        stmt = (
+            select(IndexIdentityRow)
+            .where(IndexIdentityRow.index_code == index_code)
+            .limit(1)
+        )
+        row = self._session.scalars(stmt).first()
+        return _row_to_stored_index_identity(row) if row is not None else None
+
+    def list_by_index_code(
+        self, index_code: str, *, limit: int = 100, offset: int = 0
+    ) -> list[StoredIndexIdentity]:
+        if limit < 0:
+            raise ValueError(f"limit must be >= 0, got {limit}")
+        if offset < 0:
+            raise ValueError(f"offset must be >= 0, got {offset}")
+        rows = self._session.scalars(
+            select(IndexIdentityRow)
+            .where(IndexIdentityRow.index_code == index_code)
+            .limit(limit)
+            .offset(offset)
+        ).all()
+        return [_row_to_stored_index_identity(row) for row in rows]
+
+
+def _row_to_stored_index_identity(row: IndexIdentityRow) -> StoredIndexIdentity:
+    return StoredIndexIdentity(
+        id=row.id,
+        index_code=row.index_code,
+        index_name=row.index_name,
+        category=row.category,
+        first_observed_at=row.first_observed_at,
+        last_observed_at=row.last_observed_at,
+        created_at=row.created_at,
+    )
+
+
+class SqlAlchemyIndexProfileRepository:
+    """Read/write access to ``core.index_profiles``.
+
+    Stage DC-3 introduces the persistent record of every
+    :class:`invest_domain.exposure.models.IndexProfile` observation.
+    Two write paths are exposed:
+
+    - :meth:`add` - INSERT with ``ON CONFLICT (content_hash) DO NOTHING``;
+      returns the freshly-minted :class:`StoredIndexProfile` (or the
+      pre-existing one when the hash is already present).
+    - :meth:`upsert` - INSERT-or-no-op on ``content_hash``; never
+      rewrites a row that already carries the same business content.
+
+    The repository owns the synthetic ``id`` (profile row PK) and the
+    ``index_id`` (stable FK to :class:`IndexIdentityRow`). Multiple
+    profile revisions for the same underlying market index share the
+    same ``index_id``. The application service MUST pass the same
+    ``index_id`` (obtained from :meth:`SqlAlchemyIndexIdentityRepository.add`)
+    to both :meth:`add` and :meth:`SqlAlchemyEtfIndexMappingRepository.upsert`
+    so the ``core.etf_index_mappings.index_id`` FK chain stays closed;
+    the invariant is verified by
+    :class:`tests.storage.test_exposure_repositories_mock.IndexProfile
+    RepositoryTests.test_index_id_matches_mapping_index_id`.
+    """
+
+    def __init__(self, session: Session) -> None:
+        self._session = session
+
+    def add(self, profile: IndexProfile, index_id: UUID) -> StoredIndexProfile:
+        """Persist ``profile`` and return the stored domain object.
+
+        Uses ``INSERT ... ON CONFLICT (content_hash) DO NOTHING`` so the
+        unique constraint on ``content_hash`` is the idempotency guard.
+        When the insert returns the new row id the repository
+        refetches the row by ``content_hash`` and maps it back to a
+        :class:`StoredIndexProfile`; when the insert is a no-op the
+        repository fetches the existing row by ``content_hash`` and
+        returns it instead. A :class:`RuntimeError` is raised when the
+        conflict path loses the existing row so a silent disappearance
+        cannot be papered over.
+
+        ``index_id`` is the stable UUID of the :class:`IndexIdentityRow`
+        this profile observation belongs to; the caller obtains it from
+        :meth:`SqlAlchemyIndexIdentityRepository.add` (the idempotent
+        get-or-create entry point) before calling this method.
+        """
+
+        if not isinstance(profile, IndexProfile):
+            raise TypeError(
+                "SqlAlchemyIndexProfileRepository.add expects an IndexProfile, "
+                f"got {type(profile).__name__}"
+            )
+        statement = (
+            insert(IndexProfileRow)
+            .values(**_index_profile_to_row(profile, new_id=uuid.uuid4(), index_id=index_id))
+            .on_conflict_do_nothing(
+                index_elements=[IndexProfileRow.content_hash],
+            )
+            .returning(IndexProfileRow.id)
+        )
+        inserted_id = self._session.execute(statement).scalar_one_or_none()
+        self._session.flush()
+        stored = self._find_by_content_hash(profile.content_hash)
+        if stored is None:
+            raise RuntimeError(
+                "index_profiles insert succeeded but the row was not "
+                "found on the subsequent read; this indicates a "
+                "session/transaction misconfiguration"
+            )
+        if inserted_id is None:
+            return stored
+        if stored.id != inserted_id:
+            return StoredIndexProfile(
+                id=inserted_id,
+                index_id=stored.index_id,
+                index_code=stored.index_code,
+                index_name=stored.index_name,
+                provenance=stored.provenance,
+                category=stored.category,
+                as_of_date=stored.as_of_date,
+                source_provider=stored.source_provider,
+                source_dataset=stored.source_dataset,
+                source_batch_id=stored.source_batch_id,
+                source_revision=stored.source_revision,
+                confidence=stored.confidence,
+                revision=stored.revision,
+                content_hash=stored.content_hash,
+                created_at=stored.created_at,
+            )
+        return stored
+
+    def upsert(self, profile: IndexProfile, index_id: UUID) -> StoredIndexProfile:
+        """No-op when ``content_hash`` already exists; otherwise INSERT.
+
+        The repository never rewrites a row that already carries the
+        same business content. This matches the PR-EXPOSURE-03
+        idempotency contract: re-collects of the same observation
+        return the previously-minted ``StoredIndexProfile.index_id`` so a
+        downstream :class:`EtfIndexMappingRow.index_id` write can
+        reuse the same UUID.
+        """
+
+        existing = self._find_by_content_hash(profile.content_hash)
+        if existing is not None:
+            return existing
+        return self.add(profile, index_id)
+
+    def get_by_id(self, profile_id: UUID) -> StoredIndexProfile | None:
+        """Return the persisted profile with ``profile_id`` or ``None``."""
+
+        row = self._session.get(IndexProfileRow, profile_id)
+        return _row_to_stored_index_profile(row) if row is not None else None
+
+    def find_by_content_hash(self, content_hash: str) -> StoredIndexProfile | None:
+        """Return the persisted profile carrying ``content_hash`` or ``None``."""
+
+        return self._find_by_content_hash(content_hash)
+
+    def list_by_index_id(
+        self,
+        index_id: UUID,
+        *,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> list[StoredIndexProfile]:
+        """Return every persisted profile for ``index_id`` ordered by revision desc.
+
+        The descending ``revision`` order surfaces the latest business
+        observation first; ties on ``revision`` are broken by ``id`` so
+        the result is stable.
+        """
+
+        if limit < 0:
+            raise ValueError(f"limit must be >= 0, got {limit}")
+        if offset < 0:
+            raise ValueError(f"offset must be >= 0, got {offset}")
+        rows = self._session.scalars(
+            select(IndexProfileRow)
+            .where(IndexProfileRow.index_id == index_id)
+            .order_by(
+                IndexProfileRow.revision.desc(),
+                IndexProfileRow.id.asc(),
+            )
+            .limit(limit)
+            .offset(offset)
+        ).all()
+        return [_row_to_stored_index_profile(row) for row in rows]
+
+    def list_by_provider(
+        self,
+        provider_key: str,
+        *,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> list[StoredIndexProfile]:
+        """Return every persisted profile whose ``source_provider`` matches.
+
+        Useful for an operational "what did we collect from this
+        provider?" dashboard - the storage layer projects
+        ``(source_provider, source_dataset)`` straight from the
+        provenance columns.
+        """
+
+        if not isinstance(provider_key, str) or not provider_key.strip():
+            raise ValueError("list_by_provider requires a non-empty provider_key")
+        if limit < 0:
+            raise ValueError(f"limit must be >= 0, got {limit}")
+        if offset < 0:
+            raise ValueError(f"offset must be >= 0, got {offset}")
+        rows = self._session.scalars(
+            select(IndexProfileRow)
+            .where(IndexProfileRow.source_provider == provider_key)
+            .order_by(
+                IndexProfileRow.revision.desc(),
+                IndexProfileRow.id.asc(),
+            )
+            .limit(limit)
+            .offset(offset)
+        ).all()
+        return [_row_to_stored_index_profile(row) for row in rows]
+
+    def _find_by_content_hash(self, content_hash: str) -> StoredIndexProfile | None:
+        stmt = (
+            select(IndexProfileRow)
+            .where(IndexProfileRow.content_hash == content_hash)
+            .limit(1)
+        )
+        row = self._session.scalars(stmt).first()
+        return _row_to_stored_index_profile(row) if row is not None else None
+
+
+class SqlAlchemyIndexConstituentSnapshotRepository:
+    """Read/write access to ``core.index_constituent_snapshots`` and children.
+
+    Stage DC-3 introduces the persistent record of every
+    :class:`invest_domain.exposure.models.IndexConstituentSnapshot`
+    observation. Snapshots are immutable per ADR-0006 §3:
+    ``add`` rejects an INSERT with the same ``content_hash`` and
+    returns the existing snapshot instead, preserving the natural
+    idempotency contract.
+
+    Children rows (:class:`IndexConstituentRow`) are written in the
+    same transaction as the parent snapshot so the read path can
+    reassemble a fully-populated :class:`IndexConstituentSnapshot`
+    in a single pass.
+    """
+
+    def __init__(self, session: Session) -> None:
+        self._session = session
+
+    def add(self, snapshot: IndexConstituentSnapshot, index_id: UUID) -> IndexConstituentSnapshot:
+        """Persist ``snapshot`` and its constituent children; return the input.
+
+        Uses ``INSERT ... ON CONFLICT (content_hash) DO NOTHING`` for
+        the parent row; on conflict the repository fetches the
+        existing snapshot by ``content_hash`` and returns it unchanged.
+        Child rows are inserted only on the fresh path so an
+        idempotent re-collect never produces duplicate
+        ``(snapshot_id, stock_code)`` pairs.
+
+        ``index_id`` is the UUID of the :class:`IndexIdentityRow` this
+        snapshot belongs to; the caller obtains it from
+        :meth:`SqlAlchemyIndexIdentityRepository.get_by_index_code` before
+        calling this method.
+        """
+
+        if not isinstance(snapshot, IndexConstituentSnapshot):
+            raise TypeError(
+                "SqlAlchemyIndexConstituentSnapshotRepository.add expects an "
+                f"IndexConstituentSnapshot, got {type(snapshot).__name__}"
+            )
+        parent_values = _index_constituent_snapshot_to_row(snapshot, index_id=index_id)
+        statement = (
+            insert(IndexConstituentSnapshotRow)
+            .values(**parent_values)
+            .on_conflict_do_nothing(
+                index_elements=[IndexConstituentSnapshotRow.content_hash],
+            )
+            .returning(IndexConstituentSnapshotRow.id)
+        )
+        inserted_id = self._session.execute(statement).scalar_one_or_none()
+        self._session.flush()
+        if inserted_id is None:
+            existing = self._find_by_content_hash(snapshot.content_hash)
+            if existing is None:
+                raise RuntimeError(
+                    "index_constituent_snapshots insert conflicted but the "
+                    "existing row was not found by content_hash"
+                )
+            return existing
+        if inserted_id != snapshot.id:
+            return self.get_by_id(inserted_id) or snapshot
+        self._bulk_add_children(
+            inserted_id,
+            snapshot.constituents,
+            snapshot.provenance.revision,
+        )
+        return snapshot
+
+    def get_by_id(self, snapshot_id: UUID) -> IndexConstituentSnapshot | None:
+        """Return the snapshot with ``snapshot_id`` reconstructed with its constituents.
+
+        The ``(snapshot_id)`` lookup is keyed on the parent's PRIMARY
+        KEY; the constituent children are fetched in a single
+        follow-up query and sorted by ``stock_code`` so the returned
+        domain object matches the validator's invariant.
+        """
+
+        row = self._session.get(IndexConstituentSnapshotRow, snapshot_id)
+        if row is None:
+            return None
+        return self._row_to_snapshot(row)
+
+    def find_by_content_hash(
+        self, content_hash: str
+    ) -> IndexConstituentSnapshot | None:
+        """Return the snapshot carrying ``content_hash`` or ``None``."""
+
+        return self._find_by_content_hash(content_hash)
+
+    def list_by_index_id(
+        self,
+        index_id: UUID,
+        *,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> list[IndexConstituentSnapshot]:
+        """Return every snapshot for ``index_id`` ordered by ``as_of_date`` desc.
+
+        The descending ``as_of_date`` order surfaces the most recent
+        composition first; the secondary ``revision`` desc surface
+        stale-history audits that need to see all known revisions.
+        """
+
+        if limit < 0:
+            raise ValueError(f"limit must be >= 0, got {limit}")
+        if offset < 0:
+            raise ValueError(f"offset must be >= 0, got {offset}")
+        rows = self._session.scalars(
+            select(IndexConstituentSnapshotRow)
+            .where(IndexConstituentSnapshotRow.index_id == index_id)
+            .order_by(
+                IndexConstituentSnapshotRow.as_of_date.desc(),
+                IndexConstituentSnapshotRow.revision.desc(),
+            )
+            .limit(limit)
+            .offset(offset)
+        ).all()
+        return [self._row_to_snapshot(row) for row in rows]
+
+    def _bulk_add_children(
+        self,
+        snapshot_id: UUID,
+        constituents: tuple[IndexConstituent, ...],
+        revision: int,
+    ) -> None:
+        if not constituents:
+            return
+        rows = [
+            IndexConstituentRow(
+                id=uuid.uuid4(),
+                snapshot_id=snapshot_id,
+                stock_code=item.stock_code,
+                weight=item.weight,
+                industry=item.industry,
+                revision=revision,
+            )
+            for item in constituents
+        ]
+        self._session.add_all(rows)
+        self._session.flush()
+
+    def _row_to_snapshot(self, row: IndexConstituentSnapshotRow) -> IndexConstituentSnapshot:
+        child_rows = self._session.scalars(
+            select(IndexConstituentRow)
+            .where(IndexConstituentRow.snapshot_id == row.id)
+            .order_by(IndexConstituentRow.stock_code.asc())
+        ).all()
+        constituents = tuple(
+            IndexConstituent(
+                stock_code=child.stock_code,
+                weight=_as_decimal(child.weight),
+                industry=child.industry,
+            )
+            for child in child_rows
+        )
+        return IndexConstituentSnapshot.create(
+            index_code=row.index_identity.index_code,
+            as_of_date=row.as_of_date,
+            observed_at=row.observed_at,
+            constituents=constituents,
+            provenance=_exposure_prov_from_row(
+                source_provider=row.source_provider,
+                source_dataset=row.source_dataset,
+                observed_at=row.observed_at,
+                source_batch_id=row.source_batch_id,
+                source_revision=row.source_revision,
+                confidence=row.confidence,
+            ),
+            id_factory=lambda: row.id,
+            now_factory=lambda: row.created_at or row.observed_at,
+        )
+
+    def _find_by_content_hash(
+        self, content_hash: str
+    ) -> IndexConstituentSnapshot | None:
+        stmt = (
+            select(IndexConstituentSnapshotRow)
+            .where(IndexConstituentSnapshotRow.content_hash == content_hash)
+            .limit(1)
+        )
+        row = self._session.scalars(stmt).first()
+        return self._row_to_snapshot(row) if row is not None else None
+
+
+class SqlAlchemyEtfIndexMappingRepository:
+    """Read/write access to ``core.etf_index_mappings``.
+
+    The natural idempotency key is ``content_hash``; the
+    ``(etf_id, index_id, effective_from, revision)`` UNIQUE constraint
+    is the version-key guard. The repository mints a synthetic ``id``
+    on INSERT (the domain dataclass is content-only) and threads it
+    through to the returned :class:`StoredEtfIndexMapping` so a
+    downstream reader can re-link the mapping to its parent profile
+    rows.
+
+    The ``index_id`` FK references
+    :class:`core.index_profiles.id` so callers MUST persist the
+    profile row first and reuse its minted UUID - the storage layer
+    enforces the referential integrity at the database boundary.
+    """
+
+    def __init__(self, session: Session) -> None:
+        self._session = session
+
+    def add(self, mapping: EtfIndexMapping) -> StoredEtfIndexMapping:
+        """Persist ``mapping`` and return the stored domain object."""
+
+        if not isinstance(mapping, EtfIndexMapping):
+            raise TypeError(
+                "SqlAlchemyEtfIndexMappingRepository.add expects an EtfIndexMapping, "
+                f"got {type(mapping).__name__}"
+            )
+        statement = (
+            insert(EtfIndexMappingRow)
+            .values(**_etf_index_mapping_to_row(mapping, new_id=uuid.uuid4()))
+            .on_conflict_do_nothing(
+                index_elements=[EtfIndexMappingRow.content_hash],
+            )
+            .returning(EtfIndexMappingRow.id)
+        )
+        inserted_id = self._session.execute(statement).scalar_one_or_none()
+        self._session.flush()
+        stored = self._find_by_content_hash(mapping.content_hash)
+        if stored is None:
+            raise RuntimeError(
+                "etf_index_mappings insert succeeded but the row was not "
+                "found on the subsequent read; this indicates a "
+                "session/transaction misconfiguration"
+            )
+        if inserted_id is None or inserted_id == stored.id:
+            return stored
+        return StoredEtfIndexMapping(
+            id=inserted_id,
+            etf_id=stored.etf_id,
+            index_id=stored.index_id,
+            effective_from=stored.effective_from,
+            effective_to=stored.effective_to,
+            observed_at=stored.observed_at,
+            provenance=stored.provenance,
+            source_provider=stored.source_provider,
+            source_dataset=stored.source_dataset,
+            source_batch_id=stored.source_batch_id,
+            source_revision=stored.source_revision,
+            confidence=stored.confidence,
+            revision=stored.revision,
+            content_hash=stored.content_hash,
+            created_at=stored.created_at,
+        )
+
+    def upsert(self, mapping: EtfIndexMapping) -> StoredEtfIndexMapping:
+        """No-op when ``content_hash`` already exists; otherwise INSERT."""
+
+        existing = self._find_by_content_hash(mapping.content_hash)
+        if existing is not None:
+            return existing
+        return self.add(mapping)
+
+    def get_by_id(self, mapping_id: UUID) -> StoredEtfIndexMapping | None:
+        row = self._session.get(EtfIndexMappingRow, mapping_id)
+        return _row_to_stored_etf_index_mapping(row) if row is not None else None
+
+    def list_by_etf_id(
+        self,
+        etf_id: UUID,
+        *,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> list[StoredEtfIndexMapping]:
+        """Return every mapping for ``etf_id`` ordered by ``effective_from`` desc."""
+
+        if limit < 0:
+            raise ValueError(f"limit must be >= 0, got {limit}")
+        if offset < 0:
+            raise ValueError(f"offset must be >= 0, got {offset}")
+        rows = self._session.scalars(
+            select(EtfIndexMappingRow)
+            .where(EtfIndexMappingRow.etf_id == etf_id)
+            .order_by(
+                EtfIndexMappingRow.effective_from.desc(),
+                EtfIndexMappingRow.revision.desc(),
+            )
+            .limit(limit)
+            .offset(offset)
+        ).all()
+        return [_row_to_stored_etf_index_mapping(row) for row in rows]
+
+    def list_by_index_id(
+        self,
+        index_id: UUID,
+        *,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> list[StoredEtfIndexMapping]:
+        """Return every mapping pointing at ``index_id`` ordered by ``effective_from`` desc."""
+
+        if limit < 0:
+            raise ValueError(f"limit must be >= 0, got {limit}")
+        if offset < 0:
+            raise ValueError(f"offset must be >= 0, got {offset}")
+        rows = self._session.scalars(
+            select(EtfIndexMappingRow)
+            .where(EtfIndexMappingRow.index_id == index_id)
+            .order_by(
+                EtfIndexMappingRow.effective_from.desc(),
+                EtfIndexMappingRow.revision.desc(),
+            )
+            .limit(limit)
+            .offset(offset)
+        ).all()
+        return [_row_to_stored_etf_index_mapping(row) for row in rows]
+
+    def _find_by_content_hash(
+        self, content_hash: str
+    ) -> StoredEtfIndexMapping | None:
+        stmt = (
+            select(EtfIndexMappingRow)
+            .where(EtfIndexMappingRow.content_hash == content_hash)
+            .limit(1)
+        )
+        row = self._session.scalars(stmt).first()
+        return _row_to_stored_etf_index_mapping(row) if row is not None else None
+
+
+class SqlAlchemyEtfHoldingSnapshotRepository:
+    """Read/write access to ``core.etf_holding_snapshots`` and children.
+
+    Mirrors the snapshot pattern of
+    :class:`SqlAlchemyIndexConstituentSnapshotRepository`: the parent
+    ``etf_holding_snapshots`` row carries the natural idempotency key
+    on ``content_hash`` and the child ``etf_holdings`` rows FK back
+    with ``ON DELETE CASCADE``.
+    """
+
+    def __init__(self, session: Session) -> None:
+        self._session = session
+
+    def add(self, snapshot: EtfHoldingSnapshot) -> EtfHoldingSnapshot:
+        """Persist ``snapshot`` and its holdings; return the input.
+
+        Idempotent on ``content_hash``: a re-collect of the same
+        business content returns the existing snapshot unchanged.
+        """
+
+        if not isinstance(snapshot, EtfHoldingSnapshot):
+            raise TypeError(
+                "SqlAlchemyEtfHoldingSnapshotRepository.add expects an "
+                f"EtfHoldingSnapshot, got {type(snapshot).__name__}"
+            )
+        parent_values = _etf_holding_snapshot_to_row(snapshot)
+        statement = (
+            insert(EtfHoldingSnapshotRow)
+            .values(**parent_values)
+            .on_conflict_do_nothing(
+                index_elements=[EtfHoldingSnapshotRow.content_hash],
+            )
+            .returning(EtfHoldingSnapshotRow.id)
+        )
+        inserted_id = self._session.execute(statement).scalar_one_or_none()
+        self._session.flush()
+        if inserted_id is None:
+            existing = self._find_by_content_hash(snapshot.content_hash)
+            if existing is None:
+                raise RuntimeError(
+                    "etf_holding_snapshots insert conflicted but the "
+                    "existing row was not found by content_hash"
+                )
+            return existing
+        if inserted_id != snapshot.id:
+            return self.get_by_id(inserted_id) or snapshot
+        self._bulk_add_children(
+            inserted_id,
+            snapshot.holdings,
+            snapshot.provenance.revision,
+        )
+        return snapshot
+
+    def get_by_id(self, snapshot_id: UUID) -> EtfHoldingSnapshot | None:
+        row = self._session.get(EtfHoldingSnapshotRow, snapshot_id)
+        if row is None:
+            return None
+        return self._row_to_snapshot(row)
+
+    def find_by_content_hash(
+        self, content_hash: str
+    ) -> EtfHoldingSnapshot | None:
+        return self._find_by_content_hash(content_hash)
+
+    def list_by_etf_id(
+        self,
+        etf_id: UUID,
+        *,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> list[EtfHoldingSnapshot]:
+        """Return every snapshot for ``etf_id`` ordered by ``as_of_date`` desc."""
+
+        if limit < 0:
+            raise ValueError(f"limit must be >= 0, got {limit}")
+        if offset < 0:
+            raise ValueError(f"offset must be >= 0, got {offset}")
+        rows = self._session.scalars(
+            select(EtfHoldingSnapshotRow)
+            .where(EtfHoldingSnapshotRow.etf_id == etf_id)
+            .order_by(
+                EtfHoldingSnapshotRow.as_of_date.desc(),
+                EtfHoldingSnapshotRow.revision.desc(),
+            )
+            .limit(limit)
+            .offset(offset)
+        ).all()
+        return [self._row_to_snapshot(row) for row in rows]
+
+    def _bulk_add_children(
+        self,
+        snapshot_id: UUID,
+        holdings: tuple[EtfHolding, ...],
+        revision: int,
+    ) -> None:
+        if not holdings:
+            return
+        rows = [
+            EtfHoldingRow(
+                id=uuid.uuid4(),
+                snapshot_id=snapshot_id,
+                stock_code=item.stock_code,
+                weight=item.weight,
+                industry=item.industry,
+                revision=revision,
+            )
+            for item in holdings
+        ]
+        self._session.add_all(rows)
+        self._session.flush()
+
+    def _row_to_snapshot(self, row: EtfHoldingSnapshotRow) -> EtfHoldingSnapshot:
+        child_rows = self._session.scalars(
+            select(EtfHoldingRow)
+            .where(EtfHoldingRow.snapshot_id == row.id)
+            .order_by(EtfHoldingRow.stock_code.asc())
+        ).all()
+        holdings = tuple(
+            EtfHolding(
+                stock_code=child.stock_code,
+                weight=_as_decimal(child.weight),
+                industry=child.industry,
+            )
+            for child in child_rows
+        )
+        return EtfHoldingSnapshot.create(
+            etf_id=row.etf_id,
+            as_of_date=row.as_of_date,
+            observed_at=row.observed_at,
+            holdings=holdings,
+            provenance=_exposure_prov_from_row(
+                source_provider=row.source_provider,
+                source_dataset=row.source_dataset,
+                observed_at=row.observed_at,
+                source_batch_id=row.source_batch_id,
+                source_revision=row.source_revision,
+                confidence=row.confidence,
+            ),
+            id_factory=lambda: row.id,
+            now_factory=lambda: row.created_at or row.observed_at,
+        )
+
+    def _find_by_content_hash(
+        self, content_hash: str
+    ) -> EtfHoldingSnapshot | None:
+        stmt = (
+            select(EtfHoldingSnapshotRow)
+            .where(EtfHoldingSnapshotRow.content_hash == content_hash)
+            .limit(1)
+        )
+        row = self._session.scalars(stmt).first()
+        return self._row_to_snapshot(row) if row is not None else None
+
+
+def _index_profile_to_row(profile: IndexProfile, *, new_id: UUID, index_id: UUID) -> dict[str, Any]:
+    """Translate an :class:`IndexProfile` into a ``values`` dict for INSERT.
+
+    Mirrors the :class:`IndexProfileRow` column layout and pins the
+    synthetic ``id`` from the storage layer and the ``index_id`` FK to
+    :class:`IndexIdentityRow`; the application service is expected to
+    thread the returned :class:`StoredIndexProfile.index_id` into the
+    ``EtfIndexMapping.index_id`` slot of the follow-up write.
+    """
+
+    return {
+        "id": new_id,
+        "index_id": index_id,
+        "index_name": profile.index_name,
+        "category": profile.category,
+        "as_of_date": profile.as_of_date,
+        "source_provider": profile.provenance.provider_key,
+        "source_dataset": profile.provenance.dataset_key,
+        "observed_at": profile.provenance.observed_at,
+        "source_batch_id": profile.provenance.source_batch_id,
+        "source_revision": profile.provenance.revision,
+        "confidence": profile.provenance.confidence,
+        "revision": profile.provenance.revision,
+        "content_hash": profile.content_hash,
+    }
+
+
+def _etf_index_mapping_to_row(
+    mapping: EtfIndexMapping, *, new_id: UUID
+) -> dict[str, Any]:
+    return {
+        "id": new_id,
+        "etf_id": mapping.etf_id,
+        "index_id": mapping.index_id,
+        "effective_from": mapping.effective_from,
+        "effective_to": mapping.effective_to,
+        "observed_at": mapping.observed_at,
+        "source_provider": mapping.provenance.provider_key,
+        "source_dataset": mapping.provenance.dataset_key,
+        "source_batch_id": mapping.provenance.source_batch_id,
+        "source_revision": mapping.provenance.revision,
+        "confidence": mapping.provenance.confidence,
+        "revision": mapping.provenance.revision,
+        "content_hash": mapping.content_hash,
+    }
+
+
+def _index_constituent_snapshot_to_row(
+    snapshot: IndexConstituentSnapshot, *, index_id: UUID
+) -> dict[str, Any]:
+    return {
+        "id": snapshot.id,
+        "index_id": index_id,
+        "as_of_date": snapshot.as_of_date,
+        "source_provider": snapshot.provenance.provider_key,
+        "source_dataset": snapshot.provenance.dataset_key,
+        "observed_at": snapshot.provenance.observed_at,
+        "source_batch_id": snapshot.provenance.source_batch_id,
+        "source_revision": snapshot.provenance.revision,
+        "confidence": snapshot.provenance.confidence,
+        "revision": snapshot.provenance.revision,
+        "content_hash": snapshot.content_hash,
+        "created_at": snapshot.created_at,
+    }
+
+
+def _etf_holding_snapshot_to_row(snapshot: EtfHoldingSnapshot) -> dict[str, Any]:
+    return {
+        "id": snapshot.id,
+        "etf_id": snapshot.etf_id,
+        "as_of_date": snapshot.as_of_date,
+        "source_provider": snapshot.provenance.provider_key,
+        "source_dataset": snapshot.provenance.dataset_key,
+        "observed_at": snapshot.provenance.observed_at,
+        "source_batch_id": snapshot.provenance.source_batch_id,
+        "source_revision": snapshot.provenance.revision,
+        "confidence": snapshot.provenance.confidence,
+        "revision": snapshot.provenance.revision,
+        "content_hash": snapshot.content_hash,
+        "created_at": snapshot.created_at,
+    }
+
+
+def _exposure_prov_from_row(
+    *,
+    source_provider: str,
+    source_dataset: str,
+    observed_at: datetime,
+    source_batch_id: UUID | None,
+    source_revision: int,
+    confidence: Any,
+) -> ExposureProvenance:
+    """Reconstruct an :class:`ExposureProvenance` from the row columns."""
+
+    return ExposureProvenance(
+        provider_key=source_provider,
+        dataset_key=source_dataset,
+        observed_at=observed_at,
+        source_batch_id=source_batch_id,
+        revision=source_revision,
+        confidence=_as_decimal(confidence) or Decimal("1"),
+    )
+
+
+def _row_to_stored_index_profile(
+    row: IndexProfileRow,
+) -> StoredIndexProfile:
+    return StoredIndexProfile(
+        id=row.id,
+        index_id=row.index_id,
+        index_code=row.index_identity.index_code,
+        index_name=row.index_name,
+        provenance=_exposure_prov_from_row(
+            source_provider=row.source_provider,
+            source_dataset=row.source_dataset,
+            observed_at=row.observed_at,
+            source_batch_id=row.source_batch_id,
+            source_revision=row.source_revision,
+            confidence=row.confidence,
+        ),
+        category=row.category,
+        as_of_date=_as_date(row.as_of_date),
+        source_provider=row.source_provider,
+        source_dataset=row.source_dataset,
+        source_batch_id=row.source_batch_id,
+        source_revision=row.source_revision,
+        confidence=_as_decimal(row.confidence) or Decimal("1"),
+        revision=row.revision,
+        content_hash=row.content_hash,
+        created_at=row.created_at,
+    )
+
+
+def _row_to_stored_etf_index_mapping(
+    row: EtfIndexMappingRow,
+) -> StoredEtfIndexMapping:
+    return StoredEtfIndexMapping(
+        id=row.id,
+        etf_id=row.etf_id,
+        index_id=row.index_id,
+        effective_from=row.effective_from,
+        effective_to=row.effective_to,
+        observed_at=row.observed_at,
+        provenance=_exposure_prov_from_row(
+            source_provider=row.source_provider,
+            source_dataset=row.source_dataset,
+            observed_at=row.observed_at,
+            source_batch_id=row.source_batch_id,
+            source_revision=row.source_revision,
+            confidence=row.confidence,
+        ),
+        source_provider=row.source_provider,
+        source_dataset=row.source_dataset,
+        source_batch_id=row.source_batch_id,
+        source_revision=row.source_revision,
+        confidence=_as_decimal(row.confidence) or Decimal("1"),
+        revision=row.revision,
         content_hash=row.content_hash,
         created_at=row.created_at,
     )
