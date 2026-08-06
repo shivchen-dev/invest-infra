@@ -1,5 +1,8 @@
 # invest-infra-v2 架构设计
 
+> 领域所有权、Evidence 规则和 Repository 准入以
+> [`ARCHITECTURE-GOVERNANCE.md`](ARCHITECTURE-GOVERNANCE.md) 为权威来源；本文描述部署与代码分层。
+
 ## 1. 系统边界
 
 v2 初期采用三个运行单元：
@@ -38,16 +41,23 @@ Web 边界明确如下：
 
 FastAPI 路由、Dagster assets 和命令行入口。入口只负责校验、调用用例、转换结果。
 
-## 3. 数据分层
+## 3. 数据与领域分层
 
-首期建立四个 PostgreSQL Schema：
+系统使用四个逻辑领域边界；数据库 schema 位置不替代领域所有权：
 
-- `raw`：第三方原始数据和采集元信息；
-- `core`：标准化标的、行情和公司主数据；
-- `analytics`：因子、信号、候选池和回测结果；
-- `ops`：运行审计、数据新鲜度和运维状态。
+- **Core**：Provider 原始证据的 canonical 业务对象，包括标的、行情、ETF Profile、指数与 Exposure；
+- **Analytics**：确定性因子、风险指标、市场状态、Candidate Pool 与 Quality Gate；
+- **Research**：Research Case、Evidence Pack 和可重建的只读 Context projection；
+- **AI**：Research Run、Playbook、Research Result、观点、风险解释和报告。
 
-骨架只创建 `core.instruments` 和 `ops.pipeline_runs`，其他表应随垂直切片增量增加。
+`raw`、`core`、`analytics`、`ops` PostgreSQL schema 继续作为物理存储边界。Evidence Pack 当前暂存于 `analytics`，其逻辑 owner 仍是 Research。
+
+关键约束：
+
+- Factor 是带版本和质量信息的确定性 observation，不是买卖信号；
+- Candidate Pool 是 Research Case 的可选输入，不是唯一入口；
+- `PipelineRun` 管理采集与确定性计算，`ResearchRun` 管理 AI 研究执行，两者不得共用状态机；
+- AI 只消费 Evidence/Context，不修改 Core、Analytics 或 Research Evidence。
 
 ## 4. 关键规则
 

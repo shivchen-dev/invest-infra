@@ -1,6 +1,6 @@
-# invest-infra-v2 starter
+# invest-infra-v2
 
-这是一个面向投研系统的 **greenfield v2 骨架**。它不迁移旧系统数据，只复用经过确认的业务语义、算法与验收样例。
+这是一个面向 ETF 的 **Evidence-driven AI 投资研判基础设施**。系统以可追溯的数据事实、确定性分析和不可变 Research Evidence 为基础，为后续 AI 研究执行提供受控输入；AI 输出不修改事实数据，也不触发自动交易。
 
 ## 设计目标
 
@@ -10,6 +10,8 @@
 4. 数据源通过 Provider 接口隔离；业务代码不直接依赖 AkShare 等第三方 SDK。
 5. 每个计算结果记录 `run_id`、算法版本与数据时间。
 6. 前端只通过 OpenAPI API 访问数据。
+7. Pipeline、Research 和 AI 使用独立生命周期：数据采集运行不等同于研究运行。
+8. Candidate Pool 是研究对象来源之一，不是创建 Research Case 的唯一入口。
 
 ## 目录
 
@@ -27,18 +29,18 @@ infra/
   sql/             仅用于开发辅助，不作为正式迁移源
 ```
 
-## 首个垂直切片
+## 当前能力链路
 
 ```text
-Fixture Provider (fixture_dev)
+Provider Evidence
     ↓
-Dagster seed_instruments asset
+Canonical Core Data
     ↓
-PostgreSQL core.instruments
+Analytics / Candidate Pool
     ↓
-FastAPI /v1/instruments
+Research Evidence / Context Projection
     ↓
-React 仪表盘
+AI Research（规划中的受控消费方）
 ```
 
 正式接入真实数据源时，只新增 Provider 适配器，不能让领域层直接导入数据源 SDK。
@@ -113,9 +115,10 @@ systemctl --user daemon-reload
 systemctl --user enable --now invest-infra-dagster.service
 ```
 
-详细决策见 `docs/ARCHITECTURE.md`、`docs/adr/` 和
-`docs/plan/invest-infra-v2-stage2-automation-stability-plan-no-matrix.md`。
+详细决策见 `docs/ARCHITECTURE.md`、`docs/ARCHITECTURE-GOVERNANCE.md`、
+`docs/adr/` 和
+`docs/plan/invest-infra-evidence-driven-research-lifecycle-implementation-plan.md`。
 
-## 骨架验证状态
+## 验证状态
 
-已执行 Python 语法编译、领域单元测试和架构依赖检查。由于生成环境没有 Docker 与外部包下载能力，容器构建和完整依赖安装需要在实际开发机或 CI 中完成。
+当前已具备 ETF 主数据、行情、候选池、ETF Profile、指数成分与持仓 Exposure、Evidence Pack/Context Pack 基础能力。DC-3 已通过真实 AkShare、PostgreSQL 幂等复跑、领域/流水线测试和架构检查。Research Case、Research Run、Research Result 与 AI Adapter 仍按增量计划建设。
