@@ -39,6 +39,7 @@ from invest_storage.repositories import (
     SqlAlchemyEtfIndexMappingRepository,
     SqlAlchemyEtfProfileFieldRepository,
     SqlAlchemyEtfProfileRepository,
+    SqlAlchemyEvidencePackRepository,
     SqlAlchemyIndexConstituentSnapshotRepository,
     SqlAlchemyIndexIdentityRepository,
     SqlAlchemyIndexProfileRepository,
@@ -284,6 +285,25 @@ class ResearchCaseRepositoryPort(Protocol):
 
 
 @runtime_checkable
+class ResearchEvidencePackRepositoryPort(Protocol):
+    """Subset of the ResearchEvidencePack repository surface the UoW exposes.
+
+    Phase 2B persistence closure for ``analytics.research_evidence_packs``
+    (migration ``20260807_0013``). ``add`` is idempotent on
+    ``content_hash``; the read paths expose deterministic ordering
+    (``created_at`` / ``id`` for ``list_by_case``;
+    ``as_of_date`` / ``created_at`` / ``id`` for ``list_by_instrument``).
+    There is no update / delete surface because packs are immutable.
+    """
+
+    def add(self, pack): ...
+    def get_by_id(self, pack_id): ...
+    def get_by_content_hash(self, content_hash): ...
+    def list_by_case(self, case_id): ...
+    def list_by_instrument(self, instrument_id, as_of_date=None): ...
+
+
+@runtime_checkable
 class IndexIdentityRepositoryPort(Protocol):
     """Subset of the IndexIdentity repository surface the UoW exposes.
 
@@ -413,6 +433,7 @@ class UnitOfWork(Protocol):
     etf_profile_fields: EtfProfileFieldRepositoryPort
     research_context_packs: ResearchContextPackRepositoryPort
     research_cases: ResearchCaseRepositoryPort
+    research_evidence_packs: ResearchEvidencePackRepositoryPort
     index_identities: IndexIdentityRepositoryPort
     index_profiles: IndexProfileRepositoryPort
     index_constituent_snapshots: IndexConstituentSnapshotRepositoryPort
@@ -462,6 +483,7 @@ class SqlAlchemyUnitOfWork:
         self._etf_profile_fields: SqlAlchemyEtfProfileFieldRepository | None = None
         self._research_context_packs: SqlAlchemyResearchContextPackRepository | None = None
         self._research_cases: SqlAlchemyResearchCaseRepository | None = None
+        self._research_evidence_packs: SqlAlchemyEvidencePackRepository | None = None
         self._index_identities: SqlAlchemyIndexIdentityRepository | None = None
         self._index_profiles: SqlAlchemyIndexProfileRepository | None = None
         self._index_constituent_snapshots: SqlAlchemyIndexConstituentSnapshotRepository | None = (
@@ -566,6 +588,14 @@ class SqlAlchemyUnitOfWork:
         return self._research_cases
 
     @property
+    def research_evidence_packs(self) -> SqlAlchemyEvidencePackRepository:
+        if self._research_evidence_packs is None:
+            self._research_evidence_packs = SqlAlchemyEvidencePackRepository(
+                self.session
+            )
+        return self._research_evidence_packs
+
+    @property
     def index_identities(self) -> SqlAlchemyIndexIdentityRepository:
         if self._index_identities is None:
             self._index_identities = SqlAlchemyIndexIdentityRepository(self.session)
@@ -645,6 +675,7 @@ class SqlAlchemyUnitOfWork:
             self._etf_profile_fields = None
             self._research_context_packs = None
             self._research_cases = None
+            self._research_evidence_packs = None
             self._index_identities = None
             self._index_profiles = None
             self._index_constituent_snapshots = None
@@ -670,6 +701,7 @@ __all__ = [
     "IndexProfileRepositoryPort",
     "ResearchCaseRepositoryPort",
     "ResearchContextPackRepositoryPort",
+    "ResearchEvidencePackRepositoryPort",
     "EtfProfileRepositoryPort",
     "InputSnapshotRepositoryPort",
     "InstrumentRepositoryPort",

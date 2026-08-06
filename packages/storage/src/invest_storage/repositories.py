@@ -32,6 +32,11 @@ module cover:
 - :class:`SqlAlchemyCandidatePoolItemRepository` — per-instrument
   judgments belonging to a run, persisted in
   ``analytics.candidate_pool_items``.
+- :class:`SqlAlchemyEvidencePackRepository` — Phase 2B persistence
+  closure for ``analytics.research_evidence_packs``. Idempotent on
+  ``content_hash``; the database ``research_case_id`` FK is the
+  authoritative case link; no update / delete surface because packs
+  are immutable.
 - :class:`SqlAlchemyEtfProfileFieldRepository` — per-field evidence
   rows persisted in ``analytics.etf_profile_fields`` with the
   ``content_hash`` natural key as the idempotency contract.
@@ -89,6 +94,7 @@ from invest_domain.pipeline import PipelineRun, PipelineRunStatus
 from invest_domain.research import (
     ContextItem,
     ContextValueType,
+    EvidencePack,
     QualityStatus,
     ResearchCase,
     ResearchCaseStatus,
@@ -99,6 +105,11 @@ from sqlalchemy import func, select, text, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 
+from invest_storage.evidence_pack_codec import (
+    coerce_optional_uuid,
+    evidence_pack_to_payload,
+    row_to_evidence_pack,
+)
 from invest_storage.models import (
     CandidatePoolItemRow,
     CandidatePoolRunRow,
@@ -121,6 +132,7 @@ from invest_storage.models import (
     ResearchCaseRow,
     ResearchContextItemRow,
     ResearchContextPackRow,
+    ResearchEvidencePackRow,
 )
 
 
@@ -1374,6 +1386,188 @@ def _row_to_research_case(row: ResearchCaseRow) -> ResearchCase:
         closed_at=row.closed_at,
         candidate_pool_run_id=row.candidate_pool_run_id,
     )
+
+
+class SqlAlchemyEvidencePackRepository:
+    """Phase 2B persistence closure for :class:`EvidencePack`.
+
+    The repository owns ``analytics.research_evidence_packs`` and
+    honours the immutability contract: there is no ``update`` /
+    ``delete`` surface because the evidence-pack is a durable
+    audit-grade artefact. The natural idempotency key is the
+    deterministic ``content_hash`` (see
+    :func:`invest_domain.research.canonical.compute_pack_hash`); the
+    database-level ``UNIQUE (instrument_id, as_of_date, schema_version,
+    factor_set_version, content_hash)`` constraint is the final
+    concurrency guard.
+
+    The :meth:`add` path uses ``ON CONFLICT (content_hash) DO NOTHING``
+    so a re-collect of the same business content never produces a
+    duplicate row. When the insert is a no-op the repository refetches
+    the existing row by ``content_hash`` and returns the canonical
+    :class:`EvidencePack` so callers always see the storage-assigned
+    ``pack_id`` / ``generated_at``.
+
+    ``CaseContext.case_id`` is wired through the
+    ``research_case_id`` foreign key on the row: when the input pack
+    carries a non-null ``case_id`` it must be UUID-compatible, and the
+    resulting UUID is stored as ``research_case_id``. The database FK
+    is authoritative on the read path so a corrupt
+    payload/column mismatch fails closed in
+    :func:`invest_storage.evidence_pack_codec.row_to_evidence_pack` instead of silently normalizing.
+
+    Runtime metadata fields (``workspace_path``, ``e2a_request_id``,
+    ``e2a_session_id``, ``generated_at``) are explicitly excluded from
+    the persisted JSONB payload so they cannot leak across the
+    immutable audit boundary; the storage layer re-attaches the
+    row-level ``pack_id`` and ``created_at`` (as ``generated_at``) on
+    the read path.
+    """
+
+    def __init__(self, session: Session) -> None:
+        self._session = session
+
+    def add(self, pack: EvidencePack) -> EvidencePack:
+        """Persist ``pack`` idempotently and return the canonical view.
+
+        A re-collect of the same business content returns the
+        pre-existing row instead of producing a duplicate. ``pack_id``
+        and ``generated_at`` are always taken from the database row so
+        the returned value carries the same storage-assigned identity
+        regardless of whether the call performed the INSERT or hit the
+        idempotency guard.
+
+        The natural idempotency key is the deterministic ``content_hash``;
+        the database-level
+        ``UNIQUE (instrument_id, as_of_date, schema_version,
+        factor_set_version, content_hash)`` plus the
+        ``UNIQUE (content_hash)`` constraint enforced by migration
+        ``20260807_0013`` are the concurrency guards. The
+        ``ON CONFLICT (content_hash) DO NOTHING`` clause lets the INSERT
+        silently no-op when the row already exists so a re-collect never
+        surfaces an :class:`sqlalchemy.exc.IntegrityError`.
+        """
+
+        if not isinstance(pack, EvidencePack):
+            raise TypeError(
+                "SqlAlchemyEvidencePackRepository.add expects an EvidencePack, "
+                f"got {type(pack).__name__}"
+            )
+        payload = evidence_pack_to_payload(pack)
+        research_case_id = coerce_optional_uuid(
+            pack.case.case_id, field_name="CaseContext.case_id"
+        )
+        row_values: dict[str, Any] = {
+            "id": uuid.uuid4(),
+            "instrument_id": pack.instrument.instrument_id.value,
+            "as_of_date": pack.case.as_of_date,
+            "schema_version": pack.schema_version,
+            "factor_set_key": pack.factor_set.key,
+            "factor_set_version": pack.factor_set.version,
+            "freshness_status": pack.data_quality.freshness_status.value,
+            "quality_status": pack.data_quality.quality_status.value,
+            "content_hash": pack.pack_hash,
+            "payload": payload,
+            "research_case_id": research_case_id,
+        }
+        statement = (
+            insert(ResearchEvidencePackRow)
+            .values(**row_values)
+            .on_conflict_do_nothing(
+                index_elements=[ResearchEvidencePackRow.content_hash],
+            )
+            .returning(ResearchEvidencePackRow.id)
+        )
+        self._session.execute(statement)
+        self._session.flush()
+        existing = self._find_by_content_hash(pack.pack_hash)
+        if existing is None:
+            raise RuntimeError(
+                "research_evidence_packs insert succeeded but the row "
+                "was not found on the subsequent read; this indicates "
+                "a session/transaction misconfiguration"
+            )
+        if existing.case.case_id != research_case_id:
+            raise ValueError(
+                "research_case_id mismatch: existing row is bound to "
+                f"{existing.case.case_id}, requested {research_case_id}"
+            )
+        return existing
+
+    def get_by_id(self, pack_id: UUID) -> EvidencePack | None:
+        """Return the persisted pack with ``pack_id`` or ``None``."""
+
+        row = self._session.get(ResearchEvidencePackRow, pack_id)
+        return row_to_evidence_pack(row) if row is not None else None
+
+    def get_by_content_hash(self, content_hash: str) -> EvidencePack | None:
+        """Return the persisted pack carrying ``content_hash`` or ``None``."""
+
+        return self._find_by_content_hash(content_hash)
+
+    def list_by_case(self, case_id: UUID) -> list[EvidencePack]:
+        """Return every pack bound to ``case_id`` in deterministic order.
+
+        Ordered by ``created_at`` ascending then ``id`` ascending so the
+        result is stable across replay.
+        """
+
+        rows = self._session.scalars(
+            select(ResearchEvidencePackRow)
+            .where(ResearchEvidencePackRow.research_case_id == case_id)
+            .order_by(
+                ResearchEvidencePackRow.created_at.asc(),
+                ResearchEvidencePackRow.id.asc(),
+            )
+        ).all()
+        return [row_to_evidence_pack(row) for row in rows]
+
+    def list_by_instrument(
+        self,
+        instrument_id: UUID | InstrumentId,
+        as_of_date: date | None = None,
+    ) -> list[EvidencePack]:
+        """Return every pack for ``instrument_id`` in deterministic order.
+
+        When ``as_of_date`` is provided the result is restricted to the
+        single ``as_of_date`` and ordered by ``created_at`` ascending
+        then ``id`` ascending; otherwise the result spans every
+        ``as_of_date`` and is ordered by ``as_of_date`` ascending,
+        ``created_at`` ascending, ``id`` ascending.
+        """
+
+        raw_id = (
+            instrument_id.value
+            if isinstance(instrument_id, InstrumentId)
+            else instrument_id
+        )
+        stmt = select(ResearchEvidencePackRow).where(
+            ResearchEvidencePackRow.instrument_id == raw_id
+        )
+        if as_of_date is not None:
+            stmt = stmt.where(ResearchEvidencePackRow.as_of_date == as_of_date)
+            stmt = stmt.order_by(
+                ResearchEvidencePackRow.created_at.asc(),
+                ResearchEvidencePackRow.id.asc(),
+            )
+        else:
+            stmt = stmt.order_by(
+                ResearchEvidencePackRow.as_of_date.asc(),
+                ResearchEvidencePackRow.created_at.asc(),
+                ResearchEvidencePackRow.id.asc(),
+            )
+        rows = self._session.scalars(stmt).all()
+        return [row_to_evidence_pack(row) for row in rows]
+
+    def _find_by_content_hash(self, content_hash: str) -> EvidencePack | None:
+        if not isinstance(content_hash, str) or len(content_hash) != 64:
+            return None
+        row = self._session.scalars(
+            select(ResearchEvidencePackRow)
+            .where(ResearchEvidencePackRow.content_hash == content_hash)
+            .limit(1)
+        ).first()
+        return row_to_evidence_pack(row) if row is not None else None
 
 
 def _context_item_to_row(item: ContextItem, pack_id: UUID) -> dict[str, Any]:

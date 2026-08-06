@@ -665,6 +665,23 @@ class InputSnapshotRow(Base):
 
 
 class ResearchEvidencePackRow(Base):
+    """One immutable ``EvidencePack`` observation (Phase 2B persistence closure).
+
+    Persists :class:`invest_domain.research.models.EvidencePack`. The
+    synthetic ``id`` UUID is the storage-assigned primary key; the
+    business idempotency key is the
+    ``(instrument_id, as_of_date, schema_version, factor_set_version,
+    content_hash)`` UNIQUE constraint enforced by the database.
+
+    ``research_case_id`` is a nullable FK to
+    ``analytics.research_cases.case_id``. The column is nullable so a
+    legacy pack authored before the lifecycle owner was wired into the
+    CaseContext shape can coexist with a case-bound pack without a
+    backfill migration; the database rejects an unknown ``case_id`` at
+    the FK boundary, so a pack with a non-null ``research_case_id``
+    always references a real ResearchCase row.
+    """
+
     __tablename__ = "research_evidence_packs"
     __table_args__ = (
         ForeignKeyConstraint(
@@ -682,6 +699,11 @@ class ResearchEvidencePackRow(Base):
             ["analytics.candidate_pool_runs.id"],
             name="fk_research_packs_candidate_run",
         ),
+        ForeignKeyConstraint(
+            ["research_case_id"],
+            ["analytics.research_cases.case_id"],
+            name="fk_research_evidence_packs_research_case_id_research_cases",
+        ),
         UniqueConstraint(
             "instrument_id",
             "as_of_date",
@@ -689,6 +711,10 @@ class ResearchEvidencePackRow(Base):
             "factor_set_version",
             "content_hash",
             name="uq_research_evidence_packs_natural_key",
+        ),
+        UniqueConstraint(
+            "content_hash",
+            name="uq_research_evidence_packs_content_hash",
         ),
         CheckConstraint(
             "length(content_hash) = 64",
@@ -704,6 +730,10 @@ class ResearchEvidencePackRow(Base):
             "as_of_date",
         ),
         Index("ix_research_evidence_packs_content_hash", "content_hash"),
+        Index(
+            "ix_research_evidence_packs_research_case_id",
+            "research_case_id",
+        ),
         {"schema": "analytics"},
     )
 
@@ -717,6 +747,7 @@ class ResearchEvidencePackRow(Base):
     candidate_pool_run_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), nullable=True
     )
+    research_case_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
     freshness_status: Mapped[str] = mapped_column(String(24), nullable=False)
     quality_status: Mapped[str] = mapped_column(String(24), nullable=False)
     content_hash: Mapped[str] = mapped_column(String(64), nullable=False)

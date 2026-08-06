@@ -290,7 +290,7 @@ class MigrationChainTest(unittest.TestCase):
         head_ids = all_revision_ids - referenced_down_revisions
         self.assertEqual(
             head_ids,
-            {"20260807_0012"},
+            {"20260807_0013"},
             "expected exactly one unreferenced chain head, "
             f"got {sorted(head_ids)}",
         )
@@ -402,7 +402,7 @@ class MigrationChainTest(unittest.TestCase):
         head_ids = all_revision_ids - referenced_down_revisions
         self.assertEqual(
             head_ids,
-            {"20260807_0012"},
+            {"20260807_0013"},
             "expected exactly one unreferenced chain head, "
             f"got {sorted(head_ids)}",
         )
@@ -493,7 +493,7 @@ class MigrationChainTest(unittest.TestCase):
         heads = {revision for revision, _ in revisions.values()} - {
             down_revision for _, down_revision in revisions.values() if down_revision is not None
         }
-        self.assertEqual(heads, {"20260807_0012"})
+        self.assertEqual(heads, {"20260807_0013"})
         source = (versions_directory / "20260805_0010_research_context_packs.py").read_text()
         self.assertIn('revision: str = "20260805_0010"', source)
         self.assertIn('down_revision: str | None = "20260805_0009"', source)
@@ -566,6 +566,31 @@ class MigrationChainTest(unittest.TestCase):
             "ix_research_cases_status",
         ):
             self.assertIn(name, source)
+
+    def test_research_evidence_packs_case_fk_migration(self) -> None:
+        """The 0013 migration wires ``research_evidence_packs.research_case_id``.
+
+        Pins the ``20260807_0013`` contract via direct source
+        assertions; the 0013 chain-head property is already pinned by
+        the older ``*_is_current_head`` tests above.
+        """
+        source = (
+            Path(__file__).resolve().parents[1]
+            / "apps/migrations/migrations/versions/20260807_0013_research_evidence_packs_case_fk.py"
+        ).read_text(encoding="utf-8")
+        self.assertIn('revision: str = "20260807_0013"', source)
+        self.assertIn('down_revision: str | None = "20260807_0012"', source)
+        for token in (
+            "research_case_id",
+            "fk_research_evidence_packs_research_case_id_research_cases",
+            "ix_research_evidence_packs_research_case_id",
+            "uq_research_evidence_packs_content_hash",
+            '"research_evidence_packs"',
+            '"research_cases"',
+            'source_schema="analytics"',
+            'referent_schema="analytics"',
+        ):
+            self.assertIn(token, source)
 
 
 def _first_string_literal(call_node: ast.Call) -> str | None:
