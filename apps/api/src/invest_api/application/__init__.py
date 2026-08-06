@@ -10,4 +10,4 @@ concrete repositories into the services.
 
 from __future__ import annotations
 
-__all__ = ["pipeline_runs"]
+__all__ = ["candidate_pool", "data_freshness", "etf", "pipeline_runs"]

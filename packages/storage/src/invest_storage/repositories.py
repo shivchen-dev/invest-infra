@@ -84,7 +84,7 @@ from invest_domain.research import (
     ResearchContextPack,
 )
 from invest_domain.shared.values import Currency
-from sqlalchemy import func, select
+from sqlalchemy import func, select, text
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 
@@ -2616,3 +2616,227 @@ def _row_to_field_evidence(row: EtfProfileFieldRow) -> FieldEvidence:
         content_hash=row.content_hash,
         created_at=row.created_at,
     )
+
+
+class SqlAlchemyDataFreshnessReader:
+    """Read-only adapter that powers the ``/api/v1/data-freshness`` slice.
+
+    The endpoint needs a small handful of "fresh, partial, stale, missing,
+    failed" inputs sourced from five different tables; expressing every
+    one through a dedicated domain repository would either widen those
+    repositories past their natural read surface or duplicate
+    repository state (snapshot / run / pipeline_run all already live
+    behind their own readers) just to expose one tiny aggregate
+    query. Instead the freshness reader is a thin SQLAlchemy adapter
+    that runs the same raw ``text()`` queries the pre-PR-08 router did
+    and returns the rows as the dataclasses declared in
+    :mod:`invest_api.application.data_freshness`. The application layer
+    depends only on the :class:`DataFreshnessReader` ``Protocol``; this
+    concrete class is wired in by the dependency factory.
+
+    The class intentionally stays read-only and stateless w.r.t. its
+    session - ``execute`` never mutates ORM state and never flushes -
+    so it can be constructed against the FastAPI-provided session and
+    share the transaction lifetime the rest of the HTTP handlers use.
+    """
+
+    def __init__(self, session: Session) -> None:
+        self._session = session
+
+    def get_snapshot_for_trade_date(self, trade_date: date):
+        """Return the most recent snapshot for ``trade_date`` or ``None``.
+
+        See :class:`invest_api.application.data_freshness.InputSnapshotRow`
+        for the typed read-side shape. The return type is intentionally
+        not annotated so the storage layer stays decoupled from the
+        HTTP-side application dataclass; the application :class:`Protocol`
+        check happens at the call site.
+        """
+
+        row = self._session.execute(
+            text(
+                """
+                SELECT id, instrument_ids, row_count
+                FROM analytics.input_snapshots
+                WHERE snapshot_date = :trade_date
+                ORDER BY created_at DESC, id DESC
+                LIMIT 1
+                """
+            ),
+            {"trade_date": trade_date},
+        ).first()
+        if row is None:
+            return None
+        raw_ids = row[1]
+        instrument_ids: list[str] = (
+            list(raw_ids) if isinstance(raw_ids, (list, tuple)) else []
+        )
+        return _DataFreshnessInputSnapshotRow(
+            id=row[0],
+            instrument_ids=tuple(instrument_ids),
+            row_count=int(row[2]),
+        )
+
+    def get_latest_published_candidate_pool_run(self):
+        """Return the most recent ``PUBLISHED`` candidate-pool run or ``None``.
+
+        See :class:`invest_api.application.data_freshness.PublishedCandidatePoolRunRow`
+        for the typed read-side shape; the return type is intentionally
+        not annotated so the storage layer stays decoupled from the
+        HTTP-side application dataclass.
+        """
+
+        row = self._session.execute(
+            text(
+                """
+                SELECT id, trade_date, input_row_count
+                FROM analytics.candidate_pool_runs
+                WHERE status = 'published'
+                ORDER BY trade_date DESC, created_at DESC
+                LIMIT 1
+                """
+            )
+        ).first()
+        if row is None:
+            return None
+        return _DataFreshnessPublishedRunRow(
+            id=row[0],
+            trade_date=row[1],
+            input_row_count=int(row[2]),
+        )
+
+    def count_included_items_for_run(self, run_id: UUID) -> int:
+        """Return the number of ``included = true`` items for ``run_id``."""
+
+        return int(
+            self._session.execute(
+                text(
+                    """
+                    SELECT count(*) FROM analytics.candidate_pool_items
+                    WHERE run_id = :run_id AND included = true
+                    """
+                ),
+                {"run_id": run_id},
+            ).scalar_one()
+        )
+
+    def count_daily_bars_for_snapshot(
+        self, trade_date: date, instrument_ids: tuple[str, ...]
+    ) -> int:
+        """Return the distinct daily-bar count for ``trade_date`` scoped to the snapshot.
+
+        ``instrument_ids`` is the JSON-shaped list from the matching
+        input snapshot; it is cast to ``uuid[]`` before the ``ANY``
+        comparison so PostgreSQL keeps the existing index path.
+        """
+
+        if not instrument_ids:
+            return 0
+        return int(
+            self._session.execute(
+                text(
+                    """
+                    SELECT count(DISTINCT instrument_id) FROM core.daily_bars
+                    WHERE trade_date = :trade_date
+                      AND instrument_id = ANY(CAST(:ids AS uuid[]))
+                    """
+                ),
+                {"trade_date": trade_date, "ids": list(instrument_ids)},
+            ).scalar_one()
+        )
+
+    def count_daily_bars_for_published_run(
+        self, trade_date: date, run_id: UUID
+    ) -> int:
+        """Return the distinct daily-bar count scoped to the published run's items.
+
+        Membership comes from ``analytics.candidate_pool_items`` for the
+        most recently published run so the count remains scoped to the
+        personal universe even when no same-day snapshot exists.
+        """
+
+        return int(
+            self._session.execute(
+                text(
+                    """
+                    SELECT count(DISTINCT db.instrument_id)
+                    FROM core.daily_bars db
+                    WHERE db.trade_date = :trade_date
+                      AND db.instrument_id IN (
+                          SELECT instrument_id
+                          FROM analytics.candidate_pool_items
+                          WHERE run_id = :run_id
+                      )
+                    """
+                ),
+                {"trade_date": trade_date, "run_id": run_id},
+            ).scalar_one()
+        )
+
+    def get_latest_pipeline_run_for_partition(
+        self, *, job_key: str, partition_key: str
+    ):
+        """Return the latest pipeline run for ``(job_key, partition_key)`` or ``None``.
+
+        See :class:`invest_api.application.data_freshness.PipelineRunRow`
+        for the typed read-side shape; the return type is intentionally
+        not annotated so the storage layer stays decoupled from the
+        HTTP-side application dataclass.
+        """
+
+        row = self._session.execute(
+            text(
+                """
+                SELECT id, status FROM ops.pipeline_runs
+                WHERE job_key = :job_key AND partition_key = :partition_key
+                ORDER BY started_at DESC NULLS LAST, created_at DESC
+                LIMIT 1
+                """
+            ),
+            {"job_key": job_key, "partition_key": partition_key},
+        ).first()
+        if row is None:
+            return None
+        return _DataFreshnessPipelineRunRow(id=row[0], status=row[1])
+
+
+@dataclass(frozen=True, slots=True)
+class _DataFreshnessInputSnapshotRow:
+    """Internal ``analytics.input_snapshots`` row shape for the freshness reader.
+
+    Mirrors :class:`invest_api.application.data_freshness.InputSnapshotRow`
+    structurally so the application :class:`typing.Protocol` check
+    passes; declared here (instead of imported from the API package) so
+    the storage layer never has to depend on the HTTP layer.
+    """
+
+    id: UUID
+    instrument_ids: tuple[str, ...]
+    row_count: int
+
+
+@dataclass(frozen=True, slots=True)
+class _DataFreshnessPublishedRunRow:
+    """Internal candidate-pool run row shape for the freshness reader.
+
+    Mirrors
+    :class:`invest_api.application.data_freshness.PublishedCandidatePoolRunRow`
+    structurally so the application :class:`typing.Protocol` check passes.
+    """
+
+    id: UUID
+    trade_date: date
+    input_row_count: int
+
+
+@dataclass(frozen=True, slots=True)
+class _DataFreshnessPipelineRunRow:
+    """Internal ``ops.pipeline_runs`` row shape for the freshness reader.
+
+    Mirrors :class:`invest_api.application.data_freshness.PipelineRunRow`
+    structurally so the application :class:`typing.Protocol` check
+    passes.
+    """
+
+    id: UUID
+    status: str | None

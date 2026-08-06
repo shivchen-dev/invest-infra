@@ -18,7 +18,7 @@
 - AI Agent、Playbook、Thesis、Research Result 持久化；
 - 新闻系统、机构数据库、Factor Store、Feature Store、回测平台；
 - 新 Provider 和新的策略通道；
-- API Application 层的大规模重构。
+- API Application 层的大规模重构；仅按垂直切片收敛已暴露的读用例。
 
 ## Frozen ownership
 
@@ -90,6 +90,30 @@ Rules:
   translation with focused tests.
 - Treat this as the first API slice; do not claim that all Routers have been
   migrated until the remaining slices are completed.
+
+### GOV-06 — candidate-pool and ETF/instrument API boundary
+
+- Move candidate-pool read orchestration behind
+  `CandidatePoolQueryService`.
+- Move ETF/instrument and daily-bar read orchestration behind
+  `EtfQueryService`, including the legacy `/v1/instruments` compatibility
+  endpoint.
+- Keep repository construction in dependency factories and HTTP mapping in
+  routers.
+- Cover the service seams, included-only candidate diffs, revision reduction,
+  status/date validation and repository-error translation with focused tests.
+- This slice is complete; `data_freshness` remains an explicit follow-up.
+
+### GOV-07 — data-freshness API boundary
+
+- Move raw read SQL and freshness orchestration out of
+  `routers/data_freshness.py`.
+- Preserve the existing response contract and date/status semantics.
+- Add focused Application tests before changing the governance status.
+
+- Status: complete. The raw SQL is now behind
+  `SqlAlchemyDataFreshnessReader`; the Application service owns fallback and
+  status reduction, and the router contains no SQL.
 
 ## Definition of Done
 

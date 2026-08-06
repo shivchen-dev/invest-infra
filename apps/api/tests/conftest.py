@@ -6,6 +6,12 @@ live PostgreSQL connection. A ``mock_session`` fixture overrides the
 ``get_db_session`` FastAPI dependency so the routers always receive a
 ``MagicMock`` ``Session`` instance; the per-test ``monkeypatch`` calls
 then attach controlled return values to the repository mocks.
+
+The application services injected into the routers are also mocked at
+the FastAPI dependency level (``pipeline_run_service``,
+``candidate_pool_service`` and ``etf_service``). The service-level
+tests bypass the HTTP layer and construct the real services against a
+mock repository instead.
 """
 
 from __future__ import annotations
@@ -17,10 +23,14 @@ from uuid import UUID, uuid4
 
 import pytest
 from fastapi.testclient import TestClient
-from invest_api.dependencies import get_db_session, get_pipeline_run_query_service
+from invest_api.dependencies import (
+    get_candidate_pool_query_service,
+    get_data_freshness_query_service,
+    get_db_session,
+    get_etf_query_service,
+    get_pipeline_run_query_service,
+)
 from invest_api.main import app
-from invest_api.routers import candidate_pool as candidate_pool_router
-from invest_api.routers import etf as etf_router
 from invest_domain.candidate_pool.models import (
     CandidatePoolItem,
     CandidatePoolRun,
@@ -61,76 +71,23 @@ def client(mock_session: MagicMock) -> TestClient:
 
 
 @pytest.fixture()
-def instrument_repo(monkeypatch: pytest.MonkeyPatch) -> MagicMock:
-    """Patch ``SqlAlchemyInstrumentRepository`` in the ETF router with a mock."""
+def etf_service(monkeypatch: pytest.MonkeyPatch) -> MagicMock:
+    """Inject a mock :class:`EtfQueryService` into the ETF routers.
 
-    mock = MagicMock(name="InstrumentRepository")
-    monkeypatch.setattr(
-        etf_router, "SqlAlchemyInstrumentRepository", lambda session: mock
-    )
-    return mock
+    Overrides :func:`invest_api.dependencies.get_etf_query_service` so
+    the ETF router and the legacy ``/v1/instruments`` router receive a
+    ``MagicMock`` that quacks like the application service. Endpoint
+    tests configure return values and side effects on this mock; the
+    service-level tests bypass the HTTP layer and construct the real
+    service against mock repositories instead.
+    """
 
-
-@pytest.fixture()
-def daily_bar_repo(monkeypatch: pytest.MonkeyPatch) -> MagicMock:
-    """Patch ``SqlAlchemyDailyBarRepository`` in the ETF router with a mock."""
-
-    mock = MagicMock(name="DailyBarRepository")
-    monkeypatch.setattr(
-        etf_router, "SqlAlchemyDailyBarRepository", lambda session: mock
-    )
-    return mock
-
-
-@pytest.fixture()
-def candidate_pool_run_repo(monkeypatch: pytest.MonkeyPatch) -> MagicMock:
-    """Patch ``SqlAlchemyCandidatePoolRunRepository`` in the candidate-pool router."""
-
-    mock = MagicMock(name="CandidatePoolRunRepository")
-    monkeypatch.setattr(
-        candidate_pool_router,
-        "SqlAlchemyCandidatePoolRunRepository",
-        lambda session: mock,
-    )
-    return mock
-
-
-@pytest.fixture()
-def candidate_pool_item_repo(monkeypatch: pytest.MonkeyPatch) -> MagicMock:
-    """Patch ``SqlAlchemyCandidatePoolItemRepository`` in the candidate-pool router."""
-
-    mock = MagicMock(name="CandidatePoolItemRepository")
-    monkeypatch.setattr(
-        candidate_pool_router,
-        "SqlAlchemyCandidatePoolItemRepository",
-        lambda session: mock,
-    )
-    return mock
-
-
-@pytest.fixture()
-def input_snapshot_repo(monkeypatch: pytest.MonkeyPatch) -> MagicMock:
-    """Patch ``InputSnapshotRepository`` in the candidate-pool router."""
-
-    mock = MagicMock(name="InputSnapshotRepository")
-    monkeypatch.setattr(
-        candidate_pool_router, "InputSnapshotRepository", lambda session: mock
-    )
-    return mock
-
-
-@pytest.fixture()
-def candidate_pool_instrument_repo(monkeypatch: pytest.MonkeyPatch) -> MagicMock:
-    """Patch ``SqlAlchemyInstrumentRepository`` in the candidate-pool router."""
-
-    mock = MagicMock(name="CandidatePoolInstrumentRepository")
-    mock.get_many_by_ids.return_value = {}
-    monkeypatch.setattr(
-        candidate_pool_router,
-        "SqlAlchemyInstrumentRepository",
-        lambda session: mock,
-    )
-    return mock
+    mock = MagicMock(name="EtfQueryService")
+    app.dependency_overrides[get_etf_query_service] = lambda: mock
+    try:
+        yield mock
+    finally:
+        app.dependency_overrides.pop(get_etf_query_service, None)
 
 
 @pytest.fixture()
@@ -151,6 +108,46 @@ def pipeline_run_service(monkeypatch: pytest.MonkeyPatch) -> MagicMock:
         yield mock
     finally:
         app.dependency_overrides.pop(get_pipeline_run_query_service, None)
+
+
+@pytest.fixture()
+def candidate_pool_service(monkeypatch: pytest.MonkeyPatch) -> MagicMock:
+    """Inject a mock :class:`CandidatePoolQueryService` into the candidate-pool router.
+
+    Overrides :func:`invest_api.dependencies.get_candidate_pool_query_service`
+    so the router receives a ``MagicMock`` that quacks like the
+    application service. Endpoint tests configure return values and
+    side effects on this mock; the service-level tests bypass the
+    HTTP layer and construct the real service against mock
+    repositories instead.
+    """
+
+    mock = MagicMock(name="CandidatePoolQueryService")
+    app.dependency_overrides[get_candidate_pool_query_service] = lambda: mock
+    try:
+        yield mock
+    finally:
+        app.dependency_overrides.pop(get_candidate_pool_query_service, None)
+
+
+@pytest.fixture()
+def data_freshness_service(monkeypatch: pytest.MonkeyPatch) -> MagicMock:
+    """Inject a mock :class:`DataFreshnessQueryService` into the data-freshness router.
+
+    Overrides :func:`invest_api.dependencies.get_data_freshness_query_service`
+    so the router receives a ``MagicMock`` that quacks like the
+    application service. Endpoint tests configure return values and
+    side effects on this mock; the service-level tests bypass the
+    HTTP layer and construct the real service against a mock reader
+    instead.
+    """
+
+    mock = MagicMock(name="DataFreshnessQueryService")
+    app.dependency_overrides[get_data_freshness_query_service] = lambda: mock
+    try:
+        yield mock
+    finally:
+        app.dependency_overrides.pop(get_data_freshness_query_service, None)
 
 
 def make_instrument(
@@ -372,13 +369,10 @@ def make_pipeline_run(
 
 
 __all__ = [
-    "candidate_pool_instrument_repo",
-    "candidate_pool_item_repo",
-    "candidate_pool_run_repo",
+    "candidate_pool_service",
     "client",
-    "daily_bar_repo",
-    "input_snapshot_repo",
-    "instrument_repo",
+    "data_freshness_service",
+    "etf_service",
     "make_candidate_pool_run",
     "make_daily_bar",
     "make_input_snapshot",

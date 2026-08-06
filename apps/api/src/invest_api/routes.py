@@ -2,12 +2,11 @@ from __future__ import annotations
 
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Query
-from invest_storage.repositories import SqlAlchemyInstrumentRepository
-from sqlalchemy.orm import Session
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 
+from invest_api.application.etf import EtfQueryError, EtfQueryService
 from invest_api.config import get_settings
-from invest_api.dependencies import get_db_session
+from invest_api.dependencies import get_etf_query_service
 from invest_api.schemas import HealthResponse
 from invest_api.schemas.common import InstrumentListResponse, InstrumentResponse
 
@@ -39,15 +38,20 @@ def health() -> HealthResponse:
     tags=["instruments"],
 )
 def list_instruments(
-    session: Annotated[Session, Depends(get_db_session)],
+    service: Annotated[EtfQueryService, Depends(get_etf_query_service)],
     limit: Annotated[int, Query(ge=1, le=500)] = 100,
     offset: Annotated[int, Query(ge=0)] = 0,
 ) -> InstrumentListResponse:
-    repository = SqlAlchemyInstrumentRepository(session)
-    instruments = repository.list_active(limit=limit, offset=offset)
+    try:
+        view = service.list_active_instruments(limit=limit, offset=offset)
+    except EtfQueryError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="ETF query failed",
+        ) from exc
     return InstrumentListResponse(
-        items=[InstrumentResponse.from_instrument(item) for item in instruments],
-        total=len(instruments),
-        limit=limit,
-        offset=offset,
+        items=[InstrumentResponse.from_instrument(item) for item in view.items],
+        total=view.total,
+        limit=view.limit,
+        offset=view.offset,
     )

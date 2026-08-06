@@ -1,27 +1,34 @@
-"""Tests for the ``/api/v1/candidate-pool/latest`` read-only endpoint.
+"""Tests for the ``/api/v1/candidate-pool`` read-only endpoints.
 
-The endpoint is exercised through ``fastapi.testclient.TestClient`` with
-the storage-layer repository constructors patched to ``MagicMock``
-instances so the test can inject deterministic runs, snapshots and
-items without a live PostgreSQL connection. PR-01
-(``docs/plan/invest-infra-v2-next-stage-web-workbench-plan.md``) adds:
-
-- Run-level metadata on the latest response (``run_id``, ``algorithm_*``,
-  ``parameter_set_key``, ``included_count``, ``excluded_count``,
-  ``published_at``).
-- Server-side Instrument join so each item carries optional
-  ``symbol`` / ``name`` / ``exchange`` display fields.
-- Diff endpoint semantics tightened to only compare ``included=True``
-  items with display fields attached.
+The endpoints are exercised through ``fastapi.testclient.TestClient``
+with the application-layer :class:`CandidatePoolQueryService` replaced
+through a ``MagicMock`` so the handlers can be driven without a live
+PostgreSQL connection. The router-level tests assert the HTTP
+contract (status codes, response shape, sanitized 500 detail, included
+display fields, sort order); the application-level tests in
+:mod:`tests.test_candidate_pool_service` exercise the service against
+mock repositories and own the ``PUBLISHED`` filter, the input-snapshot
+lookup, the predecessor selection, the included-only set diff and the
+repository-error-translation assertions.
 """
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import UTC, date, datetime
+from typing import TYPE_CHECKING
+from unittest.mock import MagicMock
 from uuid import uuid4
 
 import pytest
-from invest_domain.instruments import InstrumentId
+from invest_api.application.candidate_pool import (
+    CandidatePoolDiffEntryView,
+    CandidatePoolDiffView,
+    CandidatePoolQueryError,
+    CandidatePoolSnapshotMissingError,
+    LatestCandidatePoolView,
+)
+from invest_domain.candidate_pool.models import CandidatePoolStatus
+from invest_domain.instruments.models import InstrumentId
 
 from tests.conftest import (
     make_candidate_pool_run,
@@ -30,8 +37,73 @@ from tests.conftest import (
     make_pool_item,
 )
 
+if TYPE_CHECKING:
+    from fastapi.testclient import TestClient
+
+
 LATEST_ENDPOINT = "/api/v1/candidate-pool/latest"
 LATEST_DIFF_ENDPOINT = "/api/v1/candidate-pool/latest/diff"
+
+
+def _build_latest_view(
+    *,
+    run=None,
+    snapshot=None,
+    items=(),
+    instrument_map=None,
+):
+    """Return a :class:`LatestCandidatePoolView` for the latest endpoint."""
+
+    if run is None:
+        run = make_candidate_pool_run()
+    if snapshot is None:
+        snapshot = make_input_snapshot(
+            snapshot_date=run.trade_date,
+            instrument_ids=[item.instrument_id.value for item in items]
+            or [uuid4()],
+        )
+    if instrument_map is None:
+        instrument_map = {}
+    return LatestCandidatePoolView(
+        run=run,
+        snapshot=snapshot,
+        items=tuple(items),
+        instruments_by_id=instrument_map,
+    )
+
+
+def _build_diff_view(
+    *,
+    trade_date: date,
+    previous_trade_date: date | None,
+    added=(),
+    retained=(),
+    removed=(),
+) -> CandidatePoolDiffView:
+    """Return a :class:`CandidatePoolDiffView` for the diff endpoints."""
+
+    return CandidatePoolDiffView(
+        trade_date=trade_date,
+        previous_trade_date=previous_trade_date,
+        added=tuple(added),
+        retained=tuple(retained),
+        removed=tuple(removed),
+    )
+
+
+def _entry_for(
+    instrument_id,
+    *,
+    symbol: str | None = "510300",
+    name: str | None = "HS300 ETF",
+    exchange: str | None = "SSE",
+) -> CandidatePoolDiffEntryView:
+    return CandidatePoolDiffEntryView(
+        instrument_id=instrument_id,
+        symbol=symbol,
+        name=name,
+        exchange=exchange,
+    )
 
 
 class TestGetLatestCandidatePool:
@@ -39,11 +111,8 @@ class TestGetLatestCandidatePool:
 
     def test_returns_run_with_items_and_content_hash(
         self,
-        client,
-        candidate_pool_run_repo,
-        candidate_pool_item_repo,
-        input_snapshot_repo,
-        candidate_pool_instrument_repo,
+        client: TestClient,
+        candidate_pool_service: MagicMock,
     ) -> None:
         first_instrument = uuid4()
         second_instrument = uuid4()
@@ -74,13 +143,16 @@ class TestGetLatestCandidatePool:
             name="SSE 500 ETF",
             exchange="SSE",
         )
-        candidate_pool_run_repo.list_by_status.return_value = [run]
-        input_snapshot_repo.list_by_date.return_value = [snapshot]
-        candidate_pool_item_repo.list_by_run_id.return_value = items
-        candidate_pool_instrument_repo.get_many_by_ids.return_value = {
-            first_instrument: first_meta,
-            second_instrument: second_meta,
-        }
+        view = _build_latest_view(
+            run=run,
+            snapshot=snapshot,
+            items=items,
+            instrument_map={
+                first_instrument: first_meta,
+                second_instrument: second_meta,
+            },
+        )
+        candidate_pool_service.get_latest.return_value = view
 
         response = client.get(LATEST_ENDPOINT)
 
@@ -111,15 +183,14 @@ class TestGetLatestCandidatePool:
         assert second["symbol"] == "510500"
         assert second["name"] == "SSE 500 ETF"
         assert second["exclusion_reasons"][0]["code"] == "suspended"
-        candidate_pool_run_repo.list_by_status.assert_called_once()
-        candidate_pool_item_repo.list_by_run_id.assert_called_once()
-        input_snapshot_repo.list_by_date.assert_called_once()
-        candidate_pool_instrument_repo.get_many_by_ids.assert_called_once()
+        candidate_pool_service.get_latest.assert_called_once_with()
 
     def test_returns_404_when_no_published_run_exists(
-        self, client, candidate_pool_run_repo
+        self,
+        client: TestClient,
+        candidate_pool_service: MagicMock,
     ) -> None:
-        candidate_pool_run_repo.list_by_status.return_value = []
+        candidate_pool_service.get_latest.return_value = None
 
         response = client.get(LATEST_ENDPOINT)
 
@@ -128,30 +199,40 @@ class TestGetLatestCandidatePool:
 
     def test_returns_500_when_snapshot_missing(
         self,
-        client,
-        candidate_pool_run_repo,
-        candidate_pool_item_repo,
-        input_snapshot_repo,
-        candidate_pool_instrument_repo,
+        client: TestClient,
+        candidate_pool_service: MagicMock,
     ) -> None:
-        run = make_candidate_pool_run()
-        candidate_pool_run_repo.list_by_status.return_value = [run]
-        input_snapshot_repo.list_by_date.return_value = []
-        candidate_pool_item_repo.list_by_run_id.return_value = []
-        candidate_pool_instrument_repo.get_many_by_ids.return_value = {}
+        snapshot_id = uuid4()
+        run_id = uuid4()
+        candidate_pool_service.get_latest.side_effect = (
+            CandidatePoolSnapshotMissingError(snapshot_id=snapshot_id, run_id=run_id)
+        )
 
         response = client.get(LATEST_ENDPOINT)
 
         assert response.status_code == 500
         assert "input snapshot" in response.json()["detail"]
 
+    def test_returns_sanitized_500_on_query_error(
+        self,
+        client: TestClient,
+        candidate_pool_service: MagicMock,
+    ) -> None:
+        candidate_pool_service.get_latest.side_effect = CandidatePoolQueryError(
+            "connection string: postgres://user:secret@host/db"
+        )
+
+        response = client.get(LATEST_ENDPOINT)
+
+        assert response.status_code == 500
+        assert response.json() == {"detail": "Candidate pool query failed"}
+        assert "secret" not in response.text
+        assert "CandidatePoolQueryError" not in response.text
+
     def test_uses_input_row_count_for_row_count(
         self,
-        client,
-        candidate_pool_run_repo,
-        candidate_pool_item_repo,
-        input_snapshot_repo,
-        candidate_pool_instrument_repo,
+        client: TestClient,
+        candidate_pool_service: MagicMock,
     ) -> None:
         snapshot = make_input_snapshot(
             snapshot_date=date(2026, 7, 31),
@@ -161,10 +242,9 @@ class TestGetLatestCandidatePool:
         run = make_candidate_pool_run(
             input_snapshot_id=snapshot.id, input_row_count=42
         )
-        candidate_pool_run_repo.list_by_status.return_value = [run]
-        input_snapshot_repo.list_by_date.return_value = [snapshot]
-        candidate_pool_item_repo.list_by_run_id.return_value = []
-        candidate_pool_instrument_repo.get_many_by_ids.return_value = {}
+        candidate_pool_service.get_latest.return_value = _build_latest_view(
+            run=run, snapshot=snapshot, items=(), instrument_map={}
+        )
 
         response = client.get(LATEST_ENDPOINT)
 
@@ -174,17 +254,10 @@ class TestGetLatestCandidatePool:
     @pytest.mark.parametrize("status_value", ["calculated", "validated", "rejected"])
     def test_non_published_runs_are_ignored(
         self,
-        client,
-        candidate_pool_run_repo,
-        candidate_pool_item_repo,
-        input_snapshot_repo,
-        candidate_pool_instrument_repo,
+        client: TestClient,
+        candidate_pool_service: MagicMock,
         status_value: str,
     ) -> None:
-        from datetime import UTC, datetime
-
-        from invest_domain.candidate_pool.models import CandidatePoolStatus
-
         status_enum = CandidatePoolStatus(status_value)
         snapshot = make_input_snapshot(
             snapshot_date=date(2026, 7, 31), instrument_ids=[uuid4()]
@@ -194,25 +267,19 @@ class TestGetLatestCandidatePool:
             status=status_enum,
             rejection_reason="coverage below threshold",
         )
-        candidate_pool_run_repo.list_by_status.return_value = []
-        input_snapshot_repo.list_by_date.return_value = [snapshot]
-        candidate_pool_item_repo.list_by_run_id.return_value = []
-        candidate_pool_instrument_repo.get_many_by_ids.return_value = {}
-
-        response = client.get(LATEST_ENDPOINT)
-
-        assert response.status_code == 404
+        candidate_pool_service.get_latest.return_value = None
         assert run.status is status_enum
         assert isinstance(run.created_at, datetime)
         assert run.created_at.tzinfo is UTC
 
+        response = client.get(LATEST_ENDPOINT)
+
+        assert response.status_code == 404
+
     def test_items_round_trip_with_full_json_fidelity(
         self,
-        client,
-        candidate_pool_run_repo,
-        candidate_pool_item_repo,
-        input_snapshot_repo,
-        candidate_pool_instrument_repo,
+        client: TestClient,
+        candidate_pool_service: MagicMock,
     ) -> None:
         snapshot = make_input_snapshot(
             snapshot_date=date(2026, 7, 31),
@@ -224,10 +291,9 @@ class TestGetLatestCandidatePool:
         )
         instrument_id = uuid4()
         item = make_pool_item(instrument_id=instrument_id, rank=1)
-        candidate_pool_run_repo.list_by_status.return_value = [run]
-        input_snapshot_repo.list_by_date.return_value = [snapshot]
-        candidate_pool_item_repo.list_by_run_id.return_value = [item]
-        candidate_pool_instrument_repo.get_many_by_ids.return_value = {}
+        candidate_pool_service.get_latest.return_value = _build_latest_view(
+            run=run, snapshot=snapshot, items=[item], instrument_map={}
+        )
 
         response = client.get(LATEST_ENDPOINT)
 
@@ -251,11 +317,8 @@ class TestGetLatestCandidatePool:
 
     def test_reports_included_and_excluded_counts(
         self,
-        client,
-        candidate_pool_run_repo,
-        candidate_pool_item_repo,
-        input_snapshot_repo,
-        candidate_pool_instrument_repo,
+        client: TestClient,
+        candidate_pool_service: MagicMock,
     ) -> None:
         included_first = uuid4()
         included_second = uuid4()
@@ -285,10 +348,9 @@ class TestGetLatestCandidatePool:
                 instrument_id=excluded_two, included=False, rank=None, total_score=None
             ),
         ]
-        candidate_pool_run_repo.list_by_status.return_value = [run]
-        input_snapshot_repo.list_by_date.return_value = [snapshot]
-        candidate_pool_item_repo.list_by_run_id.return_value = items
-        candidate_pool_instrument_repo.get_many_by_ids.return_value = {}
+        candidate_pool_service.get_latest.return_value = _build_latest_view(
+            run=run, snapshot=snapshot, items=items, instrument_map={}
+        )
 
         response = client.get(LATEST_ENDPOINT)
 
@@ -299,61 +361,24 @@ class TestGetLatestCandidatePool:
 
 
 class TestGetCandidatePoolDiff:
-    """Coverage for the candidate-pool diff endpoints (PR-01)."""
-
-    def _included_items_for(self, instrument_ids):
-        return [
-            make_pool_item(instrument_id=iid, rank=idx + 1)
-            for idx, iid in enumerate(instrument_ids)
-        ]
-
-    def _mixed_items_for(self, included_ids, excluded_ids):
-        items = self._included_items_for(included_ids)
-        items.extend(
-            make_pool_item(
-                instrument_id=iid,
-                included=False,
-                rank=None,
-                total_score=None,
-            )
-            for iid in excluded_ids
-        )
-        return items
-
-    def _instrument_map(self, instrument_ids):
-        return {
-            iid: make_instrument(
-                instrument_id=InstrumentId(iid),
-                symbol=f"S{iid.int % 10000:04d}",
-                name=f"ETF {iid.int % 10000:04d}",
-                exchange="SSE",
-            )
-            for iid in instrument_ids
-        }
+    """Coverage for the candidate-pool diff endpoints."""
 
     def test_diff_returns_added_retained_and_removed(
         self,
-        client,
-        candidate_pool_run_repo,
-        candidate_pool_item_repo,
-        candidate_pool_instrument_repo,
+        client: TestClient,
+        candidate_pool_service: MagicMock,
     ) -> None:
         previous = make_candidate_pool_run(trade_date=date(2026, 7, 30))
         current = make_candidate_pool_run(trade_date=date(2026, 7, 31))
         retained = uuid4()
         removed = uuid4()
         added = uuid4()
-        previous_ids = [retained, removed]
-        current_ids = [retained, added]
-
-        candidate_pool_run_repo.get_by_id.return_value = current
-        candidate_pool_run_repo.list_by_status.return_value = [current, previous]
-        candidate_pool_item_repo.list_by_run_id.side_effect = [
-            self._included_items_for(current_ids),
-            self._included_items_for(previous_ids),
-        ]
-        candidate_pool_instrument_repo.get_many_by_ids.return_value = self._instrument_map(
-            set(current_ids) | set(previous_ids)
+        candidate_pool_service.get_run_diff.return_value = _build_diff_view(
+            trade_date=current.trade_date,
+            previous_trade_date=previous.trade_date,
+            added=[_entry_for(added)],
+            retained=[_entry_for(retained)],
+            removed=[_entry_for(removed)],
         )
 
         response = client.get(f"/api/v1/candidate-pool/{current.id}/diff")
@@ -372,33 +397,20 @@ class TestGetCandidatePoolDiff:
             assert entry["symbol"] is not None
             assert entry["name"] is not None
             assert entry["exchange"] == "SSE"
-        candidate_pool_run_repo.get_by_id.assert_called_once_with(current.id)
-        assert candidate_pool_item_repo.list_by_run_id.call_count == 2
-        candidate_pool_item_repo.list_by_run_id.assert_any_call(current.id)
-        candidate_pool_item_repo.list_by_run_id.assert_any_call(previous.id)
-        candidate_pool_instrument_repo.get_many_by_ids.assert_called_once()
+        candidate_pool_service.get_run_diff.assert_called_once_with(current.id)
 
     def test_diff_excludes_excluded_items_from_all_buckets(
         self,
-        client,
-        candidate_pool_run_repo,
-        candidate_pool_item_repo,
-        candidate_pool_instrument_repo,
+        client: TestClient,
+        candidate_pool_service: MagicMock,
     ) -> None:
         previous = make_candidate_pool_run(trade_date=date(2026, 7, 30))
         current = make_candidate_pool_run(trade_date=date(2026, 7, 31))
         retained = uuid4()
-        excluded_previous = uuid4()
-        excluded_current = uuid4()
-
-        candidate_pool_run_repo.get_by_id.return_value = current
-        candidate_pool_run_repo.list_by_status.return_value = [current, previous]
-        candidate_pool_item_repo.list_by_run_id.side_effect = [
-            self._mixed_items_for([retained], [excluded_current]),
-            self._mixed_items_for([retained], [excluded_previous]),
-        ]
-        candidate_pool_instrument_repo.get_many_by_ids.return_value = self._instrument_map(
-            {retained, excluded_previous, excluded_current}
+        candidate_pool_service.get_run_diff.return_value = _build_diff_view(
+            trade_date=current.trade_date,
+            previous_trade_date=previous.trade_date,
+            retained=[_entry_for(retained)],
         )
 
         response = client.get(f"/api/v1/candidate-pool/{current.id}/diff")
@@ -415,35 +427,20 @@ class TestGetCandidatePoolDiff:
 
     def test_diff_with_no_previous_run_reports_everything_as_added(
         self,
-        client,
-        candidate_pool_run_repo,
-        candidate_pool_item_repo,
-        candidate_pool_instrument_repo,
+        client: TestClient,
+        candidate_pool_service: MagicMock,
     ) -> None:
         current = make_candidate_pool_run(trade_date=date(2026, 7, 31))
         first = uuid4()
         second = uuid4()
-        current_ids = [first, second]
-
-        candidate_pool_run_repo.get_by_id.return_value = current
-        candidate_pool_run_repo.list_by_status.return_value = [current]
-        candidate_pool_item_repo.list_by_run_id.return_value = self._included_items_for(
-            current_ids
+        candidate_pool_service.get_run_diff.return_value = _build_diff_view(
+            trade_date=current.trade_date,
+            previous_trade_date=None,
+            added=[
+                _entry_for(second, symbol="510300", name="HS300 ETF"),
+                _entry_for(first, symbol="510500", name="SSE 500 ETF"),
+            ],
         )
-        candidate_pool_instrument_repo.get_many_by_ids.return_value = {
-            first: make_instrument(
-                instrument_id=InstrumentId(first),
-                symbol="510500",
-                name="SSE 500 ETF",
-                exchange="SSE",
-            ),
-            second: make_instrument(
-                instrument_id=InstrumentId(second),
-                symbol="510300",
-                name="HS300 ETF",
-                exchange="SSE",
-            ),
-        }
 
         response = client.get(f"/api/v1/candidate-pool/{current.id}/diff")
 
@@ -459,37 +456,23 @@ class TestGetCandidatePoolDiff:
         }
         assert body["retained"] == []
         assert body["removed"] == []
-        candidate_pool_item_repo.list_by_run_id.assert_called_once_with(current.id)
-        candidate_pool_instrument_repo.get_many_by_ids.assert_called_once()
 
     def test_diff_with_current_all_excluded_reports_previous_as_removed(
         self,
-        client,
-        candidate_pool_run_repo,
-        candidate_pool_item_repo,
-        candidate_pool_instrument_repo,
+        client: TestClient,
+        candidate_pool_service: MagicMock,
     ) -> None:
         previous = make_candidate_pool_run(trade_date=date(2026, 7, 30))
         current = make_candidate_pool_run(trade_date=date(2026, 7, 31))
         removed_first = uuid4()
         removed_second = uuid4()
-        excluded_current = uuid4()
-
-        candidate_pool_run_repo.get_by_id.return_value = current
-        candidate_pool_run_repo.list_by_status.return_value = [current, previous]
-        candidate_pool_item_repo.list_by_run_id.side_effect = [
-            [
-                make_pool_item(
-                    instrument_id=excluded_current,
-                    included=False,
-                    rank=None,
-                    total_score=None,
-                )
+        candidate_pool_service.get_run_diff.return_value = _build_diff_view(
+            trade_date=current.trade_date,
+            previous_trade_date=previous.trade_date,
+            removed=[
+                _entry_for(removed_first),
+                _entry_for(removed_second),
             ],
-            self._included_items_for([removed_first, removed_second]),
-        ]
-        candidate_pool_instrument_repo.get_many_by_ids.return_value = self._instrument_map(
-            {removed_first, removed_second, excluded_current}
         )
 
         response = client.get(f"/api/v1/candidate-pool/{current.id}/diff")
@@ -500,46 +483,26 @@ class TestGetCandidatePoolDiff:
         assert body["retained"] == []
         removed_ids = {entry["instrument_id"] for entry in body["removed"]}
         assert removed_ids == {str(removed_first), str(removed_second)}
-        # Excluded items must never appear in any bucket even if they
-        # were in the previous run too.
-        all_ids = removed_ids | {
-            entry["instrument_id"]
-            for entry in (*body["added"], *body["retained"])
-        }
-        assert str(excluded_current) not in all_ids
 
     def test_diff_entries_are_ordered_by_symbol_then_instrument_id(
         self,
-        client,
-        candidate_pool_run_repo,
-        candidate_pool_item_repo,
-        candidate_pool_instrument_repo,
+        client: TestClient,
+        candidate_pool_service: MagicMock,
     ) -> None:
         previous = make_candidate_pool_run(trade_date=date(2026, 7, 30))
         current = make_candidate_pool_run(trade_date=date(2026, 7, 31))
         first = uuid4()
         second = uuid4()
         third = uuid4()
-        # Use UUIDs whose integer values are intentionally non-monotonic
-        # so the symbol sort is what drives ordering.
-        added_ids = [first, second, third]
-        candidate_pool_run_repo.get_by_id.return_value = current
-        candidate_pool_run_repo.list_by_status.return_value = [current, previous]
-        candidate_pool_item_repo.list_by_run_id.side_effect = [
-            self._included_items_for(added_ids),
-            [],
-        ]
-        candidate_pool_instrument_repo.get_many_by_ids.return_value = {
-            first: make_instrument(
-                symbol="159915", name="ChiNext ETF", exchange="SZSE"
-            ),
-            second: make_instrument(
-                symbol="510300", name="HS300 ETF", exchange="SSE"
-            ),
-            third: make_instrument(
-                symbol="510500", name="SSE 500 ETF", exchange="SSE"
-            ),
-        }
+        candidate_pool_service.get_run_diff.return_value = _build_diff_view(
+            trade_date=current.trade_date,
+            previous_trade_date=previous.trade_date,
+            added=[
+                _entry_for(first, symbol="159915", name="ChiNext ETF", exchange="SZSE"),
+                _entry_for(second, symbol="510300", name="HS300 ETF", exchange="SSE"),
+                _entry_for(third, symbol="510500", name="SSE 500 ETF", exchange="SSE"),
+            ],
+        )
 
         response = client.get(f"/api/v1/candidate-pool/{current.id}/diff")
 
@@ -549,23 +512,21 @@ class TestGetCandidatePoolDiff:
 
     def test_diff_entries_with_missing_instruments_have_null_display(
         self,
-        client,
-        candidate_pool_run_repo,
-        candidate_pool_item_repo,
-        candidate_pool_instrument_repo,
+        client: TestClient,
+        candidate_pool_service: MagicMock,
     ) -> None:
         previous = make_candidate_pool_run(trade_date=date(2026, 7, 30))
         current = make_candidate_pool_run(trade_date=date(2026, 7, 31))
         added = uuid4()
-        candidate_pool_run_repo.get_by_id.return_value = current
-        candidate_pool_run_repo.list_by_status.return_value = [current, previous]
-        candidate_pool_item_repo.list_by_run_id.side_effect = [
-            self._included_items_for([added]),
-            [],
-        ]
-        # Empty map simulates a missing instrument row; the entry must
-        # still appear in the bucket with ``None`` display fields.
-        candidate_pool_instrument_repo.get_many_by_ids.return_value = {}
+        candidate_pool_service.get_run_diff.return_value = _build_diff_view(
+            trade_date=current.trade_date,
+            previous_trade_date=previous.trade_date,
+            added=[
+                CandidatePoolDiffEntryView(
+                    instrument_id=added, symbol=None, name=None, exchange=None
+                )
+            ],
+        )
 
         response = client.get(f"/api/v1/candidate-pool/{current.id}/diff")
 
@@ -580,55 +541,76 @@ class TestGetCandidatePoolDiff:
 
     def test_diff_returns_404_for_missing_run(
         self,
-        client,
-        candidate_pool_run_repo,
+        client: TestClient,
+        candidate_pool_service: MagicMock,
     ) -> None:
-        candidate_pool_run_repo.get_by_id.return_value = None
+        candidate_pool_service.get_run_diff.return_value = None
 
         response = client.get(f"/api/v1/candidate-pool/{uuid4()}/diff")
 
         assert response.status_code == 404
         assert "not found" in response.json()["detail"]
-        candidate_pool_run_repo.list_by_status.assert_not_called()
 
     @pytest.mark.parametrize("status_value", ["calculated", "validated", "rejected"])
     def test_diff_returns_404_for_non_published_run(
         self,
-        client,
-        candidate_pool_run_repo,
+        client: TestClient,
+        candidate_pool_service: MagicMock,
         status_value: str,
     ) -> None:
-        from invest_domain.candidate_pool.models import CandidatePoolStatus
-
         run = make_candidate_pool_run(
             trade_date=date(2026, 7, 31), status=CandidatePoolStatus(status_value)
         )
-        candidate_pool_run_repo.get_by_id.return_value = run
+        candidate_pool_service.get_run_diff.return_value = None
 
         response = client.get(f"/api/v1/candidate-pool/{run.id}/diff")
 
         assert response.status_code == 404
         assert "not found" in response.json()["detail"]
-        candidate_pool_run_repo.list_by_status.assert_not_called()
+
+    def test_diff_returns_500_when_snapshot_missing(
+        self,
+        client: TestClient,
+        candidate_pool_service: MagicMock,
+    ) -> None:
+        snapshot_id = uuid4()
+        run_id = uuid4()
+        candidate_pool_service.get_run_diff.side_effect = (
+            CandidatePoolSnapshotMissingError(snapshot_id=snapshot_id, run_id=run_id)
+        )
+
+        response = client.get(f"/api/v1/candidate-pool/{run_id}/diff")
+
+        assert response.status_code == 500
+        assert "input snapshot" in response.json()["detail"]
+
+    def test_diff_returns_sanitized_500_on_query_error(
+        self,
+        client: TestClient,
+        candidate_pool_service: MagicMock,
+    ) -> None:
+        candidate_pool_service.get_run_diff.side_effect = CandidatePoolQueryError(
+            "connection string: postgres://user:secret@host/db"
+        )
+
+        response = client.get(f"/api/v1/candidate-pool/{uuid4()}/diff")
+
+        assert response.status_code == 500
+        assert response.json() == {"detail": "Candidate pool query failed"}
+        assert "secret" not in response.text
 
     def test_latest_diff_uses_latest_published_run(
         self,
-        client,
-        candidate_pool_run_repo,
-        candidate_pool_item_repo,
-        candidate_pool_instrument_repo,
+        client: TestClient,
+        candidate_pool_service: MagicMock,
     ) -> None:
         previous = make_candidate_pool_run(trade_date=date(2026, 7, 30))
         current = make_candidate_pool_run(trade_date=date(2026, 7, 31))
         retained = uuid4()
-
-        candidate_pool_run_repo.list_by_status.return_value = [current, previous]
-        candidate_pool_item_repo.list_by_run_id.side_effect = [
-            [make_pool_item(instrument_id=retained, rank=1)],
-            [make_pool_item(instrument_id=retained, rank=1)],
-        ]
-        candidate_pool_instrument_repo.get_many_by_ids.return_value = self._instrument_map(
-            {retained}
+        candidate_pool_service.get_latest_diff.return_value = _build_diff_view(
+            trade_date=current.trade_date,
+            previous_trade_date=previous.trade_date,
+            retained=[_entry_for(retained)],
         )
 
         response = client.get(LATEST_DIFF_ENDPOINT)
@@ -644,12 +626,49 @@ class TestGetCandidatePoolDiff:
 
     def test_latest_diff_returns_404_when_no_published_run(
         self,
-        client,
-        candidate_pool_run_repo,
+        client: TestClient,
+        candidate_pool_service: MagicMock,
     ) -> None:
-        candidate_pool_run_repo.list_by_status.return_value = []
+        candidate_pool_service.get_latest_diff.return_value = None
 
         response = client.get(LATEST_DIFF_ENDPOINT)
 
         assert response.status_code == 404
         assert "no published candidate pool" in response.json()["detail"]
+
+    def test_latest_diff_returns_500_when_snapshot_missing(
+        self,
+        client: TestClient,
+        candidate_pool_service: MagicMock,
+    ) -> None:
+        snapshot_id = uuid4()
+        run_id = uuid4()
+        candidate_pool_service.get_latest_diff.side_effect = (
+            CandidatePoolSnapshotMissingError(snapshot_id=snapshot_id, run_id=run_id)
+        )
+
+        response = client.get(LATEST_DIFF_ENDPOINT)
+
+        assert response.status_code == 500
+        assert "input snapshot" in response.json()["detail"]
+
+    def test_latest_diff_returns_sanitized_500_on_query_error(
+        self,
+        client: TestClient,
+        candidate_pool_service: MagicMock,
+    ) -> None:
+        candidate_pool_service.get_latest_diff.side_effect = CandidatePoolQueryError(
+            "connection string: postgres://user:secret@host/db"
+        )
+
+        response = client.get(LATEST_DIFF_ENDPOINT)
+
+        assert response.status_code == 500
+        assert response.json() == {"detail": "Candidate pool query failed"}
+        assert "secret" not in response.text
+
+
+__all__ = [
+    "TestGetCandidatePoolDiff",
+    "TestGetLatestCandidatePool",
+]

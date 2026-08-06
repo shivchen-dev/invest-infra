@@ -1,8 +1,12 @@
 """Read-only ETF endpoints under ``/api/v1/etf``.
 
-Both endpoints stay inside the storage repositories' surface area -
-the handler fetches domain objects and translates them into the
-Pydantic response shapes. No write path is exposed here.
+Both endpoints stay inside the application service's surface area -
+the handlers translate the small domain views returned by
+:class:`invest_api.application.etf.EtfQueryService` into the public
+Pydantic response shapes and convert application exceptions into
+HTTP errors. No storage repositories are referenced here; the
+dependency factory in :mod:`invest_api.dependencies` owns the
+session and the two repositories.
 """
 
 from __future__ import annotations
@@ -12,14 +16,13 @@ from typing import Annotated
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from invest_domain.market_data.values import Adjust
-from invest_storage.repositories import (
-    SqlAlchemyDailyBarRepository,
-    SqlAlchemyInstrumentRepository,
-)
-from sqlalchemy.orm import Session
 
-from invest_api.dependencies import get_db_session
+from invest_api.application.etf import (
+    MISSING_INSTRUMENT_DETAIL_TEMPLATE,
+    EtfQueryError,
+    EtfQueryService,
+)
+from invest_api.dependencies import get_etf_query_service
 from invest_api.schemas.etf import (
     DailyBarListResponse,
     DailyBarResponse,
@@ -32,7 +35,7 @@ router = APIRouter(prefix="/api/v1/etf", tags=["etf"])
 
 @router.get("/instruments", response_model=InstrumentListResponse)
 def list_etf_instruments(
-    session: Annotated[Session, Depends(get_db_session)],
+    service: Annotated[EtfQueryService, Depends(get_etf_query_service)],
     limit: Annotated[int, Query(ge=1, le=1000)] = 100,
     offset: Annotated[int, Query(ge=0)] = 0,
     exchange: Annotated[str | None, Query(min_length=1, max_length=32)] = None,
@@ -40,26 +43,25 @@ def list_etf_instruments(
 ) -> InstrumentListResponse:
     """Return the active ETF master data, optionally filtered by exchange/status."""
 
-    repository = SqlAlchemyInstrumentRepository(session)
-    # Fetch the full active set so the API can compute ``total`` after
-    # filtering. The endpoint is read-only and the active instrument
-    # universe is bounded by ADR-0004 to the SSE / SZSE exchanges.
-    all_active = repository.list_active(limit=1000, offset=0)
-    filtered = [
-        item
-        for item in all_active
-        if (exchange is None or item.exchange == exchange)
-        and (status_ is None or item.status.value == status_)
-    ]
-    total = len(filtered)
-    page = filtered[offset : offset + limit]
-    items = [InstrumentResponse.from_instrument(item) for item in page]
-    return InstrumentListResponse(items=items, total=total, limit=limit, offset=offset)
+    try:
+        view = service.list_active_instruments(
+            exchange=exchange, status_=status_, limit=limit, offset=offset
+        )
+    except EtfQueryError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="ETF query failed",
+        ) from exc
+
+    items = [InstrumentResponse.from_instrument(item) for item in view.items]
+    return InstrumentListResponse(
+        items=items, total=view.total, limit=view.limit, offset=view.offset
+    )
 
 
 @router.get("/daily-bars", response_model=DailyBarListResponse)
 def list_etf_daily_bars(
-    session: Annotated[Session, Depends(get_db_session)],
+    service: Annotated[EtfQueryService, Depends(get_etf_query_service)],
     instrument_id: Annotated[UUID, Query()],
     start_date: Annotated[date, Query()],
     end_date: Annotated[date, Query()],
@@ -77,32 +79,28 @@ def list_etf_daily_bars(
             ),
         )
 
-    instrument_repository = SqlAlchemyInstrumentRepository(session)
-    instrument = instrument_repository.get_by_id(instrument_id)
-    if instrument is None:
+    try:
+        view = service.list_latest_daily_bars(
+            instrument_id=instrument_id,
+            start_date=start_date,
+            end_date=end_date,
+            limit=limit,
+            offset=offset,
+        )
+    except EtfQueryError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="ETF query failed",
+        ) from exc
+
+    if view is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"instrument {instrument_id} not found",
+            detail=MISSING_INSTRUMENT_DETAIL_TEMPLATE.format(
+                instrument_id=instrument_id
+            ),
         )
 
-    daily_bar_repository = SqlAlchemyDailyBarRepository(session)
-    all_revisions = daily_bar_repository.list_by_instrument_and_range(
-        instrument_id=instrument_id,
-        start_date=start_date,
-        end_date=end_date,
-        adjustment=Adjust.NONE,
-    )
-    # Per ADR-0006 §6, callers run their own "latest per day" reduction;
-    # the repository returns every revision sorted by trade_date then
-    # revision ascending, so we keep only the highest revision per day.
-    latest_by_date: dict[date, object] = {}
-    for bar in all_revisions:
-        existing = latest_by_date.get(bar.trade_date)
-        if existing is None or bar.revision > existing.revision:
-            latest_by_date[bar.trade_date] = bar
-    ordered = sorted(latest_by_date.values(), key=lambda item: item.trade_date)
-    total = len(ordered)
-    page = ordered[offset : offset + limit]
     items = [
         DailyBarResponse(
             instrument_id=bar.instrument_id,
@@ -121,9 +119,11 @@ def list_etf_daily_bars(
             observed_at=bar.observed_at,
             revision=bar.revision,
         )
-        for bar in page
+        for bar in view.items
     ]
-    return DailyBarListResponse(items=items, total=total, limit=limit, offset=offset)
+    return DailyBarListResponse(
+        items=items, total=view.total, limit=view.limit, offset=view.offset
+    )
 
 
 __all__ = ["router"]
