@@ -64,6 +64,15 @@ from invest_domain.etf_profile import (
     compute_field_evidence_hash,
     resolve_etf_profile_evidence,
 )
+from invest_domain.exposure import (
+    EtfHolding,
+    EtfHoldingSnapshot,
+    EtfIndexMapping,
+    ExposureProvenance,
+    IndexConstituent,
+    IndexConstituentSnapshot,
+    IndexProfile,
+)
 from invest_domain.instruments import (
     Instrument,
     InstrumentId,
@@ -176,6 +185,10 @@ __all__ = [
     "EligibilityCriteria",
     "EtfMarketDataProvider",
     "EtfProfile",
+    "EtfHolding",
+    "EtfHoldingSnapshot",
+    "EtfIndexMapping",
+    "ExposureProvenance",
     "Exchange",
     "ExclusionReason",
     "FieldEvidence",
@@ -183,6 +196,9 @@ __all__ = [
     "FieldKey",
     "FieldValueType",
     "Instrument",
+    "IndexConstituent",
+    "IndexConstituentSnapshot",
+    "IndexProfile",
     "InstrumentId",
     "InstrumentProvider",
     "InstrumentStatus",
