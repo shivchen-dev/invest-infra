@@ -45,6 +45,10 @@ from invest_domain.research.quality_gate import (
     QualityGateStatus,
     evaluate_quality_gate,
 )
+from invest_domain.research.research_case import (
+    ResearchCase,
+    ResearchCaseStatus,
+)
 
 
 def __getattr__(name: str):
@@ -92,6 +96,8 @@ __all__ = [
     "QualityGateResult",
     "QualityGateStatus",
     "QualityStatus",
+    "ResearchCase",
+    "ResearchCaseStatus",
     "ResearchContextPack",
     "SourceReference",
     "calculate_market_state_factors",

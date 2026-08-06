@@ -6,6 +6,10 @@ package is guaranteed to be SQLAlchemy-, Alembic-, FastAPI-, Dagster-
 and Provider-SDK-free (see M0-CODING-BRIEF Phase 1-B / scripts/check_architecture.py).
 """
 
+from invest_domain.analytics.factor_calculators import (
+    FactorCalculationResult,
+    calculate_market_state_factors,
+)
 from invest_domain.candidate_pool import (
     OFFICIAL_CHANNEL_STRATEGIES,
     V1_ADAPTER_CHANNEL_VERSION,
@@ -43,10 +47,6 @@ from invest_domain.candidate_pool import (
     is_official_channel_strategy,
     normalise_codes,
     utc_now,
-)
-from invest_domain.analytics.factor_calculators import (
-    FactorCalculationResult,
-    calculate_market_state_factors,
 )
 from invest_domain.etf_profile import (
     DEFAULT_PROVIDER_PRIORITY_POLICY,
@@ -117,6 +117,8 @@ from invest_domain.research import (
     QualityGateResult,
     QualityGateStatus,
     QualityStatus,
+    ResearchCase,
+    ResearchCaseStatus,
     SourceReference,
     canonical_pack_json,
     compute_item_hash,
@@ -158,6 +160,8 @@ __all__ = [
     "QualityGateResult",
     "QualityGateStatus",
     "QualityStatus",
+    "ResearchCase",
+    "ResearchCaseStatus",
     "SCHEMA_VERSION",
     "SourceReference",
     "UnknownV1InstrumentCodeError",
