@@ -30,6 +30,23 @@ AkShare 当前没有一个能直接产出仓库 `exposure_bundle` 的单一接�
 4. `EtfHoldingSnapshot`：选取单个最新 `季度`，从季度文本解析报告期为 `as_of_date`；`weight=占净值比例/100`，`industry=null`。必须显式标记这是 `reported_portfolio_holdings`，不得标记为实时或完整 PCF。
 5. 每个上游端点应有自己的 raw payload/hash/observed time；当前四段共用一个 `dataset_key`/`observed_at` 的 bundle 可作为应用层组装物，不应掩盖多源、多披露日期。
 
+## `fund_portfolio_hold_em.季度` 字段的标准化
+
+canonical 形式 `YYYY年{1,2,3,4}季度`（trim 后必须严格匹配）应被接受并解析到该季自然季末日（`03-31` / `06-30` / `09-30` / `12-31`），作为 `as_of_date`。
+
+**近期实测上游 AkShare 变体**：除了 canonical 形式外，运行期曾观察到 `季度` 单元格直接发出 `YYYY年{1,2,3,4}季度股票投资明细`（如 `2025年1季度股票投资明细`），即在 `季度` 之后紧跟 `股票投资明细` 后缀，中间无空白。`akshare.holding_mapper` 必须同时接受该观测形态并将其标准化为同一季末日，不得视为“上游契约变更”失败。
+
+**归一规则**（保留所有原有 fail-closed 行为）：
+
+- **接受并归一**：trim 后形如 `^([0-9]{4})年([1-4])季度(?:股票投资明细)?$` 的字符串（canonical 或带 `股票投资明细` 后缀），两种形态在去除可选后缀后等价，都解析到同一季末日。
+- **继续失败 closed**：
+  - 空字符串 / 纯空白；
+  - 中间夹任意空白（如 `2025年1 季度`、`2025年1 季度股票投资明细`）；
+  - 其他后缀（如 `2025年1季度其他`、`2025年1季度基金股票投资明细`、`2025年1季度股票投资明细其他`）、孤立 `股票投资明细`；
+  - 无效 `季度`（0 / 5 / `四季度` / `第4季度` 等）；
+  - 非字符串值（`int` / `float` / `list` / `None` 等）。
+- 一切失败必须以 `ProviderDataContractError(code="INVALID_QUARTER", provider_key="akshare")` 抛出，不允许静默猜测季末日。
+
 ## 明确不支持/缺口
 
 - **逐券行业**：上述官方函数不提供；当前 fixture 中的 `constituent.industry` 和 `holding.industry` 不能由这些端点直接产生。

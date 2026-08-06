@@ -6,9 +6,13 @@ an :class:`invest_domain.exposure.EtfHoldingSnapshot`.
 - ``股票代码`` — six-digit numeric code (string or non-negative int).
 - ``占净值比例`` — percentage weight in ``[0, 100]``; the mapper
   divides by 100 so the domain stores the canonical ratio form.
-- ``季度`` — trimmed ``YYYY年{1,2,3,4}季度`` label; parsed to the
-  natural quarter-end date (``YYYY-03-31`` / ``-06-30`` / ``-09-30`` /
-  ``-12-31``) which becomes ``EtfHoldingSnapshot.as_of_date``.
+- ``季度`` — trimmed ``YYYY年{1,2,3,4}季度`` label; also accepts the
+  observed AkShare upstream variant ``YYYY年{1,2,3,4}季度股票投资明细``
+  (no whitespace between ``季度`` and the suffix). Both forms are
+  normalized to the natural quarter-end date (``YYYY-03-31`` /
+  ``-06-30`` / ``-09-30`` / ``-12-31``) which becomes
+  ``EtfHoldingSnapshot.as_of_date``. Any other suffix, embedded
+  whitespace, or non-string value still raises ``INVALID_QUARTER``.
 
 Rows in older quarters are silently dropped — only the latest quarter
 present in the response survives. Same-stock duplicates inside the
@@ -47,7 +51,8 @@ _QUARTER_KEY = "季度"
 
 _QUARTER_END_DAY: dict[int, int] = {1: 31, 2: 30, 3: 30, 4: 31}
 _QUARTER_END_MONTH: dict[int, int] = {1: 3, 2: 6, 3: 9, 4: 12}
-_QUARTER_PATTERN = re.compile(r"^([0-9]{4})年([1-4])季度$")
+_QUARTER_PATTERN = re.compile(r"^([0-9]{4})年([1-4])季度(?:股票投资明细)?$")
+_OBSERVED_QUARTER_SUFFIX = "股票投资明细"
 _UUID_INT_ZERO = 0
 
 
@@ -90,7 +95,9 @@ def _parse_quarter(value: Any, *, row_index: int) -> date:
     if match is None:
         raise _err(
             "INVALID_QUARTER",
-            f"row {row_index} 季度={value!r} is not the trimmed Chinese form 'YYYY年[1-4]季度'",
+            f"row {row_index} 季度={value!r} is not the trimmed Chinese form "
+            f"'YYYY年[1-4]季度' or the observed AkShare variant "
+            f"'YYYY年[1-4]季度{_OBSERVED_QUARTER_SUFFIX}'",
         )
     year = int(match.group(1))
     quarter = int(match.group(2))

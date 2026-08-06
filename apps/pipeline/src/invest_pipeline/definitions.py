@@ -11,6 +11,7 @@ from invest_pipeline.assets import (
     personal_candidate_pool,
     seed_instruments,
 )
+from invest_pipeline.real_exposure_asset import real_exposure
 from invest_pipeline.schedules import personal_etf_daily_schedule
 
 personal_etf_daily_job = dg.define_asset_job(
@@ -25,6 +26,11 @@ personal_etf_daily_job = dg.define_asset_job(
     ],
 )
 
+real_exposure_job = dg.define_asset_job(
+    name="real_exposure_job",
+    selection=[real_exposure],
+)
+
 defs = dg.Definitions(
     assets=[
         seed_instruments,
@@ -34,7 +40,8 @@ defs = dg.Definitions(
         etf_daily_bars_raw,
         etf_daily_bars,
         personal_candidate_pool,
+        real_exposure,
     ],
-    jobs=[personal_etf_daily_job],
+    jobs=[personal_etf_daily_job, real_exposure_job],
     schedules=[personal_etf_daily_schedule],
 )

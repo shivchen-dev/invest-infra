@@ -339,3 +339,73 @@ class TestDuplicateHoldings:
         with pytest.raises(ProviderDataContractError) as info:
             _map([_row(code="600519", weight="10.0"), _row(code="600519", weight="8.0")])
         _assert_provider_error(info, "DUPLICATE_HOLDING")
+
+
+class TestQuarterVariant:
+    """Today AkShare upstream emits ``季度`` as either the canonical
+    ``YYYY年[1-4]季度`` label or the documented observed variant
+    ``YYYY年[1-4]季度股票投资明细`` (no whitespace between ``季度`` and the
+    suffix). Both forms must normalize to the same quarter-end date; any
+    other suffix, embedded whitespace, non-string value, or invalid
+    quarter/year must still raise ``INVALID_QUARTER``.
+    """
+
+    def test_observed_value_2025_q1_resolves_to_march_31(self) -> None:
+        snap = _map([_row(quarter="2025年1季度股票投资明细")])
+        assert snap.as_of_date == datetime(2025, 3, 31).date()
+
+    def test_canonical_value_2025_q1_still_resolves_to_march_31(self) -> None:
+        snap = _map([_row(quarter="2025年1季度")])
+        assert snap.as_of_date == datetime(2025, 3, 31).date()
+
+    @pytest.mark.parametrize(
+        ("label", "expected"),
+        [
+            ("2025年1季度股票投资明细", datetime(2025, 3, 31).date()),
+            ("2025年2季度股票投资明细", datetime(2025, 6, 30).date()),
+            ("2025年3季度股票投资明细", datetime(2025, 9, 30).date()),
+            ("2025年4季度股票投资明细", datetime(2025, 12, 31).date()),
+        ],
+    )
+    def test_observed_value_resolves_to_quarter_end_for_all_quarters(
+        self, label: str, expected: Any
+    ) -> None:
+        assert _map([_row(quarter=label)]).as_of_date == expected
+
+    def test_observed_value_with_surrounding_whitespace_is_stripped(self) -> None:
+        snap = _map([_row(quarter="  2025年1季度股票投资明细  ")])
+        assert snap.as_of_date == datetime(2025, 3, 31).date()
+
+    def test_mixed_canonical_and_observed_in_same_as_of_date(self) -> None:
+        snap = _map(
+            [
+                _row(code="600519", weight="10.0", quarter="2025年1季度"),
+                _row(code="601318", weight="8.0", quarter="2025年1季度股票投资明细"),
+            ]
+        )
+        assert snap.as_of_date == datetime(2025, 3, 31).date()
+        assert {h.stock_code for h in snap.holdings} == {"600519", "601318"}
+
+    @pytest.mark.parametrize(
+        "bad",
+        [
+            "2025年1季度其他",
+            "2025年1季度清算",
+            "2025年1季度基金股票投资明细",
+            "2025年1 季度股票投资明细",
+            "2025年1季度股票投资明细其他",
+            "股票投资明细",
+            "   ",
+            "",
+        ],
+    )
+    def test_other_suffixes_and_separators_still_rejected(self, bad: str) -> None:
+        with pytest.raises(ProviderDataContractError) as info:
+            _map([_row(quarter=bad)])
+        _assert_provider_error(info, "INVALID_QUARTER")
+
+    @pytest.mark.parametrize("bad", [None, 20251, 20251.0, 20251, ["2025年1季度股票投资明细"]])
+    def test_non_string_observed_value_still_rejected(self, bad: Any) -> None:
+        with pytest.raises(ProviderDataContractError) as info:
+            _map([_row(quarter=bad)])
+        _assert_provider_error(info, "INVALID_QUARTER")
