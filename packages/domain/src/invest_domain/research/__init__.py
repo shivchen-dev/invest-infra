@@ -49,6 +49,11 @@ from invest_domain.research.research_case import (
     ResearchCase,
     ResearchCaseStatus,
 )
+from invest_domain.research.research_run import (
+    ResearchResult,
+    ResearchRun,
+    ResearchRunStatus,
+)
 
 
 def __getattr__(name: str):
@@ -98,6 +103,9 @@ __all__ = [
     "QualityStatus",
     "ResearchCase",
     "ResearchCaseStatus",
+    "ResearchResult",
+    "ResearchRun",
+    "ResearchRunStatus",
     "ResearchContextPack",
     "SourceReference",
     "calculate_market_state_factors",
