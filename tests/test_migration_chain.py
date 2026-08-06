@@ -290,7 +290,7 @@ class MigrationChainTest(unittest.TestCase):
         head_ids = all_revision_ids - referenced_down_revisions
         self.assertEqual(
             head_ids,
-            {"20260806_0011"},
+            {"20260807_0012"},
             "expected exactly one unreferenced chain head, "
             f"got {sorted(head_ids)}",
         )
@@ -402,7 +402,7 @@ class MigrationChainTest(unittest.TestCase):
         head_ids = all_revision_ids - referenced_down_revisions
         self.assertEqual(
             head_ids,
-            {"20260806_0011"},
+            {"20260807_0012"},
             "expected exactly one unreferenced chain head, "
             f"got {sorted(head_ids)}",
         )
@@ -493,7 +493,7 @@ class MigrationChainTest(unittest.TestCase):
         heads = {revision for revision, _ in revisions.values()} - {
             down_revision for _, down_revision in revisions.values() if down_revision is not None
         }
-        self.assertEqual(heads, {"20260806_0011"})
+        self.assertEqual(heads, {"20260807_0012"})
         source = (versions_directory / "20260805_0010_research_context_packs.py").read_text()
         self.assertIn('revision: str = "20260805_0010"', source)
         self.assertIn('down_revision: str | None = "20260805_0009"', source)
@@ -545,6 +545,27 @@ class MigrationChainTest(unittest.TestCase):
             and node.value.startswith(("fk_", "uq_", "ck_", "ix_", "pk_"))
         ]
         self.assertTrue(all(len(name) <= 63 for name in explicit_names))
+
+    def test_research_cases_migration(self) -> None:
+        source = (
+            Path(__file__).resolve().parents[1]
+            / "apps" / "migrations" / "migrations" / "versions"
+            / "20260807_0012_research_cases.py"
+        ).read_text(encoding="utf-8")
+        self.assertIn('revision: str = "20260807_0012"', source)
+        self.assertIn('down_revision: str | None = "20260806_0011"', source)
+        self.assertIn('"research_cases"', source)
+        self.assertIn('schema="analytics"', source)
+        self.assertIn("btrim(question) <> ''", source)
+        self.assertIn("btrim(horizon) <> ''", source)
+        self.assertIn("ck_research_cases_terminal_iff_closed_at_set", source)
+        for name in (
+            "fk_research_cases_instrument_id_core_instruments",
+            "fk_research_cases_cpool_run_id_analytics_cpool_runs",
+            "ix_research_cases_instrument_as_of_date",
+            "ix_research_cases_status",
+        ):
+            self.assertIn(name, source)
 
 
 def _first_string_literal(call_node: ast.Call) -> str | None:

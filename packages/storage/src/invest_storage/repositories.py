@@ -90,10 +90,12 @@ from invest_domain.research import (
     ContextItem,
     ContextValueType,
     QualityStatus,
+    ResearchCase,
+    ResearchCaseStatus,
     ResearchContextPack,
 )
 from invest_domain.shared.values import Currency
-from sqlalchemy import func, select, text
+from sqlalchemy import func, select, text, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 
@@ -116,6 +118,7 @@ from invest_storage.models import (
     ProviderAttemptRow,
     ProviderRequestRow,
     RawProviderBatchRow,
+    ResearchCaseRow,
     ResearchContextItemRow,
     ResearchContextPackRow,
 )
@@ -1275,6 +1278,102 @@ class SqlAlchemyResearchContextPackRepository:
             created_at=row.created_at,
             missing_reason=row.missing_reason,
         )
+
+
+class SqlAlchemyResearchCaseRepository:
+    """Persistence for :class:`ResearchCase` (ADR-0012, Phase 2A).
+
+    Owns ``analytics.research_cases``. ``add`` is the only insert path;
+    ``save_transition`` is a single ``UPDATE ... WHERE case_id = :id
+    AND status = :previous_status`` compare-and-swap that raises
+    :class:`ResearchCaseTransitionError` on ``rowcount != 1`` so the
+    application layer cannot lose a concurrent transition.
+    """
+
+    def __init__(self, session: Session) -> None:
+        self._session = session
+
+    def add(self, case: ResearchCase) -> ResearchCase:
+        row = ResearchCaseRow(
+            case_id=case.case_id,
+            instrument_id=case.instrument_id.value,
+            as_of_date=case.as_of_date,
+            question=case.question,
+            horizon=case.horizon,
+            status=case.status.value,
+            created_at=case.created_at,
+            closed_at=case.closed_at,
+            candidate_pool_run_id=case.candidate_pool_run_id,
+        )
+        self._session.add(row)
+        self._session.flush()
+        return _row_to_research_case(row)
+
+    def get(self, case_id: UUID) -> ResearchCase | None:
+        row = self._session.get(ResearchCaseRow, case_id)
+        return _row_to_research_case(row) if row is not None else None
+
+    def list_by_instrument(self, instrument_id: UUID | InstrumentId) -> list[ResearchCase]:
+        raw_id = (
+            instrument_id.value
+            if isinstance(instrument_id, InstrumentId)
+            else instrument_id
+        )
+        rows = self._session.scalars(
+            select(ResearchCaseRow)
+            .where(ResearchCaseRow.instrument_id == raw_id)
+            .order_by(
+                ResearchCaseRow.created_at.asc(),
+                ResearchCaseRow.case_id.asc(),
+            )
+        ).all()
+        return [_row_to_research_case(row) for row in rows]
+
+    def save_transition(
+        self,
+        previous_status: ResearchCaseStatus,
+        transitioned_case: ResearchCase,
+    ) -> ResearchCase:
+        result = self._session.execute(
+            update(ResearchCaseRow)
+            .where(
+                ResearchCaseRow.case_id == transitioned_case.case_id,
+                ResearchCaseRow.status == previous_status.value,
+            )
+            .values(
+                status=transitioned_case.status.value,
+                closed_at=transitioned_case.closed_at,
+            )
+        )
+        if result.rowcount != 1:
+            raise ResearchCaseTransitionError(
+                f"ResearchCase {transitioned_case.case_id!s} save_transition "
+                f"expected exactly 1 row to match case_id+status="
+                f"{previous_status.value!r}, got {result.rowcount}; "
+                "either the row is missing or the status changed concurrently"
+            )
+        self._session.flush()
+        return _row_to_research_case(
+            self._session.get(ResearchCaseRow, transitioned_case.case_id)
+        )
+
+
+class ResearchCaseTransitionError(RuntimeError):
+    """Raised when ``save_transition`` cannot apply a CAS update."""
+
+
+def _row_to_research_case(row: ResearchCaseRow) -> ResearchCase:
+    return ResearchCase(
+        case_id=row.case_id,
+        instrument_id=InstrumentId(row.instrument_id),
+        as_of_date=row.as_of_date,
+        question=row.question,
+        horizon=row.horizon,
+        status=ResearchCaseStatus(row.status),
+        created_at=row.created_at,
+        closed_at=row.closed_at,
+        candidate_pool_run_id=row.candidate_pool_run_id,
+    )
 
 
 def _context_item_to_row(item: ContextItem, pack_id: UUID) -> dict[str, Any]:

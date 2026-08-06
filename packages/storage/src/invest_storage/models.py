@@ -1602,3 +1602,67 @@ class EtfHoldingRow(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
+
+
+class ResearchCaseRow(Base):
+    """Lifecycle owner row for one research question (ADR-0012 / Phase 2A).
+
+    Persists :class:`invest_domain.research.research_case.ResearchCase`.
+    The synthetic ``case_id`` UUID is the primary key. The CHECK
+    constraints reject whitespace-only ``question`` / ``horizon`` via
+    ``btrim(...) <> ''`` (mirrors the domain's ``non-blank`` contract)
+    and enforce the terminal-state ``closed_at`` invariant.
+    """
+
+    __tablename__ = "research_cases"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["instrument_id"],
+            ["core.instruments.id"],
+            name="fk_research_cases_instrument_id_core_instruments",
+        ),
+        ForeignKeyConstraint(
+            ["candidate_pool_run_id"],
+            ["analytics.candidate_pool_runs.id"],
+            name="fk_research_cases_cpool_run_id_analytics_cpool_runs",
+        ),
+        CheckConstraint(
+            "status IN ('draft', 'ready', 'running', 'completed', 'failed', 'cancelled')",
+            name="ck_research_cases_status_valid",
+        ),
+        CheckConstraint(
+            "btrim(question) <> ''",
+            name="ck_research_cases_question_nonblank",
+        ),
+        CheckConstraint(
+            "btrim(horizon) <> ''",
+            name="ck_research_cases_horizon_nonblank",
+        ),
+        CheckConstraint(
+            "closed_at IS NULL OR closed_at >= created_at",
+            name="ck_research_cases_closed_at_after_created_at",
+        ),
+        CheckConstraint(
+            "(status IN ('completed', 'failed', 'cancelled')) = (closed_at IS NOT NULL)",
+            name="ck_research_cases_terminal_iff_closed_at_set",
+        ),
+        Index("ix_research_cases_instrument_as_of_date", "instrument_id", "as_of_date"),
+        Index("ix_research_cases_status", "status"),
+        {"schema": "analytics"},
+    )
+
+    case_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    instrument_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    as_of_date: Mapped[date] = mapped_column(Date, nullable=False)
+    question: Mapped[str] = mapped_column(Text, nullable=False)
+    horizon: Mapped[str] = mapped_column(Text, nullable=False)
+    status: Mapped[str] = mapped_column(String(24), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    closed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    candidate_pool_run_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), nullable=True
+    )

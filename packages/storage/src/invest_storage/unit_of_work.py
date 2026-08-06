@@ -47,6 +47,7 @@ from invest_storage.repositories import (
     SqlAlchemyProviderAttemptRepository,
     SqlAlchemyProviderBatchRepository,
     SqlAlchemyProviderRequestRepository,
+    SqlAlchemyResearchCaseRepository,
     SqlAlchemyResearchContextPackRepository,
 )
 
@@ -273,6 +274,16 @@ class ResearchContextPackRepositoryPort(Protocol):
 
 
 @runtime_checkable
+class ResearchCaseRepositoryPort(Protocol):
+    """Subset of the ResearchCase repository surface the UoW exposes."""
+
+    def add(self, case): ...
+    def get(self, case_id): ...
+    def list_by_instrument(self, instrument_id): ...
+    def save_transition(self, previous_status, transitioned_case): ...
+
+
+@runtime_checkable
 class IndexIdentityRepositoryPort(Protocol):
     """Subset of the IndexIdentity repository surface the UoW exposes.
 
@@ -401,6 +412,7 @@ class UnitOfWork(Protocol):
     etf_profiles: EtfProfileRepositoryPort
     etf_profile_fields: EtfProfileFieldRepositoryPort
     research_context_packs: ResearchContextPackRepositoryPort
+    research_cases: ResearchCaseRepositoryPort
     index_identities: IndexIdentityRepositoryPort
     index_profiles: IndexProfileRepositoryPort
     index_constituent_snapshots: IndexConstituentSnapshotRepositoryPort
@@ -449,6 +461,7 @@ class SqlAlchemyUnitOfWork:
         self._etf_profiles: SqlAlchemyEtfProfileRepository | None = None
         self._etf_profile_fields: SqlAlchemyEtfProfileFieldRepository | None = None
         self._research_context_packs: SqlAlchemyResearchContextPackRepository | None = None
+        self._research_cases: SqlAlchemyResearchCaseRepository | None = None
         self._index_identities: SqlAlchemyIndexIdentityRepository | None = None
         self._index_profiles: SqlAlchemyIndexProfileRepository | None = None
         self._index_constituent_snapshots: SqlAlchemyIndexConstituentSnapshotRepository | None = (
@@ -547,6 +560,12 @@ class SqlAlchemyUnitOfWork:
         return self._research_context_packs
 
     @property
+    def research_cases(self) -> SqlAlchemyResearchCaseRepository:
+        if self._research_cases is None:
+            self._research_cases = SqlAlchemyResearchCaseRepository(self.session)
+        return self._research_cases
+
+    @property
     def index_identities(self) -> SqlAlchemyIndexIdentityRepository:
         if self._index_identities is None:
             self._index_identities = SqlAlchemyIndexIdentityRepository(self.session)
@@ -625,6 +644,7 @@ class SqlAlchemyUnitOfWork:
             self._etf_profiles = None
             self._etf_profile_fields = None
             self._research_context_packs = None
+            self._research_cases = None
             self._index_identities = None
             self._index_profiles = None
             self._index_constituent_snapshots = None
@@ -648,6 +668,7 @@ __all__ = [
     "IndexConstituentSnapshotRepositoryPort",
     "IndexIdentityRepositoryPort",
     "IndexProfileRepositoryPort",
+    "ResearchCaseRepositoryPort",
     "ResearchContextPackRepositoryPort",
     "EtfProfileRepositoryPort",
     "InputSnapshotRepositoryPort",
