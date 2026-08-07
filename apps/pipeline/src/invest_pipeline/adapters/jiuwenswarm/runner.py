@@ -10,19 +10,22 @@ JiuwenSwarm gateway transport. It enforces three contracts:
   the runner's ``adapter_version`` so a re-deploy that ships a new
   adapter cannot masquerade as the previous version's results.
 - The transport is called exactly once per ``runner.run`` invocation;
-  the runner does not retry inside the Slice 1 boundary because
+  the runner does not retry inside the Slice 1/2 boundary because
   lifecycle-level retry policy belongs to PR-6 Slice 3 (orchestration).
 
-The runner preserves the request / session IDs on the transport
-result but never persists them: the
-:class:`invest_domain.research.runner.ResearchRunner` port has no
-Unit-of-Work seam, so persisting identity values would leak storage
-concerns into the domain port.
+Slice 3 introduces :class:`JiuwenSwarmRunOutcome` and the
+:meth:`JiuwenSwarmResearchRunner.run_with_identity` method so the
+orchestrator can persist the exact external ``request_id`` and
+``session_id`` the gateway echoed back alongside the
+:class:`ResearchRunnerDraft`. ``run`` is preserved as a thin
+delegating wrapper so existing Slice 1 / Slice 2 callers see no
+behavioural change.
 """
 
 from __future__ import annotations
 
 from collections.abc import Mapping
+from dataclasses import dataclass
 from datetime import datetime
 
 from invest_domain.research import (
@@ -40,6 +43,7 @@ from invest_pipeline.adapters.jiuwenswarm.codec import (
     coerce_completion,
 )
 from invest_pipeline.adapters.jiuwenswarm.errors import (
+    JiuwenSwarmError,
     JiuwenSwarmMalformedResultError,
     JiuwenSwarmRemoteFailureError,
     JiuwenSwarmTimeoutUncertainError,
@@ -52,6 +56,54 @@ from invest_pipeline.adapters.jiuwenswarm.transport import (
 )
 
 _RUNNER_KEY = "jiuwenswarm-runner-v1"
+
+
+@dataclass(frozen=True, slots=True)
+class JiuwenSwarmRunOutcome:
+    """Adapter-side seam between :class:`JiuwenSwarmResearchRunner` and the orchestrator.
+
+    The orchestrator must persist the exact external ``request_id`` and
+    ``session_id`` the gateway echoed back so a duplicate callback can
+    be reconciled against the same research run. The dataclass carries
+    the gateway outcome classification alongside the (optional) draft
+    so callers can drive retry / fail-policy decisions without leaking
+    transport-layer vocabulary into the domain port.
+
+    Frozen + slots keeps the outcome immutable; ``draft`` is ``None``
+    for rejected / uncertain-timeout outcomes that never reach the
+    domain completion gate.
+    """
+
+    request_id: str
+    session_id: str
+    acceptance: JiuwenSwarmAcceptance
+    draft: ResearchRunnerDraft | None = None
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.request_id, str) or not self.request_id.strip():
+            raise ValueError(
+                "JiuwenSwarmRunOutcome.request_id must be a non-blank string"
+            )
+        if not isinstance(self.session_id, str) or not self.session_id.strip():
+            raise ValueError(
+                "JiuwenSwarmRunOutcome.session_id must be a non-blank string"
+            )
+        if not isinstance(self.acceptance, JiuwenSwarmAcceptance):
+            raise TypeError(
+                "JiuwenSwarmRunOutcome.acceptance must be a JiuwenSwarmAcceptance, "
+                f"got {type(self.acceptance).__name__}"
+            )
+        if self.acceptance is JiuwenSwarmAcceptance.ACCEPTED and self.draft is None:
+            raise ValueError(
+                "JiuwenSwarmRunOutcome.draft must be set when acceptance is ACCEPTED"
+            )
+        if self.acceptance is not JiuwenSwarmAcceptance.ACCEPTED and self.draft is not None:
+            raise ValueError(
+                "JiuwenSwarmRunOutcome.draft must be None when acceptance is "
+                f"{self.acceptance.value!r}"
+            )
+        object.__setattr__(self, "request_id", self.request_id.strip())
+        object.__setattr__(self, "session_id", self.session_id.strip())
 
 
 class JiuwenSwarmResearchRunner:
@@ -91,7 +143,64 @@ class JiuwenSwarmResearchRunner:
         playbook: ResearchPlaybook,
         started_at: datetime,
     ) -> ResearchRunnerDraft:
-        """Submit one gateway request and return a :class:`ResearchRunnerDraft`."""
+        """Submit one gateway request and return a :class:`ResearchRunnerDraft`.
+
+        Slice 1 / Slice 2 callers see the same protocol-defined return
+        shape; the method now delegates to :meth:`run_with_identity`
+        and discards the structured identity pair so the domain port
+        stays free of JiuwenSwarm-specific vocabulary.
+        """
+
+        outcome = self.run_with_identity(
+            case=case,
+            run=run,
+            evidence_pack=evidence_pack,
+            playbook=playbook,
+            started_at=started_at,
+        )
+        if outcome.acceptance is not JiuwenSwarmAcceptance.ACCEPTED or outcome.draft is None:
+            raise JiuwenSwarmTransportError(
+                "JiuwenSwarmResearchRunner.run unexpectedly received a "
+                f"non-ACCEPTED outcome {outcome.acceptance.value!r}"
+            )
+        return outcome.draft
+
+    def run_with_identity(
+        self,
+        *,
+        case: ResearchCase,
+        run: ResearchRun,
+        evidence_pack: EvidencePack,
+        playbook: ResearchPlaybook,
+        started_at: datetime,
+    ) -> JiuwenSwarmRunOutcome:
+        """Submit one gateway request and return a :class:`JiuwenSwarmRunOutcome`.
+
+        Slice 3 orchestrator entry point. Returns the structured
+        identity pair (``request_id`` / ``session_id``) alongside the
+        acceptance classification so the orchestrator can persist the
+        external identity before driving the lifecycle transition.
+
+        Raises:
+
+        - :class:`JiuwenSwarmTransportError` on unrecoverable
+          transport failures. The exception carries ``request_id`` /
+          ``session_id`` whenever the helper summary parsed
+          successfully before the failure surfaced.
+        - :class:`JiuwenSwarmRemoteFailureError` on gateway
+          ``REJECTED`` outcomes (after acceptance). The exception
+          carries the structured identity pair.
+        - :class:`JiuwenSwarmTimeoutUncertainError` on
+          ``UNCERTAIN_TIMEOUT`` outcomes (helper returned
+          ``timed_out``). The exception carries the structured
+          identity pair so the orchestrator can bind identity before
+          leaving the run / case in ``RUNNING``.
+        - :class:`JiuwenSwarmMalformedResultError` on accepted
+          completions that violate the codec contract. The exception
+          carries the structured identity pair so the orchestrator
+          can transition to ``failed`` without losing the audit
+          trail.
+        """
 
         self._validate_binding(
             case=case, run=run, evidence_pack=evidence_pack, playbook=playbook
@@ -107,7 +216,7 @@ class JiuwenSwarmResearchRunner:
 
         try:
             transport_result = self._transport.submit(request)
-        except JiuwenSwarmTransportError:
+        except JiuwenSwarmError:
             raise
         except Exception as exc:  # pragma: no cover - defensive surface
             raise JiuwenSwarmTransportError(
@@ -120,13 +229,18 @@ class JiuwenSwarmResearchRunner:
                 "JiuwenSwarmTransportResult"
             )
 
-        return self._map_transport_result(
-            request=request,
-            playbook=playbook,
-            evidence_pack=evidence_pack,
-            transport_result=transport_result,
-            started_at=started_at,
-        )
+        try:
+            return self._build_outcome(
+                request=request,
+                playbook=playbook,
+                evidence_pack=evidence_pack,
+                transport_result=transport_result,
+                started_at=started_at,
+            )
+        except JiuwenSwarmError as exc:
+            exc.request_id = transport_result.request_id
+            exc.session_id = transport_result.session_id
+            raise
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -176,7 +290,7 @@ class JiuwenSwarmResearchRunner:
                     f"ResearchCase.{label} must match EvidencePack.{label}"
                 )
 
-    def _map_transport_result(
+    def _build_outcome(
         self,
         *,
         request: JiuwenSwarmGatewayRequest,
@@ -184,30 +298,41 @@ class JiuwenSwarmResearchRunner:
         evidence_pack: EvidencePack,
         transport_result: JiuwenSwarmTransportResult,
         started_at: datetime,
-    ) -> ResearchRunnerDraft:
+    ) -> JiuwenSwarmRunOutcome:
         self._validate_transport_result(request, transport_result)
 
         acceptance = transport_result.acceptance
+        request_id = transport_result.request_id
+        session_id = transport_result.session_id
+
         if acceptance is JiuwenSwarmAcceptance.REJECTED:
             raise JiuwenSwarmRemoteFailureError(
-                f"JiuwenSwarm gateway rejected request {transport_result.request_id!r} "
-                f"on session {transport_result.session_id!r}"
+                f"JiuwenSwarm gateway rejected request {request_id!r} "
+                f"on session {session_id!r}",
+                request_id=request_id,
+                session_id=session_id,
             )
         if acceptance is JiuwenSwarmAcceptance.UNCERTAIN_TIMEOUT:
             raise JiuwenSwarmTimeoutUncertainError(
-                f"JiuwenSwarm gateway accepted request {transport_result.request_id!r} "
-                f"on session {transport_result.session_id!r} but local timeout fired; "
-                "outcome is uncertain until a duplicate callback arrives"
+                f"JiuwenSwarm gateway accepted request {request_id!r} "
+                f"on session {session_id!r} but local timeout fired; "
+                "outcome is uncertain until a duplicate callback arrives",
+                request_id=request_id,
+                session_id=session_id,
             )
         if acceptance is not JiuwenSwarmAcceptance.ACCEPTED:
             raise JiuwenSwarmRemoteFailureError(
                 f"JiuwenSwarm gateway returned unknown acceptance "
-                f"{acceptance.value!r}"
+                f"{acceptance.value!r}",
+                request_id=request_id,
+                session_id=session_id,
             )
 
         if not isinstance(transport_result.raw_payload, Mapping):
             raise JiuwenSwarmMalformedResultError(
-                "JiuwenSwarm gateway completion payload must be a mapping"
+                "JiuwenSwarm gateway completion payload must be a mapping",
+                request_id=request_id,
+                session_id=session_id,
             )
 
         completion = coerce_completion(transport_result.raw_payload)
@@ -218,7 +343,9 @@ class JiuwenSwarmResearchRunner:
         if completion.schema_version != JIUWENSWARM_SCHEMA_VERSION:
             raise JiuwenSwarmMalformedResultError(
                 f"JiuwenSwarmCompletion.schema_version must be "
-                f"{JIUWENSWARM_SCHEMA_VERSION!r}, got {completion.schema_version!r}"
+                f"{JIUWENSWARM_SCHEMA_VERSION!r}, got {completion.schema_version!r}",
+                request_id=request_id,
+                session_id=session_id,
             )
 
         # The adapter version declared by the gateway completion must
@@ -227,7 +354,9 @@ class JiuwenSwarmResearchRunner:
         if completion.adapter_version != self._adapter_version:
             raise JiuwenSwarmMalformedResultError(
                 f"JiuwenSwarmCompletion.adapter_version must be "
-                f"{self._adapter_version!r}, got {completion.adapter_version!r}"
+                f"{self._adapter_version!r}, got {completion.adapter_version!r}",
+                request_id=request_id,
+                session_id=session_id,
             )
 
         whitelist = tuple(
@@ -243,14 +372,22 @@ class JiuwenSwarmResearchRunner:
         if unknown:
             raise JiuwenSwarmMalformedResultError(
                 f"JiuwenSwarmCompletion.evidence_ids must be a subset of the "
-                f"EvidencePack whitelist; unknown: {unknown}"
+                f"EvidencePack whitelist; unknown: {unknown}",
+                request_id=request_id,
+                session_id=session_id,
             )
 
-        return build_draft(
+        draft = build_draft(
             completion=completion,
             playbook=playbook,
             adapter_version=self._adapter_version,
             now=started_at,
+        )
+        return JiuwenSwarmRunOutcome(
+            request_id=request_id,
+            session_id=session_id,
+            acceptance=JiuwenSwarmAcceptance.ACCEPTED,
+            draft=draft,
         )
 
     @staticmethod
@@ -285,4 +422,4 @@ class JiuwenSwarmResearchRunner:
             )
 
 
-__all__ = ["JiuwenSwarmResearchRunner"]
+__all__ = ["JiuwenSwarmResearchRunner", "JiuwenSwarmRunOutcome"]
