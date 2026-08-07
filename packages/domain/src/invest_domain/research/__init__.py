@@ -54,6 +54,16 @@ from invest_domain.research.research_run import (
     ResearchRun,
     ResearchRunStatus,
 )
+from invest_domain.research.runner import (
+    ResearchPlaybook,
+    ResearchRunner,
+    ResearchRunnerDraft,
+    ResearchRunnerFailure,
+    complete_research_attempt,
+    execute_research_attempt,
+    fail_research_attempt,
+    start_research_attempt,
+)
 
 
 def __getattr__(name: str):
@@ -103,9 +113,17 @@ __all__ = [
     "QualityStatus",
     "ResearchCase",
     "ResearchCaseStatus",
+    "ResearchPlaybook",
     "ResearchResult",
+    "ResearchRunner",
+    "ResearchRunnerDraft",
+    "ResearchRunnerFailure",
     "ResearchRun",
     "ResearchRunStatus",
+    "complete_research_attempt",
+    "execute_research_attempt",
+    "fail_research_attempt",
+    "start_research_attempt",
     "ResearchContextPack",
     "SourceReference",
     "calculate_market_state_factors",
