@@ -13,6 +13,9 @@ The behaviour being verified mirrors the contract documented in
 - ``__exit__`` closes the session regardless of the outcome.
 - ``uow.instruments`` and ``uow.provider_batches`` return cached
   repository instances for the lifetime of the UoW.
+- ``uow.research_runs`` and ``uow.research_results`` (PR-5.5) return
+  cached repository instances of the right concrete type and are
+  wired against the same session the factory handed out.
 - Accessing repositories after the UoW closed should not be done in
   production, but the current implementation explicitly clears them on
   exit; this test pins that behaviour so a future refactor cannot
@@ -27,8 +30,15 @@ from unittest.mock import MagicMock
 from invest_storage.repositories import (
     SqlAlchemyInstrumentRepository,
     SqlAlchemyProviderBatchRepository,
+    SqlAlchemyResearchResultRepository,
+    SqlAlchemyResearchRunRepository,
 )
-from invest_storage.unit_of_work import SqlAlchemyUnitOfWork
+from invest_storage.unit_of_work import (
+    ResearchResultRepositoryPort,
+    ResearchRunRepositoryPort,
+    SqlAlchemyUnitOfWork,
+    UnitOfWork,
+)
 from sqlalchemy.orm import Session
 
 
@@ -171,6 +181,89 @@ class SqlAlchemyUnitOfWorkMockTests(unittest.TestCase):
         with self._uow as uow:
             self.assertIsNot(uow.instruments, first_instruments)
             self.assertIsNot(uow.provider_batches, first_batches)
+
+    # ------------------------------------------------------------------
+    # PR-5.5 cached research_runs / research_results properties
+    # ------------------------------------------------------------------
+
+    def test_uow_research_runs_property_returns_repository(self) -> None:
+        with self._uow as uow:
+            runs = uow.research_runs
+            self.assertIsInstance(runs, SqlAlchemyResearchRunRepository)
+            # the same session the factory handed out is wired into the repo
+            self.assertIs(runs._session, self._session)
+
+    def test_uow_research_results_property_returns_repository(self) -> None:
+        with self._uow as uow:
+            results = uow.research_results
+            self.assertIsInstance(results, SqlAlchemyResearchResultRepository)
+            self.assertIs(results._session, self._session)
+
+    def test_uow_research_repositories_are_cached_per_uow(self) -> None:
+        # The UoW promises the same repository instance is reused for the
+        # lifetime of the UoW so SQLAlchemy's identity map behaves as
+        # expected. PR-5.5 pins this for the research_runs /
+        # research_results pair specifically.
+        with self._uow as uow:
+            first_runs = uow.research_runs
+            first_results = uow.research_results
+            self.assertIs(uow.research_runs, first_runs)
+            self.assertIs(uow.research_results, first_results)
+
+        # After exit the internal refs are cleared, and re-entering the
+        # UoW produces fresh repository instances - mirrors the contract
+        # already pinned for ``instruments`` / ``provider_batches``.
+        with self._uow as uow:
+            self.assertIsNot(uow.research_runs, first_runs)
+            self.assertIsNot(uow.research_results, first_results)
+
+    def test_uow_research_repositories_satisfy_protocol_ports(self) -> None:
+        # The Protocol-based ports are structural; both the concrete
+        # adapter and the UoW surface must satisfy them so callers can
+        # type-hint against the port without importing SQLAlchemy.
+        with self._uow as uow:
+            self.assertIsInstance(uow.research_runs, ResearchRunRepositoryPort)
+            self.assertIsInstance(uow.research_results, ResearchResultRepositoryPort)
+
+    def test_uow_research_repositories_expose_expected_public_methods(self) -> None:
+        # PR-5.5 pins the exact surface the application layer depends on;
+        # the cached properties must hand back objects that implement the
+        # methods listed in the corresponding Protocol, matching the
+        # public API of SqlAlchemyResearchRunRepository /
+        # SqlAlchemyResearchResultRepository.
+        with self._uow as uow:
+            runs = uow.research_runs
+            for method_name in (
+                "add",
+                "get",
+                "list_by_case",
+                "save_transition",
+                "bind_external_identity",
+                "lookup_by_external_session_id",
+            ):
+                self.assertTrue(
+                    callable(getattr(runs, method_name, None)),
+                    f"SqlAlchemyResearchRunRepository must expose {method_name!r}",
+                )
+
+            results = uow.research_results
+            for method_name in ("add", "get_by_id", "get_by_run_id"):
+                self.assertTrue(
+                    callable(getattr(results, method_name, None)),
+                    f"SqlAlchemyResearchResultRepository must expose {method_name!r}",
+                )
+
+    def test_uow_research_reports_ports_via_protocol_runtime_check(self) -> None:
+        # ``runtime_checkable`` Protocols let us assert at runtime that
+        # the SqlAlchemyUnitOfWork (and the concrete repositories it
+        # wires in) are assignable to the structural ports. This guards
+        # against accidental drift between the Protocol surface and the
+        # concrete adapter surface.
+        uow = SqlAlchemyUnitOfWork(self._session_factory)
+        # Outside the context the UoW itself is not yet a full UnitOfWork
+        # (no session open); enter it so the property can lazy-init.
+        with uow:
+            self.assertIsInstance(uow, UnitOfWork)
 
     # ------------------------------------------------------------------
     # post-exit safety

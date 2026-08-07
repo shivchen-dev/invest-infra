@@ -100,9 +100,15 @@ from invest_domain.research import (
     ResearchCaseStatus,
     ResearchContextPack,
 )
+from invest_domain.research.research_run import (
+    ResearchResult,
+    ResearchRun,
+    ResearchRunStatus,
+)
 from invest_domain.shared.values import Currency
 from sqlalchemy import func, select, text, update
 from sqlalchemy.dialects.postgresql import insert
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from invest_storage.evidence_pack_codec import (
@@ -133,6 +139,8 @@ from invest_storage.models import (
     ResearchContextItemRow,
     ResearchContextPackRow,
     ResearchEvidencePackRow,
+    ResearchResultRow,
+    ResearchRunRow,
 )
 
 
@@ -1385,6 +1393,354 @@ def _row_to_research_case(row: ResearchCaseRow) -> ResearchCase:
         created_at=row.created_at,
         closed_at=row.closed_at,
         candidate_pool_run_id=row.candidate_pool_run_id,
+    )
+
+
+class SqlAlchemyResearchRunRepository:
+    """Persistence for :class:`ResearchRun` (PR-5.5, lifecycle owner).
+
+    Owns ``analytics.research_runs`` (migration for Slice 1). The
+    repository exposes:
+
+    - :meth:`add` / :meth:`get` for the trivial round-trip.
+    - :meth:`list_by_case` with deterministic ordering
+      (``created_at`` ascending, ``run_id`` ascending).
+    - :meth:`save_transition` as the single ``UPDATE ... WHERE
+      run_id = :id AND status = :previous_status`` compare-and-swap
+      path that raises :class:`ResearchRunTransitionError` on
+      ``rowcount != 1`` so a stale worker cannot overwrite a newer
+      state.
+    - :meth:`bind_external_identity` for the nullable
+      ``external_request_id`` / ``external_session_id`` columns
+      reserved for the later JiuwenSwarm adapter. The repository
+      refuses blank values so the storage layer never persists a
+      meaningless identity token.
+    - :meth:`lookup_by_external_session_id` for the partial unique
+      index that the adapter will need.
+
+    The domain layer keeps the legal-transition graph in
+    :meth:`ResearchRun._transition`; the repository only mirrors the
+    resulting :class:`ResearchRun` into a CAS-aware UPDATE so a
+    concurrent worker cannot silently rewrite a row that already
+    moved to the next state.
+    """
+
+    def __init__(self, session: Session) -> None:
+        self._session = session
+
+    def add(self, run: ResearchRun) -> ResearchRun:
+        row = ResearchRunRow(
+            run_id=run.run_id,
+            case_id=run.case_id,
+            evidence_pack_id=run.evidence_pack_id,
+            runner_key=run.runner_key,
+            playbook_key=run.playbook_key,
+            status=run.status.value,
+            attempt=run.attempt,
+            started_at=run.started_at,
+            finished_at=run.finished_at,
+            error_summary=run.error_summary,
+            external_request_id=None,
+            external_session_id=None,
+        )
+        self._session.add(row)
+        self._session.flush()
+        return _row_to_research_run(row)
+
+    def get(self, run_id: UUID) -> ResearchRun | None:
+        row = self._session.get(ResearchRunRow, run_id)
+        return _row_to_research_run(row) if row is not None else None
+
+    def list_by_case(self, case_id: UUID) -> list[ResearchRun]:
+        rows = self._session.scalars(
+            select(ResearchRunRow)
+            .where(ResearchRunRow.case_id == case_id)
+            .order_by(
+                ResearchRunRow.created_at.asc(),
+                ResearchRunRow.run_id.asc(),
+            )
+        ).all()
+        return [_row_to_research_run(row) for row in rows]
+
+    def save_transition(
+        self,
+        previous_status: ResearchRunStatus,
+        transitioned_run: ResearchRun,
+    ) -> ResearchRun:
+        row = self._session.get(ResearchRunRow, transitioned_run.run_id)
+        if row is None:
+            raise LookupError(
+                f"ResearchRun {transitioned_run.run_id!s} not found; "
+                "cannot apply save_transition"
+            )
+        result = self._session.execute(
+            update(ResearchRunRow)
+            .where(
+                ResearchRunRow.run_id == transitioned_run.run_id,
+                ResearchRunRow.status == previous_status.value,
+            )
+            .values(
+                status=transitioned_run.status.value,
+                started_at=transitioned_run.started_at,
+                finished_at=transitioned_run.finished_at,
+                error_summary=transitioned_run.error_summary,
+            )
+        )
+        if result.rowcount != 1:
+            raise ResearchRunTransitionError(
+                f"ResearchRun {transitioned_run.run_id!s} save_transition "
+                f"expected exactly 1 row to match run_id+status="
+                f"{previous_status.value!r}, got {result.rowcount}; "
+                "either the row is missing or the status changed concurrently"
+            )
+        self._session.flush()
+        refreshed = self._session.get(ResearchRunRow, transitioned_run.run_id)
+        return _row_to_research_run(refreshed) if refreshed is not None else transitioned_run
+
+    def bind_external_identity(
+        self,
+        run_id: UUID,
+        *,
+        external_request_id: str | None = None,
+        external_session_id: str | None = None,
+    ) -> ResearchRun:
+        if external_request_id is None and external_session_id is None:
+            raise ValueError(
+                "bind_external_identity requires at least one of "
+                "external_request_id or external_session_id to be provided"
+            )
+        if external_request_id is not None and not external_request_id.strip():
+            raise ValueError(
+                "bind_external_identity requires a non-blank external_request_id when provided"
+            )
+        if external_session_id is not None and not external_session_id.strip():
+            raise ValueError(
+                "bind_external_identity requires a non-blank external_session_id when provided"
+            )
+        request_id = external_request_id.strip() if external_request_id is not None else None
+        session_id = external_session_id.strip() if external_session_id is not None else None
+        values: dict[str, str | None] = {}
+        if external_request_id is not None:
+            values["external_request_id"] = request_id
+        if external_session_id is not None:
+            values["external_session_id"] = session_id
+        row = self._session.get(ResearchRunRow, run_id)
+        if row is None:
+            raise LookupError(
+                f"ResearchRun {run_id!s} not found; cannot bind external identity"
+            )
+        result = self._session.execute(
+            update(ResearchRunRow)
+            .where(ResearchRunRow.run_id == run_id)
+            .values(**values)
+        )
+        if result.rowcount != 1:
+            raise RuntimeError(
+                f"ResearchRun {run_id!s} bind_external_identity expected "
+                f"exactly 1 row to match, got {result.rowcount}"
+            )
+        self._session.flush()
+        refreshed = self._session.get(ResearchRunRow, run_id)
+        if refreshed is None:
+            return _row_to_research_run(row)
+        return _row_to_research_run(refreshed)
+
+    def lookup_by_external_session_id(
+        self, external_session_id: str
+    ) -> ResearchRun | None:
+        if not isinstance(external_session_id, str) or not external_session_id.strip():
+            raise ValueError(
+                "lookup_by_external_session_id requires a non-blank external_session_id"
+            )
+        row = self._session.scalars(
+            select(ResearchRunRow)
+            .where(ResearchRunRow.external_session_id == external_session_id.strip())
+            .limit(1)
+        ).first()
+        return _row_to_research_run(row) if row is not None else None
+
+
+class ResearchRunTransitionError(RuntimeError):
+    """Raised when ``save_transition`` cannot apply a CAS update."""
+
+
+def _row_to_research_run(row: ResearchRunRow) -> ResearchRun:
+    return ResearchRun(
+        run_id=row.run_id,
+        case_id=row.case_id,
+        evidence_pack_id=row.evidence_pack_id,
+        runner_key=row.runner_key,
+        playbook_key=row.playbook_key,
+        status=ResearchRunStatus(row.status),
+        attempt=row.attempt,
+        started_at=row.started_at,
+        finished_at=row.finished_at,
+        error_summary=row.error_summary,
+    )
+
+
+class SqlAlchemyResearchResultRepository:
+    """Persistence for the immutable :class:`ResearchResult` (PR-5.5).
+
+    Owns ``analytics.research_results``. The natural unique constraint
+    on ``run_id`` is the final concurrency guard for the
+    one-immutable-result-per-run invariant; the repository honours it
+    by:
+
+    - Inserting a fresh row when no row exists for ``run_id``.
+    - Returning the existing row when its payload matches the input
+      (idempotent replay of a duplicate callback).
+    - Raising :class:`ResearchResultConflictError` when an existing
+      row for ``run_id`` carries a different payload - the run has
+      already published a result and the new payload cannot replace
+      it.
+
+    The ``risks`` / ``evidence_ids`` JSONB columns are stored as
+    ordered lists and mapped back to ``tuple[str, ...]`` on the read
+    path so the domain invariant (``ResearchResult`` requires
+    tuples of non-blank strings) is preserved end-to-end.
+    """
+
+    _PAYLOAD_FIELDS: tuple[str, ...] = (
+        "evidence_pack_id",
+        "conclusion",
+        "risks",
+        "evidence_ids",
+        "report_markdown",
+        "model_key",
+        "model_version",
+        "playbook_version",
+        "adapter_version",
+    )
+
+    def __init__(self, session: Session) -> None:
+        self._session = session
+
+    def add(self, result: ResearchResult) -> ResearchResult:
+        existing = self._find_by_run_id(result.run_id)
+        if existing is not None:
+            self._ensure_payload_matches(existing, result)
+            return _row_to_research_result(existing)
+        row = ResearchResultRow(
+            result_id=result.result_id,
+            run_id=result.run_id,
+            evidence_pack_id=result.evidence_pack_id,
+            conclusion=result.conclusion,
+            risks=list(result.risks),
+            evidence_ids=list(result.evidence_ids),
+            report_markdown=result.report_markdown,
+            model_key=result.model_key,
+            model_version=result.model_version,
+            playbook_version=result.playbook_version,
+            adapter_version=result.adapter_version,
+            created_at=result.created_at,
+        )
+        try:
+            with self._session.begin_nested():
+                self._session.add(row)
+                self._session.flush()
+        except IntegrityError as exc:
+            if not _is_run_id_unique_violation(exc):
+                raise
+            self._session.expire_all()
+            existing_after_race = self._find_by_run_id(result.run_id)
+            if existing_after_race is None:
+                raise RuntimeError(
+                    f"ResearchResult insert for run_id {result.run_id!s} "
+                    "collided on uq_research_results_run_id but the "
+                    "subsequent read found no row; this indicates a "
+                    "session/transaction misconfiguration"
+                ) from exc
+            self._ensure_payload_matches(existing_after_race, result)
+            return _row_to_research_result(existing_after_race)
+        return result
+
+    def get_by_id(self, result_id: UUID) -> ResearchResult | None:
+        row = self._session.get(ResearchResultRow, result_id)
+        return _row_to_research_result(row) if row is not None else None
+
+    def get_by_run_id(self, run_id: UUID) -> ResearchResult | None:
+        row = self._find_by_run_id(run_id)
+        return _row_to_research_result(row) if row is not None else None
+
+    def _find_by_run_id(self, run_id: UUID) -> ResearchResultRow | None:
+        return self._session.scalars(
+            select(ResearchResultRow)
+            .where(ResearchResultRow.run_id == run_id)
+            .limit(1)
+        ).first()
+
+    def _ensure_payload_matches(
+        self,
+        existing: ResearchResultRow,
+        incoming: ResearchResult,
+    ) -> None:
+        for field_name in self._PAYLOAD_FIELDS:
+            existing_value = getattr(existing, field_name)
+            incoming_value = getattr(incoming, field_name)
+            if field_name in ("risks", "evidence_ids"):
+                if list(existing_value or []) != list(incoming_value):
+                    raise ResearchResultConflictError(
+                        f"ResearchResult for run_id {incoming.run_id!s} "
+                        f"conflicts on {field_name}: existing="
+                        f"{list(existing_value or [])}, incoming="
+                        f"{list(incoming_value)}"
+                    )
+                continue
+            if existing_value != incoming_value:
+                raise ResearchResultConflictError(
+                    f"ResearchResult for run_id {incoming.run_id!s} "
+                    f"conflicts on {field_name}: existing={existing_value!r}, "
+                    f"incoming={incoming_value!r}"
+                )
+
+
+class ResearchResultConflictError(RuntimeError):
+    """Raised when ``add`` finds a result for ``run_id`` with a different payload."""
+
+
+_UNIQUE_VIOLATION_SQLSTATES = {"23505"}
+
+
+def _is_run_id_unique_violation(exc: IntegrityError) -> bool:
+    """Return True iff ``exc`` is a unique-constraint violation on ``run_id``.
+
+    The :class:`sqlalchemy.exc.IntegrityError` is the only safe way to
+    detect the ``uq_research_results_run_id`` race; we read the
+    underlying psycopg ``diag`` / ``pgcode`` to keep the check narrow.
+    Other integrity violations (NOT NULL, FK, CHECK, ...) must keep
+    bubbling so the application layer keeps the loud failure it has
+    today.
+    """
+
+    orig = getattr(exc, "orig", None)
+    if orig is None:
+        return False
+    sqlstate = getattr(orig, "sqlstate", None) or getattr(orig, "pgcode", None)
+    if sqlstate not in _UNIQUE_VIOLATION_SQLSTATES:
+        return False
+    diag = getattr(orig, "diag", None)
+    constraint_name = getattr(diag, "constraint_name", None) if diag is not None else None
+    if constraint_name:
+        return constraint_name == "uq_research_results_run_id"
+    message = str(orig).lower()
+    return "uq_research_results_run_id" in message
+
+
+def _row_to_research_result(row: ResearchResultRow) -> ResearchResult:
+    return ResearchResult(
+        result_id=row.result_id,
+        run_id=row.run_id,
+        evidence_pack_id=row.evidence_pack_id,
+        conclusion=row.conclusion,
+        risks=tuple(row.risks or ()),
+        evidence_ids=tuple(row.evidence_ids or ()),
+        report_markdown=row.report_markdown,
+        model_key=row.model_key,
+        model_version=row.model_version,
+        playbook_version=row.playbook_version,
+        adapter_version=row.adapter_version,
+        created_at=row.created_at,
     )
 
 

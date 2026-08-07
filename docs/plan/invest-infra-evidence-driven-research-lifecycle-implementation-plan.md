@@ -26,11 +26,13 @@ Research 与 AI 只消费 Core/Analytics 事实，不生成或修改行情、因
 |---|---|---|
 | EvidencePack、FactorObservation、Quality Gate、canonical hash | 已有 | 复用，不重建 |
 | ResearchContextPack Domain、Repository、UoW、ETF Profile builder | 已有 | 保持为可重建只读 projection |
-| EvidencePack 数据库表 | 已有 | 补 Repository/UoW 闭环 |
+| EvidencePack 数据库表 + Repository/UoW 闭环 | 已完成 | PR-3 落库 |
 | DC-3 Index/Exposure/Holdings | 已完成 | 作为后续 Research Evidence/Context 上游 |
-| ResearchCase | 缺失 | Phase 1/2 建设 |
-| ResearchRun、ResearchResult | 缺失 | Phase 3 建设 |
-| JiuwenSwarm Adapter、Research API | 缺失 | Fake E2E 后再建设 |
+| ResearchCase 领域 + 持久化 | 已完成 | PR-1 / PR-2 |
+| ResearchRun、ResearchResult 领域 + Fake Runner | 已完成 | PR-4 / PR-5 |
+| ResearchRun、ResearchResult PostgreSQL 持久化 + Repositories + UoW | 已完成 | PR-5.5（本次提交） |
+| JiuwenSwarm Adapter | 缺失 | PR-6 待启动 |
+| 只读 Research API | 缺失 | PR-7 待启动 |
 
 ## 2. 架构决策
 
@@ -166,8 +168,9 @@ GET /api/v1/research-runs/{run_id}/result
 4. PR-3：EvidencePack Repository/UoW 闭环。
 5. PR-4：ResearchRun 与 ResearchResult。
 6. PR-5：Fake Runner E2E。
-7. PR-6：JiuwenSwarm Adapter。
-8. PR-7：只读 Research API。
+7. PR-5.5：ResearchRun / ResearchResult PostgreSQL 持久化 + Repositories + UoW 端口（衔接 Fake Runner 与 Swarm Adapter）。
+8. PR-6：JiuwenSwarm Adapter。
+9. PR-7：只读 Research API。
 
 每个 PR 必须独立可测试、可回滚；不得把 Storage、Swarm 和 API 合并为一个大提交。
 
@@ -195,3 +198,35 @@ GET /api/v1/research-runs/{run_id}/result
 DC-3 Exposure/Investment Context 建设属于 Core 与 Analytics 的上游证据供给；本计划属于下游 Research 生命周期。二者不是替代关系。
 
 DC-3 已于 `57ff5af` 标记完成并推送。Research 生命周期现在可以独立启动；DC-4 不作为 ResearchCase/Fake Runner 闭环的前置条件，应由首个研究闭环暴露的证据缺口决定其优先级。
+
+## 8. 当前状态（截至 PR-5.5）
+
+本计划按 §4 PR 顺序逐片落地。已完成与未完成的边界如下：
+
+**已实现（PR-0 → PR-5.5）**
+
+- **PR-0** 文档一致性 + Research Lifecycle ADR（ADR-0012）。
+- **PR-1** `ResearchCase` 领域聚合 + `CaseContext` 投影，状态机 `draft → ready → running → completed / failed` 与 `cancelled`。
+- **PR-2** `ResearchCase` 持久化：`analytics.research_cases` migration + Repository + UoW port + CAS 状态转换。
+- **PR-3** EvidencePack Repository / UoW 闭环，复用 `research_evidence_packs`，`content_hash` 幂等。
+- **PR-4** `ResearchRun` / `ResearchResult` 领域类型与状态机 `queued → running → succeeded / failed / cancelled`，`failed → queued` 允许新 attempt。
+- **PR-5** Fake Research Runner 端到端：`Create Case → Attach EvidencePack → Start ResearchRun → Produce Result → Validate Evidence IDs → Mark Succeeded` 全部由领域方法驱动，无外部依赖。
+- **PR-5.5（本次提交）** `ResearchRun` / `ResearchResult` PostgreSQL 持久化：
+  - 新增 migration `20260807_0014_research_runs`（`analytics.research_runs` + `analytics.research_results`），命名 FK、CHECK 约束、唯一索引（`run_id` 在 results 上，`external_session_id` 在 runs 上），单一 head。
+  - 新增 `SqlAlchemyResearchRunRepository` / `SqlAlchemyResearchResultRepository`：`add` / `get` / `list_by_case`、CAS 状态转换、外部请求/会话 ID 绑定与查询、Result 幂等写入与冲突检测。
+  - 在 `SqlAlchemyUnitOfWork` 暴露 `uow.research_runs` / `uow.research_results` 端口及缓存属性。
+  - 域包不引入 JiuwenSwarm SDK，无新增 API 端点。
+
+**测试证据（PR-5.5）**
+
+- migration chain：`tests/test_migration_chain.py` 11 passed。
+- storage mocks（`tests/storage/test_*_mock.py` + `test_unit_of_work_mock.py`，不含 integration）：205 passed。
+- 聚焦 PostgreSQL（`tests/storage/integration/test_research_run_result_repositories.py`）：9 passed。
+- 完整 pipeline 测试套件：1461 passed。
+
+**未实现（pending）**
+
+- **PR-6** JiuwenSwarm Adapter：请求映射、事件接收、结果映射、外部 session 唯一性、`etf_medium_term_assessment` Playbook 与失败恢复用例。
+- **PR-7** 只读 Research API：`/api/v1/research-cases[/{case_id}[/evidence]]` 与 `/api/v1/research-runs[/{run_id}[/result]]`，全部 GET 形态。
+
+声明：以上状态仅覆盖已合并或本地落地的工作切片；Research 生命周期整体（特别是 Swarm Adapter 与 read-only API）尚未完成，不得在文档、ADR 或 review 描述中暗示端到端闭环已交付。

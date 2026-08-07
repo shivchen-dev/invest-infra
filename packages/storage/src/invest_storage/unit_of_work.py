@@ -14,7 +14,8 @@ Design constraints (see M1 increment 3 plan):
 - Repositories are exposed as cached properties: ``uow.instruments``,
   ``uow.provider_requests``, ``uow.provider_attempts``,
   ``uow.provider_batches``, ``uow.pipeline_runs``,
-  ``uow.candidate_pool_runs`` and ``uow.candidate_pool_items``. The
+  ``uow.candidate_pool_runs``, ``uow.candidate_pool_items``,
+  ``uow.research_runs`` and ``uow.research_results``. The
   same repository instance is reused for the lifetime of the UoW so
   identity-based caching (e.g. SQLAlchemy's identity map) works as
   expected.
@@ -50,6 +51,8 @@ from invest_storage.repositories import (
     SqlAlchemyProviderRequestRepository,
     SqlAlchemyResearchCaseRepository,
     SqlAlchemyResearchContextPackRepository,
+    SqlAlchemyResearchResultRepository,
+    SqlAlchemyResearchRunRepository,
 )
 
 
@@ -304,6 +307,51 @@ class ResearchEvidencePackRepositoryPort(Protocol):
 
 
 @runtime_checkable
+class ResearchRunRepositoryPort(Protocol):
+    """Subset of the ResearchRun repository surface the UoW exposes.
+
+    PR-5.5 lifecycle owner for ``analytics.research_runs``; the
+    Protocol mirrors the SQLAlchemy adapter's public surface so the
+    application layer can type-hint against ``uow.research_runs``
+    without importing the concrete class.
+    :meth:`save_transition` is the CAS-aware UPDATE path; the
+    bind/lookup helpers are reserved for the later JiuwenSwarm adapter.
+    """
+
+    def add(self, run): ...
+    def get(self, run_id): ...
+    def list_by_case(self, case_id): ...
+    def save_transition(self, previous_status, transitioned_run): ...
+    def bind_external_identity(
+        self,
+        run_id,
+        *,
+        external_request_id=None,
+        external_session_id=None,
+    ): ...
+    def lookup_by_external_session_id(self, external_session_id): ...
+
+
+@runtime_checkable
+class ResearchResultRepositoryPort(Protocol):
+    """Subset of the ResearchResult repository surface the UoW exposes.
+
+    PR-5.5 closure for the immutable ``analytics.research_results``
+    rows. The Protocol mirrors the SQLAlchemy adapter's public surface
+    so the application layer can type-hint against
+    ``uow.research_results`` without importing the concrete class.
+    ``add`` is idempotent on the natural unique constraint on
+    ``run_id`` and raises :class:`ResearchResultConflictError` when the
+    incoming payload diverges from the stored row; the read paths are
+    simple round-trips on the primary key and the natural key.
+    """
+
+    def add(self, result): ...
+    def get_by_id(self, result_id): ...
+    def get_by_run_id(self, run_id): ...
+
+
+@runtime_checkable
 class IndexIdentityRepositoryPort(Protocol):
     """Subset of the IndexIdentity repository surface the UoW exposes.
 
@@ -434,6 +482,8 @@ class UnitOfWork(Protocol):
     research_context_packs: ResearchContextPackRepositoryPort
     research_cases: ResearchCaseRepositoryPort
     research_evidence_packs: ResearchEvidencePackRepositoryPort
+    research_runs: ResearchRunRepositoryPort
+    research_results: ResearchResultRepositoryPort
     index_identities: IndexIdentityRepositoryPort
     index_profiles: IndexProfileRepositoryPort
     index_constituent_snapshots: IndexConstituentSnapshotRepositoryPort
@@ -484,6 +534,8 @@ class SqlAlchemyUnitOfWork:
         self._research_context_packs: SqlAlchemyResearchContextPackRepository | None = None
         self._research_cases: SqlAlchemyResearchCaseRepository | None = None
         self._research_evidence_packs: SqlAlchemyEvidencePackRepository | None = None
+        self._research_runs: SqlAlchemyResearchRunRepository | None = None
+        self._research_results: SqlAlchemyResearchResultRepository | None = None
         self._index_identities: SqlAlchemyIndexIdentityRepository | None = None
         self._index_profiles: SqlAlchemyIndexProfileRepository | None = None
         self._index_constituent_snapshots: SqlAlchemyIndexConstituentSnapshotRepository | None = (
@@ -596,6 +648,18 @@ class SqlAlchemyUnitOfWork:
         return self._research_evidence_packs
 
     @property
+    def research_runs(self) -> SqlAlchemyResearchRunRepository:
+        if self._research_runs is None:
+            self._research_runs = SqlAlchemyResearchRunRepository(self.session)
+        return self._research_runs
+
+    @property
+    def research_results(self) -> SqlAlchemyResearchResultRepository:
+        if self._research_results is None:
+            self._research_results = SqlAlchemyResearchResultRepository(self.session)
+        return self._research_results
+
+    @property
     def index_identities(self) -> SqlAlchemyIndexIdentityRepository:
         if self._index_identities is None:
             self._index_identities = SqlAlchemyIndexIdentityRepository(self.session)
@@ -676,6 +740,8 @@ class SqlAlchemyUnitOfWork:
             self._research_context_packs = None
             self._research_cases = None
             self._research_evidence_packs = None
+            self._research_runs = None
+            self._research_results = None
             self._index_identities = None
             self._index_profiles = None
             self._index_constituent_snapshots = None
@@ -702,6 +768,8 @@ __all__ = [
     "ResearchCaseRepositoryPort",
     "ResearchContextPackRepositoryPort",
     "ResearchEvidencePackRepositoryPort",
+    "ResearchResultRepositoryPort",
+    "ResearchRunRepositoryPort",
     "EtfProfileRepositoryPort",
     "InputSnapshotRepositoryPort",
     "InstrumentRepositoryPort",

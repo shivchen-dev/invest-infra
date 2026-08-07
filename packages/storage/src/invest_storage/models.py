@@ -1697,3 +1697,235 @@ class ResearchCaseRow(Base):
     candidate_pool_run_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), nullable=True
     )
+
+
+class ResearchRunRow(Base):
+    """Lifecycle owner row for one ``ResearchRun`` execution attempt.
+
+    PR-5.5 Slice 1 persists :class:`invest_domain.research.research_run
+    .ResearchRun` into ``analytics.research_runs``. The synthetic
+    ``run_id`` UUID is the storage-assigned primary key and mirrors the
+    domain aggregate's primary identifier. ``case_id`` and
+    ``evidence_pack_id`` are FK constraints to the existing
+    Phase 2A ``research_cases`` and Phase 2B ``research_evidence_packs``
+    tables so the run cannot reference an unknown case or evidence
+    pack.
+
+    The state-machine vocabulary (queued / running / succeeded /
+    failed / cancelled) is enforced by the
+    ``ck_research_runs_status_valid`` CHECK constraint; the
+    cross-column invariants (queued has no timestamps / error,
+    terminal states carry ``finished_at``, etc.) live in the domain
+    layer because SQL cannot express the full transition graph.
+
+    ``external_request_id`` and ``external_session_id`` are nullable
+    reservations for the later JiuwenSwarm adapter: the domain layer
+    remains independent of the SDK while the storage layer carries
+    the indexes the adapter will need. The ``uq_research_runs_external
+    _session_id`` PARTIAL UNIQUE INDEX guarantees that two rows cannot
+    share a non-null ``external_session_id`` so a
+    JiuwenSwarm session id maps to exactly one research run.
+    ``status``-based compare-and-set UPDATEs use ``updated_at`` as the
+    audit timestamp and ``where status = :previous`` as the
+    concurrency guard.
+    """
+
+    __tablename__ = "research_runs"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["case_id"],
+            ["analytics.research_cases.case_id"],
+            name="fk_research_runs_case_id_research_cases",
+        ),
+        ForeignKeyConstraint(
+            ["evidence_pack_id"],
+            ["analytics.research_evidence_packs.id"],
+            name="fk_research_runs_evidence_pack_id_research_evidence_packs",
+        ),
+        CheckConstraint(
+            (
+                "status IN ('queued', 'running', 'succeeded', 'failed', "
+                "'cancelled')"
+            ),
+            name="status_valid",
+        ),
+        CheckConstraint(
+            "btrim(runner_key) <> ''",
+            name="runner_key_nonempty",
+        ),
+        CheckConstraint(
+            "btrim(playbook_key) <> ''",
+            name="playbook_key_nonempty",
+        ),
+        CheckConstraint(
+            "attempt >= 1",
+            name="attempt_positive",
+        ),
+        CheckConstraint(
+            "external_request_id IS NULL OR btrim(external_request_id) <> ''",
+            name="external_request_id_nonempty",
+        ),
+        CheckConstraint(
+            "external_session_id IS NULL OR btrim(external_session_id) <> ''",
+            name="external_session_id_nonempty",
+        ),
+        CheckConstraint(
+            (
+                "started_at IS NULL OR finished_at IS NULL "
+                "OR finished_at >= started_at"
+            ),
+            name="finished_after_started",
+        ),
+        Index("ix_research_runs_status", "status"),
+        Index("ix_research_runs_case_id", "case_id"),
+        Index(
+            "ix_research_runs_external_request_id",
+            "external_request_id",
+        ),
+        Index(
+            "uq_research_runs_external_session_id",
+            "external_session_id",
+            unique=True,
+            postgresql_where=text("external_session_id IS NOT NULL"),
+        ),
+        {"schema": "analytics"},
+    )
+
+    run_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    case_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    evidence_pack_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), nullable=False
+    )
+    runner_key: Mapped[str] = mapped_column(String(120), nullable=False)
+    playbook_key: Mapped[str] = mapped_column(String(120), nullable=False)
+    status: Mapped[str] = mapped_column(String(24), nullable=False)
+    attempt: Mapped[int] = mapped_column(Integer, nullable=False)
+    started_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    finished_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    error_summary: Mapped[str | None] = mapped_column(Text, nullable=True)
+    external_request_id: Mapped[str | None] = mapped_column(
+        String(160), nullable=True
+    )
+    external_session_id: Mapped[str | None] = mapped_column(
+        String(160), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
+
+
+class ResearchResultRow(Base):
+    """Immutable conclusion row produced by a succeeded :class:`ResearchRun`.
+
+    PR-5.5 Slice 1 persists :class:`invest_domain.research.research_run
+    .ResearchResult` into ``analytics.research_results``. The synthetic
+    ``result_id`` UUID is the storage-assigned primary key; the natural
+    unique constraint ``uq_research_results_run_id`` enforces the
+    one-immutable-result-per-run invariant so a succeeded run cannot
+    publish two rows.
+
+    ``risks`` and ``evidence_ids`` are JSONB arrays; the
+    ``jsonb_typeof(...) = 'array'`` and
+    ``jsonb_array_length(evidence_ids) >= 1`` CHECK constraints reject
+    malformed payloads at the database boundary so a buggy
+    application-service path cannot smuggle non-array evidence past
+    the validator. The immutable ``run_id`` FK back to
+    ``analytics.research_runs.run_id`` plus the unique constraint on
+    the same column together guarantee that a result, once published,
+    can never be replaced or duplicated.
+    """
+
+    __tablename__ = "research_results"
+    __table_args__ = (
+        UniqueConstraint("run_id", name="uq_research_results_run_id"),
+        ForeignKeyConstraint(
+            ["run_id"],
+            ["analytics.research_runs.run_id"],
+            name="fk_research_results_run_id_research_runs",
+        ),
+        ForeignKeyConstraint(
+            ["evidence_pack_id"],
+            ["analytics.research_evidence_packs.id"],
+            name=(
+                "fk_research_results_evidence_pack_id_research_evidence_packs"
+            ),
+        ),
+        CheckConstraint(
+            "btrim(conclusion) <> ''",
+            name="conclusion_nonblank",
+        ),
+        CheckConstraint(
+            "btrim(report_markdown) <> ''",
+            name="report_markdown_nonblank",
+        ),
+        CheckConstraint(
+            "btrim(model_key) <> ''",
+            name="model_key_nonblank",
+        ),
+        CheckConstraint(
+            "btrim(model_version) <> ''",
+            name="model_version_nonblank",
+        ),
+        CheckConstraint(
+            "btrim(playbook_version) <> ''",
+            name="playbook_version_nonblank",
+        ),
+        CheckConstraint(
+            "btrim(adapter_version) <> ''",
+            name="adapter_version_nonblank",
+        ),
+        CheckConstraint(
+            "jsonb_typeof(risks) = 'array'",
+            name="risks_array",
+        ),
+        CheckConstraint(
+            "jsonb_typeof(evidence_ids) = 'array'",
+            name="evidence_ids_array",
+        ),
+        CheckConstraint(
+            "jsonb_array_length(evidence_ids) >= 1",
+            name="evidence_ids_nonempty",
+        ),
+        Index("ix_research_results_run_id", "run_id"),
+        Index(
+            "ix_research_results_evidence_pack_id",
+            "evidence_pack_id",
+        ),
+        {"schema": "analytics"},
+    )
+
+    result_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    run_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    evidence_pack_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), nullable=False
+    )
+    conclusion: Mapped[str] = mapped_column(Text, nullable=False)
+    risks: Mapped[list[Any]] = mapped_column(
+        JSONB,
+        nullable=False,
+        server_default=text("'[]'::jsonb"),
+        default=list,
+    )
+    evidence_ids: Mapped[list[Any]] = mapped_column(JSONB, nullable=False)
+    report_markdown: Mapped[str] = mapped_column(Text, nullable=False)
+    model_key: Mapped[str] = mapped_column(String(64), nullable=False)
+    model_version: Mapped[str] = mapped_column(String(64), nullable=False)
+    playbook_version: Mapped[str] = mapped_column(String(64), nullable=False)
+    adapter_version: Mapped[str] = mapped_column(String(64), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )

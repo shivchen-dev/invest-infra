@@ -4,7 +4,6 @@ import ast
 import unittest
 from pathlib import Path
 
-
 _NOT_LITERAL = object()
 
 
@@ -18,15 +17,14 @@ def _try_literal_eval(node: ast.AST) -> object:
 class MigrationChainTest(unittest.TestCase):
     def test_initial_migration_chain(self) -> None:
         repository_root = Path(__file__).resolve().parents[1]
-        versions_directory = (
-            repository_root / "apps" / "migrations" / "migrations" / "versions"
-        )
+        versions_directory = repository_root / "apps" / "migrations" / "migrations" / "versions"
         revision_files = sorted(versions_directory.glob("*.py"))
 
         self.assertGreaterEqual(
             len(revision_files),
             1,
-            f"expected at least one Alembic revision file in {versions_directory}, found {revision_files}",
+            "expected at least one Alembic revision file in "
+            f"{versions_directory}, found {revision_files}",
         )
 
         revisions: dict[Path, tuple[str, object]] = {}
@@ -69,9 +67,7 @@ class MigrationChainTest(unittest.TestCase):
             )
 
         referenced_down_revisions = {
-            down_revision
-            for _, down_revision in revisions.values()
-            if down_revision is not None
+            down_revision for _, down_revision in revisions.values() if down_revision is not None
         }
         all_revision_ids = {revision for revision, _ in revisions.values()}
         head_ids = all_revision_ids - referenced_down_revisions
@@ -79,7 +75,8 @@ class MigrationChainTest(unittest.TestCase):
         self.assertEqual(
             len(head_ids),
             1,
-            f"expected exactly one current head across the migration chain, found {len(head_ids)}: {sorted(head_ids)}",
+            "expected exactly one current head across the migration chain, "
+            f"found {len(head_ids)}: {sorted(head_ids)}",
         )
 
         self.assertIn(
@@ -96,7 +93,8 @@ class MigrationChainTest(unittest.TestCase):
         self.assertEqual(
             len(initial_files),
             1,
-            f"expected exactly one revision file declaring revision='20260731_0001', found {len(initial_files)}: {initial_files}",
+            "expected exactly one revision file declaring revision='20260731_0001', "
+            f"found {len(initial_files)}: {initial_files}",
         )
         initial_revision_file = initial_files[0]
         self.assertIsNone(
@@ -143,22 +141,26 @@ class MigrationChainTest(unittest.TestCase):
                     "CREATE SCHEMA" in sql and schema.upper() in sql
                     for sql in execute_sql_statements
                 ),
-                f"{initial_revision_file} upgrade() must call op.execute() with a statement that creates the {schema!r} schema",
+                f"{initial_revision_file} upgrade() must call op.execute() with a "
+                f"statement that creates the {schema!r} schema",
             )
         self.assertIn(
             "instruments",
             create_table_names,
-            f"{initial_revision_file} upgrade() must call op.create_table() with an 'instruments' table name",
+            f"{initial_revision_file} upgrade() must call op.create_table() with an "
+            "'instruments' table name",
         )
         self.assertIn(
             "provider_batches",
             create_table_names,
-            f"{initial_revision_file} upgrade() must call op.create_table() with a 'provider_batches' table name",
+            f"{initial_revision_file} upgrade() must call op.create_table() with a "
+            "'provider_batches' table name",
         )
         self.assertIn(
             "pipeline_runs",
             create_table_names,
-            f"{initial_revision_file} upgrade() must call op.create_table() with a 'pipeline_runs' table name",
+            f"{initial_revision_file} upgrade() must call op.create_table() with a "
+            "'pipeline_runs' table name",
         )
 
     def test_candidate_pool_snapshot_fk_migration(self) -> None:
@@ -201,7 +203,7 @@ class MigrationChainTest(unittest.TestCase):
         self.assertIn("length(content_hash) = 64", source)
         self.assertIn("ck_research_evidence_packs_content_hash_len64", source)
         self.assertIn(
-            'sa.UniqueConstraint(\n'
+            "sa.UniqueConstraint(\n"
             '            "instrument_id",\n'
             '            "as_of_date",\n'
             '            "schema_version",\n'
@@ -244,9 +246,7 @@ class MigrationChainTest(unittest.TestCase):
         """
 
         repository_root = Path(__file__).resolve().parents[1]
-        versions_directory = (
-            repository_root / "apps" / "migrations" / "migrations" / "versions"
-        )
+        versions_directory = repository_root / "apps" / "migrations" / "migrations" / "versions"
 
         revisions: dict[Path, tuple[str, object]] = {}
         for revision_file in sorted(versions_directory.glob("*.py")):
@@ -283,16 +283,13 @@ class MigrationChainTest(unittest.TestCase):
         # MUST be referenced by the next revision so it is not a head.
         all_revision_ids = {revision for revision, _ in revisions.values()}
         referenced_down_revisions = {
-            down_revision
-            for _, down_revision in revisions.values()
-            if down_revision is not None
+            down_revision for _, down_revision in revisions.values() if down_revision is not None
         }
         head_ids = all_revision_ids - referenced_down_revisions
         self.assertEqual(
             head_ids,
-            {"20260807_0013"},
-            "expected exactly one unreferenced chain head, "
-            f"got {sorted(head_ids)}",
+            {"20260807_0014"},
+            f"expected exactly one unreferenced chain head, got {sorted(head_ids)}",
         )
 
         new_migration_file = (
@@ -317,9 +314,7 @@ class MigrationChainTest(unittest.TestCase):
         self.assertIn('"etf_profiles"', source)
         self.assertIn('schema="core"', source)
         self.assertIn('"core.instruments.id"', source)
-        self.assertIn(
-            'name="fk_etf_profiles_instrument_id_core_instruments"', source
-        )
+        self.assertIn('name="fk_etf_profiles_instrument_id_core_instruments"', source)
         self.assertIn('sa.PrimaryKeyConstraint("instrument_id"', source)
         self.assertIn('name="pk_etf_profiles"', source)
 
@@ -361,9 +356,7 @@ class MigrationChainTest(unittest.TestCase):
         """
 
         repository_root = Path(__file__).resolve().parents[1]
-        versions_directory = (
-            repository_root / "apps" / "migrations" / "migrations" / "versions"
-        )
+        versions_directory = repository_root / "apps" / "migrations" / "migrations" / "versions"
 
         revisions: dict[Path, tuple[str, object]] = {}
         for revision_file in sorted(versions_directory.glob("*.py")):
@@ -395,16 +388,13 @@ class MigrationChainTest(unittest.TestCase):
 
         all_revision_ids = {revision for revision, _ in revisions.values()}
         referenced_down_revisions = {
-            down_revision
-            for _, down_revision in revisions.values()
-            if down_revision is not None
+            down_revision for _, down_revision in revisions.values() if down_revision is not None
         }
         head_ids = all_revision_ids - referenced_down_revisions
         self.assertEqual(
             head_ids,
-            {"20260807_0013"},
-            "expected exactly one unreferenced chain head, "
-            f"got {sorted(head_ids)}",
+            {"20260807_0014"},
+            f"expected exactly one unreferenced chain head, got {sorted(head_ids)}",
         )
 
         new_migration_file = (
@@ -493,7 +483,7 @@ class MigrationChainTest(unittest.TestCase):
         heads = {revision for revision, _ in revisions.values()} - {
             down_revision for _, down_revision in revisions.values() if down_revision is not None
         }
-        self.assertEqual(heads, {"20260807_0013"})
+        self.assertEqual(heads, {"20260807_0014"})
         source = (versions_directory / "20260805_0010_research_context_packs.py").read_text()
         self.assertIn('revision: str = "20260805_0010"', source)
         self.assertIn('down_revision: str | None = "20260805_0009"', source)
@@ -512,9 +502,7 @@ class MigrationChainTest(unittest.TestCase):
 
     def test_dc3_exposure_migration_schema_contract(self) -> None:
         repository_root = Path(__file__).resolve().parents[1]
-        versions_directory = (
-            repository_root / "apps" / "migrations" / "migrations" / "versions"
-        )
+        versions_directory = repository_root / "apps" / "migrations" / "migrations" / "versions"
         source = (versions_directory / "20260806_0011_dc3_exposure.py").read_text()
         self.assertIn('revision: str = "20260806_0011"', source)
         self.assertIn('down_revision: str | None = "20260805_0010"', source)
@@ -549,7 +537,10 @@ class MigrationChainTest(unittest.TestCase):
     def test_research_cases_migration(self) -> None:
         source = (
             Path(__file__).resolve().parents[1]
-            / "apps" / "migrations" / "migrations" / "versions"
+            / "apps"
+            / "migrations"
+            / "migrations"
+            / "versions"
             / "20260807_0012_research_cases.py"
         ).read_text(encoding="utf-8")
         self.assertIn('revision: str = "20260807_0012"', source)
@@ -592,15 +583,389 @@ class MigrationChainTest(unittest.TestCase):
         ):
             self.assertIn(token, source)
 
+    def test_research_runs_migration_is_current_head(self) -> None:
+        """PR-5.5 Slice 1 introduces the ``research_runs`` / ``research_results`` schema.
+
+        Pins the ``20260807_0014`` contract: the new migration chains
+        on top of ``20260807_0013``, becomes the sole chain head, and
+        defines both ``analytics.research_runs`` and
+        ``analytics.research_results`` with the FK / check / uniqueness
+        surface required by the persistence plan.
+        """
+
+        repository_root = Path(__file__).resolve().parents[1]
+        versions_directory = repository_root / "apps" / "migrations" / "migrations" / "versions"
+
+        revisions: dict[Path, tuple[str, object]] = {}
+        for revision_file in sorted(versions_directory.glob("*.py")):
+            source = revision_file.read_text(encoding="utf-8")
+            tree = ast.parse(source, filename=str(revision_file))
+            assignments: dict[str, object] = {}
+            for node in tree.body:
+                if isinstance(node, ast.Assign):
+                    literal_value = _try_literal_eval(node.value)
+                    if literal_value is _NOT_LITERAL:
+                        continue
+                    for target in node.targets:
+                        if isinstance(target, ast.Name):
+                            assignments[target.id] = literal_value
+                elif (
+                    isinstance(node, ast.AnnAssign)
+                    and isinstance(node.target, ast.Name)
+                    and node.value is not None
+                ):
+                    literal_value = _try_literal_eval(node.value)
+                    if literal_value is not _NOT_LITERAL:
+                        assignments[node.target.id] = literal_value
+            self.assertIn("revision", assignments, f"{revision_file}")
+            self.assertIn("down_revision", assignments, f"{revision_file}")
+            revisions[revision_file] = (
+                assignments["revision"],
+                assignments["down_revision"],
+            )
+
+        all_revision_ids = {revision for revision, _ in revisions.values()}
+        referenced_down_revisions = {
+            down_revision for _, down_revision in revisions.values() if down_revision is not None
+        }
+        head_ids = all_revision_ids - referenced_down_revisions
+        self.assertEqual(
+            head_ids,
+            {"20260807_0014"},
+            f"expected exactly one unreferenced chain head, got {sorted(head_ids)}",
+        )
+
+        new_migration_file = (
+            repository_root
+            / "apps"
+            / "migrations"
+            / "migrations"
+            / "versions"
+            / "20260807_0014_research_runs.py"
+        )
+        self.assertTrue(
+            new_migration_file.exists(),
+            f"expected new migration file {new_migration_file} to exist",
+        )
+        source = new_migration_file.read_text(encoding="utf-8")
+
+        self.assertIn('revision: str = "20260807_0014"', source)
+        self.assertIn('down_revision: str | None = "20260807_0013"', source)
+
+        for token in (
+            '"research_runs"',
+            '"research_results"',
+            'schema="analytics"',
+            'sa.PrimaryKeyConstraint("run_id"',
+            'name="pk_research_runs"',
+            'sa.PrimaryKeyConstraint("result_id"',
+            'name="pk_research_results"',
+        ):
+            self.assertIn(token, source)
+
+        for foreign_key_name in (
+            "fk_research_runs_case_id_research_cases",
+            "fk_research_runs_evidence_pack_id_research_evidence_packs",
+            "fk_research_results_run_id_research_runs",
+            "fk_research_results_evidence_pack_id_research_evidence_packs",
+        ):
+            self.assertIn(f'name="{foreign_key_name}"', source)
+
+        for check_constraint_name in (
+            "ck_research_runs_status_valid",
+            "ck_research_runs_runner_key_nonempty",
+            "ck_research_runs_playbook_key_nonempty",
+            "ck_research_runs_attempt_positive",
+            "ck_research_runs_external_request_id_nonempty",
+            "ck_research_runs_external_session_id_nonempty",
+            "ck_research_runs_finished_after_started",
+            "ck_research_results_evidence_ids_nonempty",
+            "ck_research_results_risks_array",
+            "ck_research_results_evidence_ids_array",
+        ):
+            self.assertIn(check_constraint_name, source)
+
+        for status_token in (
+            "'queued'",
+            "'running'",
+            "'succeeded'",
+            "'failed'",
+            "'cancelled'",
+        ):
+            self.assertIn(status_token, source)
+        self.assertIn("status IN (", source)
+        self.assertIn(
+            'name="ck_research_runs_status_valid"',
+            source,
+        )
+        self.assertIn("attempt >= 1", source)
+        self.assertIn(
+            "started_at IS NULL OR finished_at IS NULL OR finished_at >= started_at",
+            source,
+        )
+        self.assertIn("external_request_id", source)
+        self.assertIn("external_session_id", source)
+
+        self.assertIn(
+            "uq_research_runs_external_session_id",
+            source,
+        )
+        self.assertIn(
+            "uq_research_results_run_id",
+            source,
+        )
+
+        for index_name in (
+            "ix_research_runs_status",
+            "ix_research_runs_case_id",
+            "ix_research_runs_external_request_id",
+            "ix_research_results_run_id",
+            "ix_research_results_evidence_pack_id",
+        ):
+            self.assertIn(index_name, source)
+
+        self.assertIn("jsonb_typeof(risks) = 'array'", source)
+        self.assertIn("jsonb_typeof(evidence_ids) = 'array'", source)
+        self.assertIn("jsonb_array_length(evidence_ids) >= 1", source)
+
+        explicit_names = [
+            node.value
+            for node in ast.walk(ast.parse(source))
+            if isinstance(node, ast.Constant)
+            and isinstance(node.value, str)
+            and node.value.startswith(("fk_", "uq_", "ck_", "ix_", "pk_"))
+        ]
+        self.assertTrue(all(len(name) <= 63 for name in explicit_names))
+
+    def test_research_run_row_models_are_wired(self) -> None:
+        """PR-5.5 Slice 1 ships :class:`ResearchRunRow` and :class:`ResearchResultRow`.
+
+        Both rows must be importable from
+        ``invest_storage.models`` / ``invest_storage``, set the right
+        ``__tablename__``, declare the FK chain expected by the
+        migration, and configure the unique constraints that
+        guarantee ``(a)`` one immutable result per run and
+        ``(b)`` external-session uniqueness.
+
+        The model constraint / index names are matched by exact equality
+        against the names explicitly written in
+        ``20260807_0014_research_runs`` so a future regression in the
+        ``Base`` naming-convention prefix logic (e.g. accidentally
+        double-prefixing a ``CheckConstraint`` ``name=`` argument) is
+        caught as a focused failure rather than a silent schema drift.
+        Every new constraint / index name is also asserted to be at or
+        under PostgreSQL's 63-character identifier limit so a runaway
+        suffix cannot sneak past the test suite.
+        """
+
+        import sqlalchemy as sa  # noqa: F401 - import the package to ensure availability
+        from invest_storage.models import (
+            ResearchResultRow,
+            ResearchRunRow,
+        )
+
+        self.assertEqual(ResearchRunRow.__tablename__, "research_runs")
+        self.assertEqual(ResearchResultRow.__tablename__, "research_results")
+
+        run_table = ResearchRunRow.__table__
+        result_table = ResearchResultRow.__table__
+        self.assertEqual(run_table.schema, "analytics")
+        self.assertEqual(result_table.schema, "analytics")
+
+        run_pk_columns = {column.name for column in run_table.primary_key.columns}
+        result_pk_columns = {column.name for column in result_table.primary_key.columns}
+        self.assertEqual(run_pk_columns, {"run_id"})
+        self.assertEqual(result_pk_columns, {"result_id"})
+
+        run_foreign_key_names = {
+            constraint.name for constraint in run_table.foreign_key_constraints
+        }
+        result_foreign_key_names = {
+            constraint.name for constraint in result_table.foreign_key_constraints
+        }
+        self.assertEqual(
+            run_foreign_key_names,
+            {
+                "fk_research_runs_case_id_research_cases",
+                "fk_research_runs_evidence_pack_id_research_evidence_packs",
+            },
+        )
+        self.assertEqual(
+            result_foreign_key_names,
+            {
+                "fk_research_results_run_id_research_runs",
+                "fk_research_results_evidence_pack_id_research_evidence_packs",
+            },
+        )
+
+        run_check_names = {
+            constraint.name
+            for constraint in run_table.constraints
+            if isinstance(constraint, sa.CheckConstraint)
+        }
+        result_check_names = {
+            constraint.name
+            for constraint in result_table.constraints
+            if isinstance(constraint, sa.CheckConstraint)
+        }
+        self.assertEqual(
+            run_check_names,
+            {
+                "ck_research_runs_status_valid",
+                "ck_research_runs_runner_key_nonempty",
+                "ck_research_runs_playbook_key_nonempty",
+                "ck_research_runs_attempt_positive",
+                "ck_research_runs_external_request_id_nonempty",
+                "ck_research_runs_external_session_id_nonempty",
+                "ck_research_runs_finished_after_started",
+            },
+        )
+        self.assertEqual(
+            result_check_names,
+            {
+                "ck_research_results_conclusion_nonblank",
+                "ck_research_results_report_markdown_nonblank",
+                "ck_research_results_model_key_nonblank",
+                "ck_research_results_model_version_nonblank",
+                "ck_research_results_playbook_version_nonblank",
+                "ck_research_results_adapter_version_nonblank",
+                "ck_research_results_risks_array",
+                "ck_research_results_evidence_ids_array",
+                "ck_research_results_evidence_ids_nonempty",
+            },
+        )
+
+        run_unique_names = {
+            constraint.name
+            for constraint in run_table.constraints
+            if isinstance(constraint, sa.UniqueConstraint)
+        }
+        result_unique_names = {
+            constraint.name
+            for constraint in result_table.constraints
+            if isinstance(constraint, sa.UniqueConstraint)
+        }
+        self.assertEqual(run_unique_names, set())
+        self.assertEqual(
+            result_unique_names,
+            {"uq_research_results_run_id"},
+        )
+
+        run_index_names = {index.name for index in run_table.indexes}
+        result_index_names = {index.name for index in result_table.indexes}
+        self.assertEqual(
+            run_index_names,
+            {
+                "ix_research_runs_status",
+                "ix_research_runs_case_id",
+                "ix_research_runs_external_request_id",
+                "uq_research_runs_external_session_id",
+            },
+        )
+        self.assertEqual(
+            result_index_names,
+            {
+                "ix_research_results_run_id",
+                "ix_research_results_evidence_pack_id",
+            },
+        )
+
+        all_new_names: set[str] = (
+            run_check_names
+            | result_check_names
+            | run_unique_names
+            | result_unique_names
+            | run_foreign_key_names
+            | result_foreign_key_names
+            | run_index_names
+            | result_index_names
+        )
+        too_long = sorted(name for name in all_new_names if len(name) > 63)
+        self.assertEqual(
+            too_long,
+            [],
+            f"new constraint / index names exceed PostgreSQL's 63-character "
+            f"identifier limit: {too_long}",
+        )
+
+        repository_root = Path(__file__).resolve().parents[1]
+        migration_file = (
+            repository_root
+            / "apps"
+            / "migrations"
+            / "migrations"
+            / "versions"
+            / "20260807_0014_research_runs.py"
+        )
+        migration_source = migration_file.read_text(encoding="utf-8")
+        migration_tree = ast.parse(migration_source, filename=str(migration_file))
+
+        new_table_prefixes = (
+            "ck_research_runs_",
+            "ck_research_results_",
+            "ix_research_runs_",
+            "ix_research_results_",
+            "uq_research_runs_",
+            "uq_research_results_",
+            "fk_research_runs_",
+            "fk_research_results_",
+            "pk_research_runs",
+            "pk_research_results",
+        )
+
+        def _matches_new_tables(name: str) -> bool:
+            return name.startswith(new_table_prefixes)
+
+        migration_explicit_names: set[str] = set()
+        for node in ast.walk(migration_tree):
+            if (
+                isinstance(node, ast.keyword)
+                and node.arg == "name"
+                and isinstance(node.value, ast.Constant)
+                and isinstance(node.value.value, str)
+            ):
+                value = node.value.value
+                if _matches_new_tables(value):
+                    migration_explicit_names.add(value)
+            elif (
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Attribute)
+                and isinstance(node.func.value, ast.Name)
+                and node.func.value.id == "op"
+                and node.func.attr == "create_index"
+                and node.args
+                and isinstance(node.args[0], ast.Constant)
+                and isinstance(node.args[0].value, str)
+                and _matches_new_tables(node.args[0].value)
+            ):
+                migration_explicit_names.add(node.args[0].value)
+
+        self.assertEqual(
+            all_new_names | {"pk_research_runs", "pk_research_results"},
+            migration_explicit_names,
+            "model metadata names must exactly match the constraint / index "
+            "names explicitly written in migration 20260807_0014; "
+            f"model={sorted(all_new_names | {'pk_research_runs', 'pk_research_results'})}, "
+            f"migration={sorted(migration_explicit_names)}",
+        )
+
+        from invest_storage import ResearchResultRow as ExportedResultRow
+        from invest_storage import ResearchRunRow as ExportedRunRow
+
+        self.assertIs(ExportedRunRow, ResearchRunRow)
+        self.assertIs(ExportedResultRow, ResearchResultRow)
+
 
 def _first_string_literal(call_node: ast.Call) -> str | None:
     for argument in call_node.args:
         if isinstance(argument, ast.Constant) and isinstance(argument.value, str):
             return argument.value
     for keyword in call_node.keywords:
-        if keyword.arg in {"table_name", "name"} and isinstance(
-            keyword.value, ast.Constant
-        ) and isinstance(keyword.value.value, str):
+        if (
+            keyword.arg in {"table_name", "name"}
+            and isinstance(keyword.value, ast.Constant)
+            and isinstance(keyword.value.value, str)
+        ):
             return keyword.value.value
     return None
 
