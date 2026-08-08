@@ -33,6 +33,14 @@ from invest_api.schemas.etf import (
     InstrumentResponse,
 )
 from invest_api.schemas.pipeline_runs import PipelineRunListResponse, PipelineRunResponse
+from invest_api.schemas.research import (
+    EvidencePackResponse,
+    ResearchCaseListResponse,
+    ResearchCaseResponse,
+    ResearchResultResponse,
+    ResearchRunListResponse,
+    ResearchRunResponse,
+)
 
 __all__ = [
     "CandidatePoolDiffResponse",
@@ -43,6 +51,7 @@ __all__ = [
     "DataFreshnessResponse",
     "DataFreshnessStatus",
     "ExclusionReasonResponse",
+    "EvidencePackResponse",
     "HealthResponse",
     "InstrumentListResponse",
     "InstrumentResponse",
@@ -50,5 +59,10 @@ __all__ = [
     "LegacyInstrumentResponse",
     "PipelineRunResponse",
     "PipelineRunListResponse",
+    "ResearchCaseListResponse",
+    "ResearchCaseResponse",
+    "ResearchResultResponse",
+    "ResearchRunListResponse",
+    "ResearchRunResponse",
     "RuleOutcomeResponse",
 ]

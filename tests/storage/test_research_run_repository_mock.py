@@ -13,16 +13,53 @@ the existing ``SqlAlchemyResearchCaseRepository`` mock tests.
 from __future__ import annotations
 
 import unittest
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from unittest.mock import MagicMock
 from uuid import UUID, uuid4
 
+from invest_domain.instruments import InstrumentId
+from invest_domain.research import ResearchCase, ResearchCaseStatus
 from invest_domain.research.research_run import ResearchRun, ResearchRunStatus
-from invest_storage import ResearchRunRow, SqlAlchemyResearchRunRepository
+from invest_storage import (
+    ResearchCaseRow,
+    ResearchRunRow,
+    SqlAlchemyResearchCaseRepository,
+    SqlAlchemyResearchRunRepository,
+)
 from invest_storage.repositories import ResearchRunTransitionError
 from sqlalchemy.orm import Session
 
 STARTED_AT = datetime(2026, 8, 7, 9, 0, tzinfo=UTC)
+
+
+def _make_case(
+    *,
+    case_id: UUID | None = None,
+    instrument_id: UUID | None = None,
+) -> ResearchCase:
+    return ResearchCase(
+        case_id=case_id or uuid4(),
+        instrument_id=InstrumentId(instrument_id or uuid4()),
+        as_of_date=date(2026, 8, 7),
+        question="test question",
+        horizon="1d",
+        status=ResearchCaseStatus.DRAFT,
+        created_at=datetime(2026, 8, 7, tzinfo=UTC),
+    )
+
+
+def case_row_for(case: ResearchCase) -> ResearchCaseRow:
+    row = MagicMock(spec=ResearchCaseRow)
+    row.case_id = case.case_id
+    row.instrument_id = case.instrument_id.value
+    row.as_of_date = case.as_of_date
+    row.question = case.question
+    row.horizon = case.horizon
+    row.status = case.status.value
+    row.created_at = case.created_at
+    row.closed_at = case.closed_at
+    row.candidate_pool_run_id = case.candidate_pool_run_id
+    return row
 
 
 def _queued(*, case_id: UUID | None = None, run_id: UUID | None = None) -> ResearchRun:
@@ -222,6 +259,84 @@ class ResearchRunRepositoryMockTests(unittest.TestCase):
     def test_lookup_by_external_session_id_returns_none_when_absent(self) -> None:
         self.session.scalars.return_value.first.return_value = None
         self.assertIsNone(self.repo.lookup_by_external_session_id("nope"))
+
+    def test_list_recent_compiles_correct_limit_offset_order(self) -> None:
+        run = _queued()
+        self.session.scalars.return_value.all.return_value = [row_for(run)]
+        self.repo.list_recent(limit=10, offset=5)
+        stmt = self.session.scalars.call_args.args[0]
+        self.assertIsNotNone(stmt)
+        self.assertEqual(stmt._limit, 10)
+        self.assertEqual(stmt._offset, 5)
+
+    def test_list_recent_rejects_invalid_limit(self) -> None:
+        with self.assertRaises(ValueError):
+            self.repo.list_recent(limit=0)
+        with self.assertRaises(ValueError):
+            self.repo.list_recent(limit=-1)
+
+    def test_list_recent_rejects_invalid_offset(self) -> None:
+        with self.assertRaises(ValueError):
+            self.repo.list_recent(offset=-1)
+
+    def test_list_recent_maps_rows(self) -> None:
+        run = _queued()
+        self.session.scalars.return_value.all.return_value = [row_for(run)]
+        result = self.repo.list_recent(limit=1, offset=0)
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0], run)
+
+    def test_count_all_returns_scalar(self) -> None:
+        self.session.scalar.return_value = 42
+        result = self.repo.count_all()
+        self.assertEqual(result, 42)
+        self.session.scalar.assert_called_once()
+
+    def test_count_all_returns_zero_when_none(self) -> None:
+        self.session.scalar.return_value = None
+        result = self.repo.count_all()
+        self.assertEqual(result, 0)
+
+
+class ResearchCaseRepositoryMockTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.session = MagicMock(spec=Session)
+        self.repo = SqlAlchemyResearchCaseRepository(self.session)
+
+    def test_list_recent_compiles_correct_limit_offset_order(self) -> None:
+        case = _make_case()
+        self.session.scalars.return_value.all.return_value = [case_row_for(case)]
+        self.repo.list_recent(limit=10, offset=5)
+        stmt = self.session.scalars.call_args.args[0]
+        self.assertEqual(stmt._limit, 10)
+        self.assertEqual(stmt._offset, 5)
+
+    def test_list_recent_rejects_invalid_limit(self) -> None:
+        with self.assertRaises(ValueError):
+            self.repo.list_recent(limit=0)
+        with self.assertRaises(ValueError):
+            self.repo.list_recent(limit=-1)
+
+    def test_list_recent_rejects_invalid_offset(self) -> None:
+        with self.assertRaises(ValueError):
+            self.repo.list_recent(offset=-1)
+
+    def test_list_recent_maps_rows(self) -> None:
+        case = _make_case()
+        self.session.scalars.return_value.all.return_value = [case_row_for(case)]
+        result = self.repo.list_recent(limit=1, offset=0)
+        self.assertEqual(len(result), 1)
+
+    def test_count_all_returns_scalar(self) -> None:
+        self.session.scalar.return_value = 7
+        result = self.repo.count_all()
+        self.assertEqual(result, 7)
+        self.session.scalar.assert_called_once()
+
+    def test_count_all_returns_zero_when_none(self) -> None:
+        self.session.scalar.return_value = None
+        result = self.repo.count_all()
+        self.assertEqual(result, 0)
 
 
 if __name__ == "__main__":

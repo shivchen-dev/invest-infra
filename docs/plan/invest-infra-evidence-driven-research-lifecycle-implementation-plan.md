@@ -20,7 +20,7 @@ Instrument / Candidate Pool
 
 Research 与 AI 只消费 Core/Analytics 事实，不生成或修改行情、因子及候选池结果。
 
-### 当前实现基线（2026-08-07）
+### 当前实现基线（2026-08-08）
 
 | 能力 | 状态 | 处置 |
 |---|---|---|
@@ -31,8 +31,8 @@ Research 与 AI 只消费 Core/Analytics 事实，不生成或修改行情、因
 | ResearchCase 领域 + 持久化 | 已完成 | PR-1 / PR-2 |
 | ResearchRun、ResearchResult 领域 + Fake Runner | 已完成 | PR-4 / PR-5 |
 | ResearchRun、ResearchResult PostgreSQL 持久化 + Repositories + UoW | 已完成 | PR-5.5（本次提交） |
-| JiuwenSwarm Adapter | 缺失 | PR-6 待启动 |
-| 只读 Research API | 缺失 | PR-7 待启动 |
+| JiuwenSwarm Adapter | 已完成（推送） | PR-6（commit `7cc8da8`） |
+| 只读 Research API | 本地已实现 / 未提交 | PR-7（仅本地 working tree） |
 
 ## 2. 架构决策
 
@@ -199,11 +199,11 @@ DC-3 Exposure/Investment Context 建设属于 Core 与 Analytics 的上游证据
 
 DC-3 已于 `57ff5af` 标记完成并推送。Research 生命周期现在可以独立启动；DC-4 不作为 ResearchCase/Fake Runner 闭环的前置条件，应由首个研究闭环暴露的证据缺口决定其优先级。
 
-## 8. 当前状态（截至 PR-5.5）
+## 8. 当前状态（截至 PR-7）
 
-本计划按 §4 PR 顺序逐片落地。已完成与未完成的边界如下：
+本计划按 §4 PR 顺序逐片落地。PR-6 与 PR-7 的提交边界明确区分如下：PR-6 已推送并合并至 `main`；PR-7 已在本工作树实现但尚未 commit / push。
 
-**已实现（PR-0 → PR-5.5）**
+**已实现（PR-0 → PR-7）**
 
 - **PR-0** 文档一致性 + Research Lifecycle ADR（ADR-0012）。
 - **PR-1** `ResearchCase` 领域聚合 + `CaseContext` 投影，状态机 `draft → ready → running → completed / failed` 与 `cancelled`。
@@ -216,6 +216,8 @@ DC-3 已于 `57ff5af` 标记完成并推送。Research 生命周期现在可以�
   - 新增 `SqlAlchemyResearchRunRepository` / `SqlAlchemyResearchResultRepository`：`add` / `get` / `list_by_case`、CAS 状态转换、外部请求/会话 ID 绑定与查询、Result 幂等写入与冲突检测。
   - 在 `SqlAlchemyUnitOfWork` 暴露 `uow.research_runs` / `uow.research_results` 端口及缓存属性。
   - 域包不引入 JiuwenSwarm SDK，无新增 API 端点。
+- **PR-6（已推送，commit `7cc8da8`）** JiuwenSwarm Adapter：请求映射、事件接收、结果映射、外部 request/session ID 绑定与错误分类；领域包未引入 JiuwenSwarm SDK。已在 commit `7cc8da8` 合并至 `main`，纳入实现基线。
+- **PR-7（本地已实现 / 未提交）** 只读 Research API：六个固定 GET 查询端点、Application Query Service、去敏 Evidence 公共契约、分页/计数与 OpenAPI 契约已在本工作树落地，但尚未 commit / push；落地切片见下文"本地已实现 / 未提交"小节。
 
 **测试证据（PR-5.5）**
 
@@ -224,9 +226,14 @@ DC-3 已于 `57ff5af` 标记完成并推送。Research 生命周期现在可以�
 - 聚焦 PostgreSQL（`tests/storage/integration/test_research_run_result_repositories.py`）：9 passed。
 - 完整 pipeline 测试套件：1461 passed。
 
-**未实现（pending）**
+**测试证据（PR-7 实现切片，2026-08-08 复测）**
 
-- **PR-6** JiuwenSwarm Adapter：请求映射、事件接收、结果映射、外部 session 唯一性、`etf_medium_term_assessment` Playbook 与失败恢复用例。
-- **PR-7** 只读 Research API：`/api/v1/research-cases[/{case_id}[/evidence]]` 与 `/api/v1/research-runs[/{run_id}[/result]]`，全部 GET 形态。
+- API 聚焦服务与端点测试（含 `test_research_detail_serialization.py` 的 4 个 HTTP-seam 真实领域对象序列化用例，覆盖 case / evidence / run / result 四条成功路径）：16 passed。
+- 完整 API 测试套件（含 `test_research_detail_serialization.py`）：199 passed。
+- Storage Research repository mock tests（`tests/storage/test_*_mock.py`，不含 integration）：217 passed。
 
-声明：以上状态仅覆盖已合并或本地落地的工作切片；Research 生命周期整体（特别是 Swarm Adapter 与 read-only API）尚未完成，不得在文档、ADR 或 review 描述中暗示端到端闭环已交付。
+**本地已实现 / 未提交（uncommitted）**
+
+- **PR-7** 只读 Research API 已在本工作树实现，但尚未 commit / push；`main` 上最新事实仍是 PR-6（`7cc8da8`）已合并。落地切片对应 `apps/api/src/invest_api/{application,routers,schemas}/research.py`、`apps/api/tests/test_research_endpoints.py`、`apps/api/tests/test_research_service.py`、`apps/api/tests/test_research_detail_serialization.py`、`packages/storage/src/invest_storage/{repositories,unit_of_work}.py`、`tests/storage/test_research_run_repository_mock.py`、`apps/api/openapi.json`、`docs/plan/invest-infra-evidence-driven-research-lifecycle-implementation-plan.md`（本文件）、`tasks/pr7-research-api-{plan,todo}.md`。
+
+声明：以上状态准确区分了"已推送并合并"（PR-6，commit `7cc8da8`）与"本地已实现但未提交"（PR-7）。Research 生命周期在 `main` 上的最新事实是 PR-6 已合并，read-only API 仅在本地 working tree 落地；尚未存在 PR-7 commit / push，不得在文档、ADR 或 review 描述中暗示 PR-7 已交付到 `main`。

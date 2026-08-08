@@ -564,6 +564,397 @@
         "title": "DataFreshnessResponse",
         "type": "object"
       },
+      "EvidenceCaseResponse": {
+        "properties": {
+          "as_of_date": {
+            "format": "date",
+            "title": "As Of Date",
+            "type": "string"
+          },
+          "case_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Case Id"
+          },
+          "horizon": {
+            "title": "Horizon",
+            "type": "string"
+          },
+          "instrument_id": {
+            "format": "uuid",
+            "title": "Instrument Id",
+            "type": "string"
+          },
+          "question": {
+            "title": "Question",
+            "type": "string"
+          }
+        },
+        "required": [
+          "instrument_id",
+          "as_of_date",
+          "question",
+          "horizon"
+        ],
+        "title": "EvidenceCaseResponse",
+        "type": "object"
+      },
+      "EvidenceDataQualityResponse": {
+        "properties": {
+          "conflict_detected": {
+            "title": "Conflict Detected",
+            "type": "boolean"
+          },
+          "freshness_status": {
+            "title": "Freshness Status",
+            "type": "string"
+          },
+          "invalid_days": {
+            "title": "Invalid Days",
+            "type": "integer"
+          },
+          "observed_trading_days": {
+            "title": "Observed Trading Days",
+            "type": "integer"
+          },
+          "quality_status": {
+            "title": "Quality Status",
+            "type": "string"
+          },
+          "suspended_days": {
+            "title": "Suspended Days",
+            "type": "integer"
+          },
+          "target_trading_days": {
+            "title": "Target Trading Days",
+            "type": "integer"
+          },
+          "valid_price_days": {
+            "title": "Valid Price Days",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "freshness_status",
+          "quality_status",
+          "target_trading_days",
+          "observed_trading_days",
+          "valid_price_days",
+          "invalid_days",
+          "suspended_days",
+          "conflict_detected"
+        ],
+        "title": "EvidenceDataQualityResponse",
+        "type": "object"
+      },
+      "EvidenceFactorResponse": {
+        "properties": {
+          "evidence_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Evidence Id"
+          },
+          "factor_key": {
+            "title": "Factor Key",
+            "type": "string"
+          },
+          "observed_date": {
+            "format": "date",
+            "title": "Observed Date",
+            "type": "string"
+          },
+          "quality_status": {
+            "title": "Quality Status",
+            "type": "string"
+          },
+          "source_kind": {
+            "title": "Source Kind",
+            "type": "string"
+          },
+          "source_ref": {
+            "title": "Source Ref",
+            "type": "string"
+          },
+          "unit": {
+            "description": "Measurement unit supplied by the frozen factor contract; interpret value using this field without percentage or currency rescaling.",
+            "title": "Unit",
+            "type": "string"
+          },
+          "value": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Value"
+          },
+          "window": {
+            "title": "Window",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "factor_key",
+          "value",
+          "unit",
+          "window",
+          "observed_date",
+          "quality_status",
+          "source_kind",
+          "source_ref",
+          "evidence_id"
+        ],
+        "title": "EvidenceFactorResponse",
+        "type": "object"
+      },
+      "EvidenceInstrumentResponse": {
+        "properties": {
+          "currency": {
+            "title": "Currency",
+            "type": "string"
+          },
+          "exchange": {
+            "title": "Exchange",
+            "type": "string"
+          },
+          "instrument_id": {
+            "format": "uuid",
+            "title": "Instrument Id",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "symbol": {
+            "title": "Symbol",
+            "type": "string"
+          }
+        },
+        "required": [
+          "instrument_id",
+          "symbol",
+          "name",
+          "exchange",
+          "currency"
+        ],
+        "title": "EvidenceInstrumentResponse",
+        "type": "object"
+      },
+      "EvidenceMarketSnapshotResponse": {
+        "properties": {
+          "currency": {
+            "title": "Currency",
+            "type": "string"
+          },
+          "latest_close": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Latest Close"
+          },
+          "latest_trade_date": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Latest Trade Date"
+          },
+          "observed_trading_days": {
+            "title": "Observed Trading Days",
+            "type": "integer"
+          },
+          "suspended_days": {
+            "title": "Suspended Days",
+            "type": "integer"
+          },
+          "valid_price_days": {
+            "title": "Valid Price Days",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "latest_trade_date",
+          "latest_close",
+          "currency",
+          "observed_trading_days",
+          "valid_price_days",
+          "suspended_days"
+        ],
+        "title": "EvidenceMarketSnapshotResponse",
+        "type": "object"
+      },
+      "EvidencePackResponse": {
+        "properties": {
+          "case": {
+            "$ref": "#/components/schemas/EvidenceCaseResponse"
+          },
+          "data_quality": {
+            "$ref": "#/components/schemas/EvidenceDataQualityResponse"
+          },
+          "factor_set_key": {
+            "title": "Factor Set Key",
+            "type": "string"
+          },
+          "factor_set_version": {
+            "title": "Factor Set Version",
+            "type": "string"
+          },
+          "factors": {
+            "items": {
+              "$ref": "#/components/schemas/EvidenceFactorResponse"
+            },
+            "title": "Factors",
+            "type": "array"
+          },
+          "generated_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Generated At"
+          },
+          "instrument": {
+            "$ref": "#/components/schemas/EvidenceInstrumentResponse"
+          },
+          "market_snapshot": {
+            "$ref": "#/components/schemas/EvidenceMarketSnapshotResponse"
+          },
+          "missing_fields": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Missing Fields",
+            "type": "array"
+          },
+          "pack_hash": {
+            "title": "Pack Hash",
+            "type": "string"
+          },
+          "pack_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pack Id"
+          },
+          "schema_version": {
+            "title": "Schema Version",
+            "type": "string"
+          },
+          "source_refs": {
+            "items": {
+              "$ref": "#/components/schemas/EvidenceSourceReferenceResponse"
+            },
+            "title": "Source Refs",
+            "type": "array"
+          },
+          "warnings": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Warnings",
+            "type": "array"
+          }
+        },
+        "required": [
+          "pack_id",
+          "case",
+          "instrument",
+          "market_snapshot",
+          "factors",
+          "data_quality",
+          "missing_fields",
+          "warnings",
+          "source_refs",
+          "schema_version",
+          "factor_set_key",
+          "factor_set_version",
+          "pack_hash",
+          "generated_at"
+        ],
+        "title": "EvidencePackResponse",
+        "type": "object"
+      },
+      "EvidenceSourceReferenceResponse": {
+        "properties": {
+          "observed_date": {
+            "format": "date",
+            "title": "Observed Date",
+            "type": "string"
+          },
+          "quality_status": {
+            "title": "Quality Status",
+            "type": "string"
+          },
+          "revision": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Revision"
+          },
+          "source_kind": {
+            "title": "Source Kind",
+            "type": "string"
+          },
+          "source_ref": {
+            "title": "Source Ref",
+            "type": "string"
+          }
+        },
+        "required": [
+          "source_kind",
+          "source_ref",
+          "observed_date",
+          "quality_status",
+          "revision"
+        ],
+        "title": "EvidenceSourceReferenceResponse",
+        "type": "object"
+      },
       "ExclusionReasonResponse": {
         "description": "Machine-readable reason an instrument was excluded.",
         "properties": {
@@ -869,6 +1260,309 @@
         "title": "PipelineRunResponse",
         "type": "object"
       },
+      "ResearchCaseListResponse": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/ResearchCaseResponse"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "limit": {
+            "maximum": 100.0,
+            "minimum": 1.0,
+            "title": "Limit",
+            "type": "integer"
+          },
+          "offset": {
+            "minimum": 0.0,
+            "title": "Offset",
+            "type": "integer"
+          },
+          "total": {
+            "minimum": 0.0,
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "items",
+          "total",
+          "limit",
+          "offset"
+        ],
+        "title": "ResearchCaseListResponse",
+        "type": "object"
+      },
+      "ResearchCaseResponse": {
+        "properties": {
+          "as_of_date": {
+            "format": "date",
+            "title": "As Of Date",
+            "type": "string"
+          },
+          "candidate_pool_run_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Candidate Pool Run Id"
+          },
+          "case_id": {
+            "format": "uuid",
+            "title": "Case Id",
+            "type": "string"
+          },
+          "closed_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Closed At"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "horizon": {
+            "title": "Horizon",
+            "type": "string"
+          },
+          "instrument_id": {
+            "format": "uuid",
+            "title": "Instrument Id",
+            "type": "string"
+          },
+          "question": {
+            "title": "Question",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "case_id",
+          "instrument_id",
+          "as_of_date",
+          "question",
+          "horizon",
+          "status",
+          "created_at"
+        ],
+        "title": "ResearchCaseResponse",
+        "type": "object"
+      },
+      "ResearchResultResponse": {
+        "properties": {
+          "adapter_version": {
+            "title": "Adapter Version",
+            "type": "string"
+          },
+          "conclusion": {
+            "title": "Conclusion",
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "evidence_ids": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Evidence Ids",
+            "type": "array"
+          },
+          "evidence_pack_id": {
+            "format": "uuid",
+            "title": "Evidence Pack Id",
+            "type": "string"
+          },
+          "model_key": {
+            "title": "Model Key",
+            "type": "string"
+          },
+          "model_version": {
+            "title": "Model Version",
+            "type": "string"
+          },
+          "playbook_version": {
+            "title": "Playbook Version",
+            "type": "string"
+          },
+          "report_markdown": {
+            "title": "Report Markdown",
+            "type": "string"
+          },
+          "result_id": {
+            "format": "uuid",
+            "title": "Result Id",
+            "type": "string"
+          },
+          "risks": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Risks",
+            "type": "array"
+          },
+          "run_id": {
+            "format": "uuid",
+            "title": "Run Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "result_id",
+          "run_id",
+          "evidence_pack_id",
+          "conclusion",
+          "risks",
+          "evidence_ids",
+          "report_markdown",
+          "model_key",
+          "model_version",
+          "playbook_version",
+          "adapter_version",
+          "created_at"
+        ],
+        "title": "ResearchResultResponse",
+        "type": "object"
+      },
+      "ResearchRunListResponse": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/ResearchRunResponse"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "limit": {
+            "maximum": 100.0,
+            "minimum": 1.0,
+            "title": "Limit",
+            "type": "integer"
+          },
+          "offset": {
+            "minimum": 0.0,
+            "title": "Offset",
+            "type": "integer"
+          },
+          "total": {
+            "minimum": 0.0,
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "items",
+          "total",
+          "limit",
+          "offset"
+        ],
+        "title": "ResearchRunListResponse",
+        "type": "object"
+      },
+      "ResearchRunResponse": {
+        "properties": {
+          "attempt": {
+            "title": "Attempt",
+            "type": "integer"
+          },
+          "case_id": {
+            "format": "uuid",
+            "title": "Case Id",
+            "type": "string"
+          },
+          "error_summary": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error Summary"
+          },
+          "evidence_pack_id": {
+            "format": "uuid",
+            "title": "Evidence Pack Id",
+            "type": "string"
+          },
+          "finished_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Finished At"
+          },
+          "playbook_key": {
+            "title": "Playbook Key",
+            "type": "string"
+          },
+          "run_id": {
+            "format": "uuid",
+            "title": "Run Id",
+            "type": "string"
+          },
+          "runner_key": {
+            "title": "Runner Key",
+            "type": "string"
+          },
+          "started_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Started At"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "run_id",
+          "case_id",
+          "evidence_pack_id",
+          "runner_key",
+          "playbook_key",
+          "status",
+          "attempt",
+          "started_at",
+          "finished_at",
+          "error_summary"
+        ],
+        "title": "ResearchRunResponse",
+        "type": "object"
+      },
       "RuleOutcomeResponse": {
         "description": "Outcome of one rule applied to one instrument in a pool.",
         "properties": {
@@ -1066,7 +1760,7 @@
     },
     "/api/v1/data-freshness": {
       "get": {
-        "description": "Return the data-freshness summary for ``expected_trade_date``.",
+        "description": "Return the data-freshness summary for ``expected_trade_date``.\n\nThe application service applies the ``expected_trade_date`` default\n(latest weekday from :func:`invest_api.clock.market_today`), runs\nthe snapshot / published / empty fallback chain and the\nstatus-state-machine reduction, and packages the outcome into a\nsmall :class:`DataFreshnessView` dataclass. The router only maps\nthat view onto the public Pydantic response shape and converts\n:class:`DataFreshnessQueryError` into a sanitized HTTP 500.",
         "operationId": "get_data_freshness_api_v1_data_freshness_get",
         "parameters": [
           {
@@ -1297,7 +1991,7 @@
     },
     "/api/v1/pipeline-runs": {
       "get": {
-        "description": "Return a paginated history of ``personal_etf_daily_job`` runs.\n\nThe repository applies the ``job_key`` filter, limit and offset in SQL,\nand its dedicated count query supplies the exact total. ``SQLAlchemyError``\nis caught and re-raised as a sanitized HTTP 500 so a connection string or\ndriver detail never leaks to the client.",
+        "description": "Return a paginated history of ``personal_etf_daily_job`` runs.\n\nThe application service applies the ``job_key`` filter, limit and\noffset in SQL and supplies the exact total from its companion\ncount query. ``PipelineRunQueryError`` (raised when the underlying\nrepository raises ``SQLAlchemyError``) is caught and re-raised as a\nsanitized HTTP 500.",
         "operationId": "list_pipeline_runs_api_v1_pipeline_runs_get",
         "parameters": [
           {
@@ -1354,7 +2048,7 @@
     },
     "/api/v1/pipeline-runs/latest": {
       "get": {
-        "description": "Return the most recent run of the personal daily job.\n\nWalks :meth:`SqlAlchemyPipelineRunRepository.list_recent` - which is\nordered by ``started_at`` descending - and returns the first run\nmatching ``job_key = \"personal_etf_daily_job\"``. Returns ``404`` when\nno matching run exists; any run that resolves to a different job_key\nis intentionally ignored.",
+        "description": "Return the most recent run of the personal daily job.\n\nThe application service walks the repository's ``list_recent``\npage - ordered by ``started_at`` descending - and returns the first\nrun matching ``job_key = \"personal_etf_daily_job\"``. The router\nsurfaces ``404`` when no matching run exists; any run that resolves\nto a different ``job_key`` is intentionally ignored.",
         "operationId": "get_latest_pipeline_run_api_v1_pipeline_runs_latest_get",
         "responses": {
           "200": {
@@ -1376,7 +2070,7 @@
     },
     "/api/v1/pipeline-runs/{run_id}": {
       "get": {
-        "description": "Return the run for ``run_id`` if it belongs to the personal daily job.\n\nA missing run OR a run that resolves to a different ``job_key`` both\nsurface as ``404``; the front-end cannot distinguish between \"the\nUUID does not exist\" and \"the UUID belongs to a different job\", which\nmatches the contract spelled out in PR-03 §3.2.",
+        "description": "Return the run for ``run_id`` if it belongs to the personal daily job.\n\nA missing run OR a run that resolves to a different ``job_key`` both\nsurface as ``404``; the front-end cannot distinguish between \"the\nUUID does not exist\" and \"the UUID belongs to a different job\".",
         "operationId": "get_pipeline_run_by_id_api_v1_pipeline_runs__run_id__get",
         "parameters": [
           {
@@ -1415,6 +2109,294 @@
         "summary": "Get Pipeline Run By Id",
         "tags": [
           "pipeline-runs"
+        ]
+      }
+    },
+    "/api/v1/research-cases": {
+      "get": {
+        "operationId": "list_research_cases_api_v1_research_cases_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 100,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "minimum": 0,
+              "title": "Offset",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResearchCaseListResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Research Cases",
+        "tags": [
+          "research"
+        ]
+      }
+    },
+    "/api/v1/research-cases/{case_id}": {
+      "get": {
+        "operationId": "get_research_case_api_v1_research_cases__case_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "case_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Case Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResearchCaseResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Research Case",
+        "tags": [
+          "research"
+        ]
+      }
+    },
+    "/api/v1/research-cases/{case_id}/evidence": {
+      "get": {
+        "operationId": "get_research_case_evidence_api_v1_research_cases__case_id__evidence_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "case_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Case Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/EvidencePackResponse"
+                  },
+                  "title": "Response Get Research Case Evidence Api V1 Research Cases  Case Id  Evidence Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Research Case Evidence",
+        "tags": [
+          "research"
+        ]
+      }
+    },
+    "/api/v1/research-runs": {
+      "get": {
+        "operationId": "list_research_runs_api_v1_research_runs_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 100,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "minimum": 0,
+              "title": "Offset",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResearchRunListResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Research Runs",
+        "tags": [
+          "research"
+        ]
+      }
+    },
+    "/api/v1/research-runs/{run_id}": {
+      "get": {
+        "operationId": "get_research_run_api_v1_research_runs__run_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Run Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResearchRunResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Research Run",
+        "tags": [
+          "research"
+        ]
+      }
+    },
+    "/api/v1/research-runs/{run_id}/result": {
+      "get": {
+        "operationId": "get_research_run_result_api_v1_research_runs__run_id__result_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Run Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResearchResultResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Research Run Result",
+        "tags": [
+          "research"
         ]
       }
     },

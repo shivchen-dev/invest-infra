@@ -1377,6 +1377,26 @@ class SqlAlchemyResearchCaseRepository:
             self._session.get(ResearchCaseRow, transitioned_case.case_id)
         )
 
+    def list_recent(self, *, limit: int = 50, offset: int = 0) -> list[ResearchCase]:
+        if limit < 1:
+            raise ValueError(f"limit must be >= 1, got {limit}")
+        if offset < 0:
+            raise ValueError(f"offset must be >= 0, got {offset}")
+        rows = self._session.scalars(
+            select(ResearchCaseRow)
+            .order_by(
+                ResearchCaseRow.created_at.desc(),
+                ResearchCaseRow.case_id.asc(),
+            )
+            .limit(limit)
+            .offset(offset)
+        ).all()
+        return [_row_to_research_case(row) for row in rows]
+
+    def count_all(self) -> int:
+        stmt = select(func.count(ResearchCaseRow.case_id))
+        return int(self._session.scalar(stmt) or 0)
+
 
 class ResearchCaseTransitionError(RuntimeError):
     """Raised when ``save_transition`` cannot apply a CAS update."""
@@ -1558,6 +1578,26 @@ class SqlAlchemyResearchRunRepository:
             .limit(1)
         ).first()
         return _row_to_research_run(row) if row is not None else None
+
+    def list_recent(self, *, limit: int = 50, offset: int = 0) -> list[ResearchRun]:
+        if limit < 1:
+            raise ValueError(f"limit must be >= 1, got {limit}")
+        if offset < 0:
+            raise ValueError(f"offset must be >= 0, got {offset}")
+        rows = self._session.scalars(
+            select(ResearchRunRow)
+            .order_by(
+                ResearchRunRow.created_at.desc(),
+                ResearchRunRow.run_id.asc(),
+            )
+            .limit(limit)
+            .offset(offset)
+        ).all()
+        return [_row_to_research_run(row) for row in rows]
+
+    def count_all(self) -> int:
+        stmt = select(func.count(ResearchRunRow.run_id))
+        return int(self._session.scalar(stmt) or 0)
 
 
 class ResearchRunTransitionError(RuntimeError):

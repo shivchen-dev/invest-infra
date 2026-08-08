@@ -12,8 +12,12 @@ from invest_storage.repositories import (
     SqlAlchemyCandidatePoolRunRepository,
     SqlAlchemyDailyBarRepository,
     SqlAlchemyDataFreshnessReader,
+    SqlAlchemyEvidencePackRepository,
     SqlAlchemyInstrumentRepository,
     SqlAlchemyPipelineRunRepository,
+    SqlAlchemyResearchCaseRepository,
+    SqlAlchemyResearchResultRepository,
+    SqlAlchemyResearchRunRepository,
 )
 from sqlalchemy import Engine
 from sqlalchemy.orm import Session, sessionmaker
@@ -22,6 +26,7 @@ from invest_api.application.candidate_pool import CandidatePoolQueryService
 from invest_api.application.data_freshness import DataFreshnessQueryService
 from invest_api.application.etf import EtfQueryService
 from invest_api.application.pipeline_runs import PipelineRunQueryService
+from invest_api.application.research import ResearchQueryService
 from invest_api.config import get_settings
 
 
@@ -114,6 +119,17 @@ def get_data_freshness_query_service(
     return DataFreshnessQueryService(SqlAlchemyDataFreshnessReader(session))
 
 
+def get_research_query_service(
+    session: Annotated[Session, Depends(get_db_session)],
+) -> ResearchQueryService:
+    return ResearchQueryService(
+        case_repository=SqlAlchemyResearchCaseRepository(session),
+        evidence_repository=SqlAlchemyEvidencePackRepository(session),
+        run_repository=SqlAlchemyResearchRunRepository(session),
+        result_repository=SqlAlchemyResearchResultRepository(session),
+    )
+
+
 __all__ = [
     "get_candidate_pool_query_service",
     "get_data_freshness_query_service",
@@ -121,5 +137,6 @@ __all__ = [
     "get_etf_query_service",
     "get_engine",
     "get_pipeline_run_query_service",
+    "get_research_query_service",
     "get_session_factory",
 ]
