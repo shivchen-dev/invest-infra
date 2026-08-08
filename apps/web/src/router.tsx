@@ -23,6 +23,7 @@ interface MatchResult {
 interface RouterContextValue {
   match: MatchResult | null;
   push: (to: string) => void;
+  outlet: ReactNode;
 }
 
 const RouterContext = createContext<RouterContextValue | null>(null);
@@ -65,9 +66,10 @@ function readInitialPathname(): string {
 interface RouterProps {
   routes: RouteDef[];
   fallback?: ReactNode;
+  children?: ReactNode;
 }
 
-export function Router({ routes, fallback }: RouterProps) {
+export function Router({ routes, fallback, children }: RouterProps) {
   const [pathname, setPathname] = useState<string>(readInitialPathname);
 
   useEffect(() => {
@@ -99,15 +101,23 @@ export function Router({ routes, fallback }: RouterProps) {
   }, [routes, pathname, fallback]);
 
   const contextValue = useMemo<RouterContextValue>(
-    () => ({ match, push }),
-    [match, push],
+    () => ({ match, push, outlet: element }),
+    [match, push, element],
   );
 
   return (
     <RouterContext.Provider value={contextValue}>
-      {element}
+      {children ?? element}
     </RouterContext.Provider>
   );
+}
+
+export function RouterOutlet() {
+  const ctx = useContext(RouterContext);
+  if (!ctx) {
+    throw new Error("RouterOutlet must be used inside <Router>");
+  }
+  return <>{ctx.outlet}</>;
 }
 
 export function useNavigate(): (to: string) => void {

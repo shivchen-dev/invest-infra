@@ -4,7 +4,9 @@ import { DashboardPage } from "./pages/DashboardPage";
 import { EtfDetailPage } from "./pages/EtfDetailPage";
 import { OperationsPage } from "./pages/OperationsPage";
 import { PlaceholderPage } from "./pages/PlaceholderPage";
-import { Router } from "./router";
+import { ResearchCasePage } from "./pages/ResearchCasePage";
+import { ResearchHistoryPage } from "./pages/ResearchHistoryPage";
+import { Router, RouterOutlet } from "./router";
 
 const ROUTES = [
   { path: "/dashboard", element: <DashboardPage /> },
@@ -20,6 +22,14 @@ const ROUTES = [
     path: "/operations",
     element: <OperationsPage />,
   },
+  {
+    path: "/research/history",
+    element: <ResearchHistoryPage />,
+  },
+  {
+    path: "/research/:caseId",
+    element: <ResearchCasePage />,
+  },
 ];
 
 const NOT_FOUND = (
@@ -31,8 +41,10 @@ const NOT_FOUND = (
 
 export function App() {
   return (
-    <AppShell>
-      <Router routes={ROUTES} fallback={NOT_FOUND} />
-    </AppShell>
+    <Router routes={ROUTES} fallback={NOT_FOUND}>
+      <AppShell>
+        <RouterOutlet />
+      </AppShell>
+    </Router>
   );
 }
