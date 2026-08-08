@@ -1,9 +1,9 @@
 ---
 type: Concept
 title: API overview
-description: FastAPI routers, Pydantic response shapes and the read-only endpoint surface for ETF data, candidate-pool results and diffs, personal pipeline-run status and paginated history, and data freshness, including the legacy /v1/instruments endpoint.
+description: FastAPI routers, Pydantic response shapes and the read-only endpoint surface for ETF data, candidate-pool results and diffs, personal pipeline-run status and paginated history, data freshness, the PR-7 research-case / evidence / run / result lifecycle queries, and the PR-MCP-MINIMAL Model Context Protocol server, including the legacy /v1/instruments endpoint and the architecture-governance application-service split.
 resource: /openwiki/api/overview.md
-tags: [api, fastapi, routers, pydantic, etf, candidate-pool]
+tags: [api, fastapi, routers, pydantic, etf, candidate-pool, research, mcp, application-service, governance]
 ---
 
 # API overview
@@ -26,23 +26,38 @@ routers and configures CORS via `Settings.cors_origins`.
 apps/api/src/invest_api/
 ├── main.py                # FastAPI app + middleware + router mount
 ├── routes.py              # legacy /health + /v1/instruments
-├── dependencies.py        # get_db_session, get_engine, get_session_factory
+├── dependencies.py        # get_db_session, get_engine, get_session_factory,
+│                          # plus per-domain query-service factories
 ├── config.py              # pydantic-settings Settings
 ├── routers/
-│   ├── etf.py             # PR-09 read-only ETF endpoints
-│   ├── candidate_pool.py  # candidate-pool latest + diff endpoints
+│   ├── etf.py             # PR-09 read-only ETF endpoints (thin wrappers)
+│   ├── candidate_pool.py  # candidate-pool latest + diff (thin wrappers)
 │   ├── pipeline_runs.py   # personal daily pipeline-run status + history
-│   └── data_freshness.py  # personal daily data-freshness summary
+│   ├── data_freshness.py  # personal daily data-freshness summary
+│   └── research.py        # PR-7 read-only research lifecycle queries
+├── application/
+│   ├── etf.py             # EtfQueryService
+│   ├── candidate_pool.py  # CandidatePoolQueryService
+│   ├── pipeline_runs.py   # PipelineRunQueryService
+│   ├── data_freshness.py  # DataFreshnessQueryService
+│   └── research.py        # ResearchQueryService (PR-7)
+├── mcp_server.py          # PR-MCP-MINIMAL read-only MCP server
 └── schemas/
     ├── __init__.py        # re-exports all public response shapes
     ├── common.py          # legacy HealthResponse + re-exports
     ├── etf.py             # InstrumentResponse / DailyBarResponse + paginated lists
     ├── candidate_pool.py  # latest, item and diff shapes
     ├── pipeline_runs.py   # PipelineRunResponse + PipelineRunListResponse
-    └── data_freshness.py  # DataFreshnessResponse + status vocabulary
+    ├── data_freshness.py  # DataFreshnessResponse + status vocabulary
+    └── research.py        # ResearchCase / EvidencePack / Run / Result + lists
 ```
 
+The routers stayed thin per the
+[Architecture governance §6](../../docs/ARCHITECTURE-GOVERNANCE.md) convergence:
+each one delegates to an `application/*.py` query service that owns the
+storage calls, parameter validation, and the 500-detail sanitisation.
 `apps/api/tests/` holds mock-based contract tests for every router
+and application service
 (see [Testing & operations §API tests](../testing-and-ops/overview.md#api-tests)).
 
 ## 2. Routing surface
@@ -60,6 +75,12 @@ apps/api/src/invest_api/
 | `GET /api/v1/pipeline-runs/latest` | `routers/pipeline_runs.py` | Most recent run scoped to the `personal_etf_daily_job` job key. |
 | `GET /api/v1/pipeline-runs/{run_id}` | `routers/pipeline_runs.py` | One personal daily pipeline run; missing or other-job IDs return 404. |
 | `GET /api/v1/data-freshness` | `routers/data_freshness.py` | Counts and status summary for the expected trade date, defaulting to the latest weekday. |
+| `GET /api/v1/research-cases` | `routers/research.py` | Paginated research-case history, ordered by `created_at` descending. |
+| `GET /api/v1/research-cases/{case_id}` | `routers/research.py` | Single research case; missing UUIDs return 404, malformed UUIDs return 422. |
+| `GET /api/v1/research-cases/{case_id}/evidence` | `routers/research.py` | All evidence packs bound to a case; the case lookup is performed first so a missing case still returns 404 even when packs exist for the same UUID elsewhere. |
+| `GET /api/v1/research-runs` | `routers/research.py` | Paginated research-run history, ordered by `started_at` descending and `run_id` as the deterministic tiebreaker. |
+| `GET /api/v1/research-runs/{run_id}` | `routers/research.py` | Single research run; missing UUIDs return 404, malformed UUIDs return 422. |
+| `GET /api/v1/research-runs/{run_id}/result` | `routers/research.py` | The single `ResearchResult` belonging to a succeeded run; returns 404 when the run is missing or has not yet produced a result. |
 
 All endpoints accept the `get_db_session` FastAPI dependency; tests
 override it with a `MagicMock` `Session` and patch the relevant
@@ -139,17 +160,59 @@ working.
 
 ### `schemas/__init__.py`
 
-Re-exports the ETF, candidate-pool, pipeline-run and data-freshness shapes **and** the legacy
+Re-exports the ETF, candidate-pool, pipeline-run, data-freshness **and research** shapes **and** the legacy
 `InstrumentResponse` / `InstrumentListResponse` aliases as
 `LegacyInstrumentResponse` / `LegacyInstrumentListResponse` so
 pre-PR-09 callers can import the legacy names directly
 (`from invest_api.schemas import LegacyInstrumentResponse,
 DailyBarResponse, CandidatePoolLatestResponse, CandidatePoolDiffEntry,
-PipelineRunListResponse, PipelineRunResponse`). The aliases point at
+PipelineRunListResponse, PipelineRunResponse, ResearchCaseResponse,
+EvidencePackResponse, ResearchRunResponse, ResearchResultResponse`). The aliases point at
 the same Pydantic classes that [`schemas/common.py`](#schemascommonpy)
 re-exports from `schemas/etf.py`, so the public surface is one
 definition with two names. Test code uses this surface
 (see [Testing & operations](../testing-and-ops/overview.md#api-tests)).
+
+### `schemas/research.py` (PR-7 read-only research lifecycle)
+
+The PR-7 / [ADR-0012](../../docs/adr/0012-research-lifecycle-boundary.md)
+response shapes sit alongside the ETF / candidate-pool / pipeline-run
+shapes. Every model carries a `from_domain(...)` classmethod that
+maps `invest_domain.research.*` value objects to JSON-safe fields;
+the API serialises `UUID` / `date` / `datetime` / `Decimal` /
+closed-set enums (`ResearchCaseStatus`, `ResearchRunStatus`) through
+the same project-wide Pydantic settings.
+
+- `ResearchCaseResponse` — single case header
+  (`case_id`, `instrument_id`, `as_of_date`, `question`, `horizon`,
+  `status`, `created_at`, optional `closed_at`,
+  optional `candidate_pool_run_id`).
+- `ResearchCaseListResponse` — paginated envelope used by
+  `/api/v1/research-cases` (`items`, `total`, `limit`, `offset`).
+- `EvidencePackResponse` — the rich Stage 4A evidence projection
+  (`pack_id`, nested `case` / `instrument` / `market_snapshot` /
+  `factors` / `data_quality` plus `missing_fields` / `warnings` /
+  `source_refs` / `schema_version` / `factor_set_key` /
+  `factor_set_version` / `pack_hash` / `generated_at`); used by
+  `/api/v1/research-cases/{case_id}/evidence`.
+- `ResearchRunResponse` — single research-run audit row
+  (`run_id`, `case_id`, `evidence_pack_id`, `runner_key`,
+  `playbook_key`, `status`, `attempt`, optional `started_at` /
+  `finished_at` / `error_summary`).
+- `ResearchRunListResponse` — paginated envelope used by
+  `/api/v1/research-runs` (`items`, `total`, `limit`, `offset`).
+- `ResearchResultResponse` — the immutable conclusion row bound to a
+  succeeded run (`result_id`, `run_id`, `evidence_pack_id`,
+  `conclusion`, `risks`, `evidence_ids`, `report_markdown`,
+  `model_key`, `model_version`, `playbook_version`,
+  `adapter_version`, `created_at`); used by
+  `/api/v1/research-runs/{run_id}/result`.
+
+PR-7 deliberately exposes the lifecycle as a **read-only** query
+surface; the orchestrator writes new case / run / result rows
+through [`ResearchOrchestrationService`](../../apps/pipeline/src/invest_pipeline/research_orchestration_service.py)
+on the pipeline side, so the API never accepts write traffic for
+research state.
 
 ## 4. Endpoint contracts
 
@@ -256,6 +319,96 @@ definition with two names. Test code uses this surface
 - SQLAlchemy errors become a sanitized 500 response with detail
   `Data freshness query failed`; database/driver details are not exposed.
 
+### Research lifecycle endpoints (PR-7)
+
+The PR-7 router (`routers/research.py`) is a **thin** wrapper around
+[`ResearchQueryService`](../../apps/api/src/invest_api/application/research.py).
+The application service owns every storage call, parameter validation
+and the 500-detail sanitisation, so the router never sees a
+`Session` directly — per the [architecture governance §6](../../docs/ARCHITECTURE-GOVERNANCE.md)
+convergence.
+
+- `GET /api/v1/research-cases` — query `limit` (1..100, default 50)
+  and `offset` (≥0, default 0). `ResearchQueryService.list_cases`
+  reads through `SqlAlchemyResearchCaseRepository.list_recent` plus
+  `count_all`, ordered by `created_at` descending. Returns
+  `ResearchCaseListResponse`.
+- `GET /api/v1/research-cases/{case_id}` — `case_id` is a UUID.
+  `ResearchQueryService.get_case` returns `None` when the case is
+  missing; the router turns that into a 404 with detail
+  `Research case not found`. Malformed UUIDs are 422 (FastAPI
+  validation).
+- `GET /api/v1/research-cases/{case_id}/evidence` — the
+  application service first resolves the case and returns `None` to
+  the router (which 404s) when the case does not exist, then returns
+  every `EvidencePack` row from
+  `SqlAlchemyEvidencePackRepository.list_by_case(case_id)`. Returns
+  `list[EvidencePackResponse]` — empty when the case exists but no
+  pack has been bound yet.
+- `GET /api/v1/research-runs` — query `limit` (1..100, default 50)
+  and `offset` (≥0, default 0). `ResearchQueryService.list_runs`
+  reads through `SqlAlchemyResearchRunRepository.list_recent` plus
+  `count_all`, ordered by `started_at` descending (NULLs last) with
+  `run_id` as the deterministic tiebreaker.
+- `GET /api/v1/research-runs/{run_id}` — single run detail. Missing
+  UUIDs return 404 with detail `Research run not found`; malformed
+  UUIDs are 422 (FastAPI validation). The endpoint does **not**
+  filter by `runner_key` — the read-only lifecycle surface leaves
+  runner-key authorisation to the orchestrator on the pipeline side.
+- `GET /api/v1/research-runs/{run_id}/result` — the bound
+  `ResearchResult`. The service first resolves the run (returning
+  `None` for 404) then asks
+  `SqlAlchemyResearchResultRepository.get_by_run_id(run_id)`. A run
+  that succeeded but has not yet produced a result row returns
+  404; the orchestrator's `complete_research_attempt` is the only
+  legal writer of result rows.
+
+Every storage exception is re-raised as `ResearchQueryError` and
+turned into a sanitized 500 with detail `Research query failed`;
+database / driver details are never exposed.
+
+### Application services (architecture governance §6 convergence)
+
+Per the GOV-05..GOV-07 convergence landed by the architecture
+governance sequence, every router delegates to an
+`invest_api.application.*QueryService` that owns the storage calls.
+Dependency factories receive the request-scoped SQLAlchemy `Session`,
+construct the relevant repositories, and compose the service; router
+tests override those service dependencies.
+
+- [`application/etf.py`](../../apps/api/src/invest_api/application/etf.py) —
+  `EtfQueryService` wraps instrument lookup, ETF paginated list, daily-bars
+  range query with the ADR-0006 latest-revision collapse, plus the
+  shared response-shape factory.
+- [`application/candidate_pool.py`](../../apps/api/src/invest_api/application/candidate_pool.py) —
+  `CandidatePoolQueryService` owns the published-run scan, the
+  input-snapshot resolution path, the `get_many_by_ids` instrument
+  display fallback, and the included-only diff logic shared between
+  `/latest/diff` and `/{run_id}/diff`.
+- [`application/data_freshness.py`](../../apps/api/src/invest_api/application/data_freshness.py) —
+  `DataFreshnessQueryService` composes the snapshot / personal-universe
+  / daily-bar / published-candidate / personal-job audit counts that
+  the freshness handler returns.
+- [`application/pipeline_runs.py`](../../apps/api/src/invest_api/application/pipeline_runs.py) —
+  `PipelineRunQueryService` is the contract for the personal-job
+  filters (`job_key="personal_etf_daily_job"`), the
+  `count_by_job_key` exact count, and the latest-by-job scan.
+- [`application/research.py`](../../apps/api/src/invest_api/application/research.py) —
+  the PR-7 service described above. The service depends on four
+  structural Protocols (`ResearchCaseReader`,
+  `ResearchEvidenceReader`, `ResearchRunReader`,
+  `ResearchResultReader`); the `SqlAlchemy*Repository` classes from
+  [`packages/storage/.../repositories.py`](../storage/overview.md) are
+  the canonical implementations.
+
+The application services live under `apps/api/src/invest_api/application/`
+so the API depends only on `domain` + `storage`, but the storage calls
+are no longer inlined in router code; that rule is enforced by
+`scripts/check_architecture.py` and is the read-side companion of
+[ADR-0012](../../docs/adr/0012-research-lifecycle-boundary.md)'s
+"research lifecycle queries in API, orchestration in pipeline"
+split.
+
 ## 5. Configuration
 
 `invest_api.config.Settings` (pydantic-settings, `extra="ignore"`):
@@ -282,3 +435,60 @@ The router resolves instruments through the same
 runs them through the unified `InstrumentResponse.from_instrument`
 factory — there is a single construction path for `Instrument`
 domain objects across both endpoints.
+
+## 7. Read-only MCP server (PR-MCP-MINIMAL)
+
+[`invest_api/mcp_server.py`](../../apps/api/src/invest_api/mcp_server.py)
+ships a **read-only** Model Context Protocol (MCP) server over
+`stdio`. It reuses the REST application services and database-session
+factory, but it has no HTTP/CORS surface. `FastMCP` is provided by
+the external `mcp` package.
+
+Tools exposed (backed by the same application-service operations as
+the corresponding REST endpoints):
+
+| MCP tool | Corresponding REST endpoint |
+|---|---|
+| `get_data_freshness(expected_trade_date?)` | `GET /api/v1/data-freshness` |
+| `get_latest_candidate_pool()` | `GET /api/v1/candidate-pool/latest` |
+| `get_candidate_pool_diff(run_id?)` | `GET /api/v1/candidate-pool/{run_id}/diff` (and `/latest/diff` when omitted) |
+| `get_etf_daily_bars(instrument_id, start_date, end_date, limit=100, offset=0)` | `GET /api/v1/etf/daily-bars` |
+
+The MCP server **does not** expose a tool for the `/api/v1/research*`
+endpoints: PR-MCP-MINIMAL intentionally scopes the MCP surface to
+the read-only deterministic contracts already covered by the REST
+API. Adding research-lifecycle tools would couple the MCP transport
+to the orchestrator's case / run / result writes, which ADR-0012
+keeps inside the pipeline; a follow-up PR can extend the surface
+once ADR-0012's read-only API is reopened.
+
+The server's `_json_safe(...)` helper converts `UUID` / `date` /
+`datetime` / `Decimal` / closed-set enums / dataclasses / mappings
+to a JSON-serialisable form so the MCP transport never has to know
+about the domain models. Storage exceptions are sanitized to the
+single detail `Query failed`; arguments are pre-validated (`UUID`,
+ISO date, page bounds, reversed date range) before the gateway runs.
+
+`create_tool_server(ReadOnlyGateway)` returns a `FastMCP` instance
+pre-bound to the four tool implementations; the module-level
+`mcp` object is the STDIO entrypoint and is what
+`python -m invest_api.mcp_server` runs.
+
+## 8. Backlog
+
+- **Research API writes.** PR-7 is read-only by design
+  ([ADR-0012](../../docs/adr/0012-research-lifecycle-boundary.md)
+  freezes lifecycle queries in the API); the
+  `/api/v1/research/*` surface widens once the orchestrator's
+  write path stabilises.
+- **`etf_profiles` and `etf_profile_fields` API.** The pipeline-side
+  service persists the DC-2 rows through `uow.etf_profiles` /
+  `uow.etf_profile_fields` but no REST or MCP endpoint surfaces
+  them yet.
+- **Remaining read-only operational runbooks.** The checked-in
+  [`cifang-auth-failure.md`](../../docs/runbooks/cifang-auth-failure.md)
+  and [`reprocess-trade-date.md`](../../docs/runbooks/reprocess-trade-date.md)
+  cover authentication recovery and single-date replay; the
+  M0-CODING-BRIEF still calls for `daily-bars-missing`,
+  `reject-candidate-pool`, and `database-restore` runbooks,
+  which are not yet checked in.

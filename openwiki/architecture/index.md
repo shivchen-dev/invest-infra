@@ -6,4 +6,4 @@ description: "Files and subdirectories in Architecture."
 
 # Files
 
-- [Architecture overview](overview.md) - Modular-monolith topology, layered rules, four PostgreSQL schemas and ADR index for invest-infra (including ADR-0011 CifangQuant Phase 1 first + second increments, the DC-2 ETF profile framework, and the Stage 4A evidence / context separation). Explains why the codebase stays inside independent Python packages and how the layers interact.
+- [Architecture overview](overview.md) - Modular-monolith topology, layered rules, four PostgreSQL schemas and ADR index for invest-infra (including ADR-0011 CifangQuant Phase 1 first + second increments, the DC-2 ETF profile framework, the Stage 4A evidence / context separation, the architecture-governance convergence that moved ETF / candidate-pool / data-freshness / pipeline-runs / research queries behind application services, and ADR-0012 that freezes the evidence-driven Research lifecycle boundary between Domain / Pipeline / Storage). Explains why the codebase stays inside independent Python packages and how the layers interact.

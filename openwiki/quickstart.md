@@ -1,9 +1,9 @@
 ---
 type: Reference
 title: OpenWiki Quickstart
-description: Entry point for the invest-infra OpenWiki knowledge base. Describes the modular-monolith layout, links every major concept page, and summarizes local startup, migrations, personal daily scheduling and replay/backfill operations, testing, opt-in CifangQuant / Tushare validation, the DC-2 ETF profile and Stage 4A research context slices, and the centralized provider credential store.
+description: Entry point for the invest-infra OpenWiki knowledge base. Describes the modular-monolith layout, links every major concept page, and summarizes local startup, migrations, personal daily scheduling and replay/backfill operations, testing, opt-in CifangQuant / Tushare / JiuwenSwarm validation, the DC-2 ETF profile and Stage 4A evidence / context slices, the ADR-0012 evidence-driven Research lifecycle (PR-7 API + JiuwenSwarm adapter + orchestration service), the PR-MCP-MINIMAL read-only MCP server, the DC-3 exposure collection slice, and the centralized provider credential store.
 resource: /openwiki/quickstart.md
-tags: [quickstart, navigation, invest-infra, etf-profile, research-context]
+tags: [quickstart, navigation, invest-infra, etf-profile, research-context, research-lifecycle, jiuwenswarm, mcp, exposure, governance]
 ---
 
 # OpenWiki quickstart — invest-infra v2
@@ -30,7 +30,7 @@ own `pyproject.toml`; the application projects maintain their own
 | `packages/domain` | Pure domain models, value objects, ports — SQLAlchemy- and FastAPI-free. |
 | `packages/storage` | SQLAlchemy 2 ORM models, repositories, `UnitOfWork`, and the `SessionProvider` protocol. |
 | `scripts/check_architecture.py` | Custom AST-based boundary checker. |
-| `docs/adr/0001..0010` | Accepted architecture decisions; ADR-0011 is the proposed CifangQuant increment (see [Architecture overview](architecture/overview.md)). |
+| `docs/adr/0001..0012` | Architecture decisions; ADR-0011 remains Proposed, while ADR-0012 freezes the evidence-driven Research lifecycle boundary (see [Architecture overview](architecture/overview.md)). |
 
 The runtime topology is defined by [`/compose.yaml`](../compose.yaml):
 
@@ -48,25 +48,40 @@ have independent `pyproject.toml` / lockfiles / Docker images / lifecycle.
 Read these pages in order:
 
 1. [Architecture overview](architecture/overview.md) — modular monolith
-   layers, four PostgreSQL schemas, layered rules and ADR index.
+   layers, four PostgreSQL schemas, layered rules, ADR index (now
+   including ADR-0012 for the Research lifecycle boundary) and the
+   architecture-governance baseline.
 2. [Migrations overview](migrations/overview.md) — how
-   `apps/migrations` owns the schema and the seven-revision chain.
+   `apps/migrations` owns the schema and the fourteen-revision chain
+   (now including `0011` DC-3 exposure, `0012` research cases,
+   `0013` evidence-pack case FK and `0014` research runs).
 3. [Domain overview](domain/overview.md) — bounded contexts and the
    canonical hashing scheme (now including the DC-2 `etf_profile`
-   context and the Stage 4A `research.context` vocabulary).
+   context, the Stage 4A `research.context` vocabulary, the
+   evidence-driven `research.{case,run,runner}` lifecycle, the
+   `exposure` bounded context, and the consolidated
+   `analytics.factor_calculators`).
 4. [Candidate pool](domain/candidate-pool.md) — the pure-function
    calculator and the state machine that governs one calculation.
 5. [Storage overview](storage/overview.md) — repositories, the
    `UnitOfWork` and the three-layer Provider evidence model (now
    including the DC-2 `etf_profiles` / `etf_profile_fields`
-   repositories and the `research_context_packs` repository).
+   repositories, the `research_context_packs` / `research_cases` /
+   `research_runs` / `research_results` repositories, the
+   `evidence_pack_codec`, the exposure repositories, and the
+   `research_evidence_packs.research_case_id` FK from `20260807_0013`).
 6. [API overview](api/overview.md) — FastAPI routers (legacy + ETF +
-   candidate-pool latest/diff + pipeline-run status/history + data freshness),
-   Pydantic response shapes.
+   candidate-pool latest/diff + pipeline-run status/history + data
+   freshness + the PR-7 research-case / evidence / run / result
+   lifecycle queries + the PR-MCP-MINIMAL read-only MCP server),
+   Pydantic response shapes, the architecture-governance
+   application-service split.
 7. [Pipeline overview](pipeline/overview.md) — Dagster `Definitions`, the
-   `etf_*` assets, adapter boundaries (now including Tushare and the
-   centralized credential store), the DC-2 ETF Profile and research
-   context builder services, the declarative provider catalog,
+   `etf_*` assets, adapter boundaries (now including Tushare, the
+   JiuwenSwarm research-runner adapter and the gated
+   `exposure` adapters), the DC-2 ETF Profile and research context
+   builder services, the PR-7 `research_orchestration_service`,
+   the DC-3 real-exposure collection, the declarative provider catalog,
    guarded personal scheduling, and replay/backfill operations.
 8. [Testing & operations](testing-and-ops/overview.md) — CI jobs, the
    migration-chain AST gate, mock vs integration tests, the PostgreSQL e2e,
@@ -266,29 +281,49 @@ helper (default root `/home/claw/invest-secrets`, override via
 `INVEST_PIPELINE_SECRETS_DIR`); the explicit `INVEST_PIPELINE_*_TOKEN`
 env vars remain the highest-priority override.
 
-The `domain.research` bounded context defines the Stage 4A evidence
-contract (`EvidencePack` + 8-factor v1.0.0 set + canonical
-hashing); the new `domain.research.context` module adds the
-`ResearchContextPack` / `ContextItem` / `ContextValueType`
-vocabulary that the evidence / context separation plan introduces.
-`domain.candidate_pool.{universe,v1_adapter}` provide the pure
-dynamic ETF universe qualification and the V1→V2 pure adapter.
-`domain.etf_profile` is the DC-2 evidence framework: `EtfProfile`
-+ `FieldEvidence` / `FieldKey` / `FieldValueType` /
-`FieldEvidenceSource` (PR-ETF-PROFILE-01) and the `ProfileResolver`
-+ `ResolutionStatus` / `ResolvedField` (PR-ETF-PROFILE-03). The
-pipeline-side `etf_profiles` service runs the PR-02 three-layer
-evidence write for the AkShare profile snapshot, persists
-`FieldEvidence` rows through `uow.etf_profile_fields`, and
-upserts the canonical `core.etf_profiles` row. The
-`etf_profile_context` builder projects the resolved evidence into
-the `etf_profile` `ResearchContextPack` (plan §"Task C3") and
-persists the pack through `uow.research_context_packs`. Migrations
-`20260804_0008_etf_profiles` /
-`20260805_0009_etf_profile_fields` /
-`20260805_0010_research_context_packs` add the matching tables;
-the AST migration-chain gate still expects a single head at
-`20260805_0010` and round-trips `upgrade head → downgrade base →
+ADR-0012 freezes the evidence-driven Research lifecycle:
+`ResearchCase` (binds an instrument and optional Candidate Pool run)
+→ immutable `EvidencePack` → `ResearchRun` (versioned runner /
+playbook, attempts, external session identity) → `ResearchResult`
+(only when a run has succeeded, references only valid evidence IDs).
+The pipeline ships the `JiuwenSwarmResearchRunner` adapter behind
+the domain `ResearchRunner` port ([Pipeline overview §5e](pipeline/overview.md#5e-jiuwenswarm-research-runner-adapter-pr-6-slice-1-3))
+plus the `research_orchestration_service` ([Pipeline overview §5g](pipeline/overview.md#5g-research-orchestration-service-pr-7--adr-0012))
+that drives one attempt through the storage `UnitOfWork` and
+persists `analytics.research_cases` / `research_evidence_packs` /
+`research_runs` / `research_results`. The read-only `ResearchQueryService`
+exposes the lifecycle through the API ([API overview §1](api/overview.md#1-modules))
+at `/api/v1/research-cases`, `/api/v1/research-runs`, and the matching
+evidence / result detail endpoints (see [API overview §2](api/overview.md#2-routing-surface)
+for the six PR-7 endpoints). The PR-MCP-MINIMAL read-only MCP
+server ([API overview §7](api/overview.md#7-read-only-mcp-server-pr-mcp-minimal))
+exposes `get_data_freshness` / `get_latest_candidate_pool` /
+`get_candidate_pool_diff` / `get_etf_daily_bars` through the FastMCP
+transport so research agents query the API surface instead of
+reaching into PostgreSQL directly.
+
+The architecture-governance convergence ([Architecture overview §6](architecture/overview.md#6-architecture-governance-convergence))
+moved every read-only API use-case behind a dedicated
+`invest_api.application.*` service (`EtfQueryService`,
+`CandidatePoolQueryService`, `PipelineRunQueryService`,
+`DataFreshnessQueryService`, `ResearchQueryService`) so the
+routers are thin wrappers and SQLAlchemy access lives in one place.
+New data additions are gated by the
+[data admission checklist](../docs/validation/data-admission-checklist.md)
+and the consolidated `domain.analytics.factor_calculators` owns
+the deterministic factor calculation (GOV-03). DC-3 exposure
+collection (CSIndex `report_asset_detail` / AkShare
+`fund_portfolio_hold_em` mapped onto `IndexProfile` /
+`IndexConstituentSnapshot` / `EtfIndexMapping` /
+`EtfHoldingSnapshot`) lands in
+[`apps/pipeline/src/invest_pipeline/exposure_service.py`](../apps/pipeline/src/invest_pipeline/exposure_service.py)
+with the fixture / real-exposure driver pairing mirroring the
+ETF collection slice. Migration `20260806_0011_dc3_exposure`
+adds the matching tables; `20260807_0012_research_cases`,
+`20260807_0013_research_evidence_packs_case_fk` and
+`20260807_0014_research_runs` anchor the research lifecycle.
+The AST migration-chain gate now expects a single head at
+`20260807_0014` and round-trips `upgrade head → downgrade base →
 upgrade head` end-to-end.
 
 ## 7. Web data workbench
@@ -333,10 +368,24 @@ pnpm build           # production bundle
 - **M4 candidate-pool algorithm.** ADR-0008 calls for scored rules,
   rolling-window liquidity and price-quality rules, and risk scoring;
   only the PR-08 minimum calculator (no-data / suspended / invalid_price
-  / low_volume / low_amount) exists today.
+  / low_volume / low_amount) exists today, plus the PR-5 declarative
+  `candidate_pool.{baseline,institutional,custom_strategy}` channels
+  the architecture-governance slice added.
+- **JiuwenSwarm go-live.** The
+  [JiuwenSwarm adapter](pipeline/overview.md#5e-jiuwenswarm-research-runner-adapter-pr-6-slice-1-3)
+  is wired and tested against an in-memory fake runner; the
+  Slice 1 / 2 / 3 boundaries hold, but production traffic still
+  depends on a real helper CLI binary and ADR-0012 ongoing
+  graduation criteria.
 - **Remaining operational runbooks.** The checked-in
   [`cifang-auth-failure.md`](../docs/runbooks/cifang-auth-failure.md) and
   [`reprocess-trade-date.md`](../docs/runbooks/reprocess-trade-date.md)
   cover authentication recovery and single-date replay; the M0-CODING-BRIEF
   still calls for `daily-bars-missing`, `reject-candidate-pool`, and
   `database-restore` runbooks, which are not yet checked in.
+- **Research API write surface.** The PR-7 API exposes read-only
+  lifecycle queries (cases, runs, evidence, results). A controller
+  surface that opens new `ResearchCase` rows through HTTP, plus the
+  replay / reconciliation endpoint for
+  `ResearchOrchestrationReconciliationRequiredError`, is not part
+  of this slice.

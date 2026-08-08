@@ -1,9 +1,9 @@
 ---
 type: Concept
 title: Storage overview
-description: SQLAlchemy 2 ORM models, repositories, the SqlAlchemyUnitOfWork + SessionProvider, the three-layer Provider evidence model, the candidate-pool snapshot and job-history read contracts, the DC-2 ETF profile and per-field evidence repositories, and the Stage 4A research context pack persistence under packages/storage/src/invest_storage.
+description: SQLAlchemy 2 ORM models, repositories, the SqlAlchemyUnitOfWork + SessionProvider, Provider evidence, candidate-pool and job-history contracts, ETF profile/context persistence, research lifecycle persistence, and DC-3 index/ETF exposure repositories under packages/storage/src/invest_storage.
 resource: /openwiki/storage/overview.md
-tags: [storage, sqlalchemy, repository, unit-of-work, provider-evidence, etf-profile, research-context]
+tags: [storage, sqlalchemy, repository, unit-of-work, provider-evidence, etf-profile, research-context, research-lifecycle, exposure]
 ---
 
 # Storage overview
@@ -22,6 +22,7 @@ packages/storage/src/invest_storage/
 ├── database.py             # build_engine, session_factory, session_scope
 ├── models.py               # ORM tables (raw.* / core.* / analytics.* / ops.*)
 ├── repositories.py         # SQLAlchemy-backed repository factories
+├── evidence_pack_codec.py  # ORM ↔ EvidencePack projection (read-only research API)
 └── unit_of_work.py         # UoW Protocol + SqlAlchemyUnitOfWork + SessionProvider
 ```
 
@@ -33,14 +34,32 @@ three buckets:
   `DailyBarRow`, `InputSnapshotRow`, `CandidatePoolRunRow`,
   `CandidatePoolItemRow`, `ResearchEvidencePackRow`,
   `EtfProfileRow`, `EtfProfileFieldRow`, `ResearchContextPackRow`,
-  `ResearchContextItemRow`.
+  `ResearchContextItemRow`, `ResearchCaseRow`, `ResearchRunRow`,
+  `ResearchResultRow`, `ExposureObservationRow`, `ExposureBundleRow`,
+  `IndexIdentityRow`, `EtfIndexMappingRow`, `IndexProfileRow`,
+  `IndexConstituentSnapshotRow`, `EtfHoldingSnapshotRow`.
 - **Repositories and DTOs.** `SqlAlchemy*Repository` classes plus the
   `New*` and `Stored*` dataclasses that shape their inputs and outputs.
+  The PR-7 + DC-3 + ADR-0012 persistence slices add
+  `SqlAlchemyResearchCaseRepository`,
+  `SqlAlchemyResearchRunRepository`,
+  `SqlAlchemyResearchResultRepository`,
+  `SqlAlchemyExposureObservationRepository`,
+  `SqlAlchemyExposureBundleRepository`,
+  `SqlAlchemyIndexIdentityRepository`,
+  `SqlAlchemyIndexProfileRepository`,
+  `SqlAlchemyIndexConstituentSnapshotRepository`,
+  `SqlAlchemyEtfIndexMappingRepository`,
+  `SqlAlchemyEtfHoldingSnapshotRepository`.
 - **Unit of Work.** `UnitOfWork` (Protocol), `SqlAlchemyUnitOfWork`
   (impl), `SessionProvider` (Protocol), and the per-collection port
   Protocols (`InstrumentRepositoryPort`, `DailyBarRepositoryPort`,
   `EtfProfileRepositoryPort`, `EtfProfileFieldRepositoryPort`,
-  `ResearchContextPackRepositoryPort`, …).
+  `ResearchContextPackRepositoryPort`,
+  `ResearchCaseRepositoryPort`,
+  `ResearchRunRepositoryPort`,
+  `ResearchResultRepositoryPort`,
+  `IndexIdentityRepositoryPort`, …).
 
 ## 2. Three-layer Provider evidence model
 
@@ -105,6 +124,41 @@ Examples:
   (Stage 4A evidence / context separation; persists
   `ResearchContextPack` together with its child
   `ResearchContextItem` rows inside a single `UnitOfWork`).
+- `SqlAlchemyResearchCaseRepository`: `add`, `get`,
+  `list_by_instrument`, `list_recent`, `count_all`,
+  `save_transition` (PR-7 / ADR-0012; persists the `ResearchCase`
+  lifecycle and exposes the read-side `list_recent` /
+  `count_all` page used by
+  [`/api/v1/research-cases`](../api/overview.md#routing-surface)).
+- `SqlAlchemyResearchRunRepository`: `add`, `get`, `list_by_case`,
+  `save_transition`, `bind_external_identity`,
+  `lookup_by_external_session_id`, `list_recent`, and `count_all`.
+  Status transitions use a compare-and-swap update; external session
+  identity is protected by a partial unique index.
+- `SqlAlchemyResearchResultRepository`: `add`, `get_by_id`, and
+  `get_by_run_id`; the database permits one immutable result per run.
+- `SqlAlchemyEvidencePackRepository`: bind-side reader used by
+  the research router's `/api/v1/research-cases/{case_id}/evidence`
+  endpoint (`list_by_case(case_id)`). The persistence path that
+  creates `analytics.research_evidence_packs` rows lives on the
+  pipeline side and the case-id FK added by migration
+  `20260807_0013` makes the case-anchored filter a single indexed
+  read.
+- `SqlAlchemyExposureObservationRepository`,
+  `SqlAlchemyExposureBundleRepository`,
+  `SqlAlchemyIndexIdentityRepository` (DC-3 / migration
+  `20260806_0011_dc3_exposure`): persist CSIndex index constituents
+  and AkShare `fund_portfolio_hold_em` ETF holdings. Bundles are
+  deduped on `content_hash`; observations on
+  `(instrument_id, index_code, as_of_date, provenance.revision)`.
+- `SqlAlchemyIndexProfileRepository`,
+  `SqlAlchemyIndexConstituentSnapshotRepository`,
+  `SqlAlchemyEtfIndexMappingRepository`,
+  `SqlAlchemyEtfHoldingSnapshotRepository` (the index-level
+  half of the exposure bounded context): the bounded `IndexProfile`
+  metadata, the bounded `IndexConstituentSnapshot` per date, the
+  date-bounded `EtfIndexMapping`, and the per-ETF
+  `EtfHoldingSnapshot` for the reporting period.
 - `InputSnapshotRepository`: `add`, `get_by_date_and_hash`,
   `list_by_date`.
 
@@ -115,7 +169,7 @@ individual session handles.
 
 `CandidatePoolRunRow.input_snapshot_id` is a non-null foreign key to
 `analytics.input_snapshots.id`, named `fk_cpool_runs_snapshot_id`. The
-Alembic [migration](../migrations/overview.md#the-six-revision-chain)
+Alembic [migration](../migrations/overview.md#the-fourteen-revision-chain)
 adds the same constraint, so a persisted candidate-pool run cannot point
 at a missing input snapshot. This storage invariant backs the
 [Candidate pool input-snapshot binding](../domain/candidate-pool.md#input-snapshot-binding)
@@ -150,12 +204,16 @@ CLI and the API rely on:
 
 `SqlAlchemyUnitOfWork`:
 
-- Owns a single SQLAlchemy `Session` plus twelve lazily-built repository
+- Owns a single SQLAlchemy `Session` plus twenty-one lazily-built repository
   properties: `instruments`, `input_snapshot_repository`,
   `provider_requests`, `provider_attempts`, `provider_batches`,
   `pipeline_runs`, `candidate_pool_runs`, `candidate_pool_items`,
   `daily_bars`, `etf_profiles`, `etf_profile_fields`,
-  `research_context_packs`.
+  `research_context_packs`, `research_cases`, `research_evidence_packs`,
+  `research_runs`, `research_results`, `index_identities`,
+  `index_profiles`, `index_constituent_snapshots`, `etf_index_mappings`,
+  `etf_holding_snapshots`. These are the complete public repository
+  properties; the UoW does not expose separate `exposure_*` aliases.
 - Is a context manager: `with uow:` enters, commits on clean exit,
   rolls back on exception, and always closes the session.
 - Exposes a `commit()` / `rollback()` pair (mirroring `Session`) but
@@ -183,7 +241,10 @@ SQLAlchemy classes above.
 | `core.latest_daily_bars` | View maintained by the database (revision desc row_number). | New snapshot builders (NOT for replay). |
 | `analytics.input_snapshots` | `etf_input_snapshot` asset + `InputSnapshotRepository.add`. | `/api/v1/candidate-pool/latest` (for `content_hash`). |
 | `analytics.candidate_pool_runs` / `_items` | `personal_candidate_pool` via `candidate_pool_service.calculate_and_publish_candidate_pool`, inside one `UnitOfWork`. | `/api/v1/candidate-pool/latest` and the candidate-pool diff endpoints. |
-| `analytics.research_evidence_packs` | Stage 4A research evidence persistence (migration `20260803_0007`). The ORM class `ResearchEvidencePackRow` is defined in `models.py` but is **not** yet re-exported from `invest_storage.__init__`; no `SqlAlchemy*Repository`, no Unit-of-Work property, and no FastAPI router write or read it in this slice. | No API surface; the table is in place for a future persistence slice. |
+| `analytics.research_evidence_packs` | Stage 4A research evidence persistence (migration `20260803_0007`), with the indexed nullable `research_case_id` FK added by migration `20260807_0013`. `SqlAlchemyEvidencePackRepository` is exposed as `uow.research_evidence_packs`. | `/api/v1/research-cases/{case_id}/evidence`. |
+| `analytics.research_cases` | Migration `20260807_0012_research_cases`. Stores the case ID, instrument, as-of date, question, horizon, lifecycle status, timestamps, and optional candidate-pool run binding. | `/api/v1/research-cases`, `/api/v1/research-cases/{case_id}`. |
+| `analytics.research_runs` / `analytics.research_results` | Migration `20260807_0014_research_runs`. Runs carry case/evidence bindings, runner/playbook keys, attempt, state, timestamps and optional external identities; results are unique by `run_id`. | `/api/v1/research-runs`, `/api/v1/research-runs/{run_id}`, `/api/v1/research-runs/{run_id}/result`. |
+| `core.indexes`, `core.index_profiles`, `core.index_constituent_snapshots`, `core.index_constituents`, `core.etf_index_mappings`, `core.etf_holding_snapshots`, `core.etf_holdings` | DC-3 migration `20260806_0011_dc3_exposure`; pipeline exposure services persist index metadata, constituent snapshots, ETF/index mappings and ETF holdings through the matching UoW repositories. | No API surface yet. |
 | `core.etf_profiles` | DC-2 `etf_profiles` service (migration `20260804_0008_etf_profiles`). One row per `core.instruments` (instrument_id is both PK and FK), carrying the canonical ETF static metadata (`manager` / `benchmark_index` / `category` / `inception_date` / `fund_type` / `management_fee` / `custody_fee` / `aum` / `shares`). | No API surface yet; the table is the persistence target of `SqlAlchemyEtfProfileRepository.upsert`. |
 | `analytics.etf_profile_fields` | PR-ETF-PROFILE-04 `etf_profile_fields` persistence (migration `20260805_0009_etf_profile_fields`). One row per `FieldEvidence` observation, idempotent on `content_hash`, with discriminated `field_value_text` / `field_value_numeric` / `field_value_date` columns plus source provenance and `(instrument_id, field_key)` index. | No API surface yet; the resolver reads through `SqlAlchemyEtfProfileFieldRepository.get_by_instrument_field`. |
 | `analytics.research_context_packs` + `analytics.research_context_items` | Stage 4A evidence / context separation (migration `20260805_0010_research_context_packs`). One pack per `(instrument_id, context_version)`; child items carry the per-field `ContextItem` rows built by the pure `build_etf_profile_context_pack` builder. | No API surface yet; the tables are the persistence target of `SqlAlchemyResearchContextPackRepository` plus the child `ResearchContextItemRow` cascade. |

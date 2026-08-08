@@ -1,9 +1,9 @@
 ---
 type: Concept
 title: Architecture overview
-description: Modular-monolith topology, layered rules, four PostgreSQL schemas and ADR index for invest-infra (including ADR-0011 CifangQuant Phase 1 first + second increments, the DC-2 ETF profile framework, and the Stage 4A evidence / context separation). Explains why the codebase stays inside independent Python packages and how the layers interact.
+description: Modular-monolith topology, layered rules, four PostgreSQL schemas and ADR index for invest-infra (including ADR-0011 CifangQuant Phase 1 first + second increments, the DC-2 ETF profile framework, the Stage 4A evidence / context separation, the architecture-governance convergence that moved ETF / candidate-pool / data-freshness / pipeline-runs / research queries behind application services, and ADR-0012 that freezes the evidence-driven Research lifecycle boundary between Domain / Pipeline / Storage). Explains why the codebase stays inside independent Python packages and how the layers interact.
 resource: /openwiki/architecture/overview.md
-tags: [architecture, layering, schemas, adr, cifang, tushare, etf-profile, research-context]
+tags: [architecture, layering, schemas, adr, cifang, tushare, etf-profile, research-context, research-lifecycle, governance, mcp, exposure]
 ---
 
 # Architecture overview
@@ -120,7 +120,7 @@ import-graph scan and a Testcontainers-backed integration suite.
 
 ## 5. Architecture decision records
 
-All eleven ADRs are in [`/docs/adr/`](../../docs/adr/):
+All twelve ADRs are in [`/docs/adr/`](../../docs/adr/):
 
 - [ADR-0001 — Greenfield modular monolith](../../docs/adr/0001-greenfield-modular-monolith.md)
 - [ADR-0002 — Postgres-first](../../docs/adr/0002-postgres-first.md)
@@ -133,14 +133,48 @@ All eleven ADRs are in [`/docs/adr/`](../../docs/adr/):
 - [ADR-0009 — Python core dependency baseline](../../docs/adr/0009-python-core-dependency-baseline.md) (3.12.x, `<3.13`)
 - [ADR-0010 — Production deployment / secrets / backup recovery](../../docs/adr/0010-production-deployment-secrets-backup-recovery.md)
 - [ADR-0011 — CifangQuant primary ETF provider (Phase 1 first + second increments)](../../docs/adr/0011-cifangquant-primary-etf-provider.md) (Status: Proposed; the adapter is wired but disabled by default and remains gated on O-1 / O-3 / O-4 for production use)
+- [ADR-0012 — Research lifecycle and AI execution boundary](../../docs/adr/0012-research-lifecycle-boundary.md) (Accepted 2026-08-07; freezes the `ResearchCase → EvidencePack → ResearchRun → ResearchResult` chain, the immutable evidence-vs-Result separation, and the versioned `ResearchRunner` / playbook boundary implemented by the JiuwenSwarm adapter)
 
 The underlying planning documents live under
 [`/docs/plan/`](../../docs/plan/) — the current
-[`invest-infra-stage4a-merged-implementation-plan-v1.1.md`](../../docs/plan/invest-infra-stage4a-merged-implementation-plan-v1.1.md)
+[`invest-infra-evidence-driven-research-lifecycle-implementation-plan.md`](../../docs/plan/invest-infra-evidence-driven-research-lifecycle-implementation-plan.md)
 and
-[`invest-infra-v2-all-data-sources-integration-plan.md`](../../docs/plan/invest-infra-v2-all-data-sources-integration-plan.md)
+[`invest-infra-stage4a-merged-implementation-plan-v1.1.md`](../../docs/plan/invest-infra-stage4a-merged-implementation-plan-v1.1.md)
 plus
 [`/docs/implementation/`](../../docs/implementation/M0-DECISIONS.md)
 (M0 brief, decisions, acceptance). The pre-Stage-1 ETF vertical-slice
 and Phase 1 data-ingestion plans are archived under
-[`docs/archive/2026-08-02-stage1/`](../../docs/archive/2026-08-02-stage1/).
+[`docs/archive/2026-08-02-stage1/`](../../docs/archive/2026-08-02-stage1/);
+The architecture-governance and evidence-context-separation plans
+were subsequently closed by the convergence commits.
+
+## 6. Architecture governance convergence
+
+[`docs/ARCHITECTURE-GOVERNANCE.md`](../../docs/ARCHITECTURE-GOVERNANCE.md)
+is the authoritative Domain / Data / Repository ownership baseline
+that complements ADR-0001. As of the convergence PR series
+(`0d3ec02`, `1b281e9`, `6982a58`, `52124d9`, `e2676b8`):
+
+- Every read-only API use-case routes through a dedicated
+  `apps/api/src/invest_api/application/*.py` service
+  (`EtfQueryService`, `CandidatePoolQueryService`,
+  `PipelineRunQueryService`, `DataFreshnessQueryService`,
+  `ResearchQueryService`). Routers are thin wrappers that wire the
+  request through the FastAPI dependency, call the service, and
+  translate exceptions — they no longer construct repositories or
+  issue SQL.
+- The `apps/api/src/invest_api/dependencies.py` builders wire the
+  service-layer factories to the storage repositories; tests patch
+  `get_*_query_service` per-router and reuse the same
+  `app.include_router` entry-point.
+- `domain.analytics.factor_calculators` owns
+  `FactorCalculationResult` / `calculate_market_state_factors`
+  (GOV-03); the redundant `domain.research.factor_calculators`
+  module was removed. The composite `ResearchRun` port, the
+  research orchestration service and the JiuwenSwarm adapter live
+  in the pipeline layer (see [Pipeline overview](../pipeline/overview.md));
+  the read-only `ResearchQueryService` lives in the API layer
+  (see [API overview](../api/overview.md)).
+- New data admissions are gated by
+  [`docs/validation/data-admission-checklist.md`](../../docs/validation/data-admission-checklist.md),
+  the canonical per-ADR / governance registry record.

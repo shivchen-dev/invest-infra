@@ -1,9 +1,9 @@
 ---
 type: Concept
 title: Testing & operations
-description: CI jobs (architecture, domain, storage unit/integration, migrations, pipeline, API, personal-daily PostgreSQL e2e, and web), the AST-based architecture and migration-chain gates, mock vs integration tests, the DC-2 / Stage 4A evidence + context unit suites, compose runtime, and the Cifang/replay/shadow-run operating procedures.
+description: CI jobs (architecture, domain, storage unit/integration, migrations, pipeline, API, personal-daily PostgreSQL e2e, and web), the AST-based architecture and migration-chain gates, mock vs integration tests, the DC-2 / Stage 4A evidence + context unit suites, the PR-6 JiuwenSwarm adapter and research orchestration unit suites, the PR-7 research API / MCP server unit suites, the DC-3 exposure collection unit suites, compose runtime, and the Cifang/replay/shadow-run operating procedures.
 resource: /openwiki/testing-and-ops/overview.md
-tags: [ci, testing, alembic, compose, openwiki, etf-profile, research-context]
+tags: [ci, testing, alembic, compose, openwiki, etf-profile, research-context, research-lifecycle, jiuwenswarm, mcp, exposure]
 ---
 
 # Testing & operations
@@ -217,6 +217,11 @@ the asset-level integration paths against fixture data:
   tests also pin best-effort `ops.pipeline_runs` lifecycle recording,
   token-scrubbed failure summaries, and the rule that audit-write
   failures do not change the job's output or exit code.
+- The DC-3 real-exposure slice is covered by
+  `test_real_exposure_service.py`,
+  `test_real_exposure_cli.py`, `test_real_exposure_asset.py`, and
+  `test_real_exposure_job.py`; the fixture exposure CLI pairs with
+  the matching DAG-asset tests and integration tests.
 - `test_daily_preflight.py` covers the ordered run/skip/fail guard
   decisions and the default-off schedule flag; the schedule remains
   manually exercised rather than reaching a real provider in CI.
@@ -238,6 +243,25 @@ the asset-level integration paths against fixture data:
   snapshot and published candidate-pool tables against PostgreSQL 16. It
   reruns the same trade date to verify no duplicate daily-bar revisions or
   natural-key candidate-pool runs, and checks the latest candidate-pool API.
+- The PR-7 research API slice adds four unit suites:
+  `test_research_endpoints.py` (the six `/api/v1/research-cases` /
+  `/api/v1/research-runs` routes plus validation), `test_research_service.py`
+  (the `ResearchQueryService` boundary with its four `Reader` Protocols),
+  `test_research_detail_serialization.py` (the `EvidencePackResponse` /
+  `ResearchCaseResponse` factory path), and `test_mcp_server.py`
+  (the PR-MCP-MINIMAL `FastMCP` tool surface). The PR-6 JiuwenSwarm
+  slice adds `test_jiuwenswarm_adapter.py` (port binding / version
+  matching / transport identity) and `test_jiuwenswarm_slice2.py`
+  (the CLI subprocess transport). `test_research_orchestration_service.py`
+  pins the `ResearchOrchestrationService` lifecycle and the
+  `(SUCCEEDED / RUNNER_FAILED / TIMEOUT_UNCERTAIN /
+  RECONCILIATION_REQUIRED)` outcome taxonomy. The DC-3 exposure
+  slice adds `test_akshare_exposure_mapper.py`,
+  `test_akshare_holding_mapper.py`, `test_akshare_client_exposure.py`,
+  `test_exposure_service.py`, and `test_exposure_cli.py` plus the
+  `test_exposure_adapters.py` / `test_exposure_mapping.py` /
+  `test_exposure_adapter.py` coverage of the gated
+  `apps/pipeline/src/invest_pipeline/adapters/exposure/` surface.
 
 ## 6. Deployment and runtime
 

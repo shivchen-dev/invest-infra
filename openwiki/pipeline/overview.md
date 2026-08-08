@@ -1,9 +1,9 @@
 ---
 type: Concept
 title: Pipeline overview
-description: Dagster assets, the guarded personal daily schedule and preflight, ETL service modules, the fixture_dev, cifang, akshare and tushare adapter boundaries, the MCP research transports, the DC-2 ETF profile collection and the Stage 4A evidence/context builders, the declarative provider_catalog and deterministic provider-routing layer, the read-only provider coverage CLI, and replay/backfill operations wired into the raw / core / analytics / ops PostgreSQL schemas.
+description: Dagster assets, the guarded personal daily schedule, ETL services, provider adapters, JiuwenSwarm research execution, MCP research transports, research orchestration, DC-3 index/ETF exposure collection, ETF profile/context builders, provider routing, and replay/backfill operations.
 resource: /openwiki/pipeline/overview.md
-tags: [pipeline, dagster, adapters, etl, fixture_dev, cifang, akshare, tushare, provider-catalog, provider-routing, coverage, historical-backfill, etf-profile, research-context]
+tags: [pipeline, dagster, adapters, etl, fixture_dev, cifang, akshare, tushare, provider-catalog, provider-routing, coverage, historical-backfill, etf-profile, research-context, jiuwenswarm, research-lifecycle, exposure]
 ---
 
 # Pipeline overview
@@ -69,9 +69,11 @@ apps/pipeline/src/invest_pipeline/
 │   │   ├── config.py      # CifangSettings (redacted, disabled by default)
 │   │   └── README.md
 │   ├── akshare/           # AkShare ETF data adapter (PR-02 + DC-2 ETF Profile)
-│   │   ├── adapter.py     # AkshareInstrumentProvider (Sina-pref + Eastmoney fallback; +fetch_etf_profile)
+│   │   ├── adapter.py     # AkshareInstrumentProvider (Sina-pref + Eastmoney fallback; +fetch_etf_profile + exposure methods)
 │   │   ├── client.py      # lazy akshare SDK resolver + per-symbol ETF calls
-│   │   ├── mapper.py      # fund_etf_fund_info_em + fund_etf_hist_em + NAV/calendar + ETF profile mappers
+│   │   ├── mapper.py      # fund_etf_fund_info_em + fund_etf_hist_em + NAV/calendar + ETF profile + holding mappers
+│   │   ├── exposure_mapper.py  # CSIndex report_asset_detail / fund_portfolio_hold_em exposure mappers (DC-3)
+│   │   ├── holding_mapper.py   # AkShare fund_portfolio_hold_em reported ETF holdings (DC-3)
 │   │   ├── config.py      # AkshareSettings (redacted, disabled by default, adjust="")
 │   │   └── README.md
 │   ├── tushare/           # Tushare Pro adapter (Phase 1 bounded increment)
@@ -85,17 +87,36 @@ apps/pipeline/src/invest_pipeline/
 │   │   ├── config.py      # QuickTinyMcpSettings (redacted, default base_url frozen)
 │   │   ├── models.py      # frozen response / result dataclasses
 │   │   └── README.md
-│   └── rsscast/           # RssCast MCP read-only transport (PR-04, research / index)
-│       ├── client.py      # JSON-RPC 2.0 + ETF-DailyBar-shaped tool name rejection
-│       ├── config.py      # RssCastMcpSettings (redacted, base_url NOT frozen)
-│       ├── models.py      # is_forbidden_tool_name guard
-│       └── README.md
+│   ├── rsscast/           # RssCast MCP read-only transport (PR-04, research / index)
+│   │   ├── client.py      # JSON-RPC 2.0 + ETF-DailyBar-shaped tool name rejection
+│   │   ├── config.py      # RssCastMcpSettings (redacted, base_url NOT frozen)
+│   │   ├── models.py      # is_forbidden_tool_name guard
+│   │   └── README.md
+│   ├── jiuwenswarm/       # JiuwenSwarm research-runner adapter (ADR-0012 / PR-6 Slice 1-3)
+│   │   ├── runner.py      # JiuwenSwarmResearchRunner implements domain ResearchRunner port
+│   │   ├── transport.py   # JiuwenSwarmGatewayTransport Protocol + result dataclass
+│   │   ├── transport_cli.py  # subprocess CLI helper transport (Slice 2)
+│   │   ├── codec.py       # JiuwenSwarmGatewayRequest / Completion dataclasses
+│   │   ├── mapping.py     # ResearchCase → gateway request, completion → ResearchRunnerDraft
+│   │   ├── prompt.py      # build_prompt_text (prompt construction helper)
+│   │   ├── config.py      # JiuwenSwarmSettings (helper_path / workspace / artifact_root / timeouts, NOT SDK credential)
+│   │   └── errors.py      # JiuwenSwarmError taxonomy
+│   └── exposure/          # DC-3 gated ETF exposure adapter boundary
+│       ├── akshare_adapter.py  # AkShare exposure adapter (CSIndex/AkShare routing)
+│       ├── config.py      # ExposureAdapterSettings (redacted, disabled by default)
+│       └── mapping.py     # raw payload → domain IndexProfile/Constituent/EtfHolding snapshots
 ├── etf_instruments.py     # write_etf_instruments_raw / upsert_etf_instruments
 │                         # (owns RawEtlResult + UnitOfWorkFactory helpers)
 ├── etf_daily_bars.py      # write_etf_daily_bars_raw / upsert_etf_daily_bars
 │                         # (re-exports RawEtlResult from etf_instruments)
 ├── etf_profiles.py        # write_etf_profiles_raw / upsert_etf_profiles (DC-2)
 ├── etf_profile_context.py # build_etf_profile_context_pack (Stage 4A context slice)
+├── exposure_service.py    # persist_exposure (DC-3 bundle / observation writes)
+├── exposure_cli.py        # exposure_cli driver for fixture / mapped payloads
+├── real_exposure_asset.py # Dagster asset that drives AkShare/CSIndex exposure collection (DC-3)
+├── real_exposure_cli.py   # manual CLI driver for real-exposure collection (DC-3)
+├── real_exposure_service.py  # service module behind the DC-3 exposure asset
+├── research_orchestration_service.py  # PR-7 / ADR-0012 ResearchRunner lifecycle orchestrator
 └── input_snapshot.py      # create_input_snapshot (PR-07)
 ```
 
@@ -525,6 +546,125 @@ historical-quotes endpoints remain internal upstreams of the
 AkShare aggregator (`fund_etf_hist_sina` / `fund_etf_hist_em`)
 and surface only as `source_key` values on `BarSource` rows
 produced by the AkShare adapter.
+
+## 5e. `jiuwenswarm` research-runner adapter (PR-6 Slice 1-3)
+
+[`apps/pipeline/src/invest_pipeline/adapters/jiuwenswarm/`](../../apps/pipeline/src/invest_pipeline/adapters/jiuwenswarm/)
+is the research-runner adapter behind the
+[`ResearchRunner`](../domain/overview.md#4c-research-lifecycle-researchrunner)
+domain port that ADR-0012 mandates. It is a pure pipeline-side
+boundary — **no JiuwenSwarm credential or SDK is imported by the
+domain package**. The package lands in three staged slices:
+
+- **Slice 1 — port + runner.**
+  [`runner.py`](../../apps/pipeline/src/invest_pipeline/adapters/jiuwenswarm/runner.py)
+  is the only layer that wires the domain `ResearchRunner` port to
+  the JiuwenSwarm gateway transport. It enforces three contracts:
+  the runner / playbook / pack trio must be bound (case / run IDs
+  match the pack, the run is `RUNNING`, the playbook's key matches
+  the run's `playbook_key`); the adapter version declared by the
+  gateway completion must match the runner's `adapter_version` so
+  a re-deploy cannot masquerade as the previous version's
+  results; the transport is called exactly once per `runner.run`
+  invocation (the Slice 3 orchestrator owns retry policy).
+  [`config.py`](../../apps/pipeline/src/invest_pipeline/adapters/jiuwenswarm/config.py)
+  freezes seven explicit fields the contract requires
+  (`helper_path` / `workspace` / `artifact_root` /
+  `python_executable` / `mode` / `timeout_seconds` /
+  `idle_timeout_seconds`) and is intentionally a plain dataclass so
+  the runner is constructed explicitly by the orchestrator without
+  pulling in `pydantic_settings`.
+  [`codec.py`](../../apps/pipeline/src/invest_pipeline/adapters/jiuwenswarm/codec.py)
+  freezes the JSON envelope (`JiuwenSwarmGatewayRequest`,
+  `JiuwenSwarmCompletion`, `JiuwenSwarmAcceptance`,
+  `JIUWENSWARM_SCHEMA_VERSION`); [`mapping.py`](../../apps/pipeline/src/invest_pipeline/adapters/jiuwenswarm/mapping.py)
+  translates `ResearchCase` + `EvidencePack` into the gateway
+  request and a submitted completion back into a
+  `ResearchRunnerDraft`. [`prompt.py`](../../apps/pipeline/src/invest_pipeline/adapters/jiuwenswarm/prompt.py)
+  builds the prompt text the gateway streams.
+  [`errors.py`](../../apps/pipeline/src/invest_pipeline/adapters/jiuwenswarm/errors.py)
+  is the stable taxonomy: `JiuwenSwarmError` →
+  `JiuwenSwarmTransportError` / `JiuwenSwarmMalformedResultError` /
+  `JiuwenSwarmRemoteFailureError` /
+  `JiuwenSwarmTimeoutUncertainError`.
+- **Slice 2 — subprocess CLI transport.**
+  [`transport.py`](../../apps/pipeline/src/invest_pipeline/adapters/jiuwenswarm/transport.py)
+  is the synchronous `JiuwenSwarmGatewayTransport` Protocol Slice 2
+  satisfies; [`transport_cli.py`](../../apps/pipeline/src/invest_pipeline/adapters/jiuwenswarm/transport_cli.py)
+  is the `JiuwenSwarmCliGatewayTransport` implementation that
+  invokes a single helper-CLI process with
+  `--transport gateway --task-file TASK --mode MODE --session-key
+  KEY --workspace WORKSPACE --request-id REQUEST_ID --output-dir
+  DIR --timeout TIMEOUT --idle-timeout IDLE`. The transport writes
+  per-request artefacts inside an operator-controlled
+  `artifact_root` and parses a `request_id`-anchored summary line
+  out of the helper stdout so the orchestration service can
+  reconcile the external identity.
+- **Slice 3 — identity-bearing orchestrator surface.**
+  [`runner.py`](../../apps/pipeline/src/invest_pipeline/adapters/jiuwenswarm/runner.py)
+  exposes `run_with_identity(case, run, playbook, pack) -> JiuwenSwarmRunOutcome`
+  so the orchestrator can persist the
+  `(request_id, session_id)` pair the gateway echoed back
+  alongside the `ResearchRunnerDraft`. `run(...)` is preserved as
+  a delegating wrapper so Slice 1 / Slice 2 callers see no
+  behavioural change.
+
+The adapter is opt-in: the Slice 1 transport can be substituted
+with any structural implementation of `JiuwenSwarmGatewayTransport`
+(a fake used by `test_jiuwenswarm_adapter.py`,
+`test_jiuwenswarm_slice2.py`, and the
+`research_orchestration_service` test doubles). The CLI helper
+binary is operator-pinned (`JiuwenSwarmSettings.helper_path`); the
+transport never resolves `PATH` and never falls back to a bare
+`python` lookup.
+
+## 5f. Exposure adapters and DC-3 collection (PR-DC3)
+
+[`apps/pipeline/src/invest_pipeline/adapters/exposure/`](../../apps/pipeline/src/invest_pipeline/adapters/exposure/)
+defines the gated ETF exposure surface — `akshare_adapter.py`
+routes CSIndex (`report_asset_detail` / `fund_portfolio_hold_em`)
+and AkShare holding calls into `IndexProfile`,
+`IndexConstituentSnapshot`, `EtfIndexMapping` and
+`EtfHoldingSnapshot` rows. `ExposureAdapterSettings` defaults to
+`enabled=False`. The complementary
+[`akshare/exposure_mapper.py`](../../apps/pipeline/src/invest_pipeline/adapters/akshare/exposure_mapper.py)
+and
+[`akshare/holding_mapper.py`](../../apps/pipeline/src/invest_pipeline/adapters/akshare/holding_mapper.py)
+cover the unstructured payload paths so a single AkShare session can
+saturate the index-constituent, ETF-mapping and ETF-holding
+surfaces without going through a second transport.
+
+The pipeline-side collectors are `real_exposure_asset.py` (the
+Dagster asset wrapping the collection), `real_exposure_service.py`
+(transport-aware service module: per-record six-digit symbol /
+exchange normalisation, naive-`observed_at` rejection, ETF-only
+filter, instrument-id resolution, content-hash dedupe) and
+`real_exposure_cli.py` (manual driver that emits the same JSON
+summary shape the asset emits). The
+[`exposure_service.persist_exposure`](../../apps/pipeline/src/invest_pipeline/exposure_service.py)
+function is the **only** writer — it opens a `UnitOfWork`, persists
+the bundle + observations, and returns the persisted bundle id.
+The matching `exposure_cli.py` is the fixture payload driver.
+
+## 5g. Research orchestration service (PR-7 / ADR-0012)
+
+[`apps/pipeline/src/invest_pipeline/research_orchestration_service.py`](../../apps/pipeline/src/invest_pipeline/research_orchestration_service.py)
+is the application service that drives one research attempt through
+its full lifecycle. `ResearchOrchestrationService.execute(run_id)`
+uses short `SqlAlchemyUnitOfWork` transactions to load and start the
+bounded `ResearchCase` / `ResearchRun` / evidence-pack trio, invokes
+the configured `ResearchRunnerWithIdentity` outside the database
+transaction, and then persists the external identity, terminal state,
+and result through `uow.research_runs` + `uow.research_results`.
+JiuwenSwarm transport outcomes are translated into deterministic
+orchestration outcomes and exceptions, including timeout-uncertain and
+reconciliation-required states. The service is intentionally conservative:
+it never invents
+`evidence_ids`, never publishes a `ResearchResult` whose evidence
+references are not in the pack, and rejects duplicate-request
+scenarios with `ResearchOrchestrationConflictError` so the
+idempotency-keyed `analytics.research_runs` row is the single
+source of truth.
 
 ## 6. ETL service modules
 
