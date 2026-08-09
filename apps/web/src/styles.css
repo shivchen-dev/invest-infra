@@ -1145,6 +1145,9 @@ code.inlineCode {
  * 命名空间统一使用 `cockpit` 前缀，与现有 `appShell` / `dashboard` / `etf`
  * 等命名空间隔离。
  */
+.researchCockpitSection .cockpitWorkspaceGrid {
+  margin-top: 12px;
+}
 .cockpitSurface {
   --cockpit-shadow: 0 1px 2px rgba(15, 23, 42, 0.04),
     0 12px 32px rgba(15, 23, 42, 0.05);

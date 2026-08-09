@@ -5,6 +5,7 @@ import {
   fetchCandidatePoolLatestDiff,
 } from "../api/candidatePool";
 import { fetchLatestPipelineRun } from "../api/pipelineRuns";
+import { useResearchDashboard } from "../api/researchDashboard";
 import type {
   CandidatePoolDiffResponse,
   CandidatePoolLatestResponse,
@@ -16,6 +17,7 @@ import { MetricsPanel } from "../features/dashboard/MetricsPanel";
 import { CandidateDiffPanel } from "../features/dashboard/CandidateDiffPanel";
 import { TopCandidatesPanel } from "../features/dashboard/TopCandidatesPanel";
 import { LatestRunPanel } from "../features/dashboard/LatestRunPanel";
+import { ResearchCockpitSection } from "../features/research/dashboard/ResearchCockpitSection";
 import { LoadingState } from "../components/LoadingState";
 import { formatCount, formatDate } from "../utils/format";
 
@@ -51,6 +53,8 @@ export function DashboardPage() {
     queryFn: ({ signal }) => fetchLatestPipelineRun(signal),
     refetchInterval: REFETCH_INTERVAL.pipelineRun,
   });
+
+  const researchDashboard = useResearchDashboard();
 
   const initialLoading =
     freshness.isPending &&
@@ -110,6 +114,20 @@ export function DashboardPage() {
       <section className="pageSection" aria-label="最新运行">
         <h3 className="sectionTitle">最新运行</h3>
         <LatestRunPanel query={latestRun} />
+      </section>
+
+      <section className="pageSection researchCockpitSection" aria-label="Research Cockpit">
+        <header className="sectionHeader">
+          <h3 className="sectionTitle">Research Cockpit</h3>
+          <span className="cockpitReadOnlyHint" role="note">
+            只读模式 · 浏览器不写入 Research 数据
+          </span>
+        </header>
+        <p className="cockpitCaption">
+          来自 <code className="inlineCode">GET /api/v1/research-dashboard</code>
+          的只读聚合 · 仅消费 PR-7 已有资源
+        </p>
+        <ResearchCockpitSection query={researchDashboard} />
       </section>
     </div>
   );

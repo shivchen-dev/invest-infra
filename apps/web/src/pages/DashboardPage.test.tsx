@@ -16,6 +16,8 @@ import type {
   CandidatePoolLatestResponse,
   DataFreshnessResponse,
   PipelineRunResponse,
+  ResearchDashboardResponse,
+  ResearchRunResponse,
 } from "../api/types";
 
 vi.mock("../api/dataFreshness", () => ({
@@ -37,18 +39,34 @@ vi.mock("../api/pipelineRuns", () => ({
   pipelineRunsQueryKey: vi.fn(),
 }));
 
+vi.mock("../api/researchDashboard", () => ({
+  fetchResearchDashboard: vi.fn(),
+  useResearchDashboard: vi.fn(),
+  researchDashboardQueryKey: ["research-dashboard"],
+  RESEARCH_DASHBOARD_REFETCH_INTERVAL: 60_000,
+}));
+
 import { fetchDataFreshness } from "../api/dataFreshness";
 import {
   fetchCandidatePoolLatest,
   fetchCandidatePoolLatestDiff,
 } from "../api/candidatePool";
 import { fetchLatestPipelineRun } from "../api/pipelineRuns";
+import {
+  useResearchDashboard,
+} from "../api/researchDashboard";
+import {
+  errorQuery,
+  pendingQuery,
+  successQuery,
+} from "../features/research/dashboard/test-helpers";
 import { DashboardPage } from "./DashboardPage";
 
 const mockFetchFreshness = vi.mocked(fetchDataFreshness);
 const mockFetchLatestPool = vi.mocked(fetchCandidatePoolLatest);
 const mockFetchLatestDiff = vi.mocked(fetchCandidatePoolLatestDiff);
 const mockFetchLatestRun = vi.mocked(fetchLatestPipelineRun);
+const mockUseResearchDashboard = vi.mocked(useResearchDashboard);
 
 function neverResolvingPromise<T>(): Promise<T> {
   return new Promise<T>(() => {
@@ -148,6 +166,57 @@ function makeRunResponse(
   };
 }
 
+function makeResearchDashboard(
+  overrides: Partial<ResearchDashboardResponse> = {},
+): ResearchDashboardResponse {
+  return {
+    schema_version: "1.0.0",
+    generated_at: "2026-08-03T12:00:00Z",
+    as_of_date: null,
+    data_quality: "empty",
+    freshness: "unknown",
+    market_status: {
+      state: "unavailable",
+      reason: "no market dashboard source registered",
+    },
+    research_summary: {
+      case_count: 0,
+      run_count: 0,
+      latest_case: null,
+    },
+    evidence_status: {
+      state: "empty",
+      case_id: null,
+      pack_id: null,
+      schema_version: null,
+      factor_set_key: null,
+      factor_set_version: null,
+      quality_status: null,
+      freshness_status: null,
+    },
+    recent_runs: [],
+    ...overrides,
+  };
+}
+
+function makeResearchRun(
+  overrides: Partial<ResearchRunResponse> = {},
+): ResearchRunResponse {
+  return {
+    attempt: 1,
+    case_id: "case-001",
+    error_summary: null,
+    evidence_pack_id: "pack-001",
+    finished_at: "2026-08-03T12:30:00Z",
+    playbook_key: "playbook.default",
+    run_id: "run-001",
+    runner_key: "runner.default",
+    started_at: "2026-08-03T12:00:00Z",
+    status: "succeeded",
+    ...overrides,
+  };
+}
+
 function renderWithClient() {
   const client = new QueryClient({
     defaultOptions: {
@@ -163,6 +232,12 @@ function renderWithClient() {
   return render(<DashboardPage />, { wrapper: Wrapper });
 }
 
+function configureResearchDashboard(
+  result: ReturnType<typeof successQuery<ResearchDashboardResponse>>,
+) {
+  mockUseResearchDashboard.mockReturnValue(result);
+}
+
 afterEach(() => {
   cleanup();
   vi.clearAllMocks();
@@ -175,6 +250,7 @@ describe("DashboardPage", () => {
       mockFetchLatestPool.mockReturnValue(neverResolvingPromise());
       mockFetchLatestDiff.mockReturnValue(neverResolvingPromise());
       mockFetchLatestRun.mockReturnValue(neverResolvingPromise());
+      mockUseResearchDashboard.mockReturnValue(pendingQuery());
 
       renderWithClient();
 
@@ -196,6 +272,7 @@ describe("DashboardPage", () => {
       mockFetchLatestPool.mockResolvedValue(makePoolResponse(15));
       mockFetchLatestDiff.mockResolvedValue(makeDiffResponse());
       mockFetchLatestRun.mockResolvedValue(makeRunResponse());
+      configureResearchDashboard(successQuery(makeResearchDashboard()));
     });
 
     it("renders the page header and all sections once data resolves", async () => {
@@ -218,6 +295,9 @@ describe("DashboardPage", () => {
       ).toBeInTheDocument();
       expect(
         screen.getByRole("region", { name: "最新运行" }),
+      ).toBeInTheDocument();
+      expect(
+        screen.getByRole("region", { name: "Research Cockpit" }),
       ).toBeInTheDocument();
 
       // Freshness banner is rendered with the "fresh" status copy.
@@ -274,6 +354,7 @@ describe("DashboardPage", () => {
       mockFetchLatestPool.mockResolvedValue(makePoolResponse(5));
       mockFetchLatestDiff.mockResolvedValue(makeDiffResponse());
       mockFetchLatestRun.mockResolvedValue(makeRunResponse());
+      configureResearchDashboard(successQuery(makeResearchDashboard()));
 
       renderWithClient();
 
@@ -294,6 +375,7 @@ describe("DashboardPage", () => {
       );
       mockFetchLatestDiff.mockResolvedValue(makeDiffResponse());
       mockFetchLatestRun.mockResolvedValue(makeRunResponse());
+      configureResearchDashboard(successQuery(makeResearchDashboard()));
 
       renderWithClient();
 
@@ -313,6 +395,7 @@ describe("DashboardPage", () => {
       mockFetchLatestRun.mockRejectedValue(
         new ApiError("Pipeline service unavailable", 503),
       );
+      configureResearchDashboard(successQuery(makeResearchDashboard()));
 
       renderWithClient();
 
@@ -341,6 +424,7 @@ describe("DashboardPage", () => {
           error_summary: "data source timeout",
         }),
       );
+      configureResearchDashboard(successQuery(makeResearchDashboard()));
 
       renderWithClient();
 
@@ -356,6 +440,202 @@ describe("DashboardPage", () => {
       expect(
         await screen.findByRole("status", { name: "最新任务失败" }),
       ).toBeInTheDocument();
+    });
+  });
+
+  describe("research cockpit section", () => {
+    beforeEach(() => {
+      mockFetchFreshness.mockResolvedValue(makeFreshness());
+      mockFetchLatestPool.mockResolvedValue(makePoolResponse(5));
+      mockFetchLatestDiff.mockResolvedValue(makeDiffResponse());
+      mockFetchLatestRun.mockResolvedValue(makeRunResponse());
+    });
+
+    it("renders six research cockpit widgets with empty default state", async () => {
+      configureResearchDashboard(successQuery(makeResearchDashboard()));
+
+      renderWithClient();
+
+      const section = await screen.findByRole("region", {
+        name: "Research Cockpit",
+      });
+
+      expect(within(section).getByText("Market Status")).toBeInTheDocument();
+      expect(
+        within(section).getByText("Research Summary"),
+      ).toBeInTheDocument();
+      expect(within(section).getByText("Evidence Pack")).toBeInTheDocument();
+      expect(
+        within(section).getByText("Factor Snapshot"),
+      ).toBeInTheDocument();
+      expect(
+        within(section).getByText("Research Run Timeline"),
+      ).toBeInTheDocument();
+      expect(within(section).getByText("Risk Monitor")).toBeInTheDocument();
+
+      // Market Status must surface the explicit unavailable reason.
+      const market = await within(section).findByText(
+        "reason: no market dashboard source registered",
+      );
+      expect(market).toBeInTheDocument();
+      // Factor Snapshot & Risk Monitor must NOT contain buy/sell/position.
+      const factor = section.querySelector(
+        '[data-widget-id="factor-snapshot"]',
+      ) as HTMLElement;
+      const risk = section.querySelector(
+        '[data-widget-id="risk-monitor"]',
+      ) as HTMLElement;
+      expect(factor).toHaveTextContent("Factor Snapshot · unavailable");
+      expect(risk).toHaveTextContent("Risk Monitor · unavailable");
+      expect(factor.textContent ?? "").not.toMatch(/buy|sell|position/i);
+      expect(risk.textContent ?? "").not.toMatch(/buy|sell|position/i);
+    });
+
+    it("renders available summary, evidence and recent runs when the dashboard is populated", async () => {
+      configureResearchDashboard(
+        successQuery(
+          makeResearchDashboard({
+            as_of_date: "2026-08-08",
+            data_quality: "partial",
+            freshness: "current",
+            research_summary: {
+              case_count: 2,
+              run_count: 4,
+              latest_case: {
+                case_id: "case-1",
+                instrument_id: "inst-1",
+                as_of_date: "2026-08-08",
+                question: "趋势通道判断",
+                horizon: "30d",
+                status: "open",
+                created_at: "2026-08-09T00:00:00Z",
+                candidate_pool_run_id: null,
+                closed_at: null,
+              },
+            },
+            evidence_status: {
+              state: "available",
+              case_id: "case-1",
+              pack_id: "pack-1",
+              schema_version: "1.0.0",
+              factor_set_key: "factor.basic",
+              factor_set_version: "1",
+              quality_status: "ok",
+              freshness_status: "current",
+            },
+            recent_runs: [
+              makeResearchRun({
+                run_id: "run-1",
+                status: "succeeded",
+              }),
+              makeResearchRun({
+                run_id: "run-2",
+                status: "failed",
+              }),
+            ],
+          }),
+        ),
+      );
+
+      renderWithClient();
+
+      const section = await screen.findByRole("region", {
+        name: "Research Cockpit",
+      });
+
+      const caseId = await within(section).findByText("case-1");
+      expect(caseId).toBeInTheDocument();
+      expect(
+        within(section).getByText("趋势通道判断"),
+      ).toBeInTheDocument();
+      expect(within(section).getByText("pack-1")).toBeInTheDocument();
+      const table = within(section).getByRole("table");
+      expect(within(table).getByText("run-1")).toBeInTheDocument();
+      expect(within(table).getByText("run-2")).toBeInTheDocument();
+      // Status strings are surfaced verbatim.
+      expect(within(table).getByText("succeeded")).toBeInTheDocument();
+      expect(within(table).getByText("failed")).toBeInTheDocument();
+      // Stance / confidence fields must not appear.
+      expect(within(section).queryByText("Stance")).not.toBeInTheDocument();
+      expect(
+        within(section).queryByText("Confidence"),
+      ).not.toBeInTheDocument();
+    });
+
+    it("renders explicit unavailable states for factor-snapshot and risk-monitor widgets regardless of payload", async () => {
+      configureResearchDashboard(
+        successQuery(
+          makeResearchDashboard({
+            data_quality: "complete",
+            freshness: "current",
+            research_summary: {
+              case_count: 5,
+              run_count: 9,
+              latest_case: null,
+            },
+          }),
+        ),
+      );
+
+      renderWithClient();
+
+      const section = await screen.findByRole("region", {
+        name: "Research Cockpit",
+      });
+      await waitFor(() => {
+        const factor = section.querySelector(
+          '[data-widget-id="factor-snapshot"]',
+        ) as HTMLElement;
+        expect(factor).toHaveTextContent("Factor Snapshot · unavailable");
+      });
+      const risk = section.querySelector(
+        '[data-widget-id="risk-monitor"]',
+      ) as HTMLElement;
+      expect(risk).toHaveTextContent("Risk Monitor · unavailable");
+    });
+
+    it("renders an empty recent-runs placeholder when the dashboard returns no runs", async () => {
+      configureResearchDashboard(successQuery(makeResearchDashboard()));
+
+      renderWithClient();
+
+      const section = await screen.findByRole("region", {
+        name: "Research Cockpit",
+      });
+      expect(
+        await within(section).findByText("Recent Runs · 空"),
+      ).toBeInTheDocument();
+    });
+
+    it("renders a failed state in every research widget when the dashboard query fails with a non-404 status", async () => {
+      configureResearchDashboard(
+        errorQuery(new Error("Research query failed")),
+      );
+
+      renderWithClient();
+
+      const section = await screen.findByRole("region", {
+        name: "Research Cockpit",
+      });
+      await waitFor(() => {
+        expect(
+          within(section).getAllByText("Research query failed").length,
+        ).toBeGreaterThan(0);
+      });
+      const widgetIds = [
+        "market-status",
+        "research-summary",
+        "evidence-pack",
+        "factor-snapshot",
+        "research-run-timeline",
+        "risk-monitor",
+      ];
+      for (const id of widgetIds) {
+        const widget = section.querySelector(
+          `[data-widget-id="${id}"]`,
+        ) as HTMLElement;
+        expect(widget).toHaveAttribute("data-widget-state", "failed");
+      }
     });
   });
 });
