@@ -62,4 +62,5 @@ export const queryKeys = {
   latestPipelineRun: ["pipeline-runs", "latest"] as const,
   pipelineRuns: (filters: { limit: number; offset: number }) =>
     ["pipeline-runs", filters] as const,
+  researchDashboard: ["research-dashboard"] as const,
 };

@@ -2,24 +2,12 @@ from datetime import UTC, date, datetime
 from unittest.mock import MagicMock
 from uuid import uuid4
 
-import pytest
 from fastapi.testclient import TestClient
 from invest_api.application.research import ResearchQueryError
-from invest_api.dependencies import get_research_query_service
 from invest_api.main import app
 from invest_domain.instruments import InstrumentId
 from invest_domain.research import ResearchCase, ResearchCaseStatus
 from invest_domain.research.research_run import ResearchRun, ResearchRunStatus
-
-
-@pytest.fixture()
-def research_service():
-    service = MagicMock(name="ResearchQueryService")
-    app.dependency_overrides[get_research_query_service] = lambda: service
-    try:
-        yield service
-    finally:
-        app.dependency_overrides.pop(get_research_query_service, None)
 
 
 def make_case():
@@ -46,11 +34,12 @@ def make_run(case_id):
     )
 
 
-def test_exactly_six_frozen_research_get_routes_and_no_write_routes():
+def test_exactly_seven_frozen_research_get_routes_and_no_write_routes():
     expected = {
         "/api/v1/research-cases",
         "/api/v1/research-cases/{case_id}",
         "/api/v1/research-cases/{case_id}/evidence",
+        "/api/v1/research-dashboard",
         "/api/v1/research-runs",
         "/api/v1/research-runs/{run_id}",
         "/api/v1/research-runs/{run_id}/result",
@@ -59,7 +48,7 @@ def test_exactly_six_frozen_research_get_routes_and_no_write_routes():
     research_paths = {path: paths[path] for path in expected}
 
     assert set(research_paths) == expected
-    assert sum(len(operations) for operations in research_paths.values()) == 6
+    assert sum(len(operations) for operations in research_paths.values()) == 7
     assert all(set(operations) == {"get"} for operations in research_paths.values())
 
 

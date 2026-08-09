@@ -29,6 +29,7 @@ from invest_api.dependencies import (
     get_db_session,
     get_etf_query_service,
     get_pipeline_run_query_service,
+    get_research_query_service,
 )
 from invest_api.main import app
 from invest_domain.candidate_pool.models import (
@@ -148,6 +149,26 @@ def data_freshness_service(monkeypatch: pytest.MonkeyPatch) -> MagicMock:
         yield mock
     finally:
         app.dependency_overrides.pop(get_data_freshness_query_service, None)
+
+
+@pytest.fixture()
+def research_service(monkeypatch: pytest.MonkeyPatch) -> MagicMock:
+    """Inject a mock :class:`ResearchQueryService` into the research router.
+
+    Overrides :func:`invest_api.dependencies.get_research_query_service`
+    so the research router (and the PR-W03 dashboard endpoint) receive
+    a ``MagicMock`` that quacks like the application service. Endpoint
+    tests configure return values and side effects on this mock; the
+    service-level tests bypass the HTTP layer and construct the real
+    service against mock repositories instead.
+    """
+
+    mock = MagicMock(name="ResearchQueryService")
+    app.dependency_overrides[get_research_query_service] = lambda: mock
+    try:
+        yield mock
+    finally:
+        app.dependency_overrides.pop(get_research_query_service, None)
 
 
 def make_instrument(
@@ -381,4 +402,5 @@ __all__ = [
     "make_pool_item",
     "mock_session",
     "pipeline_run_service",
+    "research_service",
 ]

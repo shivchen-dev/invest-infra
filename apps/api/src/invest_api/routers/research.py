@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from typing import Annotated
 from uuid import UUID
 
@@ -11,6 +12,10 @@ from invest_api.schemas.research import (
     EvidencePackResponse,
     ResearchCaseListResponse,
     ResearchCaseResponse,
+    ResearchDashboardEvidenceStatus,
+    ResearchDashboardMarketStatus,
+    ResearchDashboardResearchSummary,
+    ResearchDashboardResponse,
     ResearchResultResponse,
     ResearchRunListResponse,
     ResearchRunResponse,
@@ -119,3 +124,64 @@ def get_research_run_result(
             detail="Research result not found",
         )
     return ResearchResultResponse.from_domain(result)
+
+
+@router.get("/research-dashboard", response_model=ResearchDashboardResponse)
+def get_research_dashboard(
+    service: Annotated[ResearchQueryService, Depends(get_research_query_service)],
+) -> ResearchDashboardResponse:
+    """Return the read-only Research Cockpit dashboard aggregate.
+
+    The dashboard derives every field from the existing PR-7
+    resource-level readers (``ResearchCaseReader`` /
+    ``ResearchRunReader`` / ``ResearchEvidenceReader``). The
+    application service owns the orchestration, the deterministic
+    ordering, the bounded ``recent_runs`` list and the
+    ``SQLAlchemyError`` boundary; this router is intentionally a
+    thin pass-through that stamps ``generated_at`` with a UTC
+    wall-clock value so two callers hitting the service in the
+    same instant still observe distinct response timestamps.
+
+    ``market_status`` is always the explicit
+    ``{"state": "unavailable", "reason": "..."}`` shape until a
+    market dashboard source is registered; no market / factor
+    values or investment conclusions are invented on this path.
+    """
+
+    try:
+        view = service.get_dashboard()
+    except ResearchQueryError as exc:
+        raise _query_failed(exc) from exc
+
+    evidence_view = view.evidence_status
+    return ResearchDashboardResponse(
+        schema_version=view.schema_version,
+        generated_at=datetime.now(UTC),
+        as_of_date=view.as_of_date,
+        data_quality=view.data_quality,
+        freshness=view.freshness,
+        market_status=ResearchDashboardMarketStatus(
+            state=view.market_status.state,
+            reason=view.market_status.reason,
+        ),
+        research_summary=ResearchDashboardResearchSummary(
+            case_count=view.research_summary.case_count,
+            run_count=view.research_summary.run_count,
+            latest_case=(
+                ResearchCaseResponse.from_domain(view.research_summary.latest_case)
+                if view.research_summary.latest_case is not None
+                else None
+            ),
+        ),
+        evidence_status=ResearchDashboardEvidenceStatus(
+            state=evidence_view.state,
+            case_id=evidence_view.case_id,
+            pack_id=evidence_view.pack_id,
+            schema_version=evidence_view.schema_version,
+            factor_set_key=evidence_view.factor_set_key,
+            factor_set_version=evidence_view.factor_set_version,
+            quality_status=evidence_view.quality_status,
+            freshness_status=evidence_view.freshness_status,
+        ),
+        recent_runs=[ResearchRunResponse.from_domain(run) for run in view.recent_runs],
+    )

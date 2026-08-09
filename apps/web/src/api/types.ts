@@ -53,3 +53,26 @@ export type DailyBarListResponse = Omit<
 > & {
   items: DailyBarResponse[];
 };
+export type ResearchCaseResponse = RequiredDefined<components["schemas"]["ResearchCaseResponse"]>;
+export type ResearchRunResponse = RequiredDefined<components["schemas"]["ResearchRunResponse"]>;
+export type ResearchDashboardDataQuality = components["schemas"]["ResearchDashboardResponse"]["data_quality"];
+export type ResearchDashboardFreshness = components["schemas"]["ResearchDashboardResponse"]["freshness"];
+export type ResearchDashboardMarketStatus = RequiredDefined<
+  components["schemas"]["ResearchDashboardMarketStatus"]
+>;
+export type ResearchDashboardEvidenceStatus = RequiredDefined<
+  components["schemas"]["ResearchDashboardEvidenceStatus"]
+>;
+export type ResearchDashboardResearchSummary = Omit<
+  RequiredDefined<components["schemas"]["ResearchDashboardResearchSummary"]>,
+  "latest_case"
+> & {
+  latest_case: ResearchCaseResponse | null;
+};
+export type ResearchDashboardResponse = Omit<
+  RequiredDefined<components["schemas"]["ResearchDashboardResponse"]>,
+  "research_summary" | "recent_runs"
+> & {
+  research_summary: ResearchDashboardResearchSummary;
+  recent_runs: ResearchRunResponse[];
+};

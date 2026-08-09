@@ -1366,6 +1366,226 @@
         "title": "ResearchCaseResponse",
         "type": "object"
       },
+      "ResearchDashboardEvidenceStatus": {
+        "description": "Explicit empty / available state for the latest-case evidence slot.\n\nThe dashboard always reports one of two states:\n\n- ``\"empty\"`` — no cases exist, or the latest case exists but has\n  no bound ``EvidencePack`` rows. ``case_id`` echoes the case\n  being reported (when available) so the front-end can deep-link\n  to it; ``pack_id`` is ``None``.\n- ``\"available\"`` — the latest case has at least one bound pack\n  and the surface carries the pack-level identifiers and quality\n  metadata. Only the **first** bound pack is summarised; the full\n  pack list is intentionally not enumerated on the dashboard.",
+        "properties": {
+          "case_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Case Id"
+          },
+          "factor_set_key": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Factor Set Key"
+          },
+          "factor_set_version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Factor Set Version"
+          },
+          "freshness_status": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Freshness Status"
+          },
+          "pack_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pack Id"
+          },
+          "quality_status": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Quality Status"
+          },
+          "schema_version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Schema Version"
+          },
+          "state": {
+            "enum": [
+              "empty",
+              "available"
+            ],
+            "title": "State",
+            "type": "string"
+          }
+        },
+        "required": [
+          "state"
+        ],
+        "title": "ResearchDashboardEvidenceStatus",
+        "type": "object"
+      },
+      "ResearchDashboardMarketStatus": {
+        "description": "Explicit empty state for the dashboard's ``market_status`` slot.\n\nThe PR-W03 dashboard deliberately does **not** invent market /\nfactor values. No market dashboard source is registered yet, so\nthe only legal response is ``state = \"unavailable\"`` with a\nmachine-readable ``reason`` so downstream consumers can render a\nstable empty placeholder rather than fabricating numbers.",
+        "properties": {
+          "reason": {
+            "description": "Stable identifier explaining why the market dashboard slot is empty. The PR-W03 dashboard never invents market values, so the only legal reason is that no market dashboard source is registered.",
+            "title": "Reason",
+            "type": "string"
+          },
+          "state": {
+            "const": "unavailable",
+            "title": "State",
+            "type": "string"
+          }
+        },
+        "required": [
+          "state",
+          "reason"
+        ],
+        "title": "ResearchDashboardMarketStatus",
+        "type": "object"
+      },
+      "ResearchDashboardResearchSummary": {
+        "description": "Deterministic counts and the latest case for the dashboard.\n\n``case_count`` / ``run_count`` are derived from the storage\nreaders' ``count_all`` so the values are exact, not bounded by the\n``recent_runs`` cap. ``latest_case`` is the first row of the\ncase reader's deterministic ``created_at`` descending ordering,\nor ``None`` when no cases exist; the dashboard never reaches into\na different ordering or derives a \"best\" case heuristically.",
+        "properties": {
+          "case_count": {
+            "minimum": 0.0,
+            "title": "Case Count",
+            "type": "integer"
+          },
+          "latest_case": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ResearchCaseResponse"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "run_count": {
+            "minimum": 0.0,
+            "title": "Run Count",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "case_count",
+          "run_count"
+        ],
+        "title": "ResearchDashboardResearchSummary",
+        "type": "object"
+      },
+      "ResearchDashboardResponse": {
+        "description": "Response envelope for the ``GET /api/v1/research-dashboard`` endpoint.\n\nThe dashboard is a read-only aggregate over the existing PR-7\nresource-level endpoints so the front-end can render the cockpit\nfirst screen with a single round trip. Every field is derived\nstrictly from existing :class:`ResearchCase` /\n:class:`ResearchRun` / :class:`EvidencePack` storage state; no\nmarket / factor values or investment conclusions are invented on\nthis path.\n\n- ``schema_version`` is the response contract version (currently\n  ``\"1.0.0\"``); it is independent of the evidence-pack schema\n  version reported under ``evidence_status``.\n- ``generated_at`` is the UTC wall-clock stamp the router applies\n  when it builds the response (two callers hitting the service in\n  the same instant observe different timestamps).\n- ``as_of_date`` echoes the latest ``ResearchCase.as_of_date`` so\n  the front-end can label the dashboard without a follow-up\n  round trip; ``None`` when no cases exist.\n- ``data_quality`` and ``freshness`` use the coarse PR-W03\n  vocabularies documented on :data:`ResearchDashboardDataQuality`\n  and :data:`ResearchDashboardFreshness`.\n- ``market_status`` is always the explicit\n  ``{\"state\": \"unavailable\", \"reason\": \"...\"}`` shape until a\n  market dashboard source is registered.\n- ``evidence_status`` distinguishes the empty case from the\n  available case; when ``available`` the surface carries the pack\n  identifiers and the existing ``QualityStatus`` /\n  ``FreshnessStatus`` enum strings.\n- ``recent_runs`` is a bounded page (the same shape\n  :class:`ResearchRunResponse` already used by\n  ``/api/v1/research-runs``) so consumers can compose the\n  dashboard timeline widget without fanning out to the\n  resource-level endpoint.",
+        "properties": {
+          "as_of_date": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "As Of Date"
+          },
+          "data_quality": {
+            "enum": [
+              "empty",
+              "partial",
+              "complete"
+            ],
+            "title": "Data Quality",
+            "type": "string"
+          },
+          "evidence_status": {
+            "$ref": "#/components/schemas/ResearchDashboardEvidenceStatus"
+          },
+          "freshness": {
+            "enum": [
+              "unknown",
+              "current",
+              "stale"
+            ],
+            "title": "Freshness",
+            "type": "string"
+          },
+          "generated_at": {
+            "format": "date-time",
+            "title": "Generated At",
+            "type": "string"
+          },
+          "market_status": {
+            "$ref": "#/components/schemas/ResearchDashboardMarketStatus"
+          },
+          "recent_runs": {
+            "items": {
+              "$ref": "#/components/schemas/ResearchRunResponse"
+            },
+            "title": "Recent Runs",
+            "type": "array"
+          },
+          "research_summary": {
+            "$ref": "#/components/schemas/ResearchDashboardResearchSummary"
+          },
+          "schema_version": {
+            "title": "Schema Version",
+            "type": "string"
+          }
+        },
+        "required": [
+          "schema_version",
+          "generated_at",
+          "data_quality",
+          "freshness",
+          "market_status",
+          "research_summary",
+          "evidence_status"
+        ],
+        "title": "ResearchDashboardResponse",
+        "type": "object"
+      },
       "ResearchResultResponse": {
         "properties": {
           "adapter_version": {
@@ -2253,6 +2473,28 @@
           }
         },
         "summary": "Get Research Case Evidence",
+        "tags": [
+          "research"
+        ]
+      }
+    },
+    "/api/v1/research-dashboard": {
+      "get": {
+        "description": "Return the read-only Research Cockpit dashboard aggregate.\n\nThe dashboard derives every field from the existing PR-7\nresource-level readers (``ResearchCaseReader`` /\n``ResearchRunReader`` / ``ResearchEvidenceReader``). The\napplication service owns the orchestration, the deterministic\nordering, the bounded ``recent_runs`` list and the\n``SQLAlchemyError`` boundary; this router is intentionally a\nthin pass-through that stamps ``generated_at`` with a UTC\nwall-clock value so two callers hitting the service in the\nsame instant still observe distinct response timestamps.\n\n``market_status`` is always the explicit\n``{\"state\": \"unavailable\", \"reason\": \"...\"}`` shape until a\nmarket dashboard source is registered; no market / factor\nvalues or investment conclusions are invented on this path.",
+        "operationId": "get_research_dashboard_api_v1_research_dashboard_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResearchDashboardResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Get Research Dashboard",
         "tags": [
           "research"
         ]

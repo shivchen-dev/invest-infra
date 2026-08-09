@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import date, datetime
 from decimal import Decimal
+from typing import Literal
 from uuid import UUID
 
 from invest_domain.research import EvidencePack, ResearchCase
@@ -217,10 +218,156 @@ class ResearchResultResponse(BaseModel):
         )
 
 
+ResearchDashboardDataQuality = Literal["empty", "partial", "complete"]
+"""Coarse vocabulary for the dashboard ``data_quality`` field.
+
+Derived strictly from existing storage state:
+
+- ``"empty"`` — no ``ResearchCase`` rows exist at all.
+- ``"partial"`` — at least one case exists but the most recent one is
+  not yet bound to any ``EvidencePack`` (the evidence pipeline has not
+  finished for the latest case).
+- ``"complete"`` — the most recent case has at least one bound
+  ``EvidencePack``. The dashboard never inspects factor quality
+  itself; the Evidence Status sub-envelope carries the
+  ``quality_status`` / ``freshness_status`` for the single bound pack.
+"""
+
+
+ResearchDashboardFreshness = Literal["unknown", "current", "stale"]
+"""Coarse vocabulary for the dashboard ``freshness`` field.
+
+Derived strictly from the latest ``ResearchCase.as_of_date`` versus the
+market clock's latest weekday (see :mod:`invest_api.clock`):
+
+- ``"unknown"`` — no cases exist; no claim is made about freshness.
+- ``"current"`` — the latest case's ``as_of_date`` matches the latest
+  weekday the market clock has resolved to.
+- ``"stale"`` — the latest case's ``as_of_date`` predates the latest
+  weekday.
+"""
+
+
+class ResearchDashboardMarketStatus(BaseModel):
+    """Explicit empty state for the dashboard's ``market_status`` slot.
+
+    The PR-W03 dashboard deliberately does **not** invent market /
+    factor values. No market dashboard source is registered yet, so
+    the only legal response is ``state = "unavailable"`` with a
+    machine-readable ``reason`` so downstream consumers can render a
+    stable empty placeholder rather than fabricating numbers.
+    """
+
+    state: Literal["unavailable"]
+    reason: str = Field(
+        description=(
+            "Stable identifier explaining why the market dashboard "
+            "slot is empty. The PR-W03 dashboard never invents market "
+            "values, so the only legal reason is that no market "
+            "dashboard source is registered."
+        )
+    )
+
+
+class ResearchDashboardEvidenceStatus(BaseModel):
+    """Explicit empty / available state for the latest-case evidence slot.
+
+    The dashboard always reports one of two states:
+
+    - ``"empty"`` — no cases exist, or the latest case exists but has
+      no bound ``EvidencePack`` rows. ``case_id`` echoes the case
+      being reported (when available) so the front-end can deep-link
+      to it; ``pack_id`` is ``None``.
+    - ``"available"`` — the latest case has at least one bound pack
+      and the surface carries the pack-level identifiers and quality
+      metadata. Only the **first** bound pack is summarised; the full
+      pack list is intentionally not enumerated on the dashboard.
+    """
+
+    state: Literal["empty", "available"]
+    case_id: UUID | None = None
+    pack_id: UUID | None = None
+    schema_version: str | None = None
+    factor_set_key: str | None = None
+    factor_set_version: str | None = None
+    quality_status: str | None = None
+    freshness_status: str | None = None
+
+
+class ResearchDashboardResearchSummary(BaseModel):
+    """Deterministic counts and the latest case for the dashboard.
+
+    ``case_count`` / ``run_count`` are derived from the storage
+    readers' ``count_all`` so the values are exact, not bounded by the
+    ``recent_runs`` cap. ``latest_case`` is the first row of the
+    case reader's deterministic ``created_at`` descending ordering,
+    or ``None`` when no cases exist; the dashboard never reaches into
+    a different ordering or derives a "best" case heuristically.
+    """
+
+    case_count: int = Field(ge=0)
+    run_count: int = Field(ge=0)
+    latest_case: ResearchCaseResponse | None = None
+
+
+class ResearchDashboardResponse(BaseModel):
+    """Response envelope for the ``GET /api/v1/research-dashboard`` endpoint.
+
+    The dashboard is a read-only aggregate over the existing PR-7
+    resource-level endpoints so the front-end can render the cockpit
+    first screen with a single round trip. Every field is derived
+    strictly from existing :class:`ResearchCase` /
+    :class:`ResearchRun` / :class:`EvidencePack` storage state; no
+    market / factor values or investment conclusions are invented on
+    this path.
+
+    - ``schema_version`` is the response contract version (currently
+      ``"1.0.0"``); it is independent of the evidence-pack schema
+      version reported under ``evidence_status``.
+    - ``generated_at`` is the UTC wall-clock stamp the router applies
+      when it builds the response (two callers hitting the service in
+      the same instant observe different timestamps).
+    - ``as_of_date`` echoes the latest ``ResearchCase.as_of_date`` so
+      the front-end can label the dashboard without a follow-up
+      round trip; ``None`` when no cases exist.
+    - ``data_quality`` and ``freshness`` use the coarse PR-W03
+      vocabularies documented on :data:`ResearchDashboardDataQuality`
+      and :data:`ResearchDashboardFreshness`.
+    - ``market_status`` is always the explicit
+      ``{"state": "unavailable", "reason": "..."}`` shape until a
+      market dashboard source is registered.
+    - ``evidence_status`` distinguishes the empty case from the
+      available case; when ``available`` the surface carries the pack
+      identifiers and the existing ``QualityStatus`` /
+      ``FreshnessStatus`` enum strings.
+    - ``recent_runs`` is a bounded page (the same shape
+      :class:`ResearchRunResponse` already used by
+      ``/api/v1/research-runs``) so consumers can compose the
+      dashboard timeline widget without fanning out to the
+      resource-level endpoint.
+    """
+
+    schema_version: str
+    generated_at: datetime
+    as_of_date: date | None = None
+    data_quality: ResearchDashboardDataQuality
+    freshness: ResearchDashboardFreshness
+    market_status: ResearchDashboardMarketStatus
+    research_summary: ResearchDashboardResearchSummary
+    evidence_status: ResearchDashboardEvidenceStatus
+    recent_runs: list[ResearchRunResponse] = Field(default_factory=list)
+
+
 __all__ = [
     "EvidencePackResponse",
     "ResearchCaseListResponse",
     "ResearchCaseResponse",
+    "ResearchDashboardDataQuality",
+    "ResearchDashboardEvidenceStatus",
+    "ResearchDashboardFreshness",
+    "ResearchDashboardMarketStatus",
+    "ResearchDashboardResearchSummary",
+    "ResearchDashboardResponse",
     "ResearchResultResponse",
     "ResearchRunListResponse",
     "ResearchRunResponse",

@@ -34,6 +34,14 @@ export interface paths {
     /**
      * Get Data Freshness
      * @description Return the data-freshness summary for ``expected_trade_date``.
+     *
+     * The application service applies the ``expected_trade_date`` default
+     * (latest weekday from :func:`invest_api.clock.market_today`), runs
+     * the snapshot / published / empty fallback chain and the
+     * status-state-machine reduction, and packages the outcome into a
+     * small :class:`DataFreshnessView` dataclass. The router only maps
+     * that view onto the public Pydantic response shape and converts
+     * :class:`DataFreshnessQueryError` into a sanitized HTTP 500.
      */
     get: operations["get_data_freshness_api_v1_data_freshness_get"];
   };
@@ -56,10 +64,11 @@ export interface paths {
      * List Pipeline Runs
      * @description Return a paginated history of ``personal_etf_daily_job`` runs.
      *
-     * The repository applies the ``job_key`` filter, limit and offset in SQL,
-     * and its dedicated count query supplies the exact total. ``SQLAlchemyError``
-     * is caught and re-raised as a sanitized HTTP 500 so a connection string or
-     * driver detail never leaks to the client.
+     * The application service applies the ``job_key`` filter, limit and
+     * offset in SQL and supplies the exact total from its companion
+     * count query. ``PipelineRunQueryError`` (raised when the underlying
+     * repository raises ``SQLAlchemyError``) is caught and re-raised as a
+     * sanitized HTTP 500.
      */
     get: operations["list_pipeline_runs_api_v1_pipeline_runs_get"];
   };
@@ -68,11 +77,11 @@ export interface paths {
      * Get Latest Pipeline Run
      * @description Return the most recent run of the personal daily job.
      *
-     * Walks :meth:`SqlAlchemyPipelineRunRepository.list_recent` - which is
-     * ordered by ``started_at`` descending - and returns the first run
-     * matching ``job_key = "personal_etf_daily_job"``. Returns ``404`` when
-     * no matching run exists; any run that resolves to a different job_key
-     * is intentionally ignored.
+     * The application service walks the repository's ``list_recent``
+     * page - ordered by ``started_at`` descending - and returns the first
+     * run matching ``job_key = "personal_etf_daily_job"``. The router
+     * surfaces ``404`` when no matching run exists; any run that resolves
+     * to a different ``job_key`` is intentionally ignored.
      */
     get: operations["get_latest_pipeline_run_api_v1_pipeline_runs_latest_get"];
   };
@@ -83,10 +92,55 @@ export interface paths {
      *
      * A missing run OR a run that resolves to a different ``job_key`` both
      * surface as ``404``; the front-end cannot distinguish between "the
-     * UUID does not exist" and "the UUID belongs to a different job", which
-     * matches the contract spelled out in PR-03 §3.2.
+     * UUID does not exist" and "the UUID belongs to a different job".
      */
     get: operations["get_pipeline_run_by_id_api_v1_pipeline_runs__run_id__get"];
+  };
+  "/api/v1/research-cases": {
+    /** List Research Cases */
+    get: operations["list_research_cases_api_v1_research_cases_get"];
+  };
+  "/api/v1/research-cases/{case_id}": {
+    /** Get Research Case */
+    get: operations["get_research_case_api_v1_research_cases__case_id__get"];
+  };
+  "/api/v1/research-cases/{case_id}/evidence": {
+    /** Get Research Case Evidence */
+    get: operations["get_research_case_evidence_api_v1_research_cases__case_id__evidence_get"];
+  };
+  "/api/v1/research-dashboard": {
+    /**
+     * Get Research Dashboard
+     * @description Return the read-only Research Cockpit dashboard aggregate.
+     *
+     * The dashboard derives every field from the existing PR-7
+     * resource-level readers (``ResearchCaseReader`` /
+     * ``ResearchRunReader`` / ``ResearchEvidenceReader``). The
+     * application service owns the orchestration, the deterministic
+     * ordering, the bounded ``recent_runs`` list and the
+     * ``SQLAlchemyError`` boundary; this router is intentionally a
+     * thin pass-through that stamps ``generated_at`` with a UTC
+     * wall-clock value so two callers hitting the service in the
+     * same instant still observe distinct response timestamps.
+     *
+     * ``market_status`` is always the explicit
+     * ``{"state": "unavailable", "reason": "..."}`` shape until a
+     * market dashboard source is registered; no market / factor
+     * values or investment conclusions are invented on this path.
+     */
+    get: operations["get_research_dashboard_api_v1_research_dashboard_get"];
+  };
+  "/api/v1/research-runs": {
+    /** List Research Runs */
+    get: operations["list_research_runs_api_v1_research_runs_get"];
+  };
+  "/api/v1/research-runs/{run_id}": {
+    /** Get Research Run */
+    get: operations["get_research_run_api_v1_research_runs__run_id__get"];
+  };
+  "/api/v1/research-runs/{run_id}/result": {
+    /** Get Research Run Result */
+    get: operations["get_research_run_result_api_v1_research_runs__run_id__result_get"];
   };
   "/health": {
     /** Health */
@@ -323,6 +377,145 @@ export interface components {
       /** Universe Count */
       universe_count: number;
     };
+    /** EvidenceCaseResponse */
+    EvidenceCaseResponse: {
+      /**
+       * As Of Date
+       * Format: date
+       */
+      as_of_date: string;
+      /** Case Id */
+      case_id?: string | null;
+      /** Horizon */
+      horizon: string;
+      /**
+       * Instrument Id
+       * Format: uuid
+       */
+      instrument_id: string;
+      /** Question */
+      question: string;
+    };
+    /** EvidenceDataQualityResponse */
+    EvidenceDataQualityResponse: {
+      /** Conflict Detected */
+      conflict_detected: boolean;
+      /** Freshness Status */
+      freshness_status: string;
+      /** Invalid Days */
+      invalid_days: number;
+      /** Observed Trading Days */
+      observed_trading_days: number;
+      /** Quality Status */
+      quality_status: string;
+      /** Suspended Days */
+      suspended_days: number;
+      /** Target Trading Days */
+      target_trading_days: number;
+      /** Valid Price Days */
+      valid_price_days: number;
+    };
+    /** EvidenceFactorResponse */
+    EvidenceFactorResponse: {
+      /** Evidence Id */
+      evidence_id: string | null;
+      /** Factor Key */
+      factor_key: string;
+      /**
+       * Observed Date
+       * Format: date
+       */
+      observed_date: string;
+      /** Quality Status */
+      quality_status: string;
+      /** Source Kind */
+      source_kind: string;
+      /** Source Ref */
+      source_ref: string;
+      /**
+       * Unit
+       * @description Measurement unit supplied by the frozen factor contract; interpret value using this field without percentage or currency rescaling.
+       */
+      unit: string;
+      /** Value */
+      value: string | null;
+      /** Window */
+      window: number;
+    };
+    /** EvidenceInstrumentResponse */
+    EvidenceInstrumentResponse: {
+      /** Currency */
+      currency: string;
+      /** Exchange */
+      exchange: string;
+      /**
+       * Instrument Id
+       * Format: uuid
+       */
+      instrument_id: string;
+      /** Name */
+      name: string;
+      /** Symbol */
+      symbol: string;
+    };
+    /** EvidenceMarketSnapshotResponse */
+    EvidenceMarketSnapshotResponse: {
+      /** Currency */
+      currency: string;
+      /** Latest Close */
+      latest_close: string | null;
+      /** Latest Trade Date */
+      latest_trade_date: string | null;
+      /** Observed Trading Days */
+      observed_trading_days: number;
+      /** Suspended Days */
+      suspended_days: number;
+      /** Valid Price Days */
+      valid_price_days: number;
+    };
+    /** EvidencePackResponse */
+    EvidencePackResponse: {
+      case: components["schemas"]["EvidenceCaseResponse"];
+      data_quality: components["schemas"]["EvidenceDataQualityResponse"];
+      /** Factor Set Key */
+      factor_set_key: string;
+      /** Factor Set Version */
+      factor_set_version: string;
+      /** Factors */
+      factors: components["schemas"]["EvidenceFactorResponse"][];
+      /** Generated At */
+      generated_at: string | null;
+      instrument: components["schemas"]["EvidenceInstrumentResponse"];
+      market_snapshot: components["schemas"]["EvidenceMarketSnapshotResponse"];
+      /** Missing Fields */
+      missing_fields: string[];
+      /** Pack Hash */
+      pack_hash: string;
+      /** Pack Id */
+      pack_id: string | null;
+      /** Schema Version */
+      schema_version: string;
+      /** Source Refs */
+      source_refs: components["schemas"]["EvidenceSourceReferenceResponse"][];
+      /** Warnings */
+      warnings: string[];
+    };
+    /** EvidenceSourceReferenceResponse */
+    EvidenceSourceReferenceResponse: {
+      /**
+       * Observed Date
+       * Format: date
+       */
+      observed_date: string;
+      /** Quality Status */
+      quality_status: string;
+      /** Revision */
+      revision: number | null;
+      /** Source Kind */
+      source_kind: string;
+      /** Source Ref */
+      source_ref: string;
+    };
     /**
      * ExclusionReasonResponse
      * @description Machine-readable reason an instrument was excluded.
@@ -444,6 +637,271 @@ export interface components {
       /** Trigger Type */
       trigger_type: string;
     };
+    /** ResearchCaseListResponse */
+    ResearchCaseListResponse: {
+      /** Items */
+      items: components["schemas"]["ResearchCaseResponse"][];
+      /** Limit */
+      limit: number;
+      /** Offset */
+      offset: number;
+      /** Total */
+      total: number;
+    };
+    /** ResearchCaseResponse */
+    ResearchCaseResponse: {
+      /**
+       * As Of Date
+       * Format: date
+       */
+      as_of_date: string;
+      /** Candidate Pool Run Id */
+      candidate_pool_run_id?: string | null;
+      /**
+       * Case Id
+       * Format: uuid
+       */
+      case_id: string;
+      /** Closed At */
+      closed_at?: string | null;
+      /**
+       * Created At
+       * Format: date-time
+       */
+      created_at: string;
+      /** Horizon */
+      horizon: string;
+      /**
+       * Instrument Id
+       * Format: uuid
+       */
+      instrument_id: string;
+      /** Question */
+      question: string;
+      /** Status */
+      status: string;
+    };
+    /**
+     * ResearchDashboardEvidenceStatus
+     * @description Explicit empty / available state for the latest-case evidence slot.
+     *
+     * The dashboard always reports one of two states:
+     *
+     * - ``"empty"`` — no cases exist, or the latest case exists but has
+     *   no bound ``EvidencePack`` rows. ``case_id`` echoes the case
+     *   being reported (when available) so the front-end can deep-link
+     *   to it; ``pack_id`` is ``None``.
+     * - ``"available"`` — the latest case has at least one bound pack
+     *   and the surface carries the pack-level identifiers and quality
+     *   metadata. Only the **first** bound pack is summarised; the full
+     *   pack list is intentionally not enumerated on the dashboard.
+     */
+    ResearchDashboardEvidenceStatus: {
+      /** Case Id */
+      case_id?: string | null;
+      /** Factor Set Key */
+      factor_set_key?: string | null;
+      /** Factor Set Version */
+      factor_set_version?: string | null;
+      /** Freshness Status */
+      freshness_status?: string | null;
+      /** Pack Id */
+      pack_id?: string | null;
+      /** Quality Status */
+      quality_status?: string | null;
+      /** Schema Version */
+      schema_version?: string | null;
+      /**
+       * State
+       * @enum {string}
+       */
+      state: "empty" | "available";
+    };
+    /**
+     * ResearchDashboardMarketStatus
+     * @description Explicit empty state for the dashboard's ``market_status`` slot.
+     *
+     * The PR-W03 dashboard deliberately does **not** invent market /
+     * factor values. No market dashboard source is registered yet, so
+     * the only legal response is ``state = "unavailable"`` with a
+     * machine-readable ``reason`` so downstream consumers can render a
+     * stable empty placeholder rather than fabricating numbers.
+     */
+    ResearchDashboardMarketStatus: {
+      /**
+       * Reason
+       * @description Stable identifier explaining why the market dashboard slot is empty. The PR-W03 dashboard never invents market values, so the only legal reason is that no market dashboard source is registered.
+       */
+      reason: string;
+      /**
+       * State
+       * @constant
+       */
+      state: "unavailable";
+    };
+    /**
+     * ResearchDashboardResearchSummary
+     * @description Deterministic counts and the latest case for the dashboard.
+     *
+     * ``case_count`` / ``run_count`` are derived from the storage
+     * readers' ``count_all`` so the values are exact, not bounded by the
+     * ``recent_runs`` cap. ``latest_case`` is the first row of the
+     * case reader's deterministic ``created_at`` descending ordering,
+     * or ``None`` when no cases exist; the dashboard never reaches into
+     * a different ordering or derives a "best" case heuristically.
+     */
+    ResearchDashboardResearchSummary: {
+      /** Case Count */
+      case_count: number;
+      latest_case?: components["schemas"]["ResearchCaseResponse"] | null;
+      /** Run Count */
+      run_count: number;
+    };
+    /**
+     * ResearchDashboardResponse
+     * @description Response envelope for the ``GET /api/v1/research-dashboard`` endpoint.
+     *
+     * The dashboard is a read-only aggregate over the existing PR-7
+     * resource-level endpoints so the front-end can render the cockpit
+     * first screen with a single round trip. Every field is derived
+     * strictly from existing :class:`ResearchCase` /
+     * :class:`ResearchRun` / :class:`EvidencePack` storage state; no
+     * market / factor values or investment conclusions are invented on
+     * this path.
+     *
+     * - ``schema_version`` is the response contract version (currently
+     *   ``"1.0.0"``); it is independent of the evidence-pack schema
+     *   version reported under ``evidence_status``.
+     * - ``generated_at`` is the UTC wall-clock stamp the router applies
+     *   when it builds the response (two callers hitting the service in
+     *   the same instant observe different timestamps).
+     * - ``as_of_date`` echoes the latest ``ResearchCase.as_of_date`` so
+     *   the front-end can label the dashboard without a follow-up
+     *   round trip; ``None`` when no cases exist.
+     * - ``data_quality`` and ``freshness`` use the coarse PR-W03
+     *   vocabularies documented on :data:`ResearchDashboardDataQuality`
+     *   and :data:`ResearchDashboardFreshness`.
+     * - ``market_status`` is always the explicit
+     *   ``{"state": "unavailable", "reason": "..."}`` shape until a
+     *   market dashboard source is registered.
+     * - ``evidence_status`` distinguishes the empty case from the
+     *   available case; when ``available`` the surface carries the pack
+     *   identifiers and the existing ``QualityStatus`` /
+     *   ``FreshnessStatus`` enum strings.
+     * - ``recent_runs`` is a bounded page (the same shape
+     *   :class:`ResearchRunResponse` already used by
+     *   ``/api/v1/research-runs``) so consumers can compose the
+     *   dashboard timeline widget without fanning out to the
+     *   resource-level endpoint.
+     */
+    ResearchDashboardResponse: {
+      /** As Of Date */
+      as_of_date?: string | null;
+      /**
+       * Data Quality
+       * @enum {string}
+       */
+      data_quality: "empty" | "partial" | "complete";
+      evidence_status: components["schemas"]["ResearchDashboardEvidenceStatus"];
+      /**
+       * Freshness
+       * @enum {string}
+       */
+      freshness: "unknown" | "current" | "stale";
+      /**
+       * Generated At
+       * Format: date-time
+       */
+      generated_at: string;
+      market_status: components["schemas"]["ResearchDashboardMarketStatus"];
+      /** Recent Runs */
+      recent_runs?: components["schemas"]["ResearchRunResponse"][];
+      research_summary: components["schemas"]["ResearchDashboardResearchSummary"];
+      /** Schema Version */
+      schema_version: string;
+    };
+    /** ResearchResultResponse */
+    ResearchResultResponse: {
+      /** Adapter Version */
+      adapter_version: string;
+      /** Conclusion */
+      conclusion: string;
+      /**
+       * Created At
+       * Format: date-time
+       */
+      created_at: string;
+      /** Evidence Ids */
+      evidence_ids: string[];
+      /**
+       * Evidence Pack Id
+       * Format: uuid
+       */
+      evidence_pack_id: string;
+      /** Model Key */
+      model_key: string;
+      /** Model Version */
+      model_version: string;
+      /** Playbook Version */
+      playbook_version: string;
+      /** Report Markdown */
+      report_markdown: string;
+      /**
+       * Result Id
+       * Format: uuid
+       */
+      result_id: string;
+      /** Risks */
+      risks: string[];
+      /**
+       * Run Id
+       * Format: uuid
+       */
+      run_id: string;
+    };
+    /** ResearchRunListResponse */
+    ResearchRunListResponse: {
+      /** Items */
+      items: components["schemas"]["ResearchRunResponse"][];
+      /** Limit */
+      limit: number;
+      /** Offset */
+      offset: number;
+      /** Total */
+      total: number;
+    };
+    /** ResearchRunResponse */
+    ResearchRunResponse: {
+      /** Attempt */
+      attempt: number;
+      /**
+       * Case Id
+       * Format: uuid
+       */
+      case_id: string;
+      /** Error Summary */
+      error_summary: string | null;
+      /**
+       * Evidence Pack Id
+       * Format: uuid
+       */
+      evidence_pack_id: string;
+      /** Finished At */
+      finished_at: string | null;
+      /** Playbook Key */
+      playbook_key: string;
+      /**
+       * Run Id
+       * Format: uuid
+       */
+      run_id: string;
+      /** Runner Key */
+      runner_key: string;
+      /** Started At */
+      started_at: string | null;
+      /** Status */
+      status: string;
+    };
     /**
      * RuleOutcomeResponse
      * @description Outcome of one rule applied to one instrument in a pool.
@@ -549,6 +1007,14 @@ export interface operations {
   /**
    * Get Data Freshness
    * @description Return the data-freshness summary for ``expected_trade_date``.
+   *
+   * The application service applies the ``expected_trade_date`` default
+   * (latest weekday from :func:`invest_api.clock.market_today`), runs
+   * the snapshot / published / empty fallback chain and the
+   * status-state-machine reduction, and packages the outcome into a
+   * small :class:`DataFreshnessView` dataclass. The router only maps
+   * that view onto the public Pydantic response shape and converts
+   * :class:`DataFreshnessQueryError` into a sanitized HTTP 500.
    */
   get_data_freshness_api_v1_data_freshness_get: {
     parameters: {
@@ -632,10 +1098,11 @@ export interface operations {
    * List Pipeline Runs
    * @description Return a paginated history of ``personal_etf_daily_job`` runs.
    *
-   * The repository applies the ``job_key`` filter, limit and offset in SQL,
-   * and its dedicated count query supplies the exact total. ``SQLAlchemyError``
-   * is caught and re-raised as a sanitized HTTP 500 so a connection string or
-   * driver detail never leaks to the client.
+   * The application service applies the ``job_key`` filter, limit and
+   * offset in SQL and supplies the exact total from its companion
+   * count query. ``PipelineRunQueryError`` (raised when the underlying
+   * repository raises ``SQLAlchemyError``) is caught and re-raised as a
+   * sanitized HTTP 500.
    */
   list_pipeline_runs_api_v1_pipeline_runs_get: {
     parameters: {
@@ -663,11 +1130,11 @@ export interface operations {
    * Get Latest Pipeline Run
    * @description Return the most recent run of the personal daily job.
    *
-   * Walks :meth:`SqlAlchemyPipelineRunRepository.list_recent` - which is
-   * ordered by ``started_at`` descending - and returns the first run
-   * matching ``job_key = "personal_etf_daily_job"``. Returns ``404`` when
-   * no matching run exists; any run that resolves to a different job_key
-   * is intentionally ignored.
+   * The application service walks the repository's ``list_recent``
+   * page - ordered by ``started_at`` descending - and returns the first
+   * run matching ``job_key = "personal_etf_daily_job"``. The router
+   * surfaces ``404`` when no matching run exists; any run that resolves
+   * to a different ``job_key`` is intentionally ignored.
    */
   get_latest_pipeline_run_api_v1_pipeline_runs_latest_get: {
     responses: {
@@ -685,8 +1152,7 @@ export interface operations {
    *
    * A missing run OR a run that resolves to a different ``job_key`` both
    * surface as ``404``; the front-end cannot distinguish between "the
-   * UUID does not exist" and "the UUID belongs to a different job", which
-   * matches the contract spelled out in PR-03 §3.2.
+   * UUID does not exist" and "the UUID belongs to a different job".
    */
   get_pipeline_run_by_id_api_v1_pipeline_runs__run_id__get: {
     parameters: {
@@ -699,6 +1165,169 @@ export interface operations {
       200: {
         content: {
           "application/json": components["schemas"]["PipelineRunResponse"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  /** List Research Cases */
+  list_research_cases_api_v1_research_cases_get: {
+    parameters: {
+      query?: {
+        limit?: number;
+        offset?: number;
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      200: {
+        content: {
+          "application/json": components["schemas"]["ResearchCaseListResponse"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  /** Get Research Case */
+  get_research_case_api_v1_research_cases__case_id__get: {
+    parameters: {
+      path: {
+        case_id: string;
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      200: {
+        content: {
+          "application/json": components["schemas"]["ResearchCaseResponse"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  /** Get Research Case Evidence */
+  get_research_case_evidence_api_v1_research_cases__case_id__evidence_get: {
+    parameters: {
+      path: {
+        case_id: string;
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      200: {
+        content: {
+          "application/json": components["schemas"]["EvidencePackResponse"][];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  /**
+   * Get Research Dashboard
+   * @description Return the read-only Research Cockpit dashboard aggregate.
+   *
+   * The dashboard derives every field from the existing PR-7
+   * resource-level readers (``ResearchCaseReader`` /
+   * ``ResearchRunReader`` / ``ResearchEvidenceReader``). The
+   * application service owns the orchestration, the deterministic
+   * ordering, the bounded ``recent_runs`` list and the
+   * ``SQLAlchemyError`` boundary; this router is intentionally a
+   * thin pass-through that stamps ``generated_at`` with a UTC
+   * wall-clock value so two callers hitting the service in the
+   * same instant still observe distinct response timestamps.
+   *
+   * ``market_status`` is always the explicit
+   * ``{"state": "unavailable", "reason": "..."}`` shape until a
+   * market dashboard source is registered; no market / factor
+   * values or investment conclusions are invented on this path.
+   */
+  get_research_dashboard_api_v1_research_dashboard_get: {
+    responses: {
+      /** @description Successful Response */
+      200: {
+        content: {
+          "application/json": components["schemas"]["ResearchDashboardResponse"];
+        };
+      };
+    };
+  };
+  /** List Research Runs */
+  list_research_runs_api_v1_research_runs_get: {
+    parameters: {
+      query?: {
+        limit?: number;
+        offset?: number;
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      200: {
+        content: {
+          "application/json": components["schemas"]["ResearchRunListResponse"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  /** Get Research Run */
+  get_research_run_api_v1_research_runs__run_id__get: {
+    parameters: {
+      path: {
+        run_id: string;
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      200: {
+        content: {
+          "application/json": components["schemas"]["ResearchRunResponse"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  /** Get Research Run Result */
+  get_research_run_result_api_v1_research_runs__run_id__result_get: {
+    parameters: {
+      path: {
+        run_id: string;
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      200: {
+        content: {
+          "application/json": components["schemas"]["ResearchResultResponse"];
         };
       };
       /** @description Validation Error */
