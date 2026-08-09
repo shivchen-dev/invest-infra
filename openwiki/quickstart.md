@@ -99,7 +99,7 @@ docker compose up --build
 
 Then visit:
 
-- Web — `http://localhost:5173`
+- Web — `http://localhost:3001`
 - API docs (Swagger UI) — `http://localhost:8000/docs`
 - Dagster UI — `http://localhost:3000`
 

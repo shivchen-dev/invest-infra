@@ -56,7 +56,7 @@ docker compose up --build
 
 然后访问：
 
-- Web: http://localhost:5173
+- Web: http://localhost:3001
 - API 文档: http://localhost:8000/docs
 - Dagster: http://localhost:3000
 

@@ -21,7 +21,7 @@ services:
       dockerfile: apps/api/Dockerfile
     environment:
       DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-invest}:${POSTGRES_PASSWORD:-invest_dev_password}@postgres:5432/${POSTGRES_DB:-invest}
-      API_CORS_ORIGINS: http://localhost:5173
+      API_CORS_ORIGINS: http://localhost:3001
     ports:
       - "8000:8000"
     depends_on:
@@ -35,7 +35,7 @@ services:
     environment:
       VITE_API_BASE_URL: http://localhost:8000
     ports:
-      - "5173:5173"
+      - "3001:5173"
     depends_on:
       - api
 

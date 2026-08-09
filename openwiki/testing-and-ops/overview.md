@@ -273,7 +273,7 @@ the asset-level integration paths against fixture data:
 - `api` — built from `apps/api/Dockerfile`, depends on `postgres`
   being healthy, exposes `8000:8000`.
 - `web` — `apps/web/Dockerfile` (Vite dev server) listening on
-  `5173:5173`.
+  `3001:5173`.
 - `dagster` — built from `apps/pipeline/Dockerfile`, exposes
   `3000:3000`, persists state in the `dagster-home` named volume, and
   loads `apps/pipeline/.env` via `env_file` so the in-container Dagster
