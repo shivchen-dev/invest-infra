@@ -4,6 +4,17 @@ export {
   type StatusBadgeTone,
 } from "./StatusBadge";
 export {
+  createResearchWidgetRegistry,
+  defaultResearchWidgetRegistry,
+  type ResearchWidgetDefinition,
+  type ResearchWidgetRegistry,
+} from "./registry";
+export {
+  getFixedLayout,
+  orderVisibleWidgetKeys,
+  type ResearchFixedLayout,
+} from "./layout";
+export {
   WidgetFrame,
   type WidgetFrameProps,
 } from "./WidgetFrame";
