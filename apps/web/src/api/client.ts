@@ -65,4 +65,8 @@ export const queryKeys = {
   researchDashboard: ["research-dashboard"] as const,
   researchCaseWorkspace: (caseId: string) =>
     ["research-case", caseId, "workspace"] as const,
+  researchCases: (filters: { limit: number; offset: number }) =>
+    ["research-cases", filters] as const,
+  researchRuns: (filters: { limit: number; offset: number }) =>
+    ["research-runs", filters] as const,
 };

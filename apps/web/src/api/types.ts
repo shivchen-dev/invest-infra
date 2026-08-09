@@ -54,7 +54,19 @@ export type DailyBarListResponse = Omit<
   items: DailyBarResponse[];
 };
 export type ResearchCaseResponse = RequiredDefined<components["schemas"]["ResearchCaseResponse"]>;
+export type ResearchCaseListResponse = Omit<
+  RequiredDefined<components["schemas"]["ResearchCaseListResponse"]>,
+  "items"
+> & {
+  items: ResearchCaseResponse[];
+};
 export type ResearchRunResponse = RequiredDefined<components["schemas"]["ResearchRunResponse"]>;
+export type ResearchRunListResponse = Omit<
+  RequiredDefined<components["schemas"]["ResearchRunListResponse"]>,
+  "items"
+> & {
+  items: ResearchRunResponse[];
+};
 export type ResearchResultResponse = RequiredDefined<
   components["schemas"]["ResearchResultResponse"]
 >;
