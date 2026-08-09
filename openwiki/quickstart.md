@@ -295,7 +295,9 @@ persists `analytics.research_cases` / `research_evidence_packs` /
 exposes the lifecycle through the API ([API overview §1](api/overview.md#1-modules))
 at `/api/v1/research-cases`, `/api/v1/research-runs`, and the matching
 evidence / result detail endpoints (see [API overview §2](api/overview.md#2-routing-surface)
-for the six PR-7 endpoints). The PR-MCP-MINIMAL read-only MCP
+for the six original PR-7 endpoints). PR-W03 adds the read-only
+`/api/v1/research-dashboard` aggregate, and PR-W05 adds the read-only case
+workspace route. The PR-MCP-MINIMAL read-only MCP
 server ([API overview §7](api/overview.md#7-read-only-mcp-server-pr-mcp-minimal))
 exposes `get_data_freshness` / `get_latest_candidate_pool` /
 `get_candidate_pool_diff` / `get_etf_daily_bars` through the FastMCP
