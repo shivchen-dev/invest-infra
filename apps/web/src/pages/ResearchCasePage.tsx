@@ -874,17 +874,27 @@ function ResearchResultBody({
 }
 
 function RunSummary({ run }: { run: ResearchRunResponse }) {
+  const statusLabel = runStatusLabel(run.status);
+  const isDiagnosticStatus = run.status === "failed" || run.status === "error";
+
   return (
     <div className="cockpitWidgetStack">
       <div className="cockpitEvidencePackHeader">
         <span className="cockpitEvidencePackHash">run · {run.run_id}</span>
-        <StatusBadge
-          tone={runStatusTone(run.status)}
-          title={`status: ${run.status}`}
-        >
-          {run.status || "unknown"}
-        </StatusBadge>
+        <span data-run-status={run.status}>
+          <StatusBadge
+            tone={runStatusTone(run.status)}
+            title={`status: ${run.status}`}
+          >
+            {statusLabel}
+          </StatusBadge>
+        </span>
       </div>
+      {isDiagnosticStatus && (
+        <div className="cockpitRunDiagnostic" data-run-diagnostic>
+          {run.error_summary || "No error summary was provided for this run."}
+        </div>
+      )}
       <dl className="cockpitCaseMeta">
         <div>
           <dt>Playbook</dt>
@@ -984,6 +994,19 @@ function ResultSummary({
       </details>
     </div>
   );
+}
+
+function runStatusLabel(status: string): string {
+  if (status === "created" || status === "queued") return "已创建";
+  if (status === "evidence_ready") return "证据就绪";
+  if (status === "running") return "运行中";
+  if (status === "succeeded" || status === "completed") return "已完成";
+  if (status === "failed" || status === "error") return "失败";
+  if (status === "skipped") return "已跳过";
+  if (status === "cancelled") return "已取消";
+  if (status === "pending") return "等待中";
+  if (!status) return "unknown";
+  return status;
 }
 
 function runStatusTone(status: string): ResearchWidgetMeta["tone"] {

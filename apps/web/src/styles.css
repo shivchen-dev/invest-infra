@@ -1568,6 +1568,16 @@ code.inlineCode {
   font-size: 13px;
 }
 
+.cockpitRunDiagnostic {
+  border: 1px solid var(--color-danger-border);
+  background: var(--color-danger-bg);
+  color: var(--color-danger-text);
+  border-radius: 8px;
+  padding: 8px 12px;
+  font-size: 12.5px;
+  word-break: break-word;
+}
+
 .cockpitKeyValueList {
   margin: 0;
   display: grid;

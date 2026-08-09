@@ -381,7 +381,7 @@ describe("ResearchCasePage", () => {
         '[data-widget-id="research-result"]',
       ) as HTMLElement;
       expect(result).toHaveTextContent("33333333-3333-3333-3333-333333333333");
-      expect(result).toHaveTextContent("succeeded");
+      expect(result).toHaveTextContent("已完成");
       expect(result).toHaveTextContent("趋势向上");
 
       const report = widgetGrid.querySelector(
@@ -521,8 +521,69 @@ describe("ResearchCasePage", () => {
       expect(result).toHaveTextContent("尚无研究结论");
       expect(result).toHaveTextContent("尚无 Result");
       expect(result).toHaveTextContent("run-1");
-      expect(result).toHaveTextContent("running");
+      expect(result).toHaveTextContent("运行中");
       expect(result.textContent ?? "").not.toMatch(/buy|sell/i);
+    });
+
+    it("renders the run diagnostic block with error_summary when a run is failed", async () => {
+      mockUseWorkspace.mockReturnValue(
+        successQuery(
+          makeWorkspace({
+            runs: [
+              makeRun({
+                run_id: "run-failed",
+                status: "failed",
+                error_summary: "evidence pack hash mismatch",
+              }),
+            ],
+            results: [null],
+          }),
+        ),
+      );
+
+      renderCasePage("/research/case-failed-run");
+
+      const widgetGrid = await screen.findByLabelText("Research Case widgets");
+      const result = widgetGrid.querySelector(
+        '[data-widget-id="research-result"]',
+      ) as HTMLElement;
+
+      const diagnostic = result.querySelector(
+        "[data-run-diagnostic]",
+      ) as HTMLElement;
+      expect(diagnostic).toBeInTheDocument();
+      expect(diagnostic).toHaveClass("cockpitRunDiagnostic");
+      expect(diagnostic).toHaveTextContent("evidence pack hash mismatch");
+    });
+
+    it("keeps the raw status text for an unknown run status", async () => {
+      mockUseWorkspace.mockReturnValue(
+        successQuery(
+          makeWorkspace({
+            runs: [
+              makeRun({
+                run_id: "run-unknown-status",
+                status: "weird_state",
+              }),
+            ],
+            results: [null],
+          }),
+        ),
+      );
+
+      renderCasePage("/research/case-unknown-run-status");
+
+      const widgetGrid = await screen.findByLabelText("Research Case widgets");
+      const result = widgetGrid.querySelector(
+        '[data-widget-id="research-result"]',
+      ) as HTMLElement;
+
+      const statusNode = result.querySelector(
+        "[data-run-status]",
+      ) as HTMLElement;
+      expect(statusNode).toHaveAttribute("data-run-status", "weird_state");
+      expect(statusNode).toHaveTextContent("weird_state");
+      expect(result.querySelector("[data-run-diagnostic]")).toBeNull();
     });
   });
 
