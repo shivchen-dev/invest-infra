@@ -49,7 +49,7 @@ from invest_domain import (
     start_research_attempt,
 )
 from invest_domain.research.canonical import compute_pack_hash
-from test_research_evidence import _pack
+from packages.domain.tests.test_research_evidence import _pack
 
 _BASE = datetime(2026, 3, 6, 7, 0, tzinfo=UTC)
 _READY_AT = _BASE + timedelta(minutes=5)

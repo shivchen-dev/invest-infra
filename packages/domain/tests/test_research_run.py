@@ -7,7 +7,7 @@ from uuid import UUID, uuid4
 import pytest
 from invest_domain import ResearchResult, ResearchRun, ResearchRunStatus
 from invest_domain.research import EvidencePack
-from test_research_evidence import _pack
+from packages.domain.tests.test_research_evidence import _pack
 
 _CASE_ID = UUID("11111111-2222-4333-8444-555555555555")
 _RUNNER = "runner-v1"
