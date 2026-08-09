@@ -338,11 +338,13 @@ function EvidencePackWidget({
     generatedAt: pickLatestEvidenceTimestamp(workspace.data),
   });
   return (
-    <WidgetFrame meta={meta}>
-      <WorkspaceLoadingGate workspace={workspace}>
-        {(data) => <EvidencePackBody data={data} />}
-      </WorkspaceLoadingGate>
-    </WidgetFrame>
+    <div id="case-evidence-pack">
+      <WidgetFrame meta={meta}>
+        <WorkspaceLoadingGate workspace={workspace}>
+          {(data) => <EvidencePackBody data={data} />}
+        </WorkspaceLoadingGate>
+      </WidgetFrame>
+    </div>
   );
 }
 
@@ -491,7 +493,7 @@ function ReportViewerBody({
       ? latestResult.report_markdown
       : "";
 
-  if (!reportMarkdown.trim()) {
+  if (!latestResult || !reportMarkdown.trim()) {
     return (
       <div className="cockpitWidgetPlaceholder" role="status">
         <strong>暂无报告</strong>
@@ -503,8 +505,319 @@ function ReportViewerBody({
   return (
     <div className="cockpitReportViewer" data-report-read-only="true">
       <p className="cockpitCaption">只读展示 · 来源于最新可用 Research Result</p>
-      <pre className="cockpitReportMarkdown">{reportMarkdown}</pre>
+      <ReportMeta result={latestResult} />
+      <MarkdownView markdown={reportMarkdown} />
     </div>
+  );
+}
+
+function ReportMeta({ result }: { result: ResearchResultResponse }) {
+  return (
+    <dl className="cockpitCaseMeta cockpitReportMeta">
+      <div>
+        <dt>Result ID</dt>
+        <dd>{result.result_id || "—"}</dd>
+      </div>
+      <div>
+        <dt>Created At</dt>
+        <dd>{result.created_at || "—"}</dd>
+      </div>
+      <div>
+        <dt>Model</dt>
+        <dd data-report-meta-field="model">
+          {result.model_key || "—"}@{result.model_version || "—"}
+        </dd>
+      </div>
+      <div>
+        <dt>Adapter</dt>
+        <dd data-report-meta-field="adapter">
+          {result.adapter_version || "—"}
+        </dd>
+      </div>
+      <div>
+        <dt>Playbook</dt>
+        <dd data-report-meta-field="playbook">
+          {result.playbook_version || "—"}
+        </dd>
+      </div>
+      {result.evidence_ids.length > 0 && (
+        <div className="cockpitReportMetaFull">
+          <dt>Evidence Ids</dt>
+          <dd>
+            <ul className="cockpitReportEvidenceList">
+              {result.evidence_ids.map((id) => (
+                <li key={id}>
+                  <a
+                    className="cockpitReportEvidenceRef"
+                    data-evidence-ref={id}
+                    href="#case-evidence-pack"
+                  >
+                    {id}
+                  </a>
+                </li>
+              ))}
+            </ul>
+          </dd>
+        </div>
+      )}
+    </dl>
+  );
+}
+
+type ReportInlineNode =
+  | { readonly kind: "text"; readonly value: string }
+  | { readonly kind: "code"; readonly value: string }
+  | { readonly kind: "link"; readonly href: string; readonly label: string };
+
+type ReportBlockNode =
+  | {
+      readonly kind: "heading";
+      readonly level: 1 | 2 | 3;
+      readonly children: ReadonlyArray<ReportInlineNode>;
+    }
+  | {
+      readonly kind: "paragraph";
+      readonly children: ReadonlyArray<ReportInlineNode>;
+    }
+  | {
+      readonly kind: "list";
+      readonly items: ReadonlyArray<ReadonlyArray<ReportInlineNode>>;
+    }
+  | {
+      readonly kind: "code";
+      readonly language: string | null;
+      readonly text: string;
+    };
+
+function isSafeReportUrl(href: string): boolean {
+  return /^https?:\/\//i.test(href.trim());
+}
+
+function parseReportInline(input: string): ReportInlineNode[] {
+  const nodes: ReportInlineNode[] = [];
+  let cursor = 0;
+  while (cursor < input.length) {
+    const codeStart = input.indexOf("`", cursor);
+    if (codeStart === -1) {
+      nodes.push(...parseReportTextWithLinks(input.slice(cursor)));
+      break;
+    }
+    if (codeStart > cursor) {
+      nodes.push(...parseReportTextWithLinks(input.slice(cursor, codeStart)));
+    }
+    const codeEnd = input.indexOf("`", codeStart + 1);
+    if (codeEnd === -1) {
+      nodes.push(...parseReportTextWithLinks(input.slice(cursor)));
+      break;
+    }
+    nodes.push({ kind: "code", value: input.slice(codeStart + 1, codeEnd) });
+    cursor = codeEnd + 1;
+  }
+  if (nodes.length === 0) {
+    nodes.push({ kind: "text", value: input });
+  }
+  return nodes;
+}
+
+function parseReportTextWithLinks(text: string): ReportInlineNode[] {
+  const nodes: ReportInlineNode[] = [];
+  const linkRegex = /\[([^\]\n]+)\]\(([^)\s]+)\)/g;
+  let lastIndex = 0;
+  let match: RegExpExecArray | null;
+  while ((match = linkRegex.exec(text)) !== null) {
+    if (match.index > lastIndex) {
+      nodes.push({ kind: "text", value: text.slice(lastIndex, match.index) });
+    }
+    const label = match[1];
+    const href = match[2];
+    if (isSafeReportUrl(href)) {
+      nodes.push({ kind: "link", href: href.trim(), label });
+    } else {
+      nodes.push({ kind: "text", value: `[${label}](${href})` });
+    }
+    lastIndex = match.index + match[0].length;
+  }
+  if (lastIndex < text.length) {
+    nodes.push({ kind: "text", value: text.slice(lastIndex) });
+  }
+  if (nodes.length === 0) {
+    nodes.push({ kind: "text", value: text });
+  }
+  return nodes;
+}
+
+function parseReportBlocks(markdown: string): ReportBlockNode[] {
+  const normalized = markdown.replace(/\r\n/g, "\n");
+  const lines = normalized.split("\n");
+  const blocks: ReportBlockNode[] = [];
+  let cursor = 0;
+
+  while (cursor < lines.length) {
+    const line = lines[cursor];
+
+    const fenceMatch = /^```([A-Za-z0-9_+\-#]*)\s*$/.exec(line);
+    if (fenceMatch) {
+      const language = fenceMatch[1] ? fenceMatch[1] : null;
+      const startCursor = cursor + 1;
+      let endCursor = startCursor;
+      while (endCursor < lines.length && !/^```\s*$/.test(lines[endCursor])) {
+        endCursor += 1;
+      }
+      const codeText = lines.slice(startCursor, endCursor).join("\n");
+      blocks.push({ kind: "code", language, text: codeText });
+      cursor = endCursor < lines.length ? endCursor + 1 : lines.length;
+      continue;
+    }
+
+    if (line.trim() === "") {
+      cursor += 1;
+      continue;
+    }
+
+    const headingMatch = /^(#{1,3})\s+(.+?)\s*#*\s*$/.exec(line);
+    if (headingMatch) {
+      const level = headingMatch[1].length as 1 | 2 | 3;
+      const text = headingMatch[2];
+      blocks.push({
+        kind: "heading",
+        level,
+        children: parseReportInline(text),
+      });
+      cursor += 1;
+      continue;
+    }
+
+    const listMatch = /^\s*[-*+]\s+(.+)$/.exec(line);
+    if (listMatch) {
+      const items: ReportInlineNode[][] = [];
+      while (cursor < lines.length) {
+        const current = lines[cursor];
+        const itemMatch = /^\s*[-*+]\s+(.+)$/.exec(current);
+        if (!itemMatch) break;
+        items.push(parseReportInline(itemMatch[1]));
+        cursor += 1;
+      }
+      blocks.push({ kind: "list", items });
+      continue;
+    }
+
+    const paragraphLines: string[] = [];
+    while (cursor < lines.length) {
+      const current = lines[cursor];
+      if (
+        current.trim() === "" ||
+        /^#{1,3}\s+/.test(current) ||
+        /^```/.test(current) ||
+        /^\s*[-*+]\s+/.test(current)
+      ) {
+        break;
+      }
+      paragraphLines.push(current);
+      cursor += 1;
+    }
+    if (paragraphLines.length > 0) {
+      blocks.push({
+        kind: "paragraph",
+        children: parseReportInline(paragraphLines.join(" ")),
+      });
+    }
+  }
+
+  return blocks;
+}
+
+function MarkdownView({ markdown }: { markdown: string }) {
+  const blocks = parseReportBlocks(markdown);
+  return (
+    <div className="cockpitReportMarkdown" data-report-markdown="true">
+      {blocks.map((block, blockKey) => renderReportBlock(block, blockKey))}
+    </div>
+  );
+}
+
+function renderReportBlock(
+  block: ReportBlockNode,
+  key: number,
+) {
+  if (block.kind === "heading") {
+    const children = block.children.map((node, i) => renderReportInline(node, i));
+    if (block.level === 1) {
+      return (
+        <h3 key={key} className="cockpitReportHeading" data-report-level="1">
+          {children}
+        </h3>
+      );
+    }
+    if (block.level === 2) {
+      return (
+        <h4 key={key} className="cockpitReportHeading" data-report-level="2">
+          {children}
+        </h4>
+      );
+    }
+    return (
+      <h5 key={key} className="cockpitReportHeading" data-report-level="3">
+        {children}
+      </h5>
+    );
+  }
+  if (block.kind === "paragraph") {
+    return (
+      <p key={key} className="cockpitReportParagraph">
+        {block.children.map((node, i) => renderReportInline(node, i))}
+      </p>
+    );
+  }
+  if (block.kind === "list") {
+    return (
+      <ul key={key} className="cockpitReportList">
+        {block.items.map((item, i) => (
+          <li key={i}>
+            {item.map((node, j) => renderReportInline(node, j))}
+          </li>
+        ))}
+      </ul>
+    );
+  }
+  return (
+    <pre
+      key={key}
+      className="cockpitReportCodeBlock"
+      data-report-code-block="true"
+    >
+      <code>{block.text}</code>
+    </pre>
+  );
+}
+
+function renderReportInline(
+  node: ReportInlineNode,
+  key: number,
+) {
+  if (node.kind === "text") {
+    return (
+      <span key={key} className="cockpitReportInlineText">
+        {node.value}
+      </span>
+    );
+  }
+  if (node.kind === "code") {
+    return (
+      <code key={key} className="inlineCode cockpitReportInlineCode">
+        {node.value}
+      </code>
+    );
+  }
+  return (
+    <a
+      key={key}
+      href={node.href}
+      className="cockpitReportLink"
+      rel="noopener noreferrer"
+      target="_blank"
+    >
+      {node.label}
+    </a>
   );
 }
 

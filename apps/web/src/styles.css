@@ -1383,11 +1383,129 @@ code.inlineCode {
   border-radius: 10px;
   background: var(--color-content);
   color: var(--color-text);
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  font-size: 13px;
-  line-height: 1.6;
-  white-space: pre-wrap;
+  font-size: 13.5px;
+  line-height: 1.65;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
   overflow-wrap: anywhere;
+}
+
+.cockpitReportMarkdown .cockpitReportHeading {
+  margin: 0;
+  font-weight: 600;
+  color: var(--color-text);
+  letter-spacing: -0.005em;
+}
+.cockpitReportMarkdown .cockpitReportHeading[data-report-level="1"] {
+  font-size: 18px;
+}
+.cockpitReportMarkdown .cockpitReportHeading[data-report-level="2"] {
+  font-size: 16px;
+}
+.cockpitReportMarkdown .cockpitReportHeading[data-report-level="3"] {
+  font-size: 14px;
+  color: var(--color-text-muted);
+  text-transform: none;
+}
+
+.cockpitReportMarkdown .cockpitReportParagraph {
+  margin: 0;
+  color: var(--color-text);
+}
+
+.cockpitReportMarkdown .cockpitReportList {
+  margin: 0;
+  padding-left: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  color: var(--color-text);
+}
+
+.cockpitReportMarkdown .cockpitReportInlineText {
+  white-space: normal;
+}
+
+.cockpitReportMarkdown .cockpitReportInlineCode {
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  font-size: 0.92em;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: var(--color-neutral-bg);
+  color: var(--color-neutral-text);
+}
+
+.cockpitReportMarkdown .cockpitReportCodeBlock {
+  margin: 0;
+  padding: 12px 14px;
+  background: var(--color-surface-soft);
+  border: 1px solid var(--cockpit-border);
+  border-radius: 8px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12.5px;
+  line-height: 1.55;
+  color: var(--color-text);
+  white-space: pre;
+  overflow-x: auto;
+  overflow-wrap: normal;
+}
+
+.cockpitReportMarkdown .cockpitReportCodeBlock code {
+  font-family: inherit;
+  font-size: inherit;
+  background: transparent;
+  color: inherit;
+  padding: 0;
+  border-radius: 0;
+}
+
+.cockpitReportMarkdown .cockpitReportLink {
+  color: var(--cockpit-accent);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  word-break: break-all;
+}
+.cockpitReportMarkdown .cockpitReportLink:hover {
+  color: #2a4ea8;
+}
+
+.cockpitReportMeta .cockpitReportMetaFull {
+  grid-column: 1 / -1;
+}
+
+.cockpitReportEvidenceList {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.cockpitReportEvidenceRef {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, monospace);
+  font-size: 12px;
+  padding: 2px 10px;
+  border-radius: 999px;
+  background: var(--cockpit-accent-bg);
+  color: var(--cockpit-accent);
+  border: 1px solid rgba(63, 108, 214, 0.22);
+  font-weight: 500;
+  word-break: break-all;
+}
+
+.cockpitReportEvidenceRef:hover {
+  background: var(--color-content);
+  color: var(--cockpit-accent);
+}
+
+.cockpitReportEvidenceRef:focus-visible {
+  outline: 2px solid var(--cockpit-accent);
+  outline-offset: 2px;
 }
 
 .cockpitEvidencePackList {

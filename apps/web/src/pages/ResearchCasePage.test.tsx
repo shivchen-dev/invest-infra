@@ -307,7 +307,7 @@ describe("ResearchCasePage", () => {
       expect(risk).toHaveTextContent("暂未接入");
       expect(report).toHaveTextContent("暂无报告");
       expect(report).toHaveTextContent("report_markdown");
-      expect(report.querySelector("pre")).toBeNull();
+      expect(report.querySelector(".cockpitReportMarkdown")).toBeNull();
       expect(factor.textContent ?? "").not.toMatch(/buy|sell|stance/i);
       expect(risk.textContent ?? "").not.toMatch(/buy|sell|stance/i);
       expect(report.textContent ?? "").not.toMatch(/buy|sell|stance/i);
@@ -391,7 +391,12 @@ describe("ResearchCasePage", () => {
         ".cockpitReportViewer",
       ) as HTMLElement;
       expect(reportViewer).toHaveAttribute("data-report-read-only", "true");
-      expect(report.querySelector("pre")).toHaveTextContent("# 趋势向上");
+      const markdownView = report.querySelector(
+        ".cockpitReportMarkdown",
+      ) as HTMLElement;
+      expect(markdownView).toBeInTheDocument();
+      expect(markdownView.querySelector("h3")).toHaveTextContent("趋势向上");
+      expect(markdownView).toHaveTextContent("趋势向上");
       expect(report.querySelector("textarea")).toBeNull();
       expect(report.querySelector("[contenteditable]")).toBeNull();
 
@@ -434,11 +439,16 @@ describe("ResearchCasePage", () => {
       const report = widgetGrid.querySelector(
         '[data-widget-id="report-viewer"]',
       ) as HTMLElement;
-      const reportSource = report.querySelector("pre");
+      const markdownView = report.querySelector(
+        ".cockpitReportMarkdown",
+      ) as HTMLElement;
 
-      expect(reportSource).toHaveTextContent("# Latest report");
-      expect(reportSource).toHaveTextContent("Evidence-backed conclusion.");
-      expect(reportSource).not.toHaveTextContent("# Older report");
+      expect(markdownView).toBeInTheDocument();
+      expect(markdownView.querySelector("h3")).toHaveTextContent(
+        "Latest report",
+      );
+      expect(markdownView).toHaveTextContent("Evidence-backed conclusion.");
+      expect(markdownView).not.toHaveTextContent("Older report");
       const reportViewer = report.querySelector(
         ".cockpitReportViewer",
       ) as HTMLElement;
@@ -466,7 +476,7 @@ describe("ResearchCasePage", () => {
 
       expect(report).toHaveTextContent("暂无报告");
       expect(report).toHaveTextContent("尚无 Result");
-      expect(report.querySelector("pre")).toBeNull();
+      expect(report.querySelector(".cockpitReportMarkdown")).toBeNull();
     });
 
     it("renders an explicit empty report state when report_markdown is blank", async () => {
@@ -488,7 +498,7 @@ describe("ResearchCasePage", () => {
 
       expect(report).toHaveTextContent("暂无报告");
       expect(report).toHaveTextContent("未提供 report_markdown");
-      expect(report.querySelector("pre")).toBeNull();
+      expect(report.querySelector(".cockpitReportMarkdown")).toBeNull();
     });
 
     it("renders an explicit missing-result marker when results[i] is null", async () => {
@@ -513,6 +523,251 @@ describe("ResearchCasePage", () => {
       expect(result).toHaveTextContent("run-1");
       expect(result).toHaveTextContent("running");
       expect(result.textContent ?? "").not.toMatch(/buy|sell/i);
+    });
+  });
+
+  describe("Report Viewer markdown rendering", () => {
+    function setupReportWorkspace(reportMarkdown: string): void {
+      const result = makeResult({
+        result_id: "55555555-5555-5555-5555-555555555555",
+        run_id: "33333333-3333-3333-3333-333333333333",
+        model_key: "model.basic",
+        model_version: "1.2.3",
+        adapter_version: "adapter-2026.08",
+        playbook_version: "playbook.v2",
+        report_markdown: reportMarkdown,
+        evidence_ids: ["evidence-alpha", "evidence-beta"],
+      });
+      mockUseWorkspace.mockReturnValue(
+        successQuery(
+          makeWorkspace({
+            runs: [makeRun()],
+            results: [result],
+          }),
+        ),
+      );
+    }
+
+    function getReportRoot(): HTMLElement {
+      const widgetGrid = screen.getByLabelText("Research Case widgets");
+      const report = widgetGrid.querySelector(
+        '[data-widget-id="report-viewer"]',
+      );
+      if (!report) throw new Error("report-viewer widget not found");
+      return report as HTMLElement;
+    }
+
+    function getMarkdownView(): HTMLElement {
+      const markdown = getReportRoot().querySelector(
+        ".cockpitReportMarkdown",
+      );
+      if (!markdown) throw new Error("cockpitReportMarkdown not found");
+      return markdown as HTMLElement;
+    }
+
+    it("renders the supported block nodes: headings, paragraphs, lists, code, inline code, links", async () => {
+      setupReportWorkspace(
+        [
+          "# Top heading",
+          "## Sub heading",
+          "### Tiny heading",
+          "",
+          "Plain paragraph with `inline_code` and a [safe link](https://example.com/path).",
+          "",
+          "- first bullet",
+          "- second bullet with `code`",
+          "",
+          "```ts",
+          "const x: number = 1;",
+          "```",
+        ].join("\n"),
+      );
+
+      renderCasePage("/research/case-report-markdown");
+
+      const markdownView = getMarkdownView();
+
+      const headings = markdownView.querySelectorAll(
+        ".cockpitReportHeading",
+      );
+      expect(headings.length).toBe(3);
+      expect(headings[0]?.tagName).toBe("H3");
+      expect(headings[0]).toHaveTextContent("Top heading");
+      expect(headings[0]).toHaveAttribute("data-report-level", "1");
+      expect(headings[1]?.tagName).toBe("H4");
+      expect(headings[1]).toHaveTextContent("Sub heading");
+      expect(headings[1]).toHaveAttribute("data-report-level", "2");
+      expect(headings[2]?.tagName).toBe("H5");
+      expect(headings[2]).toHaveTextContent("Tiny heading");
+      expect(headings[2]).toHaveAttribute("data-report-level", "3");
+
+      const paragraphs = markdownView.querySelectorAll(
+        ".cockpitReportParagraph",
+      );
+      expect(paragraphs.length).toBe(1);
+      expect(paragraphs[0]).toHaveTextContent("Plain paragraph with");
+      const inlineCode = markdownView.querySelectorAll(
+        ".cockpitReportInlineCode",
+      );
+      expect(inlineCode.length).toBeGreaterThanOrEqual(1);
+      expect(inlineCode[0]).toHaveTextContent("inline_code");
+
+      const link = markdownView.querySelector(".cockpitReportLink");
+      expect(link).not.toBeNull();
+      expect(link).toHaveAttribute("href", "https://example.com/path");
+      expect(link).toHaveTextContent("safe link");
+      expect(link).toHaveAttribute("rel", "noopener noreferrer");
+      expect(link).toHaveAttribute("target", "_blank");
+
+      const list = markdownView.querySelector(".cockpitReportList");
+      expect(list).not.toBeNull();
+      const items = list?.querySelectorAll("li") ?? [];
+      expect(items.length).toBe(2);
+      expect(items[0]).toHaveTextContent("first bullet");
+      expect(items[1]).toHaveTextContent("second bullet with");
+
+      const codeBlock = markdownView.querySelector(
+        ".cockpitReportCodeBlock",
+      );
+      expect(codeBlock).not.toBeNull();
+      expect(codeBlock?.tagName).toBe("PRE");
+      expect(codeBlock).toHaveTextContent("const x: number = 1;");
+      expect(codeBlock).toHaveAttribute("data-report-code-block", "true");
+    });
+
+    it("treats HTML tags and script content as inert text, never as elements", async () => {
+      setupReportWorkspace(
+        [
+          "# Safe title",
+          "",
+          "<script>window.__pwned = true;</script>",
+          "",
+          "Inline <img src=x onerror=alert(1)> stays as text.",
+        ].join("\n"),
+      );
+
+      renderCasePage("/research/case-report-xss");
+
+      const markdownView = getMarkdownView();
+      expect(markdownView.querySelector("script")).toBeNull();
+      expect(markdownView.querySelector("img")).toBeNull();
+      expect(markdownView.querySelector("[onerror]")).toBeNull();
+      expect(markdownView).toHaveTextContent("<script>");
+      expect(markdownView).toHaveTextContent("window.__pwned = true;");
+      expect(markdownView).toHaveTextContent("Inline");
+      expect(markdownView).toHaveTextContent("onerror=alert(1)");
+    });
+
+    it("renders unsafe URLs as inert text instead of a clickable link", async () => {
+      setupReportWorkspace(
+        [
+          "Refer to [evil js](javascript:alert(1)) and [evil mail](mailto:x@y.test).",
+          "",
+          "Real safe link: [docs](https://example.com/docs).",
+        ].join("\n"),
+      );
+
+      renderCasePage("/research/case-report-unsafe-url");
+
+      const markdownView = getMarkdownView();
+      const links = Array.from(
+        markdownView.querySelectorAll("a"),
+      ) as HTMLAnchorElement[];
+      const safeLinks = links.filter((link) =>
+        link.classList.contains("cockpitReportLink"),
+      );
+      expect(safeLinks.length).toBe(1);
+      expect(safeLinks[0]).toHaveAttribute("href", "https://example.com/docs");
+      expect(safeLinks[0]).toHaveTextContent("docs");
+
+      const jsLink = links.find((link) =>
+        (link.getAttribute("href") ?? "").toLowerCase().startsWith(
+          "javascript:",
+        ),
+      );
+      expect(jsLink).toBeUndefined();
+
+      expect(markdownView).toHaveTextContent("[evil js](javascript:alert(1))");
+      expect(markdownView).toHaveTextContent("[evil mail](mailto:x@y.test)");
+    });
+
+    it("renders the report metadata block (result_id, created_at, model@version, adapter, playbook)", async () => {
+      setupReportWorkspace("# Title");
+
+      renderCasePage("/research/case-report-meta");
+
+      const report = getReportRoot();
+      expect(report).toHaveTextContent("Result ID");
+      expect(report).toHaveTextContent("55555555-5555-5555-5555-555555555555");
+      expect(report).toHaveTextContent("Created At");
+      expect(report).toHaveTextContent("2026-08-09T00:35:00Z");
+      expect(report).toHaveTextContent("Model");
+      const modelField = report.querySelector(
+        '[data-report-meta-field="model"]',
+      );
+      expect(modelField).toHaveTextContent("model.basic@1.2.3");
+      expect(report).toHaveTextContent("Adapter");
+      const adapterField = report.querySelector(
+        '[data-report-meta-field="adapter"]',
+      );
+      expect(adapterField).toHaveTextContent("adapter-2026.08");
+      expect(report).toHaveTextContent("Playbook");
+      const playbookField = report.querySelector(
+        '[data-report-meta-field="playbook"]',
+      );
+      expect(playbookField).toHaveTextContent("playbook.v2");
+    });
+
+    it("renders evidence_ids as read-only anchors that target #case-evidence-pack", async () => {
+      setupReportWorkspace("# Title");
+
+      renderCasePage("/research/case-report-evidence");
+
+      const report = getReportRoot();
+      const refs = Array.from(
+        report.querySelectorAll("[data-evidence-ref]"),
+      ) as HTMLAnchorElement[];
+      expect(refs.length).toBe(2);
+
+      const alpha = refs.find(
+        (ref) => ref.getAttribute("data-evidence-ref") === "evidence-alpha",
+      );
+      expect(alpha).toBeDefined();
+      expect(alpha).toHaveAttribute("href", "#case-evidence-pack");
+      expect(alpha).toHaveTextContent("evidence-alpha");
+
+      const beta = refs.find(
+        (ref) => ref.getAttribute("data-evidence-ref") === "evidence-beta",
+      );
+      expect(beta).toBeDefined();
+      expect(beta).toHaveAttribute("href", "#case-evidence-pack");
+      expect(beta).toHaveTextContent("evidence-beta");
+
+      const target = document.getElementById("case-evidence-pack");
+      expect(target).not.toBeNull();
+    });
+
+    it("omits the evidence list when result has no evidence_ids", async () => {
+      mockUseWorkspace.mockReturnValue(
+        successQuery(
+          makeWorkspace({
+            runs: [makeRun()],
+            results: [
+              makeResult({
+                report_markdown: "# No evidence",
+                evidence_ids: [],
+              }),
+            ],
+          }),
+        ),
+      );
+
+      renderCasePage("/research/case-report-no-evidence");
+
+      const report = getReportRoot();
+      expect(report.querySelector("[data-evidence-ref]")).toBeNull();
+      expect(report.querySelector(".cockpitReportEvidenceList")).toBeNull();
+      expect(getMarkdownView()).toHaveTextContent("No evidence");
     });
   });
 
