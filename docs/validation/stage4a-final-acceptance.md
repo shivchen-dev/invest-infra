@@ -1,7 +1,7 @@
 # Stage 4A Final Acceptance Report
 
 > 版本：v1.1
-> 基线：`c4a96ca`（报告提交前的实现与文档基线）
+> 基线：`d0b3a65`（本报告初版实现与文档基线）
 > 验收范围：Stage 4A Final Closure Sprint
 > 状态：Closure Sprint completed; production-style seeded API/Web acceptance remains explicitly pending
 
@@ -27,6 +27,7 @@ TestClient / storage tests 验证。因此，本报告不把 contract-seam E2E
 | Fake JiuwenSwarm Runner 应用链路 | PASS | pipeline targeted tests `80 passed` |
 | Research API endpoint contract | PASS | `apps/api/tests/test_research_endpoints.py`：`6 passed` |
 | Web contract-seam E2E | PASS | `apps/web`: `pnpm test:e2e`，`2 passed` |
+| 真实 API + Web Case 联调 | PASS | 隔离 PostgreSQL + API `8100` + Web `3101`，Case workspace 浏览器验证通过 |
 | Web typecheck | PASS | `apps/web`: `pnpm typecheck` |
 | OpenWiki API inventory | PASS | 已与 8 个实际只读路由对齐 |
 
@@ -92,20 +93,28 @@ confidence、thesis、risk、disagreement 分离，AI 结果不能修改 Evidenc
 - 页面无 console error；
 - 不依赖本地数据库状态。
 
-尚未确认：在带有真实迁移数据库、seeded Research Case / Evidence Pack / Run
-的 compose 环境中，从真实 API 到浏览器的完整联调截图和运行记录。
+本轮已补做隔离环境联调，记录如下：
+
+- 数据库：`invest_stage4a`，迁移至 `20260807_0014`；
+- Case ID：`11111111-1111-4111-8111-111111111111`；
+- Evidence Pack ID：`fc22a8ae-14e8-47f9-af6e-bd9442a79952`；
+- Pack Hash：`737e32847a78c5504883626915a94efd456b21a48c8cc40ba5a426fd8606ee30`；
+- Factor 数量：8；
+- Run ID：`cccccccc-cccc-4ccc-8ccc-cccccccccccc`；
+- Result ID：`dddddddd-dddd-4ddd-8ddd-dddddddddddd`；
+- 真实 API：Cases、Case detail、Evidence、Workspace、Dashboard、Runs、Run detail、Result 均返回 200；
+- 真实 Web：History 与 Case workspace 返回对应 API 200，Case report 可见，console errors 为 0，390px viewport 无横向溢出。
+- Web 截图：[stage4a-case-workspace.png](assets/stage4a-case-workspace.png)。
+
+Dashboard 页面本身还会请求其他未 seeded 的非 Research 资源，产生 404；因此
+Dashboard 本轮只记 API 200，不宣称整个 Dashboard 页面无错误通过。
 
 ## 7. 剩余关闭条件
 
-Stage 4A 可以进入最终关闭评审，但正式勾选“Final Acceptance”前仍应补做
-一次环境级验收：
+Stage 4A 可以进入最终关闭评审。正式归档前仍需完成以下治理性收口：
 
-1. 使用迁移后的 PostgreSQL 创建可追溯的 Research Case、Evidence Pack 和 Run；
-2. 记录实际 Evidence Pack ID、hash、Factor 数量和 Run ID；
-3. 启动 API + Web，执行真实只读 API 到浏览器的联调；
-4. 保存 Web 截图、测试输出和安全检查结果；
-5. 确认无 Provider Key 泄漏、workspace 路径越界和 agent 直连数据库。
+1. 保存真实 Web 截图和完整测试输出；
+2. 确认无 Provider Key 泄漏、workspace 路径越界和 agent 直连数据库。
 
 在上述环境级证据完成前，不启动 Stage 4B 的市场智能数据层实现；可以继续
 进行必要的验收准备和缺口补齐。
-
