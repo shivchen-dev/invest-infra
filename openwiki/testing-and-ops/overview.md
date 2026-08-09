@@ -1,9 +1,9 @@
 ---
 type: Concept
 title: Testing & operations
-description: CI jobs (architecture, domain, storage unit/integration, migrations, pipeline, API, personal-daily PostgreSQL e2e, and web), the AST-based architecture and migration-chain gates, mock vs integration tests, the DC-2 / Stage 4A evidence + context unit suites, the PR-6 JiuwenSwarm adapter and research orchestration unit suites, the PR-7 research API / MCP server unit suites, the DC-3 exposure collection unit suites, compose runtime, and the Cifang/replay/shadow-run operating procedures.
+description: CI jobs (architecture, domain, storage unit/integration, migrations, pipeline, API, personal-daily PostgreSQL e2e, web vitest + Playwright e2e), the AST-based architecture and migration-chain gates, mock vs integration tests, the DC-2 / Stage 4A evidence + context unit suites, the PR-6 JiuwenSwarm adapter and research orchestration unit suites, the PR-7 research API / MCP server unit suites, the PR-W03 research dashboard / PR-W05 case workspace unit suites, the DC-3 exposure collection unit suites, compose runtime, and the Cifang/replay/shadow-run operating procedures.
 resource: /openwiki/testing-and-ops/overview.md
-tags: [ci, testing, alembic, compose, openwiki, etf-profile, research-context, research-lifecycle, jiuwenswarm, mcp, exposure]
+tags: [ci, testing, alembic, compose, openwiki, etf-profile, research-context, research-lifecycle, research-cockpit, jiuwenswarm, mcp, exposure]
 ---
 
 # Testing & operations
@@ -32,12 +32,17 @@ The CI workflow is fan-out by domain so failures are easy to triage:
 | `personal-daily-e2e` | Runs `tests/e2e/test_personal_daily_pipeline_postgres.py -q` against a PostgreSQL 16 service after syncing migrations, pipeline and API environments. |
 | `openapi-contract` | Re-runs `apps/api/src/invest_api/export_openapi.py` to refresh `apps/api/openapi.json`, then `pnpm api:generate` to refresh `apps/web/src/api/generated.ts`, and finally `git diff --exit-code` on the generated TypeScript file. The job fails when the Web workbench's generated client drifts from the live FastAPI OpenAPI surface. |
 | `web-check` | `pnpm install --frozen-lockfile` + `pnpm typecheck` + `pnpm test:run` + `pnpm build` in `apps/web`; the test step drives the vitest + jsdom suite (router, API client, page compositions, components, utils). |
+| `web-e2e` (local only) | `pnpm test:e2e` runs the Playwright cockpit end-to-end suite under [`apps/web/e2e/`](../../apps/web/e2e) via [`apps/web/playwright.config.ts`](../../apps/web/playwright.config.ts) (Chromium project, `webServer` boots Vite at `127.0.0.1:5174`). The local script is the canonical way to exercise the Research Cockpit smoke path; the Playwright suite is not yet wired into the GitHub Actions workflow. |
 
 The job name overrides in the `Makefile` (`make test` etc.) cover the
 main test slices, but the workflow also has separate import-smoke,
 personal-daily-e2e, and openapi-contract jobs. The `web-check` job
 type-checks, runs the vitest unit-test suite, and builds; the local
-`test-web` target mirrors the same three commands.
+`test-web` target mirrors the same three commands. The Playwright
+Research Cockpit e2e (`apps/web/e2e/research-cockpit.e2e.ts`) is
+local-only today (`pnpm test:e2e`); it boots Vite at `127.0.0.1:5174`
+through the Playwright `webServer` config and is the canonical cockpit
+smoke for future operators.
 
 ### Migration-chain AST gate
 
@@ -249,7 +254,20 @@ the asset-level integration paths against fixture data:
   (the `ResearchQueryService` boundary with its four `Reader` Protocols),
   `test_research_detail_serialization.py` (the `EvidencePackResponse` /
   `ResearchCaseResponse` factory path), and `test_mcp_server.py`
-  (the PR-MCP-MINIMAL `FastMCP` tool surface). The PR-6 JiuwenSwarm
+  (the PR-MCP-MINIMAL `FastMCP` tool surface). The PR-W03 dashboard
+  addition adds `test_research_dashboard_endpoints.py` (the
+  `/api/v1/research-dashboard` route plus the
+  `data_quality` / `freshness` / `market_status` / `evidence_status`
+  boundary) and `test_research_dashboard_service.py` (the
+  `get_dashboard` orchestration sequence, the bounded
+  `recent_runs` page and the explicit `unavailable` market-status
+  shape). The PR-W05 case-workspace addition adds
+  `test_research_workspace_endpoints.py` (the
+  `/api/v1/research-cases/{case_id}/workspace` route, the 404
+  contract, the `case_id` UUID 422 path) and
+  `test_research_workspace_service.py` (the `get_workspace`
+  composition sequence, the positional run ↔ result pairing, the
+  `SQLAlchemyError` boundary). The PR-6 JiuwenSwarm
   slice adds `test_jiuwenswarm_adapter.py` (port binding / version
   matching / transport identity) and `test_jiuwenswarm_slice2.py`
   (the CLI subprocess transport). `test_research_orchestration_service.py`

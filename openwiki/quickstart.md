@@ -1,9 +1,9 @@
 ---
 type: Reference
 title: OpenWiki Quickstart
-description: Entry point for the invest-infra OpenWiki knowledge base. Describes the modular-monolith layout, links every major concept page, and summarizes local startup, migrations, personal daily scheduling and replay/backfill operations, testing, opt-in CifangQuant / Tushare / JiuwenSwarm validation, the DC-2 ETF profile and Stage 4A evidence / context slices, the ADR-0012 evidence-driven Research lifecycle (PR-7 API + JiuwenSwarm adapter + orchestration service), the PR-MCP-MINIMAL read-only MCP server, the DC-3 exposure collection slice, and the centralized provider credential store.
+description: Entry point for the invest-infra OpenWiki knowledge base. Describes the modular-monolith layout, links every major concept page, and summarizes local startup, migrations, personal daily scheduling and replay/backfill operations, testing, opt-in CifangQuant / Tushare / JiuwenSwarm validation, the DC-2 ETF profile and Stage 4A evidence / context slices, the ADR-0012 evidence-driven Research lifecycle (PR-7 API + JiuwenSwarm adapter + orchestration service + PR-W03 dashboard / PR-W05 case workspace read models), the PR-MCP-MINIMAL read-only MCP server, the DC-3 exposure collection slice, the Research Cockpit web workbench (widget runtime + dashboard widgets + safe markdown renderer), and the centralized provider credential store.
 resource: /openwiki/quickstart.md
-tags: [quickstart, navigation, invest-infra, etf-profile, research-context, research-lifecycle, jiuwenswarm, mcp, exposure, governance]
+tags: [quickstart, navigation, invest-infra, etf-profile, research-context, research-lifecycle, research-cockpit, jiuwenswarm, mcp, exposure, governance]
 ---
 
 # OpenWiki quickstart — invest-infra v2
@@ -331,19 +331,57 @@ upgrade head` end-to-end.
 `apps/web/` is a read-only React workbench backed by the `/api/v1`
 surface. The page files under `apps/web/src/pages/` are intentionally
 thin compositions: each route delegates the heavy lifting to a feature
-folder (`apps/web/src/features/{dashboard,candidatePool,instruments,operations}/`)
+folder (`apps/web/src/features/{dashboard,candidatePool,instruments,operations,research}/`)
 that owns the data widgets, filters, status badges, and chart helpers
 — for example, `CandidateFilters`, `CandidateTable`, `CandidateRowDetails`,
 `DailyBarsTable`, `ClosePriceChart`, `RunStatusBadge`, and
 `LatestRunPanel`. The main routes are:
 
-- `/dashboard` — freshness, candidate summary, diff and latest run;
+- `/dashboard` — freshness, candidate summary, diff and latest run, plus
+  the **Research Cockpit** widget grid (`MarketStatusWidget` /
+  `ResearchSummaryWidget` / `EvidencePackWidget` /
+  `FactorSnapshotWidget` / `RiskMonitorWidget` /
+  `ResearchRunTimelineWidget`) composed by
+  [`features/research/dashboard/ResearchCockpitSection.tsx`](../apps/web/src/features/research/dashboard/ResearchCockpitSection.tsx)
+  and driven by [`GET /api/v1/research-dashboard`](api/overview.md);
 - `/candidate-pool` — included/excluded/all tabs, filters, exclusion reasons
   and expandable rule details;
 - `/etf/:instrumentId` — instrument metadata, 30/60/120-day daily bars and a
   lightweight SVG close-price chart;
 - `/operations` — freshness, latest/history Pipeline Runs and a non-executing
-  replay command hint.
+  replay command hint;
+- `/research/history` — paginated research-case list with filters, table,
+  status-tone badges and a detail link into the cockpit;
+- `/research/:caseId` — read-only Research Cockpit case workspace with the
+  bound `EvidencePack`, run timeline (Chinese-localised status labels plus a
+  dedicated diagnostic panel for `failed` / `error` runs), the latest
+  `ResearchResult` rendered through the safe markdown renderer
+  (`MarkdownView`, which only promotes `http(s)://` URLs to links and keeps
+  everything else as plain text), and result metadata — all driven by
+  [`GET /api/v1/research-cases/{case_id}/workspace`](api/overview.md).
+
+### 7a. Research Cockpit widget runtime
+
+The `/dashboard` and `/research/:caseId` pages render widgets through a
+small deterministic runtime under
+[`apps/web/src/research-workspace/runtime/`](../apps/web/src/research-workspace/runtime/index.ts):
+
+- `WidgetFrame` is the shared shell: title, description, provenance, state
+  badge (`pending` / `ready` / `error` / `empty`), `generatedAt`, and the
+  `asOf` date. Frame content is loaded through `WorkspaceLoadingGate` so
+  a widget and its loading state stay in lock-step.
+- `StatusBadge` is the deterministic tone helper used by the cockpit
+  (`success` / `warning` / `danger` / `info` / `neutral`) and maps the
+  raw research-run status to a Chinese label (`已创建` / `证据就绪` /
+  `运行中` / `已完成` / `失败` / `已跳过` / `已取消` / `等待中`) so a
+  failure surfaces the localised label **plus** a dedicated
+  `cockpitRunDiagnostic` panel that quotes `error_summary` verbatim.
+- `registry.ts` is the typed registry that maps widget `id`s to their
+  metadata; `layout.ts` derives the responsive 12-column grid placement
+  from a single source of truth so `/dashboard` and the case workspace
+  share the same shape. The registry deliberately omits market data
+  discovery / write controls — every widget is a read-only projection
+  of the PR-W03 dashboard endpoint.
 
 The browser has no write controls and does not trigger Pipeline runs.
 The Web's API client is auto-generated from the FastAPI OpenAPI surface
@@ -357,8 +395,14 @@ truth. The local commands are:
 cd apps/web
 pnpm typecheck       # TypeScript + Vite build type-check
 pnpm test:run        # vitest + jsdom unit suite (router, API client, pages, components, utils)
+pnpm test:e2e        # Playwright cockpit e2e (apps/web/e2e/*.e2e.ts) on http://127.0.0.1:5174
 pnpm build           # production bundle
 ```
+
+The default `API_BASE` falls back to `http://${window.location.hostname}:8000`
+when `VITE_API_BASE_URL` is unset, so the workbench auto-resolves the LAN
+address of the API container without a rebuild — see
+[`apps/web/src/api/client.ts`](../apps/web/src/api/client.ts).
 
 ## 8. Backlog
 - **Real Provider selection (O-1 in M0-DECISIONS §4).** `cifangquant`
@@ -384,8 +428,21 @@ pnpm build           # production bundle
   still calls for `daily-bars-missing`, `reject-candidate-pool`, and
   `database-restore` runbooks, which are not yet checked in.
 - **Research API write surface.** The PR-7 API exposes read-only
-  lifecycle queries (cases, runs, evidence, results). A controller
+  lifecycle queries (cases, runs, evidence, results); the PR-W03
+  cockpit dashboard and PR-W05 case workspace read models are
+  read-only compositions of those existing resources. A controller
   surface that opens new `ResearchCase` rows through HTTP, plus the
   replay / reconciliation endpoint for
   `ResearchOrchestrationReconciliationRequiredError`, is not part
   of this slice.
+- **Research Cockpit market / factor slots.** The PR-W03 dashboard
+  exposes an explicit `{"state": "unavailable", "reason": ...}` shape
+  for the `market_status` slot and renders only structural placeholders
+  for `FactorSnapshot` / `RiskMonitor`; a real market / factor source
+  must be wired in before those widgets can move out of the empty
+  state.
+- **Web e2e in CI.** The Playwright cockpit e2e
+  (`apps/web/e2e/research-cockpit.e2e.ts`) ships as a local
+  `pnpm test:e2e` script; the GitHub Actions workflow still runs the
+  vitest + jsdom suite under `web-check` only, so the cockpit smoke
+  is not gated by CI today.

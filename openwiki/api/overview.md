@@ -1,9 +1,9 @@
 ---
 type: Concept
 title: API overview
-description: FastAPI routers, Pydantic response shapes and the read-only endpoint surface for ETF data, candidate-pool results and diffs, personal pipeline-run status and paginated history, data freshness, the PR-7 research-case / evidence / run / result lifecycle queries, and the PR-MCP-MINIMAL Model Context Protocol server, including the legacy /v1/instruments endpoint and the architecture-governance application-service split.
+description: FastAPI routers, Pydantic response shapes and the read-only endpoint surface for ETF data, candidate-pool results and diffs, personal pipeline-run status and paginated history, data freshness, the PR-7 research-case / evidence / run / result lifecycle queries, the PR-W03 research dashboard aggregate and PR-W05 case workspace read models, and the PR-MCP-MINIMAL Model Context Protocol server, including the legacy /v1/instruments endpoint and the architecture-governance application-service split.
 resource: /openwiki/api/overview.md
-tags: [api, fastapi, routers, pydantic, etf, candidate-pool, research, mcp, application-service, governance]
+tags: [api, fastapi, routers, pydantic, etf, candidate-pool, research, research-dashboard, research-workspace, mcp, application-service, governance]
 ---
 
 # API overview
@@ -78,9 +78,11 @@ and application service
 | `GET /api/v1/research-cases` | `routers/research.py` | Paginated research-case history, ordered by `created_at` descending. |
 | `GET /api/v1/research-cases/{case_id}` | `routers/research.py` | Single research case; missing UUIDs return 404, malformed UUIDs return 422. |
 | `GET /api/v1/research-cases/{case_id}/evidence` | `routers/research.py` | All evidence packs bound to a case; the case lookup is performed first so a missing case still returns 404 even when packs exist for the same UUID elsewhere. |
+| `GET /api/v1/research-cases/{case_id}/workspace` | `routers/research.py` | PR-W05 read-only case workspace envelope (case + evidence packs + runs + positional run ↔ result pairing); missing UUIDs return 404, malformed UUIDs return 422. |
 | `GET /api/v1/research-runs` | `routers/research.py` | Paginated research-run history, ordered by `started_at` descending and `run_id` as the deterministic tiebreaker. |
 | `GET /api/v1/research-runs/{run_id}` | `routers/research.py` | Single research run; missing UUIDs return 404, malformed UUIDs return 422. |
 | `GET /api/v1/research-runs/{run_id}/result` | `routers/research.py` | The single `ResearchResult` belonging to a succeeded run; returns 404 when the run is missing or has not yet produced a result. |
+| `GET /api/v1/research-dashboard` | `routers/research.py` | PR-W03 read-only cockpit dashboard aggregate (counts, latest-case, evidence slot, market-status unavailable placeholder, bounded recent-runs page). |
 
 All endpoints accept the `get_db_session` FastAPI dependency; tests
 override it with a `MagicMock` `Session` and patch the relevant
@@ -207,6 +209,42 @@ the same project-wide Pydantic settings.
   `model_key`, `model_version`, `playbook_version`,
   `adapter_version`, `created_at`); used by
   `/api/v1/research-runs/{run_id}/result`.
+- `ResearchDashboardMarketStatus` — explicit empty-state envelope for
+  the dashboard market slot. `state` is the closed
+  `Literal["unavailable"]`; `reason` is the stable string
+  `"no market dashboard source registered"` until a market dashboard
+  source is wired in. The PR-W03 dashboard deliberately never invents
+  market / factor values, so the only legal reason string is the
+  `DASHBOARD_MARKET_UNAVAILABLE_REASON` constant re-exported from
+  `application/research.py`.
+- `ResearchDashboardEvidenceStatus` — `Literal["empty", "available"]`
+  state plus the case / pack identifiers and the existing
+  `quality_status` / `freshness_status` enum strings for the **first**
+  bound pack of the latest case (`pack_id` is `None` when the state is
+  `empty`). `case_id` echoes the case being reported so the front-end
+  can deep-link into the cockpit even when the evidence slot is empty.
+- `ResearchDashboardResearchSummary` — `case_count` / `run_count`
+  (exact, taken from `count_all`) plus the optional `latest_case`
+  projected through `ResearchCaseResponse.from_domain`; ordering is the
+  case reader's deterministic `created_at` descending sequence, never
+  a heuristic.
+- `ResearchDashboardResponse` — the envelope for
+  `/api/v1/research-dashboard` (frozen `schema_version="1.0.0"`,
+  `generated_at` stamped by the router from a UTC wall-clock, `as_of_date`
+  echoing the latest case's `as_of_date` or `None`, the coarse
+  `ResearchDashboardDataQuality` (`empty` / `partial` / `complete`)
+  and `ResearchDashboardFreshness` (`unknown` / `current` / `stale`)
+  literals, the `market_status` / `research_summary` /
+  `evidence_status` sub-envelopes, and the bounded `recent_runs` page
+  capped at `DASHBOARD_RECENT_RUNS_LIMIT = 10` rows).
+- `ResearchCaseWorkspaceResponse` — the composite envelope for
+  `/api/v1/research-cases/{case_id}/workspace` (a single `case`, the
+  always-present `evidence_packs` list, the always-present `runs`
+  list, and the `results` list that is **positionally parallel to**
+  `runs` — `results[i]` corresponds to `runs[i]` and is `None` when
+  the run has not published a result). No new resource field is
+  invented; the workspace is a thin composition of the existing
+  resource-level shapes.
 
 PR-7 deliberately exposes the lifecycle as a **read-only** query
 surface; the orchestrator writes new case / run / result rows
@@ -362,6 +400,38 @@ convergence.
   that succeeded but has not yet produced a result row returns
   404; the orchestrator's `complete_research_attempt` is the only
   legal writer of result rows.
+- `GET /api/v1/research-cases/{case_id}/workspace` — PR-W05
+  case-workspace envelope. `ResearchQueryService.get_workspace`
+  resolves the case first (returning `None` for 404), then composes
+  `evidence.list_by_case(case_id)` + `runs.list_by_case(case_id)`,
+  then runs `results.get_by_run_id(run_id)` once per run so the
+  workspace exposes a positional `results[i]` parallel to `runs[i]`
+  with `None` for runs that have not yet produced a result. The router
+  returns 404 with detail `Research case not found` when the case
+  does not exist; malformed UUIDs are 422 (FastAPI validation); the
+  `SQLAlchemyError` boundary wraps the whole sequence so the workspace
+  fails closed with the same sanitized 500 detail the resource-level
+  endpoints do.
+- `GET /api/v1/research-dashboard` — PR-W03 cockpit dashboard
+  aggregate. `ResearchQueryService.get_dashboard` runs a deterministic
+  sequence: `count_all` for both cases and runs, `list_recent(limit=1)`
+  on cases to resolve the latest case, `list_recent(limit=DASHBOARD_RECENT_RUNS_LIMIT)`
+  on runs for the bounded `recent_runs` page, then `evidence.list_by_case`
+  only when the latest case exists. From that state the service derives
+  `as_of_date`, `data_quality` (`empty` / `partial` / `complete`),
+  `freshness` (`unknown` / `current` / `stale` — `current` is the
+  latest weekday the market clock has resolved to, matching
+  `DataFreshnessQueryService.latest_weekday`),
+  `market_status` (always the explicit
+  `{"state": "unavailable", "reason": DASHBOARD_MARKET_UNAVAILABLE_REASON}`
+  shape — PR-W03 deliberately does **not** invent market / factor
+  values), `research_summary` (exact counts + `latest_case`), and
+  `evidence_status` (`empty` when no cases exist or when the latest
+  case has no bound pack; `available` otherwise). The router stamps
+  `generated_at` from a UTC wall-clock value so two callers hitting
+  the service in the same instant observe different response
+  timestamps. `SQLAlchemyError` from any reader call is translated to
+  `ResearchQueryError` and turned into the same sanitized 500 detail.
 
 Every storage exception is re-raised as `ResearchQueryError` and
 turned into a sanitized 500 with detail `Research query failed`;
@@ -399,7 +469,17 @@ tests override those service dependencies.
   `ResearchEvidenceReader`, `ResearchRunReader`,
   `ResearchResultReader`); the `SqlAlchemy*Repository` classes from
   [`packages/storage/.../repositories.py`](../storage/overview.md) are
-  the canonical implementations.
+  the canonical implementations. The PR-W03 dashboard addition adds
+  the `get_dashboard` orchestration plus the frozen
+  `DASHBOARD_SCHEMA_VERSION="1.0.0"`, the
+  `DASHBOARD_MARKET_UNAVAILABLE_REASON` constant and the
+  `DASHBOARD_RECENT_RUNS_LIMIT=10` cap; the PR-W05 workspace addition
+  adds the `get_workspace(case_id)` composition plus the
+  `ResearchCaseWorkspaceView` dataclass and a
+  `ResearchRunReader.list_by_case` Protocol method so the workspace
+  reads runs through the same structural port the storage repository
+  satisfies. Both additions sit inside the existing
+  `ResearchQueryService` so the routers remain thin wrappers.
 
 The application services live under `apps/api/src/invest_api/application/`
 so the API depends only on `domain` + `storage`, but the storage calls
