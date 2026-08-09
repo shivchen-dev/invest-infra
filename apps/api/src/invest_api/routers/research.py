@@ -12,6 +12,7 @@ from invest_api.schemas.research import (
     EvidencePackResponse,
     ResearchCaseListResponse,
     ResearchCaseResponse,
+    ResearchCaseWorkspaceResponse,
     ResearchDashboardEvidenceStatus,
     ResearchDashboardMarketStatus,
     ResearchDashboardResearchSummary,
@@ -75,6 +76,58 @@ def get_research_case_evidence(
     if packs is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Research case not found")
     return [EvidencePackResponse.from_domain(pack) for pack in packs]
+
+
+@router.get(
+    "/research-cases/{case_id}/workspace",
+    response_model=ResearchCaseWorkspaceResponse,
+)
+def get_research_case_workspace(
+    case_id: UUID,
+    service: Annotated[ResearchQueryService, Depends(get_research_query_service)],
+) -> ResearchCaseWorkspaceResponse:
+    """Return the read-only case workspace envelope (PR-W05 first increment).
+
+    The endpoint composes the existing
+    ``ResearchCaseResponse`` / ``EvidencePackResponse`` /
+    ``ResearchRunResponse`` / ``ResearchResultResponse`` resource
+    shapes; no new resource field is invented. ``results`` is the
+    positional, parallel companion of ``runs`` so the front-end can
+    pair them by index; a ``null`` result slot is exposed for runs
+    that have not (yet) published a result rather than fabricating
+    one. The endpoint is the read-only API contract for the future
+    workspace page; the front-end itself is not part of this PR.
+
+    Errors:
+
+    - ``404`` when the case does not exist (the same detail string
+      as ``GET /api/v1/research-cases/{case_id}`` so callers can
+      share error handlers).
+    - ``500`` with the sanitized ``"Research query failed"`` detail
+      on :class:`ResearchQueryError`, consistent with the existing
+      endpoints.
+    - ``422`` for a malformed ``case_id`` UUID (FastAPI default).
+    """
+
+    try:
+        view = service.get_workspace(case_id)
+    except ResearchQueryError as exc:
+        raise _query_failed(exc) from exc
+    if view is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Research case not found"
+        )
+    return ResearchCaseWorkspaceResponse(
+        case=ResearchCaseResponse.from_domain(view.case),
+        evidence_packs=[
+            EvidencePackResponse.from_domain(pack) for pack in view.evidence_packs
+        ],
+        runs=[ResearchRunResponse.from_domain(run) for run in view.runs],
+        results=[
+            ResearchResultResponse.from_domain(result) if result is not None else None
+            for result in view.results
+        ],
+    )
 
 
 @router.get("/research-runs", response_model=ResearchRunListResponse)

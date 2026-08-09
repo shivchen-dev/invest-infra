@@ -108,6 +108,33 @@ export interface paths {
     /** Get Research Case Evidence */
     get: operations["get_research_case_evidence_api_v1_research_cases__case_id__evidence_get"];
   };
+  "/api/v1/research-cases/{case_id}/workspace": {
+    /**
+     * Get Research Case Workspace
+     * @description Return the read-only case workspace envelope (PR-W05 first increment).
+     *
+     * The endpoint composes the existing
+     * ``ResearchCaseResponse`` / ``EvidencePackResponse`` /
+     * ``ResearchRunResponse`` / ``ResearchResultResponse`` resource
+     * shapes; no new resource field is invented. ``results`` is the
+     * positional, parallel companion of ``runs`` so the front-end can
+     * pair them by index; a ``null`` result slot is exposed for runs
+     * that have not (yet) published a result rather than fabricating
+     * one. The endpoint is the read-only API contract for the future
+     * workspace page; the front-end itself is not part of this PR.
+     *
+     * Errors:
+     *
+     * - ``404`` when the case does not exist (the same detail string
+     *   as ``GET /api/v1/research-cases/{case_id}`` so callers can
+     *   share error handlers).
+     * - ``500`` with the sanitized ``"Research query failed"`` detail
+     *   on :class:`ResearchQueryError`, consistent with the existing
+     *   endpoints.
+     * - ``422`` for a malformed ``case_id`` UUID (FastAPI default).
+     */
+    get: operations["get_research_case_workspace_api_v1_research_cases__case_id__workspace_get"];
+  };
   "/api/v1/research-dashboard": {
     /**
      * Get Research Dashboard
@@ -682,6 +709,51 @@ export interface components {
       status: string;
     };
     /**
+     * ResearchCaseWorkspaceResponse
+     * @description Composite read-only envelope for the Research Case workspace page.
+     *
+     * Composes the existing resource shapes so the front-end can render
+     * the case, its bound evidence packs, the runs attached to the case
+     * and the (nullable) result for each run in a single round trip. The
+     * endpoint is the PR-W05 first increment; only the API/backend
+     * contract is shipped here.
+     *
+     * Field invariants:
+     *
+     * - ``case`` always echoes the canonical case detail shape used by
+     *   ``GET /api/v1/research-cases/{case_id}``; the router enforces
+     *   the ``case_id`` URL parameter matches the resource.
+     * - ``evidence_packs`` is the same list shape as
+     *   ``GET /api/v1/research-cases/{case_id}/evidence`` (already
+     *   serialised by :class:`EvidencePackResponse`) but is **always
+     *   present** - it is ``[]`` rather than omitted when the case has
+     *   no bound pack, so the workspace page can render an explicit
+     *   empty evidence slot.
+     * - ``runs`` is the same per-run shape used by
+     *   ``GET /api/v1/research-runs/{run_id}`` and is always present
+     *   (the storage repository returns ``[]`` rather than ``None``
+     *   when the case has no runs).
+     * - ``results`` is **parallel to** ``runs``: ``results[i]``
+     *   corresponds to ``runs[i]``; ``results[i] is None`` when the run
+     *   has not (yet) produced a result. The pair is never reordered
+     *   server-side so the front-end can rely on positional pairing.
+     *   The list always carries exactly one entry per run, never an
+     *   arbitrary subset.
+     *
+     * The endpoint is read-only and never invents data: when a run has
+     * no published result the workspace exposes a ``null`` slot rather
+     * than fabricating one.
+     */
+    ResearchCaseWorkspaceResponse: {
+      case: components["schemas"]["ResearchCaseResponse"];
+      /** Evidence Packs */
+      evidence_packs?: components["schemas"]["EvidencePackResponse"][];
+      /** Results */
+      results?: (components["schemas"]["ResearchResultResponse"] | null)[];
+      /** Runs */
+      runs?: components["schemas"]["ResearchRunResponse"][];
+    };
+    /**
      * ResearchDashboardEvidenceStatus
      * @description Explicit empty / available state for the latest-case evidence slot.
      *
@@ -1232,6 +1304,51 @@ export interface operations {
       200: {
         content: {
           "application/json": components["schemas"]["EvidencePackResponse"][];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  /**
+   * Get Research Case Workspace
+   * @description Return the read-only case workspace envelope (PR-W05 first increment).
+   *
+   * The endpoint composes the existing
+   * ``ResearchCaseResponse`` / ``EvidencePackResponse`` /
+   * ``ResearchRunResponse`` / ``ResearchResultResponse`` resource
+   * shapes; no new resource field is invented. ``results`` is the
+   * positional, parallel companion of ``runs`` so the front-end can
+   * pair them by index; a ``null`` result slot is exposed for runs
+   * that have not (yet) published a result rather than fabricating
+   * one. The endpoint is the read-only API contract for the future
+   * workspace page; the front-end itself is not part of this PR.
+   *
+   * Errors:
+   *
+   * - ``404`` when the case does not exist (the same detail string
+   *   as ``GET /api/v1/research-cases/{case_id}`` so callers can
+   *   share error handlers).
+   * - ``500`` with the sanitized ``"Research query failed"`` detail
+   *   on :class:`ResearchQueryError`, consistent with the existing
+   *   endpoints.
+   * - ``422`` for a malformed ``case_id`` UUID (FastAPI default).
+   */
+  get_research_case_workspace_api_v1_research_cases__case_id__workspace_get: {
+    parameters: {
+      path: {
+        case_id: string;
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      200: {
+        content: {
+          "application/json": components["schemas"]["ResearchCaseWorkspaceResponse"];
         };
       };
       /** @description Validation Error */

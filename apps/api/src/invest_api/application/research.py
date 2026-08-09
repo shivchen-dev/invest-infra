@@ -74,6 +74,7 @@ class ResearchRunReader(Protocol):
     def list_recent(self, *, limit: int, offset: int) -> list[ResearchRun]: ...
     def count_all(self) -> int: ...
     def get(self, run_id: UUID) -> ResearchRun | None: ...
+    def list_by_case(self, case_id: UUID) -> list[ResearchRun]: ...
 
 
 class ResearchResultReader(Protocol):
@@ -156,6 +157,43 @@ class ResearchDashboardView:
     recent_runs: list[ResearchRun]
 
 
+@dataclass(frozen=True, slots=True)
+class ResearchCaseWorkspaceView:
+    """Small domain view backing the PR-W05 workspace response envelope.
+
+    The view composes the existing :class:`ResearchCase` /
+    :class:`EvidencePack` / :class:`ResearchRun` / :class:`ResearchResult`
+    value objects without inventing any new field so the workspace
+    contract is a thin composition of the resource-level readers.
+    The router translates this view into the
+    :class:`ResearchCaseWorkspaceResponse` envelope; the front-end
+    consumes the response, not this dataclass.
+
+    Field invariants:
+
+    - ``case`` is the canonical :class:`ResearchCase` row; the router
+      is responsible for asserting the URL parameter matches the
+      resource identity.
+    - ``evidence_packs`` mirrors ``ResearchEvidenceReader.list_by_case``
+      exactly (``[]`` rather than ``None`` when the case has no
+      bound pack) so the workspace page can render an explicit empty
+      evidence slot.
+    - ``runs`` mirrors ``ResearchRunReader.list_by_case`` exactly.
+    - ``results`` is **parallel to** ``runs``: ``results[i]``
+      corresponds to ``runs[i]`` and is ``None`` when the run has
+      not produced a result. The pairing is positional and the list
+      always carries exactly one entry per run, never a subset.
+
+    The service returns ``None`` (rather than raising) when the case
+    does not exist; the router translates that to the standard 404.
+    """
+
+    case: ResearchCase
+    evidence_packs: list[EvidencePack]
+    runs: list[ResearchRun]
+    results: list[ResearchResult | None]
+
+
 class ResearchQueryService:
     def __init__(
         self,
@@ -212,6 +250,55 @@ class ResearchQueryService:
             if self._runs.get(run_id) is None:
                 return None
             return self._results.get_by_run_id(run_id)
+        except SQLAlchemyError as exc:
+            raise ResearchQueryError("research query failed") from exc
+
+    def get_workspace(self, case_id: UUID) -> ResearchCaseWorkspaceView | None:
+        """Return the read-only case workspace view or ``None``.
+
+        The PR-W05 workspace endpoint is a thin composition of the
+        existing resource-level readers:
+
+        1. ``cases.get(case_id)`` to resolve the case; the method
+           returns ``None`` (rather than raising) when the case is
+           missing so the router can stamp a 404 with the same
+           detail string the resource-level endpoints use.
+        2. ``evidence.list_by_case(case_id)`` to enumerate the
+           evidence packs bound to the case.
+        3. ``runs.list_by_case(case_id)`` to enumerate the runs
+           attached to the case in the repository's deterministic
+           ``created_at`` / ``run_id`` ascending order.
+        4. For every run, ``results.get_by_run_id(run_id)``; the
+           lookup returns ``None`` when the run has not produced a
+           result and the workspace view carries ``None`` rather
+           than fabricating one.
+
+        ``SQLAlchemyError`` from any reader call is translated to
+        :class:`ResearchQueryError`; the error boundary wraps the
+        whole sequence so the workspace fails closed with the same
+        sanitized 500 detail the resource-level endpoints do. Reads
+        happen in this deterministic order so the workspace is
+        stable across replay: case first, evidence and runs in
+        parallel next, then one result lookup per run.
+        """
+
+        try:
+            case = self._cases.get(case_id)
+            if case is None:
+                return None
+
+            packs = self._evidence.list_by_case(case_id)
+            runs = self._runs.list_by_case(case_id)
+            results: list[ResearchResult | None] = [
+                self._results.get_by_run_id(run.run_id) for run in runs
+            ]
+
+            return ResearchCaseWorkspaceView(
+                case=case,
+                evidence_packs=list(packs),
+                runs=list(runs),
+                results=results,
+            )
         except SQLAlchemyError as exc:
             raise ResearchQueryError("research query failed") from exc
 
@@ -357,6 +444,7 @@ __all__ = [
     "DASHBOARD_RECENT_RUNS_LIMIT",
     "DASHBOARD_SCHEMA_VERSION",
     "ResearchCaseReader",
+    "ResearchCaseWorkspaceView",
     "ResearchDashboardDataQuality",
     "ResearchDashboardEvidenceStatusView",
     "ResearchDashboardFreshness",

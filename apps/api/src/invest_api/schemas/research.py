@@ -358,10 +358,53 @@ class ResearchDashboardResponse(BaseModel):
     recent_runs: list[ResearchRunResponse] = Field(default_factory=list)
 
 
+class ResearchCaseWorkspaceResponse(BaseModel):
+    """Composite read-only envelope for the Research Case workspace page.
+
+    Composes the existing resource shapes so the front-end can render
+    the case, its bound evidence packs, the runs attached to the case
+    and the (nullable) result for each run in a single round trip. The
+    endpoint is the PR-W05 first increment; only the API/backend
+    contract is shipped here.
+
+    Field invariants:
+
+    - ``case`` always echoes the canonical case detail shape used by
+      ``GET /api/v1/research-cases/{case_id}``; the router enforces
+      the ``case_id`` URL parameter matches the resource.
+    - ``evidence_packs`` is the same list shape as
+      ``GET /api/v1/research-cases/{case_id}/evidence`` (already
+      serialised by :class:`EvidencePackResponse`) but is **always
+      present** - it is ``[]`` rather than omitted when the case has
+      no bound pack, so the workspace page can render an explicit
+      empty evidence slot.
+    - ``runs`` is the same per-run shape used by
+      ``GET /api/v1/research-runs/{run_id}`` and is always present
+      (the storage repository returns ``[]`` rather than ``None``
+      when the case has no runs).
+    - ``results`` is **parallel to** ``runs``: ``results[i]``
+      corresponds to ``runs[i]``; ``results[i] is None`` when the run
+      has not (yet) produced a result. The pair is never reordered
+      server-side so the front-end can rely on positional pairing.
+      The list always carries exactly one entry per run, never an
+      arbitrary subset.
+
+    The endpoint is read-only and never invents data: when a run has
+    no published result the workspace exposes a ``null`` slot rather
+    than fabricating one.
+    """
+
+    case: ResearchCaseResponse
+    evidence_packs: list[EvidencePackResponse] = Field(default_factory=list)
+    runs: list[ResearchRunResponse] = Field(default_factory=list)
+    results: list[ResearchResultResponse | None] = Field(default_factory=list)
+
+
 __all__ = [
     "EvidencePackResponse",
     "ResearchCaseListResponse",
     "ResearchCaseResponse",
+    "ResearchCaseWorkspaceResponse",
     "ResearchDashboardDataQuality",
     "ResearchDashboardEvidenceStatus",
     "ResearchDashboardFreshness",

@@ -34,11 +34,12 @@ def make_run(case_id):
     )
 
 
-def test_exactly_seven_frozen_research_get_routes_and_no_write_routes():
+def test_exactly_eight_frozen_research_get_routes_and_no_write_routes():
     expected = {
         "/api/v1/research-cases",
         "/api/v1/research-cases/{case_id}",
         "/api/v1/research-cases/{case_id}/evidence",
+        "/api/v1/research-cases/{case_id}/workspace",
         "/api/v1/research-dashboard",
         "/api/v1/research-runs",
         "/api/v1/research-runs/{run_id}",
@@ -48,7 +49,7 @@ def test_exactly_seven_frozen_research_get_routes_and_no_write_routes():
     research_paths = {path: paths[path] for path in expected}
 
     assert set(research_paths) == expected
-    assert sum(len(operations) for operations in research_paths.values()) == 7
+    assert sum(len(operations) for operations in research_paths.values()) == 8
     assert all(set(operations) == {"get"} for operations in research_paths.values())
 
 
