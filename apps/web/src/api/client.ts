@@ -63,4 +63,6 @@ export const queryKeys = {
   pipelineRuns: (filters: { limit: number; offset: number }) =>
     ["pipeline-runs", filters] as const,
   researchDashboard: ["research-dashboard"] as const,
+  researchCaseWorkspace: (caseId: string) =>
+    ["research-case", caseId, "workspace"] as const,
 };

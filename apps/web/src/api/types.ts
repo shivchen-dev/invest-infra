@@ -55,6 +55,41 @@ export type DailyBarListResponse = Omit<
 };
 export type ResearchCaseResponse = RequiredDefined<components["schemas"]["ResearchCaseResponse"]>;
 export type ResearchRunResponse = RequiredDefined<components["schemas"]["ResearchRunResponse"]>;
+export type ResearchResultResponse = RequiredDefined<
+  components["schemas"]["ResearchResultResponse"]
+>;
+export type EvidencePackResponse = RequiredDefined<
+  components["schemas"]["EvidencePackResponse"]
+>;
+export type EvidenceDataQualityResponse = RequiredDefined<
+  components["schemas"]["EvidenceDataQualityResponse"]
+>;
+export type EvidenceFactorResponse = RequiredDefined<
+  components["schemas"]["EvidenceFactorResponse"]
+>;
+export type EvidenceCaseResponse = RequiredDefined<
+  components["schemas"]["EvidenceCaseResponse"]
+>;
+export type EvidenceInstrumentResponse = RequiredDefined<
+  components["schemas"]["EvidenceInstrumentResponse"]
+>;
+export type EvidenceMarketSnapshotResponse = RequiredDefined<
+  components["schemas"]["EvidenceMarketSnapshotResponse"]
+>;
+export type EvidenceSourceReferenceResponse = RequiredDefined<
+  components["schemas"]["EvidenceSourceReferenceResponse"]
+>;
+export type ResearchCaseWorkspaceEvidencePack = EvidencePackResponse;
+export type ResearchCaseWorkspaceRun = ResearchRunResponse;
+export type ResearchCaseWorkspaceResult = ResearchResultResponse;
+export type ResearchCaseWorkspaceResponse = Omit<
+  RequiredDefined<components["schemas"]["ResearchCaseWorkspaceResponse"]>,
+  "evidence_packs" | "runs" | "results"
+> & {
+  evidence_packs: ResearchCaseWorkspaceEvidencePack[];
+  runs: ResearchCaseWorkspaceRun[];
+  results: (ResearchCaseWorkspaceResult | null)[];
+};
 export type ResearchDashboardDataQuality = components["schemas"]["ResearchDashboardResponse"]["data_quality"];
 export type ResearchDashboardFreshness = components["schemas"]["ResearchDashboardResponse"]["freshness"];
 export type ResearchDashboardMarketStatus = RequiredDefined<
