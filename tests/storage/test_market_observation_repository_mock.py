@@ -227,6 +227,76 @@ class MarketObservationSnapshotRepositoryMockTests(unittest.TestCase):
 
         self.assertEqual(result, [])
 
+    def test_get_latest_for_scope_filters_by_scope_type_and_scope_key(self) -> None:
+        snapshot = _make_snapshot()
+        parent, children = _make_rows(snapshot)
+        parent_result = MagicMock()
+        parent_result.first.return_value = parent
+        children_result = MagicMock()
+        children_result.all.return_value = children
+        self._session.scalars.side_effect = [parent_result, children_result]
+
+        returned = self._repo.get_latest_for_scope(
+            "market_breadth", "ashare_active_universe_v1"
+        )
+
+        self.assertEqual(returned, snapshot)
+        # Two scalars calls: one for the filtered parent lookup, one
+        # for the eager child re-read inside _row_to_snapshot.
+        self.assertEqual(self._session.scalars.call_count, 2)
+        first_statement = self._session.scalars.call_args_list[0].args[0]
+        compiled = first_statement.compile()
+        params = compiled.params
+        self.assertEqual(params["scope_type_1"], "market_breadth")
+        self.assertEqual(params["scope_key_1"], "ashare_active_universe_v1")
+        # No as_of_date filter applied when caller passes None.
+        self.assertNotIn("as_of_date_1", params)
+        # Ordering is as_of_date DESC, created_at DESC, id DESC.
+        compiled_sql = str(compiled)
+        self.assertIn(
+            "ORDER BY analytics.market_observation_snapshots.as_of_date DESC",
+            compiled_sql,
+        )
+        self.assertIn(
+            "analytics.market_observation_snapshots.created_at DESC",
+            compiled_sql,
+        )
+        self.assertIn(
+            "analytics.market_observation_snapshots.id DESC",
+            compiled_sql,
+        )
+
+    def test_get_latest_for_scope_passes_as_of_date_through(self) -> None:
+        snapshot = _make_snapshot()
+        parent, children = _make_rows(snapshot)
+        parent_result = MagicMock()
+        parent_result.first.return_value = parent
+        children_result = MagicMock()
+        children_result.all.return_value = children
+        self._session.scalars.side_effect = [parent_result, children_result]
+
+        returned = self._repo.get_latest_for_scope(
+            "market_breadth",
+            "ashare_active_universe_v1",
+            as_of_date=_AS_OF,
+        )
+
+        self.assertEqual(returned, snapshot)
+        first_statement = self._session.scalars.call_args_list[0].args[0]
+        params = first_statement.compile().params
+        self.assertEqual(params["as_of_date_1"], _AS_OF)
+
+    def test_get_latest_for_scope_returns_none_when_no_row(self) -> None:
+        result = MagicMock()
+        result.first.return_value = None
+        self._session.scalars.return_value = result
+
+        returned = self._repo.get_latest_for_scope(
+            "market_breadth", "ashare_active_universe_v1"
+        )
+
+        self.assertIsNone(returned)
+
 
 if __name__ == "__main__":
     unittest.main()

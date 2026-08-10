@@ -26,6 +26,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from invest_api.application.candidate_pool import CandidatePoolQueryService
 from invest_api.application.data_freshness import DataFreshnessQueryService
 from invest_api.application.etf import EtfQueryService
+from invest_api.application.market_breadth import MarketBreadthQueryService
 from invest_api.application.market_temperature import MarketTemperatureQueryService
 from invest_api.application.pipeline_runs import PipelineRunQueryService
 from invest_api.application.research import ResearchQueryService
@@ -140,12 +141,30 @@ def get_market_temperature_query_service(
     )
 
 
+def get_market_breadth_query_service(
+    session: Annotated[Session, Depends(get_db_session)],
+) -> MarketBreadthQueryService:
+    """Build the application service that backs ``/api/v1/market-breadth``.
+
+    Constructs :class:`invest_storage.repositories.SqlAlchemyMarketObservationSnapshotRepository`
+    against the FastAPI-provided session and hands it to
+    :class:`invest_api.application.market_breadth.MarketBreadthQueryService`.
+    Tests override this dependency through ``app.dependency_overrides``
+    to inject a mock service without touching the storage layer.
+    """
+
+    return MarketBreadthQueryService(
+        SqlAlchemyMarketObservationSnapshotRepository(session)
+    )
+
+
 __all__ = [
     "get_candidate_pool_query_service",
     "get_data_freshness_query_service",
     "get_db_session",
     "get_etf_query_service",
     "get_engine",
+    "get_market_breadth_query_service",
     "get_pipeline_run_query_service",
     "get_research_query_service",
     "get_session_factory",

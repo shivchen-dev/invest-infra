@@ -4615,8 +4615,11 @@ class SqlAlchemyMarketObservationSnapshotRepository:
     - There is no update / delete surface.
 
     Read paths: :meth:`get_by_id` (storage PK),
-    :meth:`get_by_content_hash` (natural idempotency key) and
-    :meth:`list_by_date` (``as_of_date`` ascending-created order).
+    :meth:`get_by_content_hash` (natural idempotency key),
+    :meth:`list_by_date` (``as_of_date`` ascending-created order),
+    :meth:`get_latest` (no-scope latest) and
+    :meth:`get_latest_for_scope` (scope- and optionally
+    ``as_of_date``-filtered latest).
     """
 
     def __init__(self, session: Session) -> None:
@@ -4691,6 +4694,40 @@ class SqlAlchemyMarketObservationSnapshotRepository:
                 MarketObservationSnapshotRow.id.desc(),
             ).limit(1)
         ).first()
+        return self._row_to_snapshot(row) if row is not None else None
+
+    def get_latest_for_scope(
+        self,
+        scope_type: str,
+        scope_key: str,
+        as_of_date: date | None = None,
+    ) -> MarketObservationSnapshot | None:
+        """Return the latest snapshot scoped to ``scope_type`` / ``scope_key``.
+
+        Optional ``as_of_date`` narrows the search to that exact trade
+        date (used by the Market Breadth read-only API slice to serve
+        historical re-fetches); when omitted the function returns the
+        newest snapshot regardless of date. Ordering matches
+        :meth:`get_latest` (``as_of_date DESC, created_at DESC, id
+        DESC``) so concurrent writes during the as-of-date boundary pick
+        deterministically. Returns ``None`` when no row matches; the
+        caller decides whether that is a 404 or an empty state.
+        """
+
+        statement = select(MarketObservationSnapshotRow).where(
+            MarketObservationSnapshotRow.scope_type == scope_type,
+            MarketObservationSnapshotRow.scope_key == scope_key,
+        )
+        if as_of_date is not None:
+            statement = statement.where(
+                MarketObservationSnapshotRow.as_of_date == as_of_date
+            )
+        statement = statement.order_by(
+            MarketObservationSnapshotRow.as_of_date.desc(),
+            MarketObservationSnapshotRow.created_at.desc(),
+            MarketObservationSnapshotRow.id.desc(),
+        ).limit(1)
+        row = self._session.scalars(statement).first()
         return self._row_to_snapshot(row) if row is not None else None
 
     def _row_to_snapshot(self, row: MarketObservationSnapshotRow) -> MarketObservationSnapshot:

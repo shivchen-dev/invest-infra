@@ -7,6 +7,7 @@ from invest_api.config import get_settings
 from invest_api.routers.candidate_pool import router as candidate_pool_router
 from invest_api.routers.data_freshness import router as data_freshness_router
 from invest_api.routers.etf import router as etf_router
+from invest_api.routers.market_breadth import router as market_breadth_router
 from invest_api.routers.market_temperature import router as market_temperature_router
 from invest_api.routers.pipeline_runs import router as pipeline_runs_router
 from invest_api.routers.research import router as research_router
@@ -28,3 +29,4 @@ app.include_router(pipeline_runs_router)
 app.include_router(data_freshness_router)
 app.include_router(research_router)
 app.include_router(market_temperature_router)
+app.include_router(market_breadth_router)
