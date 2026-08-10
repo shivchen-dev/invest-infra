@@ -119,8 +119,16 @@ class ResearchRun:
     started_at: datetime | None = None
     finished_at: datetime | None = None
     error_summary: str | None = None
+    evidence_bundle_id: UUID | None = None
 
     def __post_init__(self) -> None:
+        if self.evidence_bundle_id is not None and not isinstance(
+            self.evidence_bundle_id, UUID
+        ):
+            raise TypeError(
+                "ResearchRun.evidence_bundle_id must be a UUID, "
+                f"got {type(self.evidence_bundle_id).__name__}"
+            )
         if not isinstance(self.run_id, UUID):
             raise TypeError(
                 "ResearchRun.run_id must be a UUID, "
@@ -217,6 +225,7 @@ class ResearchRun:
         evidence_pack_id: UUID,
         runner_key: str,
         playbook_key: str,
+        evidence_bundle_id: UUID | None = None,
     ) -> ResearchRun:
         """Return a fresh queued :class:`ResearchRun` with ``attempt=1``.
 
@@ -232,6 +241,7 @@ class ResearchRun:
             playbook_key=playbook_key,
             status=ResearchRunStatus.QUEUED,
             attempt=1,
+            evidence_bundle_id=evidence_bundle_id,
         )
 
     def _transition(
