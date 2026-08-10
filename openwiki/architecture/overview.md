@@ -137,9 +137,7 @@ All twelve ADRs are in [`/docs/adr/`](../../docs/adr/):
 
 The underlying planning documents live under
 [`/docs/plan/`](../../docs/plan/) — the current
-[`invest-infra-evidence-driven-research-lifecycle-implementation-plan.md`](../../docs/plan/invest-infra-evidence-driven-research-lifecycle-implementation-plan.md)
-and
-[`invest-infra-stage4a-merged-implementation-plan-v1.1.md`](../../docs/plan/invest-infra-stage4a-merged-implementation-plan-v1.1.md)
+[`invest-infra-stage4a-final-closure-sprint-plan-v1.1.md`](../../docs/plan/invest-infra-stage4a-final-closure-sprint-plan-v1.1.md)
 plus
 [`/docs/implementation/`](../../docs/implementation/M0-DECISIONS.md)
 (M0 brief, decisions, acceptance). The pre-Stage-1 ETF vertical-slice

@@ -117,8 +117,8 @@ systemctl --user enable --now invest-infra-dagster.service
 
 详细决策见 `docs/ARCHITECTURE.md`、`docs/ARCHITECTURE-GOVERNANCE.md`、
 `docs/adr/` 和
-`docs/plan/invest-infra-evidence-driven-research-lifecycle-implementation-plan.md`。
+`docs/plan/invest-infra-stage4a-final-closure-sprint-plan-v1.1.md`。
 
 ## 验证状态
 
-当前已具备 ETF 主数据、行情、候选池、ETF Profile、指数成分与持仓 Exposure、Evidence Pack/Context Pack 基础能力。DC-3 已通过真实 AkShare、PostgreSQL 幂等复跑、领域/流水线测试和架构检查。Research Case、Research Run、Research Result 与 AI Adapter 仍按增量计划建设。
+当前已具备 ETF 主数据、行情、候选池、ETF Profile、指数成分与持仓 Exposure、Evidence Pack/Context Pack 基础能力。Stage 4A 的 Research Case、Research Run、Research Result、JiuwenSwarm Adapter、只读 API 和 Web Research Cockpit 已完成代码级验收；生产风格的 API/Web 联调仍以 Final Acceptance 报告中的明确状态为准。

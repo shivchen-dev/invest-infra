@@ -566,6 +566,14 @@ Evidence Pack Foundation
  ↓
 
 Stage 4B
+Market Intelligence Foundation
+
+ ↓
+
+Research Evidence Bundle / Context Projection
+
+ ↓
+
 JiuwenSwarm Investment Research
 
  ↓

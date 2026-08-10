@@ -275,12 +275,18 @@ Fixture ETF
 Stage 4B 的输入边界为：
 
 ```text
-Market Evidence + ETF Evidence
-  → Research Case / Evidence Pack
+ETF Daily Bars / Factor Observations
+  → Analytics Market Observation
+  → Market Temperature Snapshot
+  → Research Evidence Bundle
+  → Context Projection
   → AI Research
 ```
 
-Stage 4B 可另行设计 Market Temperature、Market Breadth、Theme Intelligence、ETF Rotation 等数据 Pack；这些内容不纳入本 Closure Sprint。
+Stage 4B 首期只实现 ETF Market Temperature。Market Observation 不直接追加到现有
+固定 8 因子 EvidencePack，而由 Research Evidence Bundle 按 Case 绑定后进入
+Context Projection。Market Breadth、Theme Intelligence、ETF Rotation 等后续切片
+另行实施；这些内容不纳入本 Closure Sprint。
 
 ## 9. 暂不实施
 
