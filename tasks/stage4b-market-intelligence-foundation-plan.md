@@ -78,10 +78,49 @@
 
 ## Deferred
 
-- Market Breadth
+- Market Breadth persistence / orchestration / API
 - Market Style
 - Theme Intelligence
 - ETF Rotation
 - 新 Provider 和商业研究数据
 - Market Intelligence UI
 - Agent Tool
+
+## Slice 2：Market Breadth（Contract & Builder, 2026-08）
+
+- Universe: `ashare_active_universe_v1`（全 A 股，不混入 ETF）
+- 首期指标：`advancing_ratio` / `declining_ratio` / `above_ma20_ratio`
+- 输入：`MarketBreadthInput`（逐只股票 close/prev_close/ma20/trading_status）
+- 输出：沿用 `analytics.market_observation_snapshots`（不新增表）
+- Algorithm version：`1.0.0`（与 Market Temperature 的 `1.0.0` 不冲突，通过不同 `scope_key` 区分）
+- API：本切片不新增 `/market-breadth/latest`
+- Agent Tool：本切片不新增
+
+### Slice 2 Phase 1 (delivered)
+
+- [x] 冻结 Universe / scope / algorithm version
+- [x] `MarketBreadthInput` + `build_market_breadth()` 纯函数 builder
+- [x] clip & quantise 至 [0, 1]、8 位小数、`ROUND_HALF_EVEN`
+- [x] empty / stale / unknown / suspended fail-closed 路径
+- [x] 15 项 focused 测试（hash / scope / ratios / clip / 输入校验 / 不可变）
+- [x] arch-check pass / ruff format pass
+
+### Slice 2 Phase 2 (deferred)
+
+- [ ] Repository / 迁移 / UoW（沿用现有 `market_observation_snapshots`，待 A 股 daily bars 接入后启动）
+- [ ] 幂等 / revision / PostgreSQL round-trip 验证
+- [ ] 显式 Dagster 编排入口
+
+### Slice 2 Phase 3 (deferred)
+
+- [ ] `GET /api/v1/market-breadth/latest` OpenAPI 冻结 → Router
+- [ ] 404/422/安全边界 + 只读契约测试
+
+### Slice 2 Phase 4 (deferred)
+
+- [ ] 评估把 Market Breadth snapshot 加入 `ResearchEvidenceBundle`
+- [ ] Context Projection 扩展 + Evidence ID 校验
+
+### Slice 2 Phase 5 (deferred)
+
+- [ ] A 股 daily bars Provider 走 Provider Contract + Catalog + Data Admission

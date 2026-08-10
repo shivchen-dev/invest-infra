@@ -27,5 +27,6 @@ from __future__ import annotations
 
 from invest_pipeline.adapters.tushare.adapter import TushareInstrumentProvider
 from invest_pipeline.adapters.tushare.config import TushareSettings
+from invest_pipeline.adapters.tushare.stock_adapter import StockTushareProvider
 
-__all__ = ["TushareInstrumentProvider", "TushareSettings"]
+__all__ = ["StockTushareProvider", "TushareInstrumentProvider", "TushareSettings"]

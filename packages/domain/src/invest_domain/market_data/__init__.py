@@ -15,6 +15,7 @@ from invest_domain.market_data.ports import (
     EtfMarketDataProvider,
     InstrumentProvider,
     ProviderDataContractError,
+    StockMarketDataProvider,
 )
 from invest_domain.market_data.values import Adjust, Currency, Exchange, TradingStatus
 
@@ -33,6 +34,7 @@ __all__ = [
     "ProviderDataContractError",
     "ProviderFailureStage",
     "ProviderRequest",
+    "StockMarketDataProvider",
     "TradingStatus",
     "bar_source_metadata_hash",
 ]

@@ -94,6 +94,7 @@ from invest_domain.market_data import (
     ProviderDataContractError,
     ProviderFailureStage,
     ProviderRequest,
+    StockMarketDataProvider,
     TradingStatus,
     bar_source_metadata_hash,
 )
@@ -243,6 +244,7 @@ __all__ = [
     "ProviderDataContractError",
     "ProviderFailureStage",
     "ProviderRequest",
+    "StockMarketDataProvider",
     "ResolutionPolicyError",
     "ResolutionStatus",
     "ResolvedField",

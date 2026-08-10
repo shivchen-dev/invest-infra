@@ -63,6 +63,42 @@ AI Research
 
 ---
 
+## Stock Daily Market Context
+
+来源：
+
+- 通达信本地离线 `.day` 文件
+- AkShare 股票历史行情（外部补数/交叉校验候选）
+- Tushare Pro 股票日线（需单独确认 Token、权限和使用条款）
+
+新增/复用：
+
+```
+core.instruments
+core.daily_bars
+market_breadth_snapshot
+```
+
+用途：
+
+- 全 A 股 Universe
+- 上涨/下跌占比
+- 站上 MA20 占比
+- Market Breadth 的可追溯原始行情输入
+
+约束：
+
+- 通达信文件通过独立 `tdx_offline` Provider Adapter 接入，不允许
+  Domain、API 或 Web 直接读取本地路径；
+- 日线统一使用未复权原始口径，禁止把 `qfq/hfq` 结果直接写入生产
+  `core.daily_bars`；
+- 先完成本地文件 Spike（文件完整性、全 A 覆盖、60 个交易日连续性），
+  再进入批量导入和 Market Breadth 持久化；
+- 该 Provider 不自动取得通达信数据许可，也不承诺本地文件维护 SLA。
+
+
+---
+
 ## Index Exposure
 
 来源：
@@ -190,11 +226,18 @@ institution_activity
 
 ## MarketDataProvider
 
-已有：
+当前代码已存在或已有适配基础：
 
 - AkShare
 - Cifang
-- EastMoney
+- Tushare（当前实现仍是 ETF 路径）
+
+规划新增：
+
+- `tdx_offline`：本地通达信 `.day` 股票日线 Provider
+
+说明：EastMoney、Sina 等公开行情源目前是 AkShare 的内部上游候选，
+不是本项目当前独立 runtime Provider。
 
 
 ## IndexProvider
@@ -234,6 +277,7 @@ institution_activity
 | 数据类别 | 可获取性 | 首选项目或数据源 | 生产使用结论 |
 |---|---|---|---|
 | ETF 基本信息、净值、行情、折溢价 | 高 | [AKShare](https://github.com/akfamily/akshare)、[efinance](https://github.com/Micro-sheep/efinance) | AKShare 作为首选采集层，efinance 作为东方财富/天天基金备用源 |
+| A 股股票日线 | 高（前提是本地 TDX 文件完整） | 通达信离线 `.day` + `tdx_offline` Adapter；AkShare/Tushare 作为外部候选 | 首选本地文件 Spike；完成覆盖、连续性、许可和维护责任确认后再进入生产数据链路 |
 | 指数列表、成分股、权重 | 高 | AKShare 中证公开文件适配、Tushare Pro | 可落地；必须区分当前快照与历史成分/权重 |
 | ETF 与指数映射 | 高 | AKShare、Tushare Pro、基金公告及招募说明书 | 通过多来源交叉确认，不依赖单个名称字段 |
 | 基金公告、分红、定期报告 | 高 | 巨潮资讯、AKShare CNINFO 接口 | 保留原文 URL、发布日期、下载内容和哈希 |
@@ -246,6 +290,8 @@ institution_activity
 ## 4.2 开源项目定位
 
 - **AKShare**：覆盖面最大，适合作为首期免费采集适配层；其本质是对中证、巨潮、东方财富等公开网页/API 的封装，不是这些平台的稳定授权 API。
+- **通达信离线 `.day`**：适合作为本地股票日线输入；字段可映射到 `DailyBar`，但完整性取决于客户端盘后下载和本地目录维护，不能直接视为生产 SLA。
+- **`tdx_offline`**：应作为本项目自己的 Provider Adapter；第三方 `easy_tdx`/`tdxrs` 只作为 Reader 或 Spike 依赖，不应让 Domain/API 直接依赖其文件路径或 CLI。
 - **Tushare Pro**：适合作为接口较规范的补充，但必须核验 Token、积分、接口权限、字段历史和商用条款；GitHub SDK 的活跃度不能代表 Pro 数据服务的 SLA。
 - **efinance**：适合作为东方财富/天天基金的备用实现和交叉验证源，不作为唯一生产数据源。
 - **理杏仁**：使用官方开放平台；GitHub 上的非官方封装较旧，不应作为核心依赖。
@@ -268,10 +314,20 @@ institution_activity
 先接入：
 
 ```text
-AKShare + Tushare Pro + CNINFO
+TDX offline Spike + AKShare + Tushare Pro + CNINFO
 ```
 
-覆盖 ETF Profile、ETF 行情/NAV、基础折溢价、指数成分与权重、基金公告、分红和基础估值。此阶段不承诺完整历史成分、历史估值分位或 ETF 净申购赎回。
+其中 TDX offline 先只验证股票日线和 Market Breadth 所需 20 日窗口；
+不直接承诺完整历史成分、历史估值分位或 ETF 净申购赎回。
+
+TDX Spike 的通过条件：
+
+- `sh/sz` 日线目录可定位且文件快照稳定；
+- 全 A 股票代码覆盖数量可解释；
+- 至少 60 个交易日连续性通过；
+- OHLC、成交量、成交额和未复权口径通过契约测试；
+- 缺失、停牌、半写入文件和重复记录有明确 fail-closed 规则；
+- 本地数据维护责任和使用/再分发边界已确认。
 
 ### 第二阶段：特色数据源
 

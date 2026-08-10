@@ -366,6 +366,47 @@ Builder 接收已冻结输入并返回不可变结果；不在 Builder 内部创
 
 这些切片不得提前修改首期 Market Temperature 的 Evidence/Bundle 语义。
 
+### 7a. Slice 2：Market Breadth (Contract & Builder, 2026-08)
+
+在 Stage 4B Phase 0–4 完成、Phase 1 验收报告封板后，启动
+Slice 2 的 Market Breadth 垂直切片。Slice 2 不动 Market Temperature
+Evidence/Bundle 语义，不新增 Provider，不接商业研究数据，不新增 UI
+和 Agent Tool。
+
+#### 7a.1 范围与默认值
+
+| 项目 | 默认值 | 备注 |
+|---|---|---|
+| Universe | `ashare_active_universe_v1` | 全 A 股；不混入 ETF Universe |
+| 输入 | `MarketBreadthInput`（逐只股票 close/prev_close/ma20/trading_status） | 由调用方注入；本切片不实现 A 股行情采集 |
+| 输出指标（首期三项） | `advancing_ratio` / `declining_ratio` / `above_ma20_ratio` | 单位 `ratio`；clip 至 [0, 1]；8 位小数 `ROUND_HALF_EVEN` |
+| Scope | `scope_type=ashare_universe` / `scope_key=ashare_active_universe_v1` | 冻结 |
+| Algorithm version | `1.0.0` | 模块级常量；与 Market Temperature 的 `1.0.0` 不冲突 |
+| 持久化 | 沿用 `analytics.market_observation_snapshots` / `analytics.market_observations` | 不新增表 |
+| API | 本切片**不新增** `/market-breadth/latest` | 待 Slice 3 评估后冻结 OpenAPI 再开 Router |
+| Agent Tool | 本切片**不新增** | 同上 |
+
+#### 7a.2 已交付（当前 commit）
+
+- `packages/domain/src/invest_domain/analytics/market_breadth.py`：
+  纯函数 `build_market_breadth()` + `MarketBreadthInput` 值对象；deep
+  module 边界，零数据库 / Provider / FastAPI / SQLAlchemy / Dagster
+  依赖。
+- `packages/domain/tests/test_market_breadth.py`：15 个 focused 测试
+  覆盖 hash 稳定性、scope/algorithm pin、ratio 计算、clip/quantise、
+  empty/stale/unknown/suspended fail-closed、输入校验、不可变性。
+
+#### 7a.3 后续切片边界
+
+1. **Slice 3 — Persistence & Orchestration**：等 A 股 daily bars 接入
+   后，再行评估 Repository / 迁移 / Dagster 编排，沿用
+   `SqlAlchemyMarketObservationSnapshotRepository` 路径。
+2. **Slice 4 — API**：先冻结 OpenAPI contract，再实现 Router。
+3. **Slice 5 — Bundle 注册**：在 `ResearchEvidenceBundle` 中
+   评估是否把 Market Breadth snapshot 加入绑定候选。
+4. **Slice 6 — Provider**：A 股日线 Provider 走现有 Provider Contract
+   + Catalog + Data Admission 流程；本切片不得提前引入。
+
 ## 8. 安全与非目标
 
 - Agent 不直连数据库；

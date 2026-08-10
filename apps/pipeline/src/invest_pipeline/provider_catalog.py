@@ -146,6 +146,8 @@ class ProviderCapability(StrEnum):
     ETF_DAILY_BARS = "etf_daily_bars"
     ETF_MASTER_DATA = "etf_master_data"
     INDEX_DAILY_BARS = "index_daily_bars"
+    STOCK_DAILY_BARS = "stock_daily_bars"
+    STOCK_MASTER_DATA = "stock_master_data"
 
 
 @dataclass(frozen=True, slots=True)
@@ -292,7 +294,12 @@ RSSCAST = ProviderDeclaration(
 TUSHARE = ProviderDeclaration(
     provider_key="tushare",
     role=ProviderRole.SECONDARY,
-    capabilities=(ProviderCapability.ETF_DAILY_BARS, ProviderCapability.ETF_MASTER_DATA),
+    capabilities=(
+        ProviderCapability.ETF_DAILY_BARS,
+        ProviderCapability.ETF_MASTER_DATA,
+        ProviderCapability.STOCK_DAILY_BARS,
+        ProviderCapability.STOCK_MASTER_DATA,
+    ),
     enabled_by_default=False,
     has_runtime_factory_adapter=True,
 )

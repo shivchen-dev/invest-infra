@@ -51,7 +51,8 @@ def _decimal(value: Any, field: str, row: int) -> Decimal | None:
 
 def _trade_date(value: Any, row: int) -> date:
     try:
-        return date.fromisoformat(str(value))
+        text = str(value)
+        return date.fromisoformat(text) if "-" in text else datetime.strptime(text, "%Y%m%d").date()
     except ValueError as exc:
         raise ProviderDataContractError(
             "MALFORMED_DATE", f"row {row} trade_date is invalid", provider_key=_PROVIDER_KEY
@@ -60,7 +61,10 @@ def _trade_date(value: Any, row: int) -> date:
 
 def _optional_date(row_data: dict[str, Any], field: str) -> date | None:
     value = row_data.get(field)
-    return date.fromisoformat(str(value)) if value else None
+    if not value:
+        return None
+    text = str(value)
+    return date.fromisoformat(text) if "-" in text else datetime.strptime(text, "%Y%m%d").date()
 
 
 def _exchange(ts_code: str) -> tuple[str, str]:
@@ -164,4 +168,39 @@ def map_fund_daily(
     return tuple(records), tuple(warnings)
 
 
-__all__ = ["map_fund_basic", "map_fund_daily"]
+def map_stock_basic(response: TushareResponse) -> tuple[tuple[Instrument, ...], tuple[str, ...]]:
+    records: list[Instrument] = []
+    warnings: list[str] = []
+    for index, row in enumerate(_rows(response)):
+        ts_code, name = row.get("ts_code"), row.get("name")
+        if not isinstance(ts_code, str) or not isinstance(name, str) or not name.strip():
+            raise ProviderDataContractError(
+                "MISSING_REQUIRED_FIELD", f"row {index} requires ts_code/name",
+                provider_key=_PROVIDER_KEY,
+            )
+        symbol, exchange = _exchange(ts_code)
+        list_date = _optional_date(row, "list_date")
+        delist_date = _optional_date(row, "delist_date")
+        status = (
+            InstrumentStatus.DELISTED
+            if delist_date or row.get("list_status") == "D"
+            else InstrumentStatus.ACTIVE
+        )
+        records.append(Instrument(
+            symbol=symbol, name=name, exchange=exchange, instrument_type=InstrumentType.STOCK,
+            is_active=status is InstrumentStatus.ACTIVE, currency=Currency.CNY,
+            list_date=list_date, delist_date=delist_date, status=status,
+            provider_symbol_map={_PROVIDER_KEY: ts_code}, category=row.get("industry"),
+        ))
+    return tuple(records), tuple(warnings)
+
+
+def map_stock_daily(
+    response: TushareResponse, *, source_batch_id: UUID, observed_at: datetime,
+    instrument_id_resolver: Callable[[str, str], InstrumentId],
+) -> tuple[tuple[DailyBar, ...], tuple[str, ...]]:
+    return map_fund_daily(response, source_batch_id=source_batch_id, observed_at=observed_at,
+                          instrument_id_resolver=instrument_id_resolver)
+
+
+__all__ = ["map_fund_basic", "map_fund_daily", "map_stock_basic", "map_stock_daily"]

@@ -102,3 +102,8 @@ class EtfMarketDataProvider(Protocol):
         start_date: date,
         end_date: date,
     ) -> tuple[ProviderRequest, ProviderAttempt, ProviderBatch[DailyBar] | None]: ...
+
+
+@runtime_checkable
+class StockMarketDataProvider(EtfMarketDataProvider, Protocol):
+    """Port with the same evidence contract for listed A-share stocks."""

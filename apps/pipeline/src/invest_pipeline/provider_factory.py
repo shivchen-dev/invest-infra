@@ -68,7 +68,11 @@ from invest_pipeline.adapters.errors import (
     UnknownProviderError,
 )
 from invest_pipeline.adapters.fixture_dev import FixtureDevInstrumentProvider
-from invest_pipeline.adapters.tushare import TushareInstrumentProvider, TushareSettings
+from invest_pipeline.adapters.tushare import (
+    StockTushareProvider,
+    TushareInstrumentProvider,
+    TushareSettings,
+)
 from invest_pipeline.config import Settings, get_settings
 from invest_pipeline.provider_catalog import runtime_supported_provider_keys
 
@@ -189,7 +193,28 @@ def build_provider(
     raise UnknownProviderError(key)
 
 
-__all__ = ["KNOWN_PROVIDER_KEYS", "build_provider"]
+def build_stock_provider(
+    settings: Settings | None = None,
+    *,
+    tushare_settings: TushareSettings | None = None,
+):
+    """Build the Tushare-backed A-share provider for stock consumers."""
+
+    pipeline = settings if settings is not None else get_settings()
+    if pipeline.provider_key != "tushare":
+        raise UnknownProviderError(pipeline.provider_key)
+    cfg = tushare_settings if tushare_settings is not None else TushareSettings()
+    if not cfg.enabled:
+        raise RealProviderRequiresExplicitEnablementError(
+            "tushare provider requires TushareSettings.enabled=True "
+            "(INVEST_PIPELINE_TUSHARE_ENABLED)"
+        )
+    if not cfg.resolved_token():
+        raise ProviderAuthenticationError("tushare", "tushare provider credential is missing")
+    return StockTushareProvider(cfg)
+
+
+__all__ = ["KNOWN_PROVIDER_KEYS", "build_provider", "build_stock_provider"]
 
 
 # Public, frozen alias of the supported provider-key tuple so callers

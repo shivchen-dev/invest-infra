@@ -55,6 +55,8 @@ _PROVIDER_KEY = "tushare"
 _BASE_URL = "https://api.tushare.pro"
 _FUND_BASIC_API = "fund_basic"
 _FUND_DAILY_API = "fund_daily"
+_STOCK_BASIC_API = "stock_basic"
+_STOCK_DAILY_API = "daily"
 _FUND_DAILY_FIELDS = (
     "ts_code",
     "trade_date",
@@ -67,6 +69,9 @@ _FUND_DAILY_FIELDS = (
     "pct_chg",
     "vol",
     "amount",
+)
+_STOCK_DAILY_FIELDS = (
+    "ts_code", "trade_date", "open", "high", "low", "close", "pre_close", "vol", "amount"
 )
 _MAX_ATTEMPTS = 3
 _RETRYABLE_HTTP_STATUS = frozenset({429, 500, 502, 503, 504})
@@ -198,6 +203,36 @@ class TushareClient:
         }
         return self._post_json(body)
 
+    def fetch_stock_basic(self) -> TushareResponse:
+        """Fetch the A-share stock master table from ``stock_basic``."""
+
+        return self._post_json({
+            "api_name": _STOCK_BASIC_API,
+            "token": self._resolve_token(),
+            "params": {"list_status": "L"},
+            "fields": "ts_code,symbol,name,area,industry,market,list_date,delist_date,list_status",
+        })
+
+    def fetch_stock_daily(
+        self, *, ts_code: str, start_date: date, end_date: date
+    ) -> TushareResponse:
+        """Fetch unadjusted stock daily bars using Tushare's YYYYMMDD dates."""
+
+        if not isinstance(ts_code, str) or not ts_code.strip():
+            raise ValueError("ts_code must be a non-empty string")
+        if end_date < start_date:
+            raise ValueError("end_date must be on or after start_date")
+        return self._post_json({
+            "api_name": _STOCK_DAILY_API,
+            "token": self._resolve_token(),
+            "params": {
+                "ts_code": ts_code.strip(),
+                "start_date": start_date.strftime("%Y%m%d"),
+                "end_date": end_date.strftime("%Y%m%d"),
+            },
+            "fields": ",".join(_STOCK_DAILY_FIELDS),
+        })
+
     # ------------------------------------------------------------------
     # Internal: token resolution + request + retry
     # ------------------------------------------------------------------
@@ -221,7 +256,8 @@ class TushareClient:
         if not token:
             raise ProviderAuthenticationError(
                 _PROVIDER_KEY,
-                "Tushare credential is missing from the explicit setting or centralized secret store",
+                "Tushare credential is missing from the explicit setting or "
+                "centralized secret store",
             )
         return token
 
