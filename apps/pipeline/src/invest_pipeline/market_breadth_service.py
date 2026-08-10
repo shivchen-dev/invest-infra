@@ -3,10 +3,22 @@
 This module implements the smallest complete ``Pipeline`` application
 service for the Market Breadth vertical slice that:
 
-* loads the explicit stock universe from the configuration YAML;
-* resolves every enabled symbol against an active ``STOCK`` row in
-  ``core.instruments`` (re-using the same lookup contract
-  :func:`invest_pipeline.personal_universe.resolve_personal_universe`
+* exposes a provider-agnostic
+  :func:`list_active_stock_instrument_ids` helper that queries the
+  ``UnitOfWork`` session for every active ``STOCK`` row in
+  ``core.instruments`` (filtering out ``ETF`` / ``INDEX`` /
+  inactive / delisted rows at the database level) and returns the
+  storage-side ``instrument_id`` UUIDs in deterministic
+  ``(exchange, symbol, id)`` order. The helper is the canonical
+  dynamic-universe source for the ``stock_input_snapshot`` Dagster
+  asset; it fails closed with :class:`StockUniverseEmptyError` when
+  the persisted active ``STOCK`` universe is empty so a
+  misconfigured upstream ``stock_instruments`` materialisation
+  surfaces as a hard failure rather than a partial ``InputSnapshot``;
+* preserves :func:`resolve_stock_instrument_ids` for explicit-universe
+  callers (it resolves a hand-curated symbol set against active
+  ``STOCK`` rows in ``core.instruments`` using the same lookup
+  contract :func:`invest_pipeline.personal_universe.resolve_personal_universe`
   uses for ETFs, with the only difference that the resolver accepts
   ``STOCK`` instead of ``ETF``);
 * persists the resolved ``instrument_ids`` as an :class:`InputSnapshot`
@@ -111,7 +123,9 @@ _BREADTH_LOOKBACK_NATURAL_DAYS = 60
 __all__ = [
     "MarketBreadthInsufficientDataError",
     "MarketBreadthPublishResult",
+    "StockUniverseEmptyError",
     "calculate_and_publish_market_breadth",
+    "list_active_stock_instrument_ids",
     "resolve_stock_instrument_ids",
 ]
 
@@ -122,6 +136,21 @@ class MarketBreadthInsufficientDataError(ValueError):
     The caller is expected to surface this as a fail-closed
     :class:`MaterializeResult` (with ``skipped=True`` and
     ``invalid=True`` metadata) rather than a Dagster retry loop.
+    """
+
+
+class StockUniverseEmptyError(ValueError):
+    """Raised when the persisted active ``STOCK`` universe is empty.
+
+    The dynamic-universe slice refuses to publish a non-empty
+    :class:`InputSnapshot` for an empty universe — the asset would
+    either fabricate ids or surface a generic empty-list error. The
+    :class:`InputSnapshot` / market-observation contract requires at
+    least one instrument, so the helper fails closed with a
+    domain-specific exception that the asset layer propagates so a
+    misconfigured upstream ``stock_instruments`` materialisation
+    surfaces as a hard Dagster failure rather than a partial
+    snapshot.
     """
 
 
@@ -212,6 +241,109 @@ def resolve_stock_instrument_ids(
     # Preserve the order declared by the universe loader so the
     # resulting ``instrument_ids`` matches the YAML author intent.
     return [resolved[symbol] for symbol in symbols]
+
+
+def list_active_stock_instrument_ids(uow: UnitOfWork) -> list[UUID]:
+    """Return every active ``STOCK`` row's storage ``instrument_id``.
+
+    The lookup is structural and provider-agnostic: every row in
+    ``core.instruments`` whose ``is_active`` flag is set, whose
+    ``instrument_type`` is :attr:`InstrumentType.STOCK` and whose
+    ``delist_date`` is still ``NULL`` contributes its storage-side
+    primary key to the returned list. ``ETF`` / ``INDEX`` rows,
+    inactive ``STOCK`` rows, and delisted ``STOCK`` rows are filtered
+    out at the database level so the universe can never silently grow
+    with non-stock rows or re-target a delisted ticker.
+
+    The list is ordered by ``(exchange, symbol, id)`` so two back-to-back
+    runs of the same partition yield byte-identical ``instrument_ids``
+    and the resulting :class:`InputSnapshot` content hash stays
+    deterministic across reruns. The ``id`` tiebreaker is defensive —
+    the partial unique index ``uq_instruments_symbol_exchange_active``
+    already guarantees ``(symbol, exchange)`` uniqueness for
+    non-delisted rows, but pinning the ordering on the primary key
+    keeps the result stable even if that invariant is ever relaxed.
+
+    The helper bypasses
+    :meth:`invest_storage.repositories.SqlAlchemyInstrumentRepository.list_active`
+    on purpose: that repository method has a silent default
+    ``limit=100`` which would truncate the A-share universe (the full
+    active universe is well above 100 rows). Querying the UoW session
+    directly with no row limit avoids the silent truncation and
+    returns every active ``STOCK`` row in a single roundtrip. The
+    session-level read is also provider-agnostic — no ``Provider`` /
+    ``Client`` / network dependency leaks in.
+
+    Parameters
+    ----------
+    uow:
+        An open :class:`UnitOfWork` whose ``session`` is bound to the
+        PostgreSQL ``core.instruments`` table. The caller is
+        responsible for entering the UoW context and committing /
+        rolling back; the helper only reads.
+
+    Returns
+    -------
+    list[UUID]
+        The storage-side ``core.instruments.id`` for every active
+        ``STOCK`` row, in deterministic ``(exchange, symbol, id)``
+        order. The list is empty only when no active ``STOCK`` row
+        exists, which is treated as a fail-closed configuration error
+        (see :class:`StockUniverseEmptyError`).
+
+    Raises
+    ------
+    StockUniverseEmptyError
+        When the persisted active ``STOCK`` universe is empty. The
+        asset layer propagates this so a misconfigured upstream
+        ``stock_instruments`` materialisation surfaces as a hard
+        Dagster failure rather than a partial ``InputSnapshot``.
+    """
+
+    if uow is None:
+        raise ValueError("uow must not be None")
+    session: Session = uow.session
+    stmt = (
+        select(InstrumentRow)
+        .where(
+            InstrumentRow.is_active.is_(True),
+            InstrumentRow.instrument_type == InstrumentType.STOCK.value,
+            InstrumentRow.delist_date.is_(None),
+        )
+        .order_by(
+            InstrumentRow.exchange.asc(),
+            InstrumentRow.symbol.asc(),
+            InstrumentRow.id.asc(),
+        )
+    )
+    rows = session.scalars(stmt).all()
+    # Defence in depth: the SQL ``where`` clause above is the primary
+    # filter (so PostgreSQL can use the partial unique index and we
+    # never pull non-stock rows over the wire), but the helper also
+    # re-applies the same predicates in Python. This guards against
+    # silent regressions if the SQL filter is ever relaxed (e.g. an
+    # accidental drop of ``instrument_type == 'STOCK'``) and lets the
+    # helper contract be unit-tested through a hand-rolled fake UoW
+    # that returns rows verbatim. The order is preserved end-to-end
+    # so the deterministic ``(exchange, symbol, id)`` ordering the
+    # ``order_by`` clause produces on a real session matches what the
+    # unit test sees when it pre-orders the mock row list.
+    ids = [
+        row.id
+        for row in rows
+        if row.id is not None
+        and getattr(row, "is_active", False) is True
+        and getattr(row, "instrument_type", None) == InstrumentType.STOCK.value
+        and getattr(row, "delist_date", None) is None
+    ]
+    if not ids:
+        raise StockUniverseEmptyError(
+            "no active STOCK rows in core.instruments; the dynamic "
+            "stock universe is empty so stock_input_snapshot cannot "
+            "persist a non-empty InputSnapshot — re-materialise "
+            "stock_instruments before retrying"
+        )
+    return ids
 
 
 def _bars_in_window(

@@ -31,6 +31,7 @@ from invest_pipeline.stock_daily_bars import (
     serialize_stock_daily_bars,
     upsert_stock_daily_bars,
     write_stock_daily_bars_raw,
+    write_stock_daily_bars_raw_by_trade_date,
 )
 from invest_storage.models import ProviderAttemptRow, ProviderRequestRow
 from invest_storage.repositories import (
@@ -412,6 +413,80 @@ class _InlineProvider:
         instrument_id: Any,
     ) -> tuple[str, str] | None:
         return self._reverse_lookup(instrument_id)
+
+
+class _ByTradeDateInlineProvider:
+    """Provider stub for the by-trade-date path.
+
+    Mirrors :meth:`StockTushareProvider.fetch_daily_bars_by_trade_date`
+    — a single request keyed by ``trade_date`` — and the same reverse
+    lookup the per-symbol path exposes. ``fetch_daily_bars`` is
+    deliberately omitted; the by-trade-date port only requires
+    ``fetch_daily_bars_by_trade_date`` plus the reverse lookup.
+    """
+
+    def __init__(self, fetch_by_trade_date: Any, *, reverse_lookup: Any = lambda _: None) -> None:
+        self._fetch_by_trade_date = fetch_by_trade_date
+        self._reverse_lookup = reverse_lookup
+
+    @property
+    def provider_key(self) -> str:
+        return "tushare"
+
+    def fetch_daily_bars_by_trade_date(
+        self,
+        trade_date: date,
+    ) -> tuple[Any, Any, Any]:
+        return self._fetch_by_trade_date(trade_date)
+
+    def symbol_and_exchange_for_instrument_id(
+        self,
+        instrument_id: Any,
+    ) -> tuple[str, str] | None:
+        return self._reverse_lookup(instrument_id)
+
+
+def _build_by_trade_date_response(
+    *,
+    trade_date: date,
+    records: tuple[DailyBar, ...],
+    attempt_id: UUID,
+    status: ProviderAttemptStatus = ProviderAttemptStatus.SUCCEEDED,
+    error_stage: Any = None,
+    error_code: str | None = None,
+    error_message: str | None = None,
+    warnings: tuple[str, ...] = (),
+) -> tuple[Any, Any, Any]:
+    """Build a ``(request, attempt, batch)`` triple for the by-date provider stub."""
+
+    request = MagicMock(
+        name="ProviderRequest",
+        provider_key="tushare",
+        dataset_key="stock_daily_bars_by_date",
+        request_key=f"daily-bars-by-date-{trade_date.isoformat()}",
+        params={"trade_date": trade_date.isoformat()},
+    )
+    attempt = MagicMock(
+        name="ProviderAttempt",
+        attempt_number=1,
+        status=status,
+        started_at=_FIXED_OBSERVED_AT,
+        finished_at=_FIXED_OBSERVED_AT,
+        error_stage=error_stage,
+        error_code=error_code,
+        error_message=error_message,
+    )
+    if status is ProviderAttemptStatus.FAILED:
+        return request, attempt, None
+    batch = MagicMock(
+        name="ProviderBatch",
+        attempt_id=attempt_id,
+        records=records,
+        raw_payload_hash="0" * 64,
+        status=ProviderBatchStatus.SUCCEEDED,
+        warnings=warnings,
+    )
+    return request, attempt, batch
 
 
 def _build_write_session() -> tuple[MagicMock, MagicMock, MagicMock]:
@@ -804,6 +879,368 @@ class UpsertStockDailyBarsContractTest(unittest.TestCase):
             with self.assertRaises(ValueError) as ctx:
                 upsert_stock_daily_bars(factory, unit_of_work_factory=uow_factory, **kwargs)
             self.assertIn("request_key", str(ctx.exception))
+
+
+_BY_TRADE_DATE_TRADE_DATE = date(2026, 7, 27)
+
+
+def _build_by_date_daily_bar(
+    *,
+    instrument_id: InstrumentId,
+    trade_date: date,
+    close: Decimal,
+    attempt_id: UUID,
+    observed_at: datetime,
+) -> DailyBar:
+    """Mirror :func:`_build_daily_bar` for the by-date test set."""
+
+    return DailyBar.build(
+        instrument_id=instrument_id,
+        trade_date=trade_date,
+        open=close,
+        high=close + Decimal("0.02"),
+        low=close - Decimal("0.02"),
+        close=close,
+        prev_close=close - Decimal("0.01"),
+        volume=Decimal("1000"),
+        amount=Decimal("1000000"),
+        adjustment=Adjust.NONE,
+        trading_status=TradingStatus.NORMAL,
+        source=BarSource(
+            provider_key="tushare", source_batch_id=attempt_id, observed_at=observed_at
+        ),
+        revision=1,
+    )
+
+
+class WriteStockDailyBarsRawByTradeDateSidecarTest(unittest.TestCase):
+    """The by-date path must stamp ``dataset_key='stock_daily_bars_by_date'``."""
+
+    def setUp(self) -> None:
+        self._session, self._factory, self._uow_factory = _build_write_session()
+        self._placeholders: dict[tuple[str, str], InstrumentId] = {}
+        self._expected_records: list[tuple[str, str, Decimal]] = [
+            ("600519", "SSE", Decimal("1800.50")),
+            ("000001", "SZSE", Decimal("10.50")),
+            ("600000", "SSE", Decimal("8.50")),
+        ]
+        self._attempt_id = uuid4()
+        self._observed = _FIXED_OBSERVED_AT
+
+        def _reverse_lookup(instrument_id: Any) -> tuple[str, str] | None:
+            for (symbol, exchange), value in self._placeholders.items():
+                if value == instrument_id:
+                    return symbol, exchange
+            return None
+
+        self._placeholders = {
+            (symbol, exchange): InstrumentId.generate()
+            for symbol, exchange, _ in self._expected_records
+        }
+
+        def _fetch_by_trade_date(trade_date: date) -> tuple[Any, Any, Any]:
+            assert trade_date == _BY_TRADE_DATE_TRADE_DATE
+            records = tuple(
+                _build_by_date_daily_bar(
+                    instrument_id=self._placeholders[(symbol, exchange)],
+                    trade_date=trade_date,
+                    close=close,
+                    attempt_id=self._attempt_id,
+                    observed_at=self._observed,
+                )
+                for symbol, exchange, close in self._expected_records
+            )
+            return _build_by_trade_date_response(
+                trade_date=trade_date,
+                records=records,
+                attempt_id=self._attempt_id,
+            )
+
+        self._provider = _ByTradeDateInlineProvider(
+            _fetch_by_trade_date, reverse_lookup=_reverse_lookup
+        )
+
+    def test_request_key_and_dataset_key_match_by_date_contract(self) -> None:
+        result = write_stock_daily_bars_raw_by_trade_date(
+            self._provider,
+            self._factory,
+            trade_date=_BY_TRADE_DATE_TRADE_DATE,
+            unit_of_work_factory=self._uow_factory,
+        )
+
+        self.assertEqual(result.request_status, "succeeded")
+        self.assertEqual(result.attempt_status, "succeeded")
+        self.assertEqual(result.record_count, len(self._expected_records))
+
+        request_rows = [
+            r for r in self._session.added_rows if isinstance(r, ProviderRequestRow)
+        ]
+        self.assertEqual(len(request_rows), 1)
+        request_row = request_rows[0]
+        self.assertEqual(request_row.provider_key, "tushare")
+        self.assertEqual(request_row.dataset_key, "stock_daily_bars_by_date")
+        self.assertEqual(
+            request_row.request_key,
+            f"daily-bars-by-date-{_BY_TRADE_DATE_TRADE_DATE.isoformat()}",
+        )
+        self.assertEqual(
+            request_row.request_params,
+            {"trade_date": _BY_TRADE_DATE_TRADE_DATE.isoformat()},
+        )
+
+    def test_sidecar_records_carry_symbol_and_exchange(self) -> None:
+        write_stock_daily_bars_raw_by_trade_date(
+            self._provider,
+            self._factory,
+            trade_date=_BY_TRADE_DATE_TRADE_DATE,
+            unit_of_work_factory=self._uow_factory,
+        )
+
+        records = _attempt_payload(self._session)["records"]
+        self.assertEqual(len(records), len(self._expected_records))
+
+        seen = {(e["symbol"], e["exchange"]) for e in records}
+        expected = {(symbol, exchange) for symbol, exchange, _ in self._expected_records}
+        self.assertEqual(seen, expected)
+
+        self.assertEqual({e["source_provider"] for e in records}, {"tushare"})
+
+    def test_sidecar_shape_is_byte_compatible_with_per_symbol_path(self) -> None:
+        # The by-date and per-symbol entry points share
+        # ``_persist_stock_daily_bars_raw``; the sidecar must therefore
+        # carry identical keys per record so the downstream
+        # ``upsert_stock_daily_bars`` cannot tell which path produced
+        # it.
+        write_stock_daily_bars_raw_by_trade_date(
+            self._provider,
+            self._factory,
+            trade_date=_BY_TRADE_DATE_TRADE_DATE,
+            unit_of_work_factory=self._uow_factory,
+        )
+
+        records = _attempt_payload(self._session)["records"]
+        expected_keys = {
+            "symbol",
+            "exchange",
+            "trade_date",
+            "open",
+            "high",
+            "low",
+            "close",
+            "prev_close",
+            "volume",
+            "amount",
+            "trading_status",
+            "source_provider",
+            "source_batch_id",
+            "observed_at",
+        }
+        for record in records:
+            self.assertEqual(set(record.keys()), expected_keys)
+
+
+class WriteStockDailyBarsRawByTradeDateFailurePathTest(unittest.TestCase):
+    """The by-date path mirrors the per-symbol failure / sidecar / idempotency contract."""
+
+    def setUp(self) -> None:
+        self._session, self._factory, self._uow_factory = _build_write_session()
+
+    def test_failed_attempt_creates_no_batch_and_no_daily_bars(self) -> None:
+        def _fetch(trade_date: date) -> tuple[Any, Any, Any]:
+            return _build_by_trade_date_response(
+                trade_date=trade_date,
+                records=(),
+                attempt_id=uuid4(),
+                status=ProviderAttemptStatus.FAILED,
+                error_stage=MagicMock(),
+                error_code="MALFORMED_PAYLOAD",
+                error_message="trade_date missing",
+            )
+
+        provider = _ByTradeDateInlineProvider(_fetch)
+        result = write_stock_daily_bars_raw_by_trade_date(
+            provider,
+            self._factory,
+            trade_date=_BY_TRADE_DATE_TRADE_DATE,
+            unit_of_work_factory=self._uow_factory,
+        )
+
+        self.assertEqual(result.request_status, "failed")
+        self.assertEqual(result.attempt_status, "failed")
+        self.assertIsNone(result.batch_id)
+        self.assertEqual(result.record_count, 0)
+
+        request_rows = [
+            r for r in self._session.added_rows if isinstance(r, ProviderRequestRow)
+        ]
+        self.assertEqual(len(request_rows), 1)
+        self.assertEqual(request_rows[0].dataset_key, "stock_daily_bars_by_date")
+        self.assertEqual(
+            request_rows[0].request_key,
+            f"daily-bars-by-date-{_BY_TRADE_DATE_TRADE_DATE.isoformat()}",
+        )
+
+        attempt_rows = [
+            r for r in self._session.added_rows if isinstance(r, ProviderAttemptRow)
+        ]
+        self.assertEqual(len(attempt_rows), 1)
+        self.assertEqual(attempt_rows[0].status, "failed")
+        self.assertEqual(attempt_rows[0].error_code, "MALFORMED_PAYLOAD")
+        self.assertIsNone(attempt_rows[0].response_payload_json)
+        self.assertEqual(_batch_rows(self._session), [])
+
+    def test_rerun_reuses_logical_request_and_appends_attempts(self) -> None:
+        attempt_id = uuid4()
+        records = tuple(
+            _build_by_date_daily_bar(
+                instrument_id=InstrumentId.generate(),
+                trade_date=_BY_TRADE_DATE_TRADE_DATE,
+                close=Decimal("1800.50"),
+                attempt_id=attempt_id,
+                observed_at=_FIXED_OBSERVED_AT,
+            )
+            for _ in range(2)
+        )
+
+        def _fetch(trade_date: date) -> tuple[Any, Any, Any]:
+            return _build_by_trade_date_response(
+                trade_date=trade_date,
+                records=records,
+                attempt_id=attempt_id,
+            )
+
+        def _lookup(instrument_id: Any) -> tuple[str, str] | None:
+            for record in records:
+                if record.instrument_id == instrument_id:
+                    return ("600519", "SSE")
+            return None
+
+        provider = _ByTradeDateInlineProvider(_fetch, reverse_lookup=_lookup)
+        factory = self._factory
+        uow_factory = self._uow_factory
+
+        first = write_stock_daily_bars_raw_by_trade_date(
+            provider,
+            factory,
+            trade_date=_BY_TRADE_DATE_TRADE_DATE,
+            unit_of_work_factory=uow_factory,
+        )
+        second = write_stock_daily_bars_raw_by_trade_date(
+            provider,
+            factory,
+            trade_date=_BY_TRADE_DATE_TRADE_DATE,
+            unit_of_work_factory=uow_factory,
+        )
+
+        self.assertEqual(first.request_id, second.request_id)
+        request_rows = [
+            r for r in self._session.added_rows if isinstance(r, ProviderRequestRow)
+        ]
+        self.assertEqual(len(request_rows), 1)
+
+        attempt_rows = [
+            r for r in self._session.added_rows if isinstance(r, ProviderAttemptRow)
+        ]
+        self.assertEqual(len(attempt_rows), 2)
+        self.assertEqual(sorted(r.attempt_no for r in attempt_rows), [1, 2])
+
+    def test_unknown_instrument_id_raises_lookup_error(self) -> None:
+        foreign_id = InstrumentId.generate()
+        attempt_id = uuid4()
+
+        def _fetch(trade_date: date) -> tuple[Any, Any, Any]:
+            orphan_bar = _build_by_date_daily_bar(
+                instrument_id=foreign_id,
+                trade_date=trade_date,
+                close=Decimal("3.15"),
+                attempt_id=attempt_id,
+                observed_at=_FIXED_OBSERVED_AT,
+            )
+            return _build_by_trade_date_response(
+                trade_date=trade_date,
+                records=(orphan_bar,),
+                attempt_id=attempt_id,
+            )
+
+        with self.assertRaises(LookupError) as ctx:
+            write_stock_daily_bars_raw_by_trade_date(
+                _ByTradeDateInlineProvider(_fetch),
+                self._factory,
+                trade_date=_BY_TRADE_DATE_TRADE_DATE,
+                unit_of_work_factory=self._uow_factory,
+            )
+        message = str(ctx.exception)
+        self.assertIn("could not resolve instrument_id", message)
+        self.assertIn("tushare", message)
+
+
+class UpsertStockDailyBarsByTradeDateLookupTest(unittest.TestCase):
+    """``upsert_stock_daily_bars`` resolves the by-date request via the logical-key triplet."""
+
+    def setUp(self) -> None:
+        self._session = _build_session()
+        self._provider_request_id = uuid4()
+        self._by_date_request_key = (
+            f"daily-bars-by-date-{_BY_TRADE_DATE_TRADE_DATE.isoformat()}"
+        )
+        self._stored_request = StoredProviderRequest(
+            id=self._provider_request_id,
+            provider_key="tushare",
+            dataset_key="stock_daily_bars_by_date",
+            request_key=self._by_date_request_key,
+            request_params={"trade_date": _BY_TRADE_DATE_TRADE_DATE.isoformat()},
+            status="succeeded",
+        )
+
+    def test_upsert_resolves_by_date_request_via_logical_key(self) -> None:
+        # Round-trip: the by-date raw writer stamps the same
+        # ``(provider_key, dataset_key, request_key)`` the upsert asset
+        # looks up by — pin the asset's contract against the persisted
+        # request surface.
+        attempt_no = 1
+        batch_id = uuid4()
+        sidecar_records = [
+            _stock_row(symbol="600519", exchange="SSE", close="1800.50")
+        ]
+        payload = serialize_stock_daily_bars(
+            sidecar_records,
+            source_batch_id=batch_id,
+            observed_at=_BASE_ATTEMPT_FINISH,
+            provider_key="tushare",
+        )
+        attempt = StoredProviderAttempt(
+            id=batch_id,
+            provider_request_id=self._provider_request_id,
+            attempt_no=attempt_no,
+            started_at=_BASE_ATTEMPT_START,
+            finished_at=_BASE_ATTEMPT_FINISH,
+            status="succeeded",
+            response_payload_sha256="0" * 64,
+            response_payload_json=payload,
+        )
+        upsert_calls: list[list[Any]] = []
+        uow_factory = _make_uow_factory(
+            session=self._session,
+            uow_cls=_UpsertFakeUnitOfWork,
+            stored_request=self._stored_request,
+            attempts=[attempt],
+            instrument_lookup=_sh_lookup,
+            upsert_calls=upsert_calls,
+        )
+
+        summary = upsert_stock_daily_bars(
+            _make_session_factory(self._session),
+            provider_key="tushare",
+            dataset_key="stock_daily_bars_by_date",
+            request_key=self._by_date_request_key,
+            unit_of_work_factory=uow_factory,
+        )
+
+        self.assertEqual(summary.total, 1)
+        self.assertEqual(summary.inserted, 1)
+        bars = upsert_calls[0]
+        self.assertEqual(len(bars), 1)
+        self.assertEqual(bars[0].close, Decimal("1800.50"))
 
 
 if __name__ == "__main__":

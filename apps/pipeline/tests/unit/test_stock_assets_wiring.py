@@ -3,9 +3,9 @@
 The four production stock assets (``stock_instruments_raw``,
 ``stock_instruments``, ``stock_daily_bars_raw``, ``stock_daily_bars``)
 wrap the existing PR-02 / PR-05 / PR-06 service modules behind the
-Tushare ``StockTushareProvider``. The slice only wires a new Dagster
-asset chain — the service layer is unchanged — but the wiring contract
-is the whole point of the increment, so the suite pins every relevant
+Tushare ``StockTushareProvider``. The slice wires a new Dagster asset
+chain — the service layer is unchanged for the per-symbol baseline, and
+the by-date batch path is additive — so the suite pins every relevant
 invariant at the source / runtime boundary:
 
 * :class:`StockAssetsSourceWiringTest` reads each production asset's
@@ -16,14 +16,15 @@ invariant at the source / runtime boundary:
   - ``stock_instruments`` calls ``upsert_etf_instruments`` with
     explicit ``provider_key="tushare"`` / ``dataset_key="stock_instruments"``
     so the upstream lookup cannot collide with the ETF slice.
-  - ``stock_daily_bars_raw`` reads symbols via
-    ``load_stock_universe(settings.stock_universe_path)`` and
-    delegates to ``write_stock_daily_bars_raw`` — no implicit
-    full-market scan.
+  - ``stock_daily_bars_raw`` routes through
+    ``write_stock_daily_bars_raw_by_trade_date`` and stamps
+    ``dataset_key="stock_daily_bars_by_date"`` so the by-date request
+    cannot collide with the per-symbol ``stock_daily_bars`` baseline.
   - ``stock_daily_bars`` calls ``upsert_stock_daily_bars`` with
-    ``dataset_key="stock_daily_bars"`` and surfaces a skipped
-    ``MaterializeResult`` when the upstream request is missing or
-    failed.
+    ``dataset_key="stock_daily_bars_by_date"`` /
+    ``request_key="daily-bars-by-date-{trade_date.isoformat()}"`` and
+    surfaces a skipped ``MaterializeResult`` when the upstream request
+    is missing or failed.
 
 * :class:`StockAssetsRuntimeWiringTest` invokes each production asset's
   underlying callable (via
@@ -31,9 +32,13 @@ invariant at the source / runtime boundary:
   context and patches :func:`invest_pipeline.assets.build_stock_provider`
   to a sentinel that raises immediately, so the suite verifies the
   factory call happens at runtime without booting a real database.
-  The stock_daily_bars / stock_daily_bars_raw assets additionally
-  receive a fixed ``StockUniverse`` via a patched loader so the
-  symbols are deterministic across reruns.
+
+* :class:`StockDailyBarsByTradeDateAssetWiringTest` pins the
+  by-trade-date wiring on both ``stock_daily_bars_raw`` (calls
+  ``write_stock_daily_bars_raw_by_trade_date`` with the partition
+  trade date) and ``stock_daily_bars`` (looks up
+  ``(provider_key="tushare", dataset_key="stock_daily_bars_by_date",
+  request_key="daily-bars-by-date-{trade_date.isoformat()}")``).
 
 * :class:`StockAssetsSkippedBehaviourTest` exercises the
   ``MaterializeResult`` skip path: the upstream-request lookup returns
@@ -41,11 +46,13 @@ invariant at the source / runtime boundary:
   asset must surface ``skipped=True`` without raising so the job does
   not enter a Dagster retry loop.
 
-* :class:`SettingsStockUniversePathTest` pins the new
+* :class:`SettingsStockUniversePathTest` pins the
   :attr:`Settings.stock_universe_path` setting — the path the loader
   receives must come from configuration, not from a hard-coded
   constant, so an operator can swap universes without editing the
-  asset source.
+  asset source. The setting is consumed by
+  :func:`stock_input_snapshot` only; the by-date raw asset is
+  universe-agnostic.
 """
 
 from __future__ import annotations
@@ -124,19 +131,27 @@ class StockAssetsSourceWiringTest(unittest.TestCase):
         self.assertIn("dataset_key=\"stock_instruments\"", body)
         self.assertIn("upsert_etf_instruments", body)
 
-    def test_stock_daily_bars_raw_reads_symbols_from_settings_path(self) -> None:
+    def test_stock_daily_bars_raw_uses_by_trade_date_provider_path(self) -> None:
         body = _asset_body("stock_daily_bars_raw")
         self.assertIn("build_stock_provider(settings)", body)
-        self.assertIn("load_stock_universe(settings.stock_universe_path)", body)
-        self.assertIn("write_stock_daily_bars_raw", body)
+        self.assertIn("write_stock_daily_bars_raw_by_trade_date", body)
+        # ``stock_daily_bars_raw`` must surface the by-date dataset_key
+        # in metadata so an operator can audit which logical-request
+        # window a partition materialised.
+        self.assertIn("\"stock_daily_bars_by_date\"", body)
+        # The asset must NOT route through the per-symbol
+        # ``write_stock_daily_bars_raw`` baseline — the additive by-date
+        # function is the wired path. The per-symbol helper is still
+        # exported and is preserved for any direct caller.
+        self.assertNotIn("write_stock_daily_bars_raw(", body)
         # Hard-coded "ts_code" / "all market" defaults must not leak in.
         self.assertNotIn("fetch_stock_basic", body)
         self.assertNotIn("stock_basic", body)
 
-    def test_stock_daily_bars_uses_stock_daily_bars_dataset_key(self) -> None:
+    def test_stock_daily_bars_uses_by_date_dataset_key_and_request_key(self) -> None:
         body = _asset_body("stock_daily_bars")
         self.assertIn("build_stock_provider(settings)", body)
-        self.assertIn("dataset_key=\"stock_daily_bars\"", body)
+        self.assertIn("dataset_key=\"stock_daily_bars_by_date\"", body)
         self.assertIn("upsert_stock_daily_bars", body)
         # Must surface a skipped MaterializeResult rather than raising
         # so a missing or failed upstream attempt does not enter a
@@ -225,14 +240,20 @@ class StockAssetsRuntimeWiringTest(unittest.TestCase):
         self._assert_factory_called_with_settings("stock_daily_bars")
 
 
-class StockAssetsFixedSymbolsTest(unittest.TestCase):
-    """The ``stock_daily_bars_raw`` / ``stock_daily_bars`` assets consume fixed symbols.
+class StockDailyBarsByTradeDateAssetWiringTest(unittest.TestCase):
+    """The ``stock_daily_bars_raw`` / ``stock_daily_bars`` assets use the by-trade-date path.
 
-    The chain must derive its symbol list from the explicit
-    ``load_stock_universe(settings.stock_universe_path)`` loader —
-    never from an implicit full-market scan — so the asset's contract
-    is reproducible across reruns and the test suite can pin the
-    symbols.
+    Stage 4B narrows the ``stock_daily_bars_raw`` asset to the by-date
+    ``StockTushareProvider.fetch_daily_bars_by_trade_date`` provider
+    call (one HTTP roundtrip per trade date, every A-share daily bar
+    for that date), and ``stock_daily_bars`` looks up the persisted
+    request via the by-date logical key
+    ``(provider_key='tushare',
+    dataset_key='stock_daily_bars_by_date',
+    request_key='daily-bars-by-date-{trade_date.isoformat()}')``. The
+    upstream ``load_stock_universe`` / symbols-based projection is no
+    longer consulted by the daily-bars chain; ``stock_input_snapshot``
+    keeps the universe, untouched.
     """
 
     def _invoke_raw_with_capture(self) -> dict[str, Any]:
@@ -242,14 +263,10 @@ class StockAssetsFixedSymbolsTest(unittest.TestCase):
             provider: Any,
             session_factory: Any,
             *,
-            symbols: Any,
-            start_date: date,
-            end_date: date,
+            trade_date: date,
             unit_of_work_factory: Any = None,
         ) -> Any:
-            captured["symbols"] = list(symbols)
-            captured["start_date"] = start_date
-            captured["end_date"] = end_date
+            captured["trade_date"] = trade_date
             from uuid import uuid4
 
             return SimpleNamespace(
@@ -258,7 +275,7 @@ class StockAssetsFixedSymbolsTest(unittest.TestCase):
                 batch_id=uuid4(),
                 request_status="succeeded",
                 attempt_status="succeeded",
-                record_count=len(list(symbols)),
+                record_count=7,
             )
 
         engine = MagicMock()
@@ -266,8 +283,9 @@ class StockAssetsFixedSymbolsTest(unittest.TestCase):
             patch.object(assets, "build_engine", lambda _url: engine),
             patch.object(assets, "session_factory", lambda _engine: MagicMock()),
             patch.object(assets, "build_stock_provider", lambda _settings: MagicMock()),
-            patch.object(assets, "load_stock_universe", lambda _path: _FIXED_UNIVERSE),
-            patch.object(assets, "write_stock_daily_bars_raw", _fake_write),
+            patch.object(
+                assets, "write_stock_daily_bars_raw_by_trade_date", _fake_write
+            ),
         ):
             result = _underlying_callable("stock_daily_bars_raw")(
                 dg.build_asset_context(partition_key=_HISTORICAL_PARTITION)
@@ -275,40 +293,57 @@ class StockAssetsFixedSymbolsTest(unittest.TestCase):
         captured["result"] = result
         return captured
 
-    def test_raw_asset_uses_universe_loader_symbols_and_partition_date(self) -> None:
+    def test_raw_asset_invokes_by_trade_date_write_with_partition_date(self) -> None:
         captured = self._invoke_raw_with_capture()
-        self.assertEqual(captured["symbols"], list(_FIXED_SYMBOLS))
-        self.assertEqual(captured["start_date"], _HISTORICAL_DATE)
-        self.assertEqual(captured["end_date"], _HISTORICAL_DATE)
+        self.assertEqual(captured["trade_date"], _HISTORICAL_DATE)
+        self.assertEqual(captured["result"].metadata["trade_date"], _HISTORICAL_DATE.isoformat())
         self.assertEqual(
-            captured["result"].metadata["symbol_count"],
-            len(_FIXED_SYMBOLS),
+            captured["result"].metadata["dataset_key"],
+            "stock_daily_bars_by_date",
+        )
+        self.assertEqual(
+            captured["result"].metadata["partition_key"],
+            _HISTORICAL_PARTITION,
         )
 
-    def test_raw_asset_passes_settings_path_to_universe_loader(self) -> None:
-        captured_paths: list[Path] = []
+    def test_raw_asset_does_not_load_stock_universe(self) -> None:
+        # The by-date path is universe-agnostic; the asset must NOT
+        # call ``load_stock_universe`` (that's ``stock_input_snapshot``'s
+        # job). A stale universe must never silently re-target or
+        # filter the raw fetch.
+        from uuid import uuid4 as _uuid4
 
-        def _capture_path(path: Path) -> StockUniverse:
-            captured_paths.append(path)
+        captured_calls: list[Path] = []
+
+        def _explode_if_called(path: Path) -> StockUniverse:
+            captured_calls.append(path)
             raise RuntimeError("STOP_AFTER_LOAD_UNIVERSE")
 
         engine = MagicMock()
-        custom_path = Path("/tmp/custom-stock-universe.yaml")
-        settings = Settings(stock_universe_path=custom_path)
         with (
-            patch.object(assets, "get_settings", lambda: settings),
             patch.object(assets, "build_engine", lambda _url: engine),
             patch.object(assets, "session_factory", lambda _engine: MagicMock()),
             patch.object(assets, "build_stock_provider", lambda _settings: MagicMock()),
-            patch.object(assets, "load_stock_universe", _capture_path),
-            self.assertRaises(RuntimeError),
+            patch.object(
+                assets,
+                "write_stock_daily_bars_raw_by_trade_date",
+                lambda _provider, _factory, **_kwargs: SimpleNamespace(
+                    request_id=_uuid4(),
+                    attempt_id=_uuid4(),
+                    batch_id=_uuid4(),
+                    request_status="succeeded",
+                    attempt_status="succeeded",
+                    record_count=1,
+                ),
+            ),
+            patch.object(assets, "load_stock_universe", _explode_if_called),
         ):
             _underlying_callable("stock_daily_bars_raw")(
                 dg.build_asset_context(partition_key=_HISTORICAL_PARTITION)
             )
-        self.assertEqual(captured_paths, [custom_path])
+        self.assertEqual(captured_calls, [])
 
-    def test_upsert_asset_uses_universe_loader_symbols_to_compute_request_key(self) -> None:
+    def test_upsert_asset_uses_partition_aligned_by_date_request_key(self) -> None:
         captured: dict[str, Any] = {}
 
         def _fake_upsert(
@@ -350,7 +385,6 @@ class StockAssetsFixedSymbolsTest(unittest.TestCase):
             patch.object(assets, "build_engine", lambda _url: engine),
             patch.object(assets, "session_factory", lambda _engine: MagicMock()),
             patch.object(assets, "build_stock_provider", lambda _settings: provider),
-            patch.object(assets, "load_stock_universe", lambda _path: _FIXED_UNIVERSE),
             patch.object(invest_storage, "SqlAlchemyUnitOfWork", lambda _f: uow),
             patch.object(assets, "upsert_stock_daily_bars", _fake_upsert),
         ):
@@ -358,15 +392,12 @@ class StockAssetsFixedSymbolsTest(unittest.TestCase):
                 dg.build_asset_context(partition_key=_HISTORICAL_PARTITION)
             )
 
-        from invest_pipeline.request_keys import make_daily_bars_request_key
-
-        expected_key = make_daily_bars_request_key(
-            _HISTORICAL_DATE, _HISTORICAL_DATE, list(_FIXED_SYMBOLS)
-        )
+        expected_key = f"daily-bars-by-date-{_HISTORICAL_DATE.isoformat()}"
         self.assertEqual(captured["request_key"], expected_key)
-        self.assertEqual(captured["dataset_key"], "stock_daily_bars")
+        self.assertEqual(captured["dataset_key"], "stock_daily_bars_by_date")
         self.assertEqual(captured["provider_key"], "tushare")
         self.assertEqual(result.metadata["request_key"], expected_key)
+        self.assertEqual(result.metadata["trade_date"], _HISTORICAL_DATE.isoformat())
 
 
 class StockAssetsSkippedBehaviourTest(unittest.TestCase):

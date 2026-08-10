@@ -8,11 +8,15 @@ UoW so the suite never boots a real database.
 
 * :class:`StockInputSnapshotAssetTest` pins the partition / dependency
   metadata for :func:`invest_pipeline.assets.stock_input_snapshot` and
-  the happy path through the asset: the asset loads the explicit
-  ``config/stock-universe.yaml``, resolves every enabled symbol
-  against an active ``STOCK`` row in ``core.instruments`` through
-  the breadth service, and persists the resulting :class:`InputSnapshot`
-  through the existing :func:`create_input_snapshot` helper.
+  the happy path through the asset: the asset derives the stock
+  universe from the persisted ``core.instruments`` table through
+  :func:`invest_pipeline.market_breadth_service.list_active_stock_instrument_ids`,
+  and persists the resulting :class:`InputSnapshot` through the
+  existing :func:`create_input_snapshot` helper. The
+  "empty-universe" case surfaces a hard
+  :class:`StockUniverseEmptyError` so a misconfigured upstream
+  ``stock_instruments`` materialisation fails closed rather than
+  producing a partial snapshot.
 * :class:`MarketBreadthSnapshotAssetTest` does the same for
   :func:`invest_pipeline.assets.market_breadth_snapshot`: the asset
   resolves the persisted input snapshot for the partition date,
@@ -43,13 +47,11 @@ from invest_domain.research.models import FreshnessStatus, QualityStatus
 from invest_pipeline import assets
 from invest_pipeline.market_breadth_service import (
     MarketBreadthPublishResult,
+    StockUniverseEmptyError,
 )
-from invest_pipeline.stock_universe import StockUniverse
 
 _TRADE_DATE = date(2026, 8, 10)
 _TRADE_DATE_HISTORICAL = date(2026, 7, 31)
-_FIXED_SYMBOLS: tuple[str, ...] = ("600519", "000001")
-_FIXED_UNIVERSE = StockUniverse(version=1, symbols=_FIXED_SYMBOLS)
 
 
 def _instrument(symbol: str, instrument_id: UUID) -> Instrument:
@@ -74,7 +76,7 @@ def _patch_engine() -> MagicMock:
 
 
 class StockInputSnapshotAssetTest(unittest.TestCase):
-    """``stock_input_snapshot`` wiring + happy path."""
+    """``stock_input_snapshot`` wiring + happy path + empty-universe fail-closed."""
 
     def test_stock_input_snapshot_is_partitioned_and_depends_on_stock_instruments(self) -> None:
         assert isinstance(
@@ -82,7 +84,9 @@ class StockInputSnapshotAssetTest(unittest.TestCase):
         )
         assert dg.AssetKey("stock_instruments") in assets.stock_input_snapshot.dependency_keys
 
-    def test_stock_input_snapshot_uses_partition_date_and_resolved_stock_ids(self) -> None:
+    def test_stock_input_snapshot_uses_partition_date_and_dynamic_active_stock_universe(
+        self,
+    ) -> None:
         ids = [uuid4(), uuid4()]
         uow = MagicMock(name="UoW")
         uow.__enter__ = MagicMock(return_value=uow)
@@ -111,11 +115,10 @@ class StockInputSnapshotAssetTest(unittest.TestCase):
         with (
             patch.object(assets, "build_engine", lambda _url: engine),
             patch.object(assets, "session_factory", lambda _engine: MagicMock()),
-            patch.object(assets, "load_stock_universe", lambda _path: _FIXED_UNIVERSE),
             patch.object(
                 assets,
-                "resolve_stock_instrument_ids",
-                lambda _uow, *, symbols: ids,
+                "list_active_stock_instrument_ids",
+                lambda _uow: list(ids),
             ),
             patch.object(invest_storage, "SqlAlchemyUnitOfWork", lambda _factory: uow),
             patch.object(assets, "create_input_snapshot", _capturing_create),
@@ -128,7 +131,89 @@ class StockInputSnapshotAssetTest(unittest.TestCase):
         assert captured["instrument_ids"] == ids
         assert result.metadata["partition_key"] == _TRADE_DATE.isoformat()
         assert result.metadata["row_count"] == len(ids)
-        assert result.metadata["universe_size"] == len(_FIXED_SYMBOLS)
+        assert result.metadata["universe_size"] == len(ids)
+        engine.dispose.assert_called_once_with()
+
+    def test_stock_input_snapshot_does_not_consult_stock_universe_yaml(self) -> None:
+        """The asset must NOT call ``load_stock_universe`` after the dynamic-universe slice.
+
+        The persisted ``core.instruments`` table is the authoritative
+        stock universe; consulting ``config/stock-universe.yaml``
+        would silently couple the asset to a hand-curated symbol set
+        and bypass the upstream ``stock_instruments`` materialisation.
+        The wiring test explodes the call to surface a regression.
+        """
+
+        captured_calls: list[Any] = []
+
+        def _explode_if_called(_path: Any) -> None:
+            captured_calls.append(_path)
+            raise RuntimeError("STOP_AFTER_LOAD_STOCK_UNIVERSE")
+
+        uow = MagicMock(name="UoW")
+        uow.__enter__ = MagicMock(return_value=uow)
+        uow.__exit__ = MagicMock(return_value=False)
+        engine = _patch_engine()
+
+        with (
+            patch.object(assets, "build_engine", lambda _url: engine),
+            patch.object(assets, "session_factory", lambda _engine: MagicMock()),
+            patch.object(
+                assets,
+                "list_active_stock_instrument_ids",
+                lambda _uow: [uuid4()],
+            ),
+            patch.object(invest_storage, "SqlAlchemyUnitOfWork", lambda _factory: uow),
+            patch.object(assets, "load_stock_universe", _explode_if_called),
+        ):
+            assets.stock_input_snapshot.op.compute_fn.decorated_fn(
+                dg.build_asset_context(partition_key=_TRADE_DATE.isoformat())
+            )
+
+        assert captured_calls == []
+        engine.dispose.assert_called_once_with()
+
+    def test_stock_input_snapshot_empty_universe_fails_closed(self) -> None:
+        """An empty active ``STOCK`` universe fails closed with ``StockUniverseEmptyError``.
+
+        The asset propagates :class:`StockUniverseEmptyError` rather
+        than calling :func:`create_input_snapshot` with an empty
+        list, so a misconfigured upstream ``stock_instruments``
+        materialisation surfaces as a hard Dagster failure (Dagster
+        surfaces uncaught exceptions as materialisation errors, not
+        silent ``skipped`` / ``invalid`` skips). ``create_input_snapshot``
+        is never invoked so the ``InputSnapshot`` row never appears in
+        storage.
+        """
+
+        uow = MagicMock(name="UoW")
+        uow.__enter__ = MagicMock(return_value=uow)
+        uow.__exit__ = MagicMock(return_value=False)
+        engine = _patch_engine()
+
+        def _raise_empty(_uow: Any) -> list[UUID]:
+            raise StockUniverseEmptyError(
+                "no active STOCK rows in core.instruments; the dynamic "
+                "stock universe is empty so stock_input_snapshot cannot "
+                "persist a non-empty InputSnapshot — re-materialise "
+                "stock_instruments before retrying"
+            )
+
+        create_spy = MagicMock(name="create_input_snapshot")
+
+        with (
+            patch.object(assets, "build_engine", lambda _url: engine),
+            patch.object(assets, "session_factory", lambda _engine: MagicMock()),
+            patch.object(assets, "list_active_stock_instrument_ids", _raise_empty),
+            patch.object(invest_storage, "SqlAlchemyUnitOfWork", lambda _factory: uow),
+            patch.object(assets, "create_input_snapshot", create_spy),
+            self.assertRaises(StockUniverseEmptyError),
+        ):
+            assets.stock_input_snapshot.op.compute_fn.decorated_fn(
+                dg.build_asset_context(partition_key=_TRADE_DATE.isoformat())
+            )
+
+        create_spy.assert_not_called()
         engine.dispose.assert_called_once_with()
 
 

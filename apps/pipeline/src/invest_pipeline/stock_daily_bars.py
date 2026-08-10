@@ -1,44 +1,57 @@
 """Stock daily-bars ETL service (vertical slice on top of PR-06).
 
 Mirrors :mod:`invest_pipeline.etf_daily_bars` but for A-share stocks
-and the ``stock_daily_bars`` dataset key. The slice only adds a new
-service module — Dagster assets and real Provider wiring are left for
-a follow-up — and reuses every PR-06 building block so the contract
-stays symmetric:
+and the ``stock_daily_bars`` dataset key. Two raw entry points share
+the same PR-02 three-layer evidence contract:
 
-- :func:`write_stock_daily_bars_raw` calls the Provider, persists the
-  PR-02 three-layer evidence bundle to ``raw.provider_requests`` /
-  ``raw.provider_attempts`` / ``raw.provider_batches``, and returns a
-  :class:`RawEtlResult` carrying the assigned UUIDs. The standardized
-  daily-bar records are serialised into a JSONB sidecar on the
-  attempt's ``response_payload_json`` — same wire pattern the ETF
-  service uses — but the sidecar carries **both** ``symbol`` and
-  ``exchange`` so the upsert service does not have to infer the
-  exchange from the code prefix. The exchange comes from the
-  provider's ``symbol_and_exchange_for_instrument_id`` reverse lookup;
-  stock symbols span more than one exchange prefix (SH 6xxxxx, SZ
-  0xxxxx / 3xxxxx) so guessing by prefix would mis-route a non-trivial
-  share of the universe. Failed attempts persist the request + attempt
-  only; no batch row is created, mirroring the contract :mod:`etf_daily_bars`
-  enforces.
+- :func:`write_stock_daily_bars_raw` calls the Provider for an
+  explicit ``(symbols, start_date, end_date)`` window, persists the
+  bundle to ``raw.provider_requests`` / ``raw.provider_attempts`` /
+  ``raw.provider_batches`` and returns a :class:`RawEtlResult`
+  carrying the assigned UUIDs. The standardized daily-bar records are
+  serialised into a JSONB sidecar on the attempt's
+  ``response_payload_json`` — same wire pattern the ETF service uses
+  — but the sidecar carries **both** ``symbol`` and ``exchange`` so
+  the upsert service does not have to infer the exchange from the code
+  prefix. The exchange comes from the provider's
+  ``symbol_and_exchange_for_instrument_id`` reverse lookup; stock
+  symbols span more than one exchange prefix (SH 6xxxxx, SZ 0xxxxx /
+  3xxxxx) so guessing by prefix would mis-route a non-trivial share
+  of the universe. The provider stamps
+  ``dataset_key='stock_daily_bars'`` /
+  ``request_key=daily-bars-{start}-{end}-{symbols}`` on the persisted
+  request.
+- :func:`write_stock_daily_bars_raw_by_trade_date` is the additive
+  batch path: it calls
+  :meth:`StockTushareProvider.fetch_daily_bars_by_trade_date`, which
+  fetches every A-share daily bar for a single ``trade_date`` in one
+  HTTP roundtrip, and persists the same PR-02 bundle. The provider
+  stamps ``dataset_key='stock_daily_bars_by_date'`` /
+  ``request_key='daily-bars-by-date-{trade_date.isoformat()}'`` so the
+  by-date request cannot collide with the per-symbol
+  ``stock_daily_bars`` baseline. The two entry points share
+  :func:`_persist_stock_daily_bars_raw` so failure semantics,
+  sidecar shape and idempotency stay byte-identical — the only
+  difference is the (symbols-window vs. by-trade-date) provider call
+  and the (provider, dataset_key, request_key) the request carries.
+
+Failed attempts persist the request + attempt only; no batch row is
+created, mirroring the contract :mod:`etf_daily_bars` enforces.
+
 - :func:`upsert_stock_daily_bars` re-opens a fresh UoW, locates the
   latest successful attempt for the ``(provider, dataset, request_key)``
   triplet, deserializes the sidecar, resolves the real
   ``core.instruments.id`` for every ``(symbol, exchange)`` pair, and
   upserts the standardized bars into ``core.daily_bars`` under the
-  ADR-0006 §3 revision rules.
+  ADR-0006 §3 revision rules. The function is dataset-agnostic — the
+  slice pass either ``dataset_key='stock_daily_bars'`` (per-symbol)
+  or ``dataset_key='stock_daily_bars_by_date'`` (by-date) and the
+  service resolves the matching attempt via the logical-key triplet.
 
-Both functions accept a ``session_factory`` so unit tests can inject a
-factory that hands out a :class:`unittest.mock.MagicMock` session —
-the asset-level integration is verified via the test suite without
-booting a real database.
-
-The slice intentionally stops short of touching the ETF service,
-:mod:`invest_pipeline.assets`, the Tushare ``etf`` adapter, or any
-CLI wiring. The Tushare ``StockTushareProvider`` already carries the
-``symbol_and_exchange_for_instrument_id`` reverse lookup (added in an
-earlier PR); no further Provider interface changes are required for
-this slice.
+Both write entry points accept a ``session_factory`` so unit tests can
+inject a factory that hands out a :class:`unittest.mock.MagicMock`
+session — the asset-level integration is verified via the test suite
+without booting a real database.
 """
 
 from __future__ import annotations
@@ -96,7 +109,7 @@ class UpsertSummary:
 
 
 class _StockProviderPort(Protocol):
-    """Structural port for the stock daily-bars Provider.
+    """Structural port for the per-symbol stock daily-bars Provider.
 
     Mirrors the subset of :class:`invest_pipeline.adapters.tushare.StockTushareProvider`
     the service depends on so a stub provider can be injected in unit
@@ -128,55 +141,61 @@ class _StockProviderPort(Protocol):
     ) -> tuple[str, str] | None: ...
 
 
+class _StockByTradeDateProviderPort(Protocol):
+    """Structural port for the by-trade-date stock daily-bars Provider.
+
+    Mirrors :meth:`StockTushareProvider.fetch_daily_bars_by_trade_date`
+    — a single-shot ``daily`` request keyed by ``trade_date`` that
+    returns every A-share daily bar for that date — plus the same
+    ``symbol_and_exchange_for_instrument_id`` reverse lookup the
+    per-symbol port requires. The provider stamps
+    ``dataset_key='stock_daily_bars_by_date'`` and
+    ``request_key='daily-bars-by-date-{trade_date.isoformat()}'`` on
+    the persisted request so the by-date path cannot collide with the
+    parallel per-symbol ``stock_daily_bars`` request.
+    """
+
+    @property
+    def provider_key(self) -> str: ...
+
+    def fetch_daily_bars_by_trade_date(
+        self, trade_date: date
+    ) -> tuple[Any, Any, Any]: ...
+
+    def symbol_and_exchange_for_instrument_id(
+        self, instrument_id: Any
+    ) -> tuple[str, str] | None: ...
+
+
 def _now() -> datetime:
     return datetime.now(UTC)
 
 
-def write_stock_daily_bars_raw(
-    provider: _StockProviderPort,
+def _persist_stock_daily_bars_raw(
+    provider: Any,
     session_factory: SessionProvider | sessionmaker[Any],
     *,
-    symbols: Sequence[str],
-    start_date: date,
-    end_date: date,
-    unit_of_work_factory: UnitOfWorkFactory = SqlAlchemyUnitOfWork,
+    request: Any,
+    attempt: Any,
+    batch: Any | None,
+    unit_of_work_factory: UnitOfWorkFactory,
 ) -> RawEtlResult:
-    """Run the PR-02 three-layer evidence write for stock daily bars.
+    """Persist the ``(request, attempt, batch)`` bundle per the PR-02 contract.
 
-    Persists the ``(ProviderRequest, ProviderAttempt, ProviderBatch)``
-    triple returned by ``provider.fetch_daily_bars`` in order so the
-    FK wiring on ``provider_attempts`` and ``provider_batches``
-    resolves against the storage-assigned UUIDs. The standardized bars
-    are serialised into a JSONB sidecar on the attempt's
-    ``response_payload_json``; every sidecar record carries both
-    ``symbol`` and ``exchange`` so the downstream upsert can resolve
-    the real ``core.instruments.id`` without inferring the exchange
-    from the code prefix.
-
-    Failure semantics (mirrors
-    :func:`invest_pipeline.etf_daily_bars.write_etf_daily_bars_raw`):
-
-    - ``ProviderAttempt.status == FAILED`` → only the request (status
-      ``failed``) and the attempt (status ``failed`` with mandatory
-      ``error_stage`` / ``error_code``) are persisted. No batch row is
-      created.
-    - ``ProviderAttempt.status == SUCCEEDED`` and a non-``None`` batch
-      → the request, the attempt and the batch are all persisted. The
-      attempt's ``response_payload_json`` carries the sidecar.
-    - ``ProviderAttempt.status == SUCCEEDED`` and ``batch is None`` →
-      the request and attempt are persisted with status ``partial``;
-      no batch is created.
+    Shared by :func:`write_stock_daily_bars_raw` (per-symbol) and
+    :func:`write_stock_daily_bars_raw_by_trade_date` (by-trade-date) so
+    both call sites enforce byte-identical failure / sidecar /
+    idempotency semantics. The function reaches for
+    ``provider.symbol_and_exchange_for_instrument_id`` only when
+    building the sidecar records — both per-symbol and by-trade-date
+    adapters expose that reverse lookup by contract, so this minimal
+    helper covers both ports without forcing callers to thread an
+    extra symbol/exchange-resolver callback. The ``request`` object is
+    consumed only for ``provider_key``, ``dataset_key``, ``request_key``
+    and ``params`` — the provider stamps those for both entry points,
+    so the helper does not need to know which path produced them.
     """
 
-    if not symbols:
-        raise ValueError("write_stock_daily_bars_raw requires at least one symbol")
-    if end_date < start_date:
-        raise ValueError(
-            f"end_date {end_date.isoformat()} must be on or after "
-            f"start_date {start_date.isoformat()}"
-        )
-
-    request, attempt, batch = provider.fetch_daily_bars(symbols, start_date, end_date)
     finished_at = attempt.finished_at or _now()
 
     factory = _coerce_session_factory(session_factory)
@@ -191,7 +210,9 @@ def write_stock_daily_bars_raw(
             )
         )
 
-        existing_attempts = uow.provider_attempts.list_by_request(stored_request.id, limit=1000)
+        existing_attempts = uow.provider_attempts.list_by_request(
+            stored_request.id, limit=1000
+        )
         next_attempt_no = (
             max(a.attempt_no for a in existing_attempts) + 1
             if existing_attempts
@@ -257,12 +278,15 @@ def write_stock_daily_bars_raw(
             stored_batch_id = stored_batch.id
             record_count = len(batch.records)
             sidecar_records = [
-                _build_sidecar_record(bar, request.provider_key, provider) for bar in batch.records
+                _build_sidecar_record(bar, request.provider_key, provider)
+                for bar in batch.records
             ]
             response_payload_json = serialize_stock_daily_bars(
                 sidecar_records,
                 source_batch_id=stored_batch.id,
-                observed_at=batch.records[0].source.observed_at if batch.records else finished_at,
+                observed_at=batch.records[0].source.observed_at
+                if batch.records
+                else finished_at,
                 provider_key=request.provider_key,
             )
         else:
@@ -271,7 +295,9 @@ def write_stock_daily_bars_raw(
         uow.provider_attempts.mark_succeeded(
             stored_attempt.id,
             finished_at=finished_at,
-            response_payload_sha256=batch.raw_payload_hash if batch is not None else "0" * 64,
+            response_payload_sha256=batch.raw_payload_hash
+            if batch is not None
+            else "0" * 64,
             response_payload_json=response_payload_json,
         )
 
@@ -288,6 +314,105 @@ def write_stock_daily_bars_raw(
             attempt_status="succeeded",
             record_count=record_count,
         )
+
+
+def write_stock_daily_bars_raw(
+    provider: _StockProviderPort,
+    session_factory: SessionProvider | sessionmaker[Any],
+    *,
+    symbols: Sequence[str],
+    start_date: date,
+    end_date: date,
+    unit_of_work_factory: UnitOfWorkFactory = SqlAlchemyUnitOfWork,
+) -> RawEtlResult:
+    """Run the PR-02 three-layer evidence write for stock daily bars.
+
+    Persists the ``(ProviderRequest, ProviderAttempt, ProviderBatch)``
+    triple returned by ``provider.fetch_daily_bars`` in order so the
+    FK wiring on ``provider_attempts`` and ``provider_batches``
+    resolves against the storage-assigned UUIDs. The standardized bars
+    are serialised into a JSONB sidecar on the attempt's
+    ``response_payload_json``; every sidecar record carries both
+    ``symbol`` and ``exchange`` so the downstream upsert can resolve
+    the real ``core.instruments.id`` without inferring the exchange
+    from the code prefix. The provider stamps
+    ``dataset_key='stock_daily_bars'`` /
+    ``request_key=daily-bars-{start}-{end}-{symbols}`` on the persisted
+    request.
+
+    Failure semantics (mirrors
+    :func:`invest_pipeline.etf_daily_bars.write_etf_daily_bars_raw` and
+    shares the helper with :func:`write_stock_daily_bars_raw_by_trade_date`):
+
+    - ``ProviderAttempt.status == FAILED`` → only the request (status
+      ``failed``) and the attempt (status ``failed`` with mandatory
+      ``error_stage`` / ``error_code``) are persisted. No batch row is
+      created.
+    - ``ProviderAttempt.status == SUCCEEDED`` and a non-``None`` batch
+      → the request, the attempt and the batch are all persisted. The
+      attempt's ``response_payload_json`` carries the sidecar.
+    - ``ProviderAttempt.status == SUCCEEDED`` and ``batch is None`` →
+      the request and attempt are persisted with status ``partial``;
+      no batch is created.
+    """
+
+    if not symbols:
+        raise ValueError("write_stock_daily_bars_raw requires at least one symbol")
+    if end_date < start_date:
+        raise ValueError(
+            f"end_date {end_date.isoformat()} must be on or after "
+            f"start_date {start_date.isoformat()}"
+        )
+
+    request, attempt, batch = provider.fetch_daily_bars(symbols, start_date, end_date)
+    return _persist_stock_daily_bars_raw(
+        provider,
+        session_factory,
+        request=request,
+        attempt=attempt,
+        batch=batch,
+        unit_of_work_factory=unit_of_work_factory,
+    )
+
+
+def write_stock_daily_bars_raw_by_trade_date(
+    provider: _StockByTradeDateProviderPort,
+    session_factory: SessionProvider | sessionmaker[Any],
+    *,
+    trade_date: date,
+    unit_of_work_factory: UnitOfWorkFactory = SqlAlchemyUnitOfWork,
+) -> RawEtlResult:
+    """Run the PR-02 three-layer evidence write for the by-trade-date batch path.
+
+    Calls :meth:`StockTushareProvider.fetch_daily_bars_by_trade_date`
+    — a single by-date ``daily`` request that returns every A-share
+    daily bar for ``trade_date`` — and hands the resulting
+    ``(ProviderRequest, ProviderAttempt, ProviderBatch)`` triple to the
+    shared :func:`_persist_stock_daily_bars_raw` helper. The provider
+    stamps ``dataset_key='stock_daily_bars_by_date'`` and
+    ``request_key='daily-bars-by-date-{trade_date.isoformat()}'`` on
+    the persisted request, distinct from the per-symbol
+    ``dataset_key='stock_daily_bars'`` baseline so the two requests
+    cannot collide.
+
+    Failure / sidecar / idempotency semantics mirror
+    :func:`write_stock_daily_bars_raw` — both entry points share the
+    same helper, so an attempt's failure mode (request + attempt only,
+    no batch) and the sidecar byte layout are identical. The
+    per-symbol entry point is intentionally left unchanged; this
+    function is the additive batch path that wires
+    ``fetch_daily_bars_by_trade_date`` into the raw asset.
+    """
+
+    request, attempt, batch = provider.fetch_daily_bars_by_trade_date(trade_date)
+    return _persist_stock_daily_bars_raw(
+        provider,
+        session_factory,
+        request=request,
+        attempt=attempt,
+        batch=batch,
+        unit_of_work_factory=unit_of_work_factory,
+    )
 
 
 def upsert_stock_daily_bars(
@@ -579,4 +704,5 @@ __all__ = [
     "serialize_stock_daily_bars",
     "upsert_stock_daily_bars",
     "write_stock_daily_bars_raw",
+    "write_stock_daily_bars_raw_by_trade_date",
 ]  # type: ignore[no-redef]  # noqa: F811

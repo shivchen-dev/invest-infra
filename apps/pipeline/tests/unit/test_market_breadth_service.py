@@ -11,6 +11,14 @@ boots a real database:
   ``INDEX`` rows are rejected, ambiguous / missing / duplicate
   matches surface as ``ValueError`` so a stale universe file is
   surfaced loudly.
+* :class:`MarketBreadthServiceActiveStockUniverseTest` covers the
+  dynamic-universe helper: every active ``STOCK`` row in
+  ``core.instruments`` is returned in deterministic
+  ``(exchange, symbol, id)`` order, ``ETF`` / ``INDEX`` / inactive /
+  delisted rows are filtered out at the database level, and an empty
+  persisted active ``STOCK`` universe raises
+  :class:`StockUniverseEmptyError` so the ``stock_input_snapshot``
+  asset fails closed.
 * :class:`MarketBreadthServiceWindowTest` covers the 20-day window /
   MA20 filtering: instruments whose latest bar is not on ``as_of``,
   whose rolling history is short, or whose ``close`` /
@@ -57,7 +65,9 @@ from invest_domain.input_snapshot import InputSnapshot
 from invest_domain.instruments import Instrument, InstrumentId, InstrumentType
 from invest_domain.research.models import FreshnessStatus, QualityStatus
 from invest_pipeline.market_breadth_service import (
+    StockUniverseEmptyError,
     calculate_and_publish_market_breadth,
+    list_active_stock_instrument_ids,
     resolve_stock_instrument_ids,
 )
 from invest_storage.models import InstrumentRow
@@ -313,6 +323,202 @@ class MarketBreadthServiceResolveTest(unittest.TestCase):
 
         with self.assertRaisesRegex(ValueError, "must not contain duplicates"):
             resolve_stock_instrument_ids(uow, symbols=[_SYMBOL_A, _SYMBOL_A])
+
+
+# ---------------------------------------------------------------------------
+# Dynamic active-STOCK universe
+# ---------------------------------------------------------------------------
+
+
+class MarketBreadthServiceActiveStockUniverseTest(unittest.TestCase):
+    """Provider-agnostic dynamic active ``STOCK`` universe query.
+
+    The helper :func:`list_active_stock_instrument_ids` is the
+    canonical universe source for the ``stock_input_snapshot``
+    Dagster asset: it queries the UoW session for every active
+    ``STOCK`` row in ``core.instruments`` and returns the
+    storage-side ``instrument_id`` UUIDs in deterministic
+    ``(exchange, symbol, id)`` order. ``ETF`` / ``INDEX`` / inactive
+    / delisted rows are filtered out at the database level so the
+    universe can never silently grow with non-stock rows or
+    re-target a delisted ticker. An empty persisted active
+    ``STOCK`` universe raises :class:`StockUniverseEmptyError` so
+    the asset fails closed.
+    """
+
+    def _row(
+        self,
+        *,
+        instrument_id: UUID,
+        symbol: str,
+        exchange: str,
+        instrument_type: str = "STOCK",
+        is_active: bool = True,
+        delist_date: date | None = None,
+    ) -> MagicMock:
+        row = MagicMock(spec=InstrumentRow)
+        row.id = instrument_id
+        row.symbol = symbol
+        row.exchange = exchange
+        row.instrument_type = instrument_type
+        row.is_active = is_active
+        row.delist_date = delist_date
+        return row
+
+    def _uow(self, rows: list[MagicMock]) -> MagicMock:
+        session = MagicMock(name="Session")
+        session.scalars.return_value.all.return_value = rows
+        uow = MagicMock(name="UoW")
+        uow.session = session
+        return uow
+
+    def test_returns_only_active_stock_rows_in_deterministic_order(self) -> None:
+        """The helper returns every active ``STOCK`` row in ``(exchange, symbol, id)`` order.
+
+        The session-side filter must reject ``ETF`` / ``INDEX`` /
+        inactive ``STOCK`` / delisted ``STOCK`` rows so the dynamic
+        universe can never silently grow with non-stock rows. The
+        test feeds the mock session a list of rows out of natural
+        order (mixed types, mixed exchanges) and verifies the helper
+        preserves the natural ``(exchange, symbol, id)`` order the
+        ``order_by`` clause would produce on a real database.
+        """
+
+        a = self._row(instrument_id=uuid4(), symbol="000001", exchange="SZSE")
+        b = self._row(instrument_id=uuid4(), symbol="300750", exchange="SZSE")
+        c = self._row(instrument_id=uuid4(), symbol="600519", exchange="SSE")
+        d = self._row(instrument_id=uuid4(), symbol="600276", exchange="SSE")
+        etf = self._row(
+            instrument_id=uuid4(),
+            symbol="510300",
+            exchange="SSE",
+            instrument_type="ETF",
+        )
+        index_row = self._row(
+            instrument_id=uuid4(),
+            symbol="000300",
+            exchange="SZSE",
+            instrument_type="INDEX",
+        )
+        inactive = self._row(
+            instrument_id=uuid4(),
+            symbol="600999",
+            exchange="SSE",
+            is_active=False,
+        )
+        delisted = self._row(
+            instrument_id=uuid4(),
+            symbol="300001",
+            exchange="SZSE",
+            delist_date=date(2020, 1, 1),
+        )
+
+        # Pre-ordered list (matches the ``order_by`` clause the
+        # helper applies on a real session) — the helper must pass
+        # the order through verbatim.
+        rows = [a, b, c, d, etf, index_row, inactive, delisted]
+        uow = self._uow(rows)
+
+        result = list_active_stock_instrument_ids(uow)
+
+        self.assertEqual(result, [a.id, b.id, c.id, d.id])
+
+    def test_filters_out_delisted_stock_rows(self) -> None:
+        """Delisted ``STOCK`` rows (non-null ``delist_date``) must be filtered out.
+
+        The explicit-universe resolver at
+        :func:`resolve_stock_instrument_ids` filters on
+        ``delist_date IS NULL`` so the dynamic helper must match
+        that contract: a delisted row is not "active" from the
+        breadth service's point of view even if its ``is_active``
+        flag is still ``True``.
+        """
+
+        active = self._row(
+            instrument_id=uuid4(),
+            symbol="600519",
+            exchange="SSE",
+        )
+        delisted = self._row(
+            instrument_id=uuid4(),
+            symbol="600999",
+            exchange="SSE",
+            delist_date=date(2020, 1, 1),
+        )
+        uow = self._uow([active, delisted])
+
+        self.assertEqual(list_active_stock_instrument_ids(uow), [active.id])
+
+    def test_empty_universe_raises_stock_universe_empty_error(self) -> None:
+        """An empty persisted active ``STOCK`` universe fails closed.
+
+        The asset layer propagates :class:`StockUniverseEmptyError`
+        so a misconfigured upstream ``stock_instruments``
+        materialisation surfaces as a hard Dagster failure rather
+        than a partial ``InputSnapshot``. The error message
+        references the upstream asset so operators can find the
+        remediation path quickly.
+        """
+
+        uow = self._uow([])
+
+        with self.assertRaises(StockUniverseEmptyError) as ctx:
+            list_active_stock_instrument_ids(uow)
+        self.assertIn("no active STOCK rows", str(ctx.exception))
+        self.assertIn("stock_instruments", str(ctx.exception))
+
+    def test_universe_with_only_etf_and_index_rows_raises(self) -> None:
+        """A universe with only ``ETF`` / ``INDEX`` rows is empty from the helper's view.
+
+        The ``ETF`` / ``INDEX`` rows are filtered out at the
+        database level, leaving the helper with an empty id list,
+        which triggers the fail-closed
+        :class:`StockUniverseEmptyError`. This pins the
+        silent-growth guard: a misconfigured upstream that
+        accidentally only persists ETF/INDEX rows cannot trick
+        ``stock_input_snapshot`` into publishing a non-empty
+        ``InputSnapshot``.
+        """
+
+        etf = self._row(
+            instrument_id=uuid4(),
+            symbol="510300",
+            exchange="SSE",
+            instrument_type="ETF",
+        )
+        index_row = self._row(
+            instrument_id=uuid4(),
+            symbol="000300",
+            exchange="SZSE",
+            instrument_type="INDEX",
+        )
+        uow = self._uow([etf, index_row])
+
+        with self.assertRaises(StockUniverseEmptyError):
+            list_active_stock_instrument_ids(uow)
+
+    def test_helper_does_not_use_silent_limit_on_instrument_repository(self) -> None:
+        """Bypass the silent ``limit`` default on ``InstrumentRepository.list_active``.
+
+        :meth:`SqlAlchemyInstrumentRepository.list_active` carries a
+        silent ``limit=100`` default — using it for the dynamic
+        universe would silently truncate the A-share universe (the
+        full active universe is well above 100 rows). The helper
+        queries the UoW session directly, so the test simply
+        confirms the helper does not call any
+        ``uow.instruments.list_active`` method.
+        """
+
+        rows = [
+            self._row(instrument_id=uuid4(), symbol=f"{i:06d}", exchange="SZSE")
+            for i in range(1, 151)
+        ]
+        uow = self._uow(rows)
+
+        result = list_active_stock_instrument_ids(uow)
+
+        self.assertEqual(len(result), 150)
+        uow.instruments.list_active.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
