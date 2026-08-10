@@ -231,6 +231,7 @@ class JiuwenSwarmResearchRunner:
 
         try:
             return self._build_outcome(
+                run=run,
                 request=request,
                 playbook=playbook,
                 evidence_pack=evidence_pack,
@@ -293,6 +294,7 @@ class JiuwenSwarmResearchRunner:
     def _build_outcome(
         self,
         *,
+        run: ResearchRun,
         request: JiuwenSwarmGatewayRequest,
         playbook: ResearchPlaybook,
         evidence_pack: EvidencePack,
@@ -382,6 +384,7 @@ class JiuwenSwarmResearchRunner:
             playbook=playbook,
             adapter_version=self._adapter_version,
             now=started_at,
+            evidence_bundle_id=run.evidence_bundle_id,
         )
         return JiuwenSwarmRunOutcome(
             request_id=request_id,

@@ -250,6 +250,7 @@ def build_draft(
     playbook: ResearchPlaybook,
     adapter_version: str,
     now: datetime,
+    evidence_bundle_id: UUID | None = None,
 ) -> ResearchRunnerDraft:
     """Build a :class:`ResearchRunnerDraft` from a validated completion.
 
@@ -261,7 +262,10 @@ def build_draft(
     By the time ``build_draft`` is reached the runner has already
     rejected any citation whose evidence ID is not present in the
     supplied pack whitelist, so the mapper passes the completion's
-    IDs through verbatim.
+    IDs through verbatim. ``evidence_bundle_id`` is forwarded as-is so
+    the upstream orchestrator can persist the bundle identity on the
+    succeeded :class:`ResearchResult` without round-tripping through
+    the gateway.
     """
 
     if completion.playbook_key != playbook.playbook_key:
@@ -278,6 +282,13 @@ def build_draft(
         )
     if now.tzinfo is None or now.tzinfo.utcoffset(now) is None:
         raise ValueError("build_draft requires a timezone-aware now")
+    if evidence_bundle_id is not None and not isinstance(
+        evidence_bundle_id, UUID
+    ):
+        raise TypeError(
+            "build_draft requires evidence_bundle_id to be a UUID, "
+            f"got {type(evidence_bundle_id).__name__}"
+        )
 
     return ResearchRunnerDraft(
         conclusion=completion.conclusion,
@@ -289,6 +300,7 @@ def build_draft(
         playbook_version=completion.playbook_version,
         adapter_version=adapter_version,
         created_at=now,
+        evidence_bundle_id=evidence_bundle_id,
     )
 
 

@@ -34,6 +34,7 @@ from invest_domain.research import (
     InstrumentSnapshot,
     MarketSnapshot,
     QualityStatus,
+    ResearchEvidenceBundle,
     ResearchPlaybook,
     ResearchResult,
     ResearchRunnerDraft,
@@ -54,6 +55,7 @@ from invest_pipeline.adapters.jiuwenswarm.runner import JiuwenSwarmRunOutcome
 from invest_pipeline.research_orchestration_service import (
     ResearchOrchestrationConflictError,
     ResearchOrchestrationFailedError,
+    ResearchOrchestrationInputError,
     ResearchOrchestrationReconciliationRequiredError,
     ResearchOrchestrationService,
     ResearchOrchestrationUncertainError,
@@ -63,6 +65,7 @@ from invest_pipeline.research_orchestration_service import (
 
 _INSTRUMENT_ID = InstrumentId(UUID("11111111-1114-4118-9111-111111111111"))
 _PACK_ID = UUID("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb")
+_BUNDLE_ID = UUID("eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee")
 _CASE_ID = UUID("22222222-2224-4228-9222-222222222222")
 _RUN_ID = UUID("33333333-3334-4338-9333-333333333333")
 _OTHER_RUN_ID = UUID("99999999-9994-4998-9999-999999999999")
@@ -158,7 +161,11 @@ def _playbook() -> ResearchPlaybook:
     )
 
 
-def _build_draft(*, evidence_pack: EvidencePack) -> ResearchRunnerDraft:
+def _build_draft(
+    *,
+    evidence_pack: EvidencePack,
+    evidence_bundle_id: UUID | None = None,
+) -> ResearchRunnerDraft:
     payload = {
         "schema_version": JIUWENSWARM_SCHEMA_VERSION,
         "playbook_key": _PLAYBOOK_KEY,
@@ -180,6 +187,7 @@ def _build_draft(*, evidence_pack: EvidencePack) -> ResearchRunnerDraft:
         playbook=_playbook(),
         adapter_version=_ADAPTER_VERSION,
         now=_STARTED_AT,
+        evidence_bundle_id=evidence_bundle_id,
     )
 
 
@@ -315,11 +323,24 @@ class _FakeEvidencePackRepo:
 
 
 @dataclass
+class _FakeEvidenceBundleRepo:
+    """In-memory fake for ``ResearchEvidenceBundleRepositoryPort.get_by_id``."""
+
+    by_id: dict[UUID, ResearchEvidenceBundle] = field(default_factory=dict)
+
+    def get_by_id(self, bundle_id: UUID) -> ResearchEvidenceBundle | None:
+        return self.by_id.get(bundle_id)
+
+
+@dataclass
 class _FakeUoW:
     cases: _FakeCaseRepo
     runs: _FakeRunRepo
     evidence_packs: _FakeEvidencePackRepo
     results: _FakeResultRepo
+    evidence_bundles: _FakeEvidenceBundleRepo = field(
+        default_factory=_FakeEvidenceBundleRepo
+    )
     commit_count: int = 0
     rollback_count: int = 0
     in_use: bool = False
@@ -333,6 +354,8 @@ class _FakeUoW:
             return self.evidence_packs
         if name == "research_results":
             return self.results
+        if name == "research_evidence_bundles":
+            return self.evidence_bundles
         raise AttributeError(
             f"'_FakeUoW' object has no attribute {name!r}"
         )
@@ -363,6 +386,8 @@ def _build_service(
     result: ResearchResult | None = None,
     fake_runner: _FakeRunner | None = None,
     run_repo: _FakeRunRepo | None = None,
+    bundle_repo: _FakeEvidenceBundleRepo | None = None,
+    bundle: ResearchEvidenceBundle | None = None,
 ) -> tuple[ResearchOrchestrationService, _FakeUoW, _FakeRunner]:
     runs = run_repo or _FakeRunRepo(runs={run.run_id: run})
     if run.run_id not in runs.runs:
@@ -370,11 +395,15 @@ def _build_service(
     result_repo = _FakeResultRepo()
     if result is not None:
         result_repo.by_run[result.run_id] = result
+    evidence_bundles = bundle_repo or _FakeEvidenceBundleRepo()
+    if bundle is not None:
+        evidence_bundles.by_id[bundle.bundle_id] = bundle
     uow = _FakeUoW(
         cases=_FakeCaseRepo(cases={case.case_id: case}),
         runs=runs,
         evidence_packs=_FakeEvidencePackRepo(by_id={pack.pack_id: pack}),
         results=result_repo,
+        evidence_bundles=evidence_bundles,
     )
     runner = fake_runner or _FakeRunner()
     service = ResearchOrchestrationService(
@@ -386,7 +415,9 @@ def _build_service(
     return service, uow, runner
 
 
-def _ready_case_and_queued_run() -> tuple[ResearchCase, ResearchRun, EvidencePack]:
+def _ready_case_and_queued_run(
+    *, evidence_bundle_id: UUID | None = None
+) -> tuple[ResearchCase, ResearchRun, EvidencePack]:
     pack = _build_pack()
     case = ResearchCase(
         case_id=_CASE_ID,
@@ -403,16 +434,45 @@ def _ready_case_and_queued_run() -> tuple[ResearchCase, ResearchRun, EvidencePac
         evidence_pack_id=pack.pack_id,
         runner_key=_RUNNER_KEY,
         playbook_key=_PLAYBOOK_KEY,
+        evidence_bundle_id=evidence_bundle_id,
     )
     return case, run, pack
 
 
-def _running_case_and_run() -> tuple[ResearchCase, ResearchRun, EvidencePack]:
-    case, run, pack = _ready_case_and_queued_run()
+def _running_case_and_run(
+    *, evidence_bundle_id: UUID | None = None
+) -> tuple[ResearchCase, ResearchRun, EvidencePack]:
+    case, run, pack = _ready_case_and_queued_run(
+        evidence_bundle_id=evidence_bundle_id
+    )
     return (
         case.transition(ResearchCaseStatus.RUNNING, occurred_at=_STARTED_AT),
         run.start(occurred_at=_STARTED_AT),
         pack,
+    )
+
+
+def _build_bundle(
+    *,
+    pack: EvidencePack,
+    bundle_id: UUID = _BUNDLE_ID,
+    research_case_id: UUID | None = None,
+    evidence_pack_id: UUID | None = None,
+) -> ResearchEvidenceBundle:
+    return ResearchEvidenceBundle(
+        bundle_id=bundle_id,
+        research_case_id=(
+            research_case_id if research_case_id is not None else pack.case.case_id
+        ),
+        evidence_pack_id=(
+            evidence_pack_id if evidence_pack_id is not None else pack.pack_id
+        ),
+        evidence_pack_hash=pack.pack_hash,
+        market_snapshot_refs=(),
+        schema_version="1.0.0",
+        bundle_hash="",
+        created_at=_STARTED_AT,
+        as_of_date=pack.case.as_of_date,
     )
 
 
@@ -651,6 +711,98 @@ class AlreadyBoundRunningTest(unittest.TestCase):
         # Load + existing-result lookup transactions both committed before
         # the reconciliation error surfaced; no start transaction was needed.
         self.assertEqual(uow.commit_count, 2)
+
+
+class EvidenceBundleBindingTest(unittest.TestCase):
+    """Optional ``evidence_bundle_id`` on the run is loaded, validated, and propagated."""
+
+    def test_missing_bundle_raises_input_error(self) -> None:
+        case, run, pack = _ready_case_and_queued_run(evidence_bundle_id=_BUNDLE_ID)
+        runner = _FakeRunner()
+        service, uow, runner = _build_service(
+            case=case, run=run, pack=pack, fake_runner=runner
+        )
+
+        with self.assertRaises(ResearchOrchestrationInputError) as ctx:
+            service.execute(run.run_id)
+
+        self.assertIn(str(_BUNDLE_ID), str(ctx.exception))
+        self.assertEqual(runner.calls, [])
+
+    def test_bundle_with_wrong_case_raises_input_error(self) -> None:
+        case, run, pack = _ready_case_and_queued_run(evidence_bundle_id=_BUNDLE_ID)
+        wrong_case = UUID("77777777-7774-4778-9777-777777777777")
+        bundle = _build_bundle(pack=pack, research_case_id=wrong_case)
+        runner = _FakeRunner()
+        service, _uow, runner = _build_service(
+            case=case, run=run, pack=pack, fake_runner=runner, bundle=bundle
+        )
+
+        with self.assertRaises(ResearchOrchestrationInputError) as ctx:
+            service.execute(run.run_id)
+
+        self.assertIn("research_case_id", str(ctx.exception))
+        self.assertEqual(runner.calls, [])
+
+    def test_bundle_with_wrong_pack_raises_input_error(self) -> None:
+        case, run, pack = _ready_case_and_queued_run(evidence_bundle_id=_BUNDLE_ID)
+        wrong_pack = UUID("88888888-8884-4888-9888-888888888888")
+        bundle = _build_bundle(pack=pack, evidence_pack_id=wrong_pack)
+        runner = _FakeRunner()
+        service, _uow, runner = _build_service(
+            case=case, run=run, pack=pack, fake_runner=runner, bundle=bundle
+        )
+
+        with self.assertRaises(ResearchOrchestrationInputError) as ctx:
+            service.execute(run.run_id)
+
+        self.assertIn("evidence_pack_id", str(ctx.exception))
+        self.assertEqual(runner.calls, [])
+
+    def test_run_without_bundle_id_is_accepted(self) -> None:
+        case, run, pack = _ready_case_and_queued_run()
+        self.assertIsNone(run.evidence_bundle_id)
+        draft = _build_draft(evidence_pack=pack)
+        runner = _FakeRunner(
+            outcome=_accepted_outcome(
+                request_id="req-no-bundle", session_id="sess-no-bundle", draft=draft
+            )
+        )
+        service, _uow, _r = _build_service(
+            case=case, run=run, pack=pack, fake_runner=runner
+        )
+
+        outcome = service.execute(run.run_id)
+
+        self.assertIsNotNone(outcome.result)
+        self.assertIsNone(outcome.result.evidence_bundle_id)
+
+    def test_run_with_valid_bundle_propagates_id_to_result(self) -> None:
+        case, run, pack = _ready_case_and_queued_run(evidence_bundle_id=_BUNDLE_ID)
+        bundle = _build_bundle(pack=pack)
+        draft = _build_draft(
+            evidence_pack=pack, evidence_bundle_id=run.evidence_bundle_id
+        )
+        self.assertEqual(run.evidence_bundle_id, _BUNDLE_ID)
+        self.assertEqual(draft.evidence_bundle_id, _BUNDLE_ID)
+        runner = _FakeRunner(
+            outcome=_accepted_outcome(
+                request_id="req-bundle", session_id="sess-bundle", draft=draft
+            )
+        )
+        service, _uow, _r = _build_service(
+            case=case,
+            run=run,
+            pack=pack,
+            fake_runner=runner,
+            bundle=bundle,
+        )
+
+        outcome = service.execute(run.run_id)
+
+        self.assertFalse(outcome.replay)
+        self.assertIsNotNone(outcome.result)
+        self.assertEqual(outcome.result.evidence_bundle_id, _BUNDLE_ID)
 
 
 if __name__ == "__main__":

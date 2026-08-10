@@ -390,6 +390,27 @@ class ResearchOrchestrationService:
                     f"{evidence_pack.case.case_id!s} does not match "
                     f"ResearchCase {case.case_id!s}"
                 )
+            if run.evidence_bundle_id is not None:
+                bundle = uow.research_evidence_bundles.get_by_id(
+                    run.evidence_bundle_id
+                )
+                if bundle is None:
+                    raise ResearchOrchestrationInputError(
+                        f"ResearchEvidenceBundle {run.evidence_bundle_id!s} "
+                        f"referenced by run {run.run_id!s} not found"
+                    )
+                if bundle.research_case_id != case.case_id:
+                    raise ResearchOrchestrationInputError(
+                        f"ResearchEvidenceBundle {bundle.bundle_id!s} "
+                        f"research_case_id {bundle.research_case_id!s} does "
+                        f"not match ResearchCase {case.case_id!s}"
+                    )
+                if bundle.evidence_pack_id != evidence_pack.pack_id:
+                    raise ResearchOrchestrationInputError(
+                        f"ResearchEvidenceBundle {bundle.bundle_id!s} "
+                        f"evidence_pack_id {bundle.evidence_pack_id!s} does "
+                        f"not match EvidencePack {evidence_pack.pack_id!s}"
+                    )
             ctx = case.to_case_context()
             for label, lhs, rhs in (
                 ("instrument_id", ctx.instrument_id, evidence_pack.case.instrument_id),

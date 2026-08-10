@@ -201,6 +201,7 @@ def _running_case_and_run(
     *,
     case_id: UUID | None = None,
     pack_id: UUID | None = None,
+    evidence_bundle_id: UUID | None = None,
 ) -> tuple[ResearchCase, ResearchRun, EvidencePack]:
     pack = _build_pack(case_id=case_id, pack_id=pack_id)
     case_id_for_pack = pack.case.case_id
@@ -228,6 +229,7 @@ def _running_case_and_run(
         evidence_pack_id=pack.pack_id,
         runner_key="jiuwenswarm-runner-v1",
         playbook_key=_PLAYBOOK_KEY,
+        evidence_bundle_id=evidence_bundle_id,
     ).start(occurred_at=running_at)
     return case, run, pack
 
@@ -629,6 +631,39 @@ class CompletionMappingTest(unittest.TestCase):
             ),
         )
 
+    def test_draft_defaults_evidence_bundle_id_to_none(self) -> None:
+        completion = coerce_completion(_completed_payload())
+        draft = build_draft(
+            completion=completion,
+            playbook=_playbook(),
+            adapter_version=_ADAPTER_VERSION,
+            now=_STARTED_AT,
+        )
+        self.assertIsNone(draft.evidence_bundle_id)
+
+    def test_draft_propagates_evidence_bundle_id(self) -> None:
+        completion = coerce_completion(_completed_payload())
+        bundle_id = UUID("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa")
+        draft = build_draft(
+            completion=completion,
+            playbook=_playbook(),
+            adapter_version=_ADAPTER_VERSION,
+            now=_STARTED_AT,
+            evidence_bundle_id=bundle_id,
+        )
+        self.assertEqual(draft.evidence_bundle_id, bundle_id)
+
+    def test_draft_rejects_non_uuid_evidence_bundle_id(self) -> None:
+        completion = coerce_completion(_completed_payload())
+        with self.assertRaises(TypeError):
+            build_draft(
+                completion=completion,
+                playbook=_playbook(),
+                adapter_version=_ADAPTER_VERSION,
+                now=_STARTED_AT,
+                evidence_bundle_id="not-a-uuid",
+            )
+
 
 class RunnerRunTest(unittest.TestCase):
     """End-to-end :meth:`JiuwenSwarmResearchRunner.run` behaviour."""
@@ -814,6 +849,33 @@ class RunnerRunTest(unittest.TestCase):
                 case=case, run=run, evidence_pack=pack,
                 playbook=_playbook(), started_at=_STARTED_AT,
             )
+
+    def test_run_propagates_evidence_bundle_id_to_draft(self) -> None:
+        bundle_id = UUID("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa")
+        case, run, pack = _running_case_and_run(evidence_bundle_id=bundle_id)
+        self.assertEqual(run.evidence_bundle_id, bundle_id)
+        transport = FakeTransport()
+        runner = JiuwenSwarmResearchRunner(
+            transport=transport, adapter_version=_ADAPTER_VERSION,
+        )
+        draft = runner.run(
+            case=case, run=run, evidence_pack=pack,
+            playbook=_playbook(), started_at=_STARTED_AT,
+        )
+        self.assertEqual(draft.evidence_bundle_id, bundle_id)
+
+    def test_run_without_evidence_bundle_id_yields_none_on_draft(self) -> None:
+        case, run, pack = _running_case_and_run()
+        self.assertIsNone(run.evidence_bundle_id)
+        transport = FakeTransport()
+        runner = JiuwenSwarmResearchRunner(
+            transport=transport, adapter_version=_ADAPTER_VERSION,
+        )
+        draft = runner.run(
+            case=case, run=run, evidence_pack=pack,
+            playbook=_playbook(), started_at=_STARTED_AT,
+        )
+        self.assertIsNone(draft.evidence_bundle_id)
 
     def test_transport_result_preserves_request_and_session_ids(self) -> None:
         case, run, pack = _running_case_and_run()
