@@ -102,6 +102,7 @@ class ResearchRunnerDraft:
     playbook_version: str
     adapter_version: str
     created_at: datetime
+    evidence_bundle_id: UUID | None = None
 
     def __post_init__(self) -> None:
         for name in (
@@ -122,6 +123,13 @@ class ResearchRunnerDraft:
         if not self.evidence_ids:
             raise ValueError("ResearchRunnerDraft requires at least one evidence_id")
         _require_aware(self.created_at, "ResearchRunnerDraft.created_at")
+        if self.evidence_bundle_id is not None and not isinstance(
+            self.evidence_bundle_id, UUID
+        ):
+            raise TypeError(
+                "ResearchRunnerDraft.evidence_bundle_id must be a UUID, "
+                f"got {type(self.evidence_bundle_id).__name__}"
+            )
         object.__setattr__(self, "risks", _stripped_sorted(self.risks))
         object.__setattr__(
             self, "evidence_ids", _stripped_sorted(self.evidence_ids)
@@ -142,6 +150,7 @@ class ResearchRunnerDraft:
             playbook_version=self.playbook_version,
             adapter_version=self.adapter_version,
             created_at=self.created_at,
+            evidence_bundle_id=self.evidence_bundle_id,
         )
 
 

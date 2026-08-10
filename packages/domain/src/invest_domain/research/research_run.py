@@ -360,6 +360,7 @@ class ResearchResult:
     - ``risks`` and ``evidence_ids`` are normalized (stripped),
       de-duplicated and sorted on construction.
     - ``created_at`` is a timezone-aware :class:`datetime`.
+    - ``evidence_bundle_id`` is either ``None`` or a :class:`UUID`.
     - Construction never mutates the supplied :class:`EvidencePack`.
     """
 
@@ -375,6 +376,7 @@ class ResearchResult:
     playbook_version: str
     adapter_version: str
     created_at: datetime
+    evidence_bundle_id: UUID | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.result_id, UUID):
@@ -417,6 +419,13 @@ class ResearchResult:
         if not self.evidence_ids:
             raise ValueError("ResearchResult requires at least one evidence ID")
         _require_aware(self.created_at, "created_at")
+        if self.evidence_bundle_id is not None and not isinstance(
+            self.evidence_bundle_id, UUID
+        ):
+            raise TypeError(
+                "ResearchResult.evidence_bundle_id must be a UUID, "
+                f"got {type(self.evidence_bundle_id).__name__}"
+            )
 
     @classmethod
     def create(
@@ -433,6 +442,7 @@ class ResearchResult:
         playbook_version: str,
         adapter_version: str,
         created_at: datetime | None = None,
+        evidence_bundle_id: UUID | None = None,
     ) -> ResearchResult:
         """Build a :class:`ResearchResult` from a succeeded run and its evidence pack.
 
@@ -520,6 +530,7 @@ class ResearchResult:
             playbook_version=playbook_version.strip(),
             adapter_version=adapter_version.strip(),
             created_at=timestamp,
+            evidence_bundle_id=evidence_bundle_id,
         )
 
 
