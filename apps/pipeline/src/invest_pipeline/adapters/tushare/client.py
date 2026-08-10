@@ -71,7 +71,15 @@ _FUND_DAILY_FIELDS = (
     "amount",
 )
 _STOCK_DAILY_FIELDS = (
-    "ts_code", "trade_date", "open", "high", "low", "close", "pre_close", "vol", "amount"
+    "ts_code",
+    "trade_date",
+    "open",
+    "high",
+    "low",
+    "close",
+    "pre_close",
+    "vol",
+    "amount",
 )
 _MAX_ATTEMPTS = 3
 _RETRYABLE_HTTP_STATUS = frozenset({429, 500, 502, 503, 504})
@@ -206,12 +214,17 @@ class TushareClient:
     def fetch_stock_basic(self) -> TushareResponse:
         """Fetch the A-share stock master table from ``stock_basic``."""
 
-        return self._post_json({
-            "api_name": _STOCK_BASIC_API,
-            "token": self._resolve_token(),
-            "params": {"list_status": "L"},
-            "fields": "ts_code,symbol,name,area,industry,market,list_date,delist_date,list_status",
-        })
+        return self._post_json(
+            {
+                "api_name": _STOCK_BASIC_API,
+                "token": self._resolve_token(),
+                "params": {"list_status": "L"},
+                "fields": (
+                    "ts_code,symbol,name,area,industry,market,list_date,"
+                    "delist_date,list_status"
+                ),
+            }
+        )
 
     def fetch_stock_daily(
         self, *, ts_code: str, start_date: date, end_date: date
@@ -222,16 +235,40 @@ class TushareClient:
             raise ValueError("ts_code must be a non-empty string")
         if end_date < start_date:
             raise ValueError("end_date must be on or after start_date")
-        return self._post_json({
-            "api_name": _STOCK_DAILY_API,
-            "token": self._resolve_token(),
-            "params": {
-                "ts_code": ts_code.strip(),
-                "start_date": start_date.strftime("%Y%m%d"),
-                "end_date": end_date.strftime("%Y%m%d"),
-            },
-            "fields": ",".join(_STOCK_DAILY_FIELDS),
-        })
+        return self._post_json(
+            {
+                "api_name": _STOCK_DAILY_API,
+                "token": self._resolve_token(),
+                "params": {
+                    "ts_code": ts_code.strip(),
+                    "start_date": start_date.strftime("%Y%m%d"),
+                    "end_date": end_date.strftime("%Y%m%d"),
+                },
+                "fields": ",".join(_STOCK_DAILY_FIELDS),
+            }
+        )
+
+    def fetch_stock_daily_by_trade_date(self, *, trade_date: date) -> TushareResponse:
+        """Fetch unadjusted stock daily bars for every symbol on ``trade_date``.
+
+        Tushare's ``daily`` endpoint accepts a single ``trade_date``
+        filter (no ``ts_code``) and returns one row per listed A-share
+        symbol. The column set is identical to :meth:`fetch_stock_daily`
+        (unadjusted), so callers MUST NOT interpret the rows as adjusted
+        data. ``trade_date`` is encoded in Tushare's ``YYYYMMDD`` form
+        to stay consistent with :meth:`fetch_stock_daily`.
+        """
+
+        if not isinstance(trade_date, date):
+            raise TypeError(f"trade_date must be a date instance (got {type(trade_date).__name__})")
+        return self._post_json(
+            {
+                "api_name": _STOCK_DAILY_API,
+                "token": self._resolve_token(),
+                "params": {"trade_date": trade_date.strftime("%Y%m%d")},
+                "fields": ",".join(_STOCK_DAILY_FIELDS),
+            }
+        )
 
     # ------------------------------------------------------------------
     # Internal: token resolution + request + retry

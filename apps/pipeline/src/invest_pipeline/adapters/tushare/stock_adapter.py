@@ -16,11 +16,15 @@ class StockTushareProvider(TushareInstrumentProvider):
 
     def fetch_instruments(self, as_of: date):
         request = ProviderRequest(
-            "tushare", "stock_instruments", f"instruments-{as_of.isoformat()}",
-            {"as_of": as_of.isoformat()}, self._clock()
+            "tushare",
+            "stock_instruments",
+            f"instruments-{as_of.isoformat()}",
+            {"as_of": as_of.isoformat()},
+            self._clock(),
         )
         return self._fetch(
-            request, self._client.fetch_stock_basic,
+            request,
+            self._client.fetch_stock_basic,
             lambda response, batch_id, observed: map_stock_basic(response),
         )
 
@@ -28,9 +32,15 @@ class StockTushareProvider(TushareInstrumentProvider):
         if end_date < start_date:
             raise ValueError("end_date must be on or after start_date")
         request = ProviderRequest(
-            "tushare", "stock_daily_bars", self._daily_key(start_date, end_date, symbols),
-            {"symbols": list(symbols), "start_date": start_date.isoformat(),
-             "end_date": end_date.isoformat()}, self._clock()
+            "tushare",
+            "stock_daily_bars",
+            self._daily_key(start_date, end_date, symbols),
+            {
+                "symbols": list(symbols),
+                "start_date": start_date.isoformat(),
+                "end_date": end_date.isoformat(),
+            },
+            self._clock(),
         )
 
         def fetch_all():
@@ -48,7 +58,9 @@ class StockTushareProvider(TushareInstrumentProvider):
             warnings: list[str] = []
             for response in responses:
                 mapped, row_warnings = map_stock_daily(
-                    response, source_batch_id=batch_id, observed_at=observed,
+                    response,
+                    source_batch_id=batch_id,
+                    observed_at=observed,
                     instrument_id_resolver=self._resolve_id,
                 )
                 bars.extend(mapped)
@@ -57,9 +69,42 @@ class StockTushareProvider(TushareInstrumentProvider):
 
         return self._fetch(request, fetch_all, map_all)
 
+    def fetch_daily_bars_by_trade_date(self, trade_date: date):
+        """Fetch every A-share daily bar for ``trade_date`` into the evidence tuple.
+
+        Issues a single ``daily`` request keyed by ``trade_date`` and
+        pipes the response through :func:`map_stock_daily` so the
+        returned ``ProviderBatch`` contains one :class:`DailyBar` per
+        symbol the upstream returned. The per-symbol behavior of
+        :meth:`fetch_daily_bars` is intentionally left unchanged.
+        """
+
+        request = ProviderRequest(
+            "tushare",
+            "stock_daily_bars_by_date",
+            f"daily-bars-by-date-{trade_date.isoformat()}",
+            {"trade_date": trade_date.isoformat()},
+            self._clock(),
+        )
+
+        def fetch_one():
+            return self._client.fetch_stock_daily_by_trade_date(trade_date=trade_date)
+
+        def map_one(response, batch_id, observed):
+            bars, row_warnings = map_stock_daily(
+                response,
+                source_batch_id=batch_id,
+                observed_at=observed,
+                instrument_id_resolver=self._resolve_id,
+            )
+            return bars, row_warnings
+
+        return self._fetch(request, fetch_one, map_one)
+
     @staticmethod
     def _daily_key(start_date: date, end_date: date, symbols: Sequence[str]) -> str:
         from invest_pipeline.request_keys import make_daily_bars_request_key
+
         return make_daily_bars_request_key(start_date, end_date, symbols)
 
 
