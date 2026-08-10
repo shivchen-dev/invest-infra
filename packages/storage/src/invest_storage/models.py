@@ -1876,6 +1876,13 @@ class ResearchResultRow(Base):
                 "fk_research_results_evidence_pack_id_research_evidence_packs"
             ),
         ),
+        ForeignKeyConstraint(
+            ["evidence_bundle_id"],
+            ["analytics.research_evidence_bundles.bundle_id"],
+            name=(
+                "fk_research_results_evidence_bundle_id_bundles"
+            ),
+        ),
         CheckConstraint(
             "btrim(conclusion) <> ''",
             name="conclusion_nonblank",
@@ -1917,6 +1924,10 @@ class ResearchResultRow(Base):
             "ix_research_results_evidence_pack_id",
             "evidence_pack_id",
         ),
+        Index(
+            "ix_research_results_evidence_bundle_id",
+            "evidence_bundle_id",
+        ),
         {"schema": "analytics"},
     )
 
@@ -1926,6 +1937,9 @@ class ResearchResultRow(Base):
     run_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
     evidence_pack_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), nullable=False
+    )
+    evidence_bundle_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), nullable=True
     )
     conclusion: Mapped[str] = mapped_column(Text, nullable=False)
     risks: Mapped[list[Any]] = mapped_column(

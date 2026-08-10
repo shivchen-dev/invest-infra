@@ -1474,7 +1474,7 @@ class SqlAlchemyResearchRunRepository:
             error_summary=run.error_summary,
             external_request_id=None,
             external_session_id=None,
-            evidence_bundle_id=None,
+            evidence_bundle_id=run.evidence_bundle_id,
         )
         self._session.add(row)
         self._session.flush()
@@ -1517,6 +1517,7 @@ class SqlAlchemyResearchRunRepository:
                 started_at=transitioned_run.started_at,
                 finished_at=transitioned_run.finished_at,
                 error_summary=transitioned_run.error_summary,
+                evidence_bundle_id=transitioned_run.evidence_bundle_id,
             )
         )
         if result.rowcount != 1:
@@ -1629,6 +1630,7 @@ def _row_to_research_run(row: ResearchRunRow) -> ResearchRun:
         started_at=row.started_at,
         finished_at=row.finished_at,
         error_summary=row.error_summary,
+        evidence_bundle_id=row.evidence_bundle_id,
     )
 
 
@@ -1656,6 +1658,7 @@ class SqlAlchemyResearchResultRepository:
 
     _PAYLOAD_FIELDS: tuple[str, ...] = (
         "evidence_pack_id",
+        "evidence_bundle_id",
         "conclusion",
         "risks",
         "evidence_ids",
@@ -1678,6 +1681,7 @@ class SqlAlchemyResearchResultRepository:
             result_id=result.result_id,
             run_id=result.run_id,
             evidence_pack_id=result.evidence_pack_id,
+            evidence_bundle_id=result.evidence_bundle_id,
             conclusion=result.conclusion,
             risks=list(result.risks),
             evidence_ids=list(result.evidence_ids),
@@ -1785,6 +1789,7 @@ def _row_to_research_result(row: ResearchResultRow) -> ResearchResult:
         result_id=row.result_id,
         run_id=row.run_id,
         evidence_pack_id=row.evidence_pack_id,
+        evidence_bundle_id=row.evidence_bundle_id,
         conclusion=row.conclusion,
         risks=tuple(row.risks or ()),
         evidence_ids=tuple(row.evidence_ids or ()),

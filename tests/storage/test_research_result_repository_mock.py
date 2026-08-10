@@ -44,6 +44,7 @@ def make_result(
     result_id: UUID | None = None,
     run_id: UUID | None = None,
     evidence_pack_id: UUID | None = None,
+    evidence_bundle_id: UUID | None = None,
     conclusion: str = "Conclusion text",
     risks: tuple[str, ...] = ("risk-a", "risk-b"),
     evidence_ids: tuple[str, ...] = ("ev-1", "ev-2"),
@@ -57,6 +58,7 @@ def make_result(
         result_id=result_id or uuid4(),
         run_id=run_id or uuid4(),
         evidence_pack_id=evidence_pack_id or uuid4(),
+        evidence_bundle_id=evidence_bundle_id,
         conclusion=conclusion,
         risks=risks,
         evidence_ids=evidence_ids,
@@ -74,6 +76,7 @@ def row_for(result: ResearchResult) -> ResearchResultRow:
     row.result_id = result.result_id
     row.run_id = result.run_id
     row.evidence_pack_id = result.evidence_pack_id
+    row.evidence_bundle_id = result.evidence_bundle_id
     row.conclusion = result.conclusion
     row.risks = list(result.risks)
     row.evidence_ids = list(result.evidence_ids)
@@ -324,6 +327,45 @@ class ResearchResultRepositoryMockTests(unittest.TestCase):
     def test_get_by_run_id_returns_none_when_absent(self) -> None:
         self.session.scalars.return_value.first.return_value = None
         self.assertIsNone(self.repo.get_by_run_id(uuid4()))
+
+    def test_add_persists_evidence_bundle_id_when_supplied(self) -> None:
+        bundle_id = uuid4()
+        result = make_result(evidence_bundle_id=bundle_id)
+        self.session.scalars.return_value.first.return_value = None
+
+        self.repo.add(result)
+
+        persisted = self.session.add.call_args.args[0]
+        self.assertEqual(persisted.evidence_bundle_id, bundle_id)
+
+    def test_add_persists_none_evidence_bundle_id_by_default(self) -> None:
+        result = make_result()
+        self.session.scalars.return_value.first.return_value = None
+
+        self.repo.add(result)
+
+        persisted = self.session.add.call_args.args[0]
+        self.assertIsNone(persisted.evidence_bundle_id)
+
+    def test_get_by_id_round_trips_evidence_bundle_id(self) -> None:
+        bundle_id = uuid4()
+        result = make_result(evidence_bundle_id=bundle_id)
+        self.session.get.return_value = row_for(result)
+
+        returned = self.repo.get_by_id(result.result_id)
+
+        self.assertIsNotNone(returned)
+        self.assertEqual(returned.evidence_bundle_id, bundle_id)
+
+    def test_add_raises_conflict_when_evidence_bundle_id_differs(self) -> None:
+        result = make_result(evidence_bundle_id=uuid4())
+        existing = row_for(result)
+        existing.evidence_bundle_id = uuid4()
+        self.session.scalars.return_value.first.return_value = existing
+
+        with self.assertRaises(ResearchResultConflictError):
+            self.repo.add(result)
+        self.session.add.assert_not_called()
 
 
 class _FakeDiag:

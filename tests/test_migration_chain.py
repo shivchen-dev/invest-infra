@@ -288,7 +288,7 @@ class MigrationChainTest(unittest.TestCase):
         head_ids = all_revision_ids - referenced_down_revisions
         self.assertEqual(
             head_ids,
-            {"20260811_0016"},
+            {"20260812_0017"},
             f"expected exactly one unreferenced chain head, got {sorted(head_ids)}",
         )
 
@@ -393,7 +393,7 @@ class MigrationChainTest(unittest.TestCase):
         head_ids = all_revision_ids - referenced_down_revisions
         self.assertEqual(
             head_ids,
-            {"20260811_0016"},
+            {"20260812_0017"},
             f"expected exactly one unreferenced chain head, got {sorted(head_ids)}",
         )
 
@@ -483,7 +483,7 @@ class MigrationChainTest(unittest.TestCase):
         heads = {revision for revision, _ in revisions.values()} - {
             down_revision for _, down_revision in revisions.values() if down_revision is not None
         }
-        self.assertEqual(heads, {"20260811_0016"})
+        self.assertEqual(heads, {"20260812_0017"})
         source = (versions_directory / "20260805_0010_research_context_packs.py").read_text()
         self.assertIn('revision: str = "20260805_0010"', source)
         self.assertIn('down_revision: str | None = "20260805_0009"', source)
@@ -631,7 +631,7 @@ class MigrationChainTest(unittest.TestCase):
         head_ids = all_revision_ids - referenced_down_revisions
         self.assertEqual(
             head_ids,
-            {"20260811_0016"},
+            {"20260812_0017"},
             f"expected exactly one unreferenced chain head, got {sorted(head_ids)}",
         )
 
@@ -796,6 +796,7 @@ class MigrationChainTest(unittest.TestCase):
             {
                 "fk_research_results_run_id_research_runs",
                 "fk_research_results_evidence_pack_id_research_evidence_packs",
+                "fk_research_results_evidence_bundle_id_bundles",
             },
         )
 
@@ -869,6 +870,7 @@ class MigrationChainTest(unittest.TestCase):
             {
                 "ix_research_results_run_id",
                 "ix_research_results_evidence_pack_id",
+                "ix_research_results_evidence_bundle_id",
             },
         )
 
@@ -896,6 +898,9 @@ class MigrationChainTest(unittest.TestCase):
         )
         primary_migration = migrations_dir / "20260807_0014_research_runs.py"
         bundle_migration = migrations_dir / "20260811_0016_research_evidence_bundles.py"
+        result_bundle_migration = (
+            migrations_dir / "20260812_0017_research_result_evidence_bundle_fk.py"
+        )
         migration_tree = ast.parse(
             primary_migration.read_text(encoding="utf-8"),
             filename=str(primary_migration),
@@ -903,6 +908,10 @@ class MigrationChainTest(unittest.TestCase):
         bundle_tree = ast.parse(
             bundle_migration.read_text(encoding="utf-8"),
             filename=str(bundle_migration),
+        )
+        result_bundle_tree = ast.parse(
+            result_bundle_migration.read_text(encoding="utf-8"),
+            filename=str(result_bundle_migration),
         )
 
         new_table_prefixes = (
@@ -922,7 +931,7 @@ class MigrationChainTest(unittest.TestCase):
             return name.startswith(new_table_prefixes)
 
         migration_explicit_names: set[str] = set()
-        for tree in (migration_tree, bundle_tree):
+        for tree in (migration_tree, bundle_tree, result_bundle_tree):
             for node in ast.walk(tree):
                 if (
                     isinstance(node, ast.keyword)
@@ -950,7 +959,7 @@ class MigrationChainTest(unittest.TestCase):
             all_new_names | {"pk_research_runs", "pk_research_results"},
             migration_explicit_names,
             "model metadata names must exactly match the constraint / index "
-            "names explicitly written in migrations 20260807_0014 + 20260811_0016; "
+            "names explicitly written in migrations 20260807_0014 + 20260811_0016 + 20260812_0017; "
             f"model={sorted(all_new_names | {'pk_research_runs', 'pk_research_results'})}, "
             f"migration={sorted(migration_explicit_names)}",
         )
@@ -1022,7 +1031,7 @@ class MigrationChainTest(unittest.TestCase):
         head_ids = all_revision_ids - referenced_down_revisions
         self.assertEqual(
             head_ids,
-            {"20260811_0016"},
+            {"20260812_0017"},
             f"expected exactly one unreferenced chain head, got {sorted(head_ids)}",
         )
 
@@ -1192,6 +1201,134 @@ class MigrationChainTest(unittest.TestCase):
         from invest_storage import ResearchEvidenceBundleRow as ExportedRow
 
         self.assertIs(ExportedRow, ResearchEvidenceBundleRow)
+
+    def test_research_result_evidence_bundle_fk_migration_chains(self) -> None:
+        """Stage 4B Phase 3 wires ``research_results.evidence_bundle_id``.
+
+        The new migration ``20260812_0017`` must:
+
+        - chain on top of the current head ``20260811_0016`` and
+          become the sole chain head;
+        - add a nullable ``evidence_bundle_id`` UUID column to
+          ``analytics.research_results`` with a FK to
+          ``analytics.research_evidence_bundles.bundle_id``;
+        - create the supporting
+          ``ix_research_results_evidence_bundle_id`` index;
+        - keep the column nullable so legacy rows survive the upgrade
+          unchanged;
+        - expose a reversible ``downgrade()`` that drops the index and
+          FK and removes the column.
+        """
+
+        repository_root = Path(__file__).resolve().parents[1]
+        versions_directory = (
+            repository_root
+            / "apps"
+            / "migrations"
+            / "migrations"
+            / "versions"
+        )
+        new_migration_file = (
+            versions_directory
+            / "20260812_0017_research_result_evidence_bundle_fk.py"
+        )
+        self.assertTrue(
+            new_migration_file.exists(),
+            f"expected new migration file {new_migration_file} to exist",
+        )
+        source = new_migration_file.read_text(encoding="utf-8")
+
+        self.assertIn('revision: str = "20260812_0017"', source)
+        self.assertIn('down_revision: str | None = "20260811_0016"', source)
+
+        revisions: dict[Path, tuple[str, object]] = {}
+        for revision_file in sorted(versions_directory.glob("*.py")):
+            tree = ast.parse(revision_file.read_text(encoding="utf-8"))
+            assignments: dict[str, object] = {}
+            for node in tree.body:
+                if isinstance(node, ast.Assign):
+                    literal_value = _try_literal_eval(node.value)
+                    if literal_value is _NOT_LITERAL:
+                        continue
+                    for target in node.targets:
+                        if isinstance(target, ast.Name):
+                            assignments[target.id] = literal_value
+                elif (
+                    isinstance(node, ast.AnnAssign)
+                    and isinstance(node.target, ast.Name)
+                    and node.value is not None
+                ):
+                    literal_value = _try_literal_eval(node.value)
+                    if literal_value is not _NOT_LITERAL:
+                        assignments[node.target.id] = literal_value
+            self.assertIn("revision", assignments)
+            self.assertIn("down_revision", assignments)
+            revisions[revision_file] = (
+                assignments["revision"],
+                assignments["down_revision"],
+            )
+
+        all_revision_ids = {revision for revision, _ in revisions.values()}
+        referenced_down_revisions = {
+            down_revision
+            for _, down_revision in revisions.values()
+            if down_revision is not None
+        }
+        head_ids = all_revision_ids - referenced_down_revisions
+        self.assertEqual(
+            head_ids,
+            {"20260812_0017"},
+            f"expected exactly one chain head pointing at 20260812_0017, got {sorted(head_ids)}",
+        )
+
+        for token in (
+            '"research_results"',
+            '"research_evidence_bundles"',
+            '"evidence_bundle_id"',
+            '"bundle_id"',
+            "fk_research_results_evidence_bundle_id_bundles",
+            "ix_research_results_evidence_bundle_id",
+            "nullable=True",
+        ):
+            self.assertIn(
+                token,
+                source,
+                f"20260812_0017 migration is missing required token: {token!r}",
+            )
+
+        self.assertIn("op.drop_index(", source)
+        self.assertIn("op.drop_constraint(", source)
+        self.assertIn("op.drop_column(", source)
+
+        explicit_names = [
+            node.value
+            for node in ast.walk(ast.parse(source))
+            if isinstance(node, ast.Constant)
+            and isinstance(node.value, str)
+            and node.value.startswith(("fk_", "uq_", "ck_", "ix_", "pk_"))
+        ]
+        too_long = sorted(name for name in explicit_names if len(name) > 63)
+        self.assertEqual(
+            too_long,
+            [],
+            f"new constraint / index names exceed PostgreSQL's 63-character "
+            f"identifier limit: {too_long}",
+        )
+
+        from invest_storage.models import ResearchResultRow
+
+        result_table = ResearchResultRow.__table__
+        result_fk_names = {
+            constraint.name for constraint in result_table.foreign_key_constraints
+        }
+        self.assertIn(
+            "fk_research_results_evidence_bundle_id_bundles",
+            result_fk_names,
+        )
+        result_index_names = {index.name for index in result_table.indexes}
+        self.assertIn("ix_research_results_evidence_bundle_id", result_index_names)
+        result_column = result_table.c["evidence_bundle_id"]
+        self.assertTrue(result_column.nullable)
 
 
 def _first_string_literal(call_node: ast.Call) -> str | None:

@@ -74,11 +74,30 @@ def _queued(*, case_id: UUID | None = None, run_id: UUID | None = None) -> Resea
     )
 
 
+def _queued_with_bundle(
+    *,
+    case_id: UUID | None = None,
+    run_id: UUID | None = None,
+    evidence_bundle_id: UUID | None = None,
+) -> ResearchRun:
+    return ResearchRun(
+        run_id=run_id or uuid4(),
+        case_id=case_id or uuid4(),
+        evidence_pack_id=uuid4(),
+        runner_key="runner-a",
+        playbook_key="playbook-v1",
+        status=ResearchRunStatus.QUEUED,
+        attempt=1,
+        evidence_bundle_id=evidence_bundle_id,
+    )
+
+
 def row_for(
     run: ResearchRun,
     *,
     external_request_id: str | None = None,
     external_session_id: str | None = None,
+    evidence_bundle_id: UUID | None = None,
 ) -> ResearchRunRow:
     row = MagicMock(spec=ResearchRunRow)
     row.run_id = run.run_id
@@ -93,6 +112,7 @@ def row_for(
     row.error_summary = run.error_summary
     row.external_request_id = external_request_id
     row.external_session_id = external_session_id
+    row.evidence_bundle_id = evidence_bundle_id
     return row
 
 
@@ -296,6 +316,62 @@ class ResearchRunRepositoryMockTests(unittest.TestCase):
         self.session.scalar.return_value = None
         result = self.repo.count_all()
         self.assertEqual(result, 0)
+
+    def test_add_persists_evidence_bundle_id_when_supplied(self) -> None:
+        bundle_id = uuid4()
+        run = _queued_with_bundle(evidence_bundle_id=bundle_id)
+
+        self.repo.add(run)
+
+        persisted = self.session.add.call_args.args[0]
+        self.assertEqual(persisted.evidence_bundle_id, bundle_id)
+
+    def test_add_persists_none_evidence_bundle_id_by_default(self) -> None:
+        run = _queued()
+
+        self.repo.add(run)
+
+        persisted = self.session.add.call_args.args[0]
+        self.assertIsNone(persisted.evidence_bundle_id)
+
+    def test_get_round_trips_evidence_bundle_id(self) -> None:
+        bundle_id = uuid4()
+        run = _queued_with_bundle(evidence_bundle_id=bundle_id)
+        self.session.get.return_value = row_for(run, evidence_bundle_id=bundle_id)
+
+        result = self.repo.get(run.run_id)
+
+        self.assertIsNotNone(result)
+        self.assertEqual(result.evidence_bundle_id, bundle_id)
+
+    def test_save_transition_persists_evidence_bundle_id(self) -> None:
+        bundle_id = uuid4()
+        queued = _queued()
+        running = queued.start(occurred_at=STARTED_AT)
+        bound = ResearchRun(
+            run_id=running.run_id,
+            case_id=running.case_id,
+            evidence_pack_id=running.evidence_pack_id,
+            runner_key=running.runner_key,
+            playbook_key=running.playbook_key,
+            status=running.status,
+            attempt=running.attempt,
+            started_at=running.started_at,
+            finished_at=running.finished_at,
+            error_summary=running.error_summary,
+            evidence_bundle_id=bundle_id,
+        )
+        pre = row_for(queued)
+        post = row_for(bound, evidence_bundle_id=bundle_id)
+        self.session.get.side_effect = [pre, post]
+        self.session.execute.return_value.rowcount = 1
+
+        result = self.repo.save_transition(ResearchRunStatus.QUEUED, bound)
+
+        self.assertEqual(result.evidence_bundle_id, bundle_id)
+        statement = self.session.execute.call_args.args[0]
+        compiled = statement.compile()
+        self.assertEqual(compiled.params.get("evidence_bundle_id"), bundle_id)
 
 
 class ResearchCaseRepositoryMockTests(unittest.TestCase):
