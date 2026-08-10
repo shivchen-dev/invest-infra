@@ -52,6 +52,7 @@ from invest_storage.repositories import (
     SqlAlchemyProviderRequestRepository,
     SqlAlchemyResearchCaseRepository,
     SqlAlchemyResearchContextPackRepository,
+    SqlAlchemyResearchEvidenceBundleRepository,
     SqlAlchemyResearchResultRepository,
     SqlAlchemyResearchRunRepository,
 )
@@ -327,6 +328,32 @@ class ResearchEvidencePackRepositoryPort(Protocol):
 
 
 @runtime_checkable
+class ResearchEvidenceBundleRepositoryPort(Protocol):
+    """Subset of the ResearchEvidenceBundle repository surface the UoW exposes.
+
+    Stage 4B Phase 3 persistence closure for
+    ``analytics.research_evidence_bundles`` (migration
+    ``20260811_0016``). ``add`` is idempotent on ``bundle_hash``;
+    bundles are immutable so there is no update / delete surface.
+    Per plan, a changed market snapshot set for the same
+    ``(research_case_id, evidence_pack_id)`` pair MUST create a new
+    bundle identity, so the table has no ``(research_case_id,
+    evidence_pack_id)`` unique constraint — the application layer
+    relies on ``get_by_case_and_pack`` (newest first, ``bundle_id``
+    tie-break) for a deterministic "current" bundle.
+    ``get_by_id`` / ``get_by_bundle_hash`` /
+    ``get_by_case_and_pack`` / ``list_by_case`` mirror the
+    deterministic ordering expected by the application layer.
+    """
+
+    def add(self, bundle): ...
+    def get_by_id(self, bundle_id): ...
+    def get_by_bundle_hash(self, bundle_hash): ...
+    def get_by_case_and_pack(self, *, research_case_id, evidence_pack_id): ...
+    def list_by_case(self, research_case_id): ...
+
+
+@runtime_checkable
 class ResearchRunRepositoryPort(Protocol):
     """Subset of the ResearchRun repository surface the UoW exposes.
 
@@ -505,6 +532,7 @@ class UnitOfWork(Protocol):
     market_observation_snapshots: MarketObservationSnapshotRepositoryPort
     research_cases: ResearchCaseRepositoryPort
     research_evidence_packs: ResearchEvidencePackRepositoryPort
+    research_evidence_bundles: ResearchEvidenceBundleRepositoryPort
     research_runs: ResearchRunRepositoryPort
     research_results: ResearchResultRepositoryPort
     index_identities: IndexIdentityRepositoryPort
@@ -560,6 +588,9 @@ class SqlAlchemyUnitOfWork:
         )
         self._research_cases: SqlAlchemyResearchCaseRepository | None = None
         self._research_evidence_packs: SqlAlchemyEvidencePackRepository | None = None
+        self._research_evidence_bundles: (
+            SqlAlchemyResearchEvidenceBundleRepository | None
+        ) = None
         self._research_runs: SqlAlchemyResearchRunRepository | None = None
         self._research_results: SqlAlchemyResearchResultRepository | None = None
         self._index_identities: SqlAlchemyIndexIdentityRepository | None = None
@@ -682,6 +713,16 @@ class SqlAlchemyUnitOfWork:
         return self._research_evidence_packs
 
     @property
+    def research_evidence_bundles(
+        self,
+    ) -> SqlAlchemyResearchEvidenceBundleRepository:
+        if self._research_evidence_bundles is None:
+            self._research_evidence_bundles = (
+                SqlAlchemyResearchEvidenceBundleRepository(self.session)
+            )
+        return self._research_evidence_bundles
+
+    @property
     def research_runs(self) -> SqlAlchemyResearchRunRepository:
         if self._research_runs is None:
             self._research_runs = SqlAlchemyResearchRunRepository(self.session)
@@ -775,6 +816,7 @@ class SqlAlchemyUnitOfWork:
             self._market_observation_snapshots = None
             self._research_cases = None
             self._research_evidence_packs = None
+            self._research_evidence_bundles = None
             self._research_runs = None
             self._research_results = None
             self._index_identities = None
@@ -797,11 +839,13 @@ __all__ = [
     "EtfHoldingSnapshotRepositoryPort",
     "EtfIndexMappingRepositoryPort",
     "EtfProfileFieldRepositoryPort",
+    "EtfProfileRepositoryPort",
     "IndexConstituentSnapshotRepositoryPort",
     "IndexIdentityRepositoryPort",
     "IndexProfileRepositoryPort",
     "ResearchCaseRepositoryPort",
     "ResearchContextPackRepositoryPort",
+    "ResearchEvidenceBundleRepositoryPort",
     "ResearchEvidencePackRepositoryPort",
     "ResearchResultRepositoryPort",
     "ResearchRunRepositoryPort",

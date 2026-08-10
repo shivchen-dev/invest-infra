@@ -18,6 +18,15 @@ from invest_domain.research.context import (
     context_item_projection,
     context_pack_projection,
 )
+from invest_domain.research.evidence_bundle import (
+    BUNDLE_SCHEMA_VERSION,
+    ContextProjection,
+    MarketSnapshotRef,
+    ResearchEvidenceBundle,
+    build_projection,
+    canonical_bundle_json,
+    compute_bundle_hash,
+)
 from invest_domain.research.factor_set import (
     FACTOR_DEFINITIONS,
     FACTOR_KEYS,
@@ -89,6 +98,7 @@ def __getattr__(name: str):
 
 
 __all__ = [
+    "BUNDLE_SCHEMA_VERSION",
     "FACTOR_DEFINITIONS",
     "FACTOR_KEYS",
     "FACTOR_SET_KEY",
@@ -97,6 +107,7 @@ __all__ = [
     "CONTEXT_SCHEMA_VERSION",
     "CandidateContext",
     "ContextItem",
+    "ContextProjection",
     "ContextValueType",
     "CaseContext",
     "DataQuality",
@@ -108,11 +119,13 @@ __all__ = [
     "FreshnessStatus",
     "InstrumentSnapshot",
     "MarketSnapshot",
+    "MarketSnapshotRef",
     "QualityGateResult",
     "QualityGateStatus",
     "QualityStatus",
     "ResearchCase",
     "ResearchCaseStatus",
+    "ResearchEvidenceBundle",
     "ResearchPlaybook",
     "ResearchResult",
     "ResearchRunner",
@@ -120,6 +133,7 @@ __all__ = [
     "ResearchRunnerFailure",
     "ResearchRun",
     "ResearchRunStatus",
+    "build_projection",
     "complete_research_attempt",
     "execute_research_attempt",
     "fail_research_attempt",
@@ -127,8 +141,10 @@ __all__ = [
     "ResearchContextPack",
     "SourceReference",
     "calculate_market_state_factors",
+    "canonical_bundle_json",
     "canonical_pack_json",
     "canonical_context_pack_json",
+    "compute_bundle_hash",
     "compute_item_hash",
     "compute_pack_hash",
     "compute_context_item_hash",

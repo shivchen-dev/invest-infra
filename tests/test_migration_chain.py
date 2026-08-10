@@ -288,7 +288,7 @@ class MigrationChainTest(unittest.TestCase):
         head_ids = all_revision_ids - referenced_down_revisions
         self.assertEqual(
             head_ids,
-            {"20260807_0014"},
+            {"20260811_0016"},
             f"expected exactly one unreferenced chain head, got {sorted(head_ids)}",
         )
 
@@ -393,7 +393,7 @@ class MigrationChainTest(unittest.TestCase):
         head_ids = all_revision_ids - referenced_down_revisions
         self.assertEqual(
             head_ids,
-            {"20260807_0014"},
+            {"20260811_0016"},
             f"expected exactly one unreferenced chain head, got {sorted(head_ids)}",
         )
 
@@ -483,7 +483,7 @@ class MigrationChainTest(unittest.TestCase):
         heads = {revision for revision, _ in revisions.values()} - {
             down_revision for _, down_revision in revisions.values() if down_revision is not None
         }
-        self.assertEqual(heads, {"20260807_0014"})
+        self.assertEqual(heads, {"20260811_0016"})
         source = (versions_directory / "20260805_0010_research_context_packs.py").read_text()
         self.assertIn('revision: str = "20260805_0010"', source)
         self.assertIn('down_revision: str | None = "20260805_0009"', source)
@@ -631,7 +631,7 @@ class MigrationChainTest(unittest.TestCase):
         head_ids = all_revision_ids - referenced_down_revisions
         self.assertEqual(
             head_ids,
-            {"20260807_0014"},
+            {"20260811_0016"},
             f"expected exactly one unreferenced chain head, got {sorted(head_ids)}",
         )
 
@@ -788,6 +788,7 @@ class MigrationChainTest(unittest.TestCase):
             {
                 "fk_research_runs_case_id_research_cases",
                 "fk_research_runs_evidence_pack_id_research_evidence_packs",
+                "fk_research_runs_evidence_bundle_id_research_evidence_bundles",
             },
         )
         self.assertEqual(
@@ -859,6 +860,7 @@ class MigrationChainTest(unittest.TestCase):
                 "ix_research_runs_status",
                 "ix_research_runs_case_id",
                 "ix_research_runs_external_request_id",
+                "ix_research_runs_evidence_bundle_id",
                 "uq_research_runs_external_session_id",
             },
         )
@@ -889,16 +891,19 @@ class MigrationChainTest(unittest.TestCase):
         )
 
         repository_root = Path(__file__).resolve().parents[1]
-        migration_file = (
-            repository_root
-            / "apps"
-            / "migrations"
-            / "migrations"
-            / "versions"
-            / "20260807_0014_research_runs.py"
+        migrations_dir = (
+            repository_root / "apps" / "migrations" / "migrations" / "versions"
         )
-        migration_source = migration_file.read_text(encoding="utf-8")
-        migration_tree = ast.parse(migration_source, filename=str(migration_file))
+        primary_migration = migrations_dir / "20260807_0014_research_runs.py"
+        bundle_migration = migrations_dir / "20260811_0016_research_evidence_bundles.py"
+        migration_tree = ast.parse(
+            primary_migration.read_text(encoding="utf-8"),
+            filename=str(primary_migration),
+        )
+        bundle_tree = ast.parse(
+            bundle_migration.read_text(encoding="utf-8"),
+            filename=str(bundle_migration),
+        )
 
         new_table_prefixes = (
             "ck_research_runs_",
@@ -917,34 +922,35 @@ class MigrationChainTest(unittest.TestCase):
             return name.startswith(new_table_prefixes)
 
         migration_explicit_names: set[str] = set()
-        for node in ast.walk(migration_tree):
-            if (
-                isinstance(node, ast.keyword)
-                and node.arg == "name"
-                and isinstance(node.value, ast.Constant)
-                and isinstance(node.value.value, str)
-            ):
-                value = node.value.value
-                if _matches_new_tables(value):
-                    migration_explicit_names.add(value)
-            elif (
-                isinstance(node, ast.Call)
-                and isinstance(node.func, ast.Attribute)
-                and isinstance(node.func.value, ast.Name)
-                and node.func.value.id == "op"
-                and node.func.attr == "create_index"
-                and node.args
-                and isinstance(node.args[0], ast.Constant)
-                and isinstance(node.args[0].value, str)
-                and _matches_new_tables(node.args[0].value)
-            ):
-                migration_explicit_names.add(node.args[0].value)
+        for tree in (migration_tree, bundle_tree):
+            for node in ast.walk(tree):
+                if (
+                    isinstance(node, ast.keyword)
+                    and node.arg == "name"
+                    and isinstance(node.value, ast.Constant)
+                    and isinstance(node.value.value, str)
+                ):
+                    value = node.value.value
+                    if _matches_new_tables(value):
+                        migration_explicit_names.add(value)
+                elif (
+                    isinstance(node, ast.Call)
+                    and isinstance(node.func, ast.Attribute)
+                    and isinstance(node.func.value, ast.Name)
+                    and node.func.value.id == "op"
+                    and node.func.attr in {"create_index", "create_foreign_key"}
+                    and node.args
+                    and isinstance(node.args[0], ast.Constant)
+                    and isinstance(node.args[0].value, str)
+                    and _matches_new_tables(node.args[0].value)
+                ):
+                    migration_explicit_names.add(node.args[0].value)
 
         self.assertEqual(
             all_new_names | {"pk_research_runs", "pk_research_results"},
             migration_explicit_names,
             "model metadata names must exactly match the constraint / index "
-            "names explicitly written in migration 20260807_0014; "
+            "names explicitly written in migrations 20260807_0014 + 20260811_0016; "
             f"model={sorted(all_new_names | {'pk_research_runs', 'pk_research_results'})}, "
             f"migration={sorted(migration_explicit_names)}",
         )
@@ -954,6 +960,238 @@ class MigrationChainTest(unittest.TestCase):
 
         self.assertIs(ExportedRunRow, ResearchRunRow)
         self.assertIs(ExportedResultRow, ResearchResultRow)
+
+    def test_research_evidence_bundles_migration_is_current_head(self) -> None:
+        """Stage 4B Phase 3 ships the ``research_evidence_bundles`` schema.
+
+        Pins the ``20260811_0016`` contract: the new migration chains
+        on top of the market observation head
+        (``20260810_0015``), becomes the sole chain head, and adds:
+
+        - ``analytics.research_evidence_bundles`` for the new bundle
+          identity record;
+        - a nullable ``evidence_bundle_id`` column on
+          ``analytics.research_runs`` so the existing PR-7 ResearchRun
+          row can be retrofitted to a bundle without invalidating
+          legacy runs.
+        """
+
+        repository_root = Path(__file__).resolve().parents[1]
+        versions_directory = (
+            repository_root
+            / "apps"
+            / "migrations"
+            / "migrations"
+            / "versions"
+        )
+
+        revisions: dict[Path, tuple[str, object]] = {}
+        for revision_file in sorted(versions_directory.glob("*.py")):
+            source = revision_file.read_text(encoding="utf-8")
+            tree = ast.parse(source)
+            assignments: dict[str, object] = {}
+            for node in tree.body:
+                if isinstance(node, ast.Assign):
+                    literal_value = _try_literal_eval(node.value)
+                    if literal_value is _NOT_LITERAL:
+                        continue
+                    for target in node.targets:
+                        if isinstance(target, ast.Name):
+                            assignments[target.id] = literal_value
+                elif (
+                    isinstance(node, ast.AnnAssign)
+                    and isinstance(node.target, ast.Name)
+                    and node.value is not None
+                ):
+                    literal_value = _try_literal_eval(node.value)
+                    if literal_value is not _NOT_LITERAL:
+                        assignments[node.target.id] = literal_value
+            self.assertIn("revision", assignments, f"{revision_file}")
+            self.assertIn("down_revision", assignments, f"{revision_file}")
+            revisions[revision_file] = (
+                assignments["revision"],
+                assignments["down_revision"],
+            )
+
+        all_revision_ids = {revision for revision, _ in revisions.values()}
+        referenced_down_revisions = {
+            down_revision
+            for _, down_revision in revisions.values()
+            if down_revision is not None
+        }
+        head_ids = all_revision_ids - referenced_down_revisions
+        self.assertEqual(
+            head_ids,
+            {"20260811_0016"},
+            f"expected exactly one unreferenced chain head, got {sorted(head_ids)}",
+        )
+
+        new_migration_file = (
+            versions_directory / "20260811_0016_research_evidence_bundles.py"
+        )
+        self.assertTrue(
+            new_migration_file.exists(),
+            f"expected new migration file {new_migration_file} to exist",
+        )
+        source = new_migration_file.read_text(encoding="utf-8")
+
+        self.assertIn('revision: str = "20260811_0016"', source)
+        self.assertIn('down_revision: str | None = "20260810_0015"', source)
+
+        for token in (
+            '"research_evidence_bundles"',
+            'schema="analytics"',
+            'name="pk_research_evidence_bundles"',
+            "uq_research_evidence_bundles_bundle_hash",
+            "ck_research_evidence_bundles_bundle_hash_len64",
+            "ck_research_evidence_bundles_evidence_pack_hash_len64",
+            "ck_research_evidence_bundles_schema_version_nonempty",
+            "ck_research_evidence_bundles_snapshot_ids_array",
+            "ck_research_evidence_bundles_snapshot_hashes_array",
+            "ck_research_evidence_bundles_snapshot_dates_array",
+            "ck_research_evidence_bundles_snapshot_ids_hashes_same_length",
+            "ck_research_evidence_bundles_snapshot_ids_dates_same_length",
+            "ix_research_evidence_bundles_research_case_id",
+            "ix_research_evidence_bundles_evidence_pack_id",
+            "fk_research_evidence_bundles_research_case_id_research_cases",
+            "fk_research_evidence_bundles_evidence_pack_id_",
+            "research_packs",
+            "evidence_bundle_id",
+            "fk_research_runs_evidence_bundle_id_research_evidence_bundles",
+            "ix_research_runs_evidence_bundle_id",
+        ):
+            self.assertIn(token, source)
+
+        # The plan requires a changed market snapshot set for the same
+        # ``(research_case_id, evidence_pack_id)`` pair to create a
+        # new bundle identity so the audit history is preserved; the
+        # table therefore carries NO ``(research_case_id,
+        # evidence_pack_id)`` unique constraint. ``bundle_hash`` is
+        # the only idempotency key, enforced by
+        # ``uq_research_evidence_bundles_bundle_hash``.
+        self.assertNotIn("uq_research_evidence_bundles_case_pack", source)
+
+        # The new column is a NULLABLE backfill so legacy runs survive
+        # the upgrade without a backfill migration.
+        self.assertIn('"evidence_bundle_id"', source)
+        self.assertIn("nullable=True", source)
+
+        explicit_names = [
+            node.value
+            for node in ast.walk(ast.parse(source))
+            if isinstance(node, ast.Constant)
+            and isinstance(node.value, str)
+            and node.value.startswith(("fk_", "uq_", "ck_", "ix_", "pk_"))
+        ]
+        too_long = sorted(name for name in explicit_names if len(name) > 63)
+        self.assertEqual(
+            too_long,
+            [],
+            f"new constraint / index names exceed PostgreSQL's 63-character "
+            f"identifier limit: {too_long}",
+        )
+
+    def test_research_evidence_bundle_row_models_are_wired(self) -> None:
+        """Stage 4B Phase 3 ships :class:`ResearchEvidenceBundleRow`.
+
+        The row must be importable from
+        ``invest_storage.models`` / ``invest_storage``, set the right
+        ``__tablename__``, declare the FK chain expected by the
+        migration, and configure the unique / check / index surface
+        that guarantees ``(a)`` ``bundle_hash`` is the only
+        idempotency key (no ``(research_case_id, evidence_pack_id)``
+        uniqueness — plan §4B Phase 3 requires a changed market
+        snapshot set to create a new bundle identity and preserve
+        history), and ``(b)`` the same-length invariant between
+        ``market_snapshot_ids`` / ``market_snapshot_hashes`` /
+        ``market_snapshot_dates``.
+        """
+
+        import sqlalchemy as sa  # noqa: F401 - import the package to ensure availability
+        from invest_storage.models import (
+            ResearchEvidenceBundleRow,
+            ResearchRunRow,
+        )
+
+        self.assertEqual(ResearchEvidenceBundleRow.__tablename__, "research_evidence_bundles")
+
+        bundle_table = ResearchEvidenceBundleRow.__table__
+        run_table = ResearchRunRow.__table__
+        self.assertEqual(bundle_table.schema, "analytics")
+
+        bundle_pk_columns = {
+            column.name for column in bundle_table.primary_key.columns
+        }
+        self.assertEqual(bundle_pk_columns, {"bundle_id"})
+
+        bundle_foreign_key_names = {
+            constraint.name for constraint in bundle_table.foreign_key_constraints
+        }
+        self.assertEqual(
+            bundle_foreign_key_names,
+            {
+                "fk_research_evidence_bundles_research_case_id_research_cases",
+                "fk_research_evidence_bundles_evidence_pack_id_research_packs",
+            },
+        )
+
+        bundle_check_names = {
+            constraint.name
+            for constraint in bundle_table.constraints
+            if isinstance(constraint, sa.CheckConstraint)
+        }
+        self.assertEqual(
+            bundle_check_names,
+            {
+                "ck_research_evidence_bundles_bundle_hash_len64",
+                "ck_research_evidence_bundles_evidence_pack_hash_len64",
+                "ck_research_evidence_bundles_schema_version_nonempty",
+                "ck_research_evidence_bundles_snapshot_ids_array",
+                "ck_research_evidence_bundles_snapshot_hashes_array",
+                "ck_research_evidence_bundles_snapshot_dates_array",
+                "ck_research_evidence_bundles_snapshot_ids_hashes_same_length",
+                "ck_research_evidence_bundles_snapshot_ids_dates_same_length",
+            },
+        )
+
+        bundle_unique_names = {
+            constraint.name
+            for constraint in bundle_table.constraints
+            if isinstance(constraint, sa.UniqueConstraint)
+        }
+        # ``bundle_hash`` is the only idempotency key — a changed
+        # market snapshot set for the same ``(research_case_id,
+        # evidence_pack_id)`` pair MUST create a new bundle identity
+        # so the audit history is preserved.
+        self.assertEqual(
+            bundle_unique_names,
+            {
+                "uq_research_evidence_bundles_bundle_hash",
+            },
+        )
+        self.assertNotIn("uq_research_evidence_bundles_case_pack", bundle_unique_names)
+
+        bundle_index_names = {index.name for index in bundle_table.indexes}
+        self.assertEqual(
+            bundle_index_names,
+            {
+                "ix_research_evidence_bundles_research_case_id",
+                "ix_research_evidence_bundles_evidence_pack_id",
+            },
+        )
+
+        run_index_names = {index.name for index in run_table.indexes}
+        self.assertIn("ix_research_runs_evidence_bundle_id", run_index_names)
+
+        run_fk_names = {constraint.name for constraint in run_table.foreign_key_constraints}
+        self.assertIn(
+            "fk_research_runs_evidence_bundle_id_research_evidence_bundles",
+            run_fk_names,
+        )
+
+        from invest_storage import ResearchEvidenceBundleRow as ExportedRow
+
+        self.assertIs(ExportedRow, ResearchEvidenceBundleRow)
 
 
 def _first_string_literal(call_node: ast.Call) -> str | None:

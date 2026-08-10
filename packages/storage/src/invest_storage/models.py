@@ -1742,6 +1742,13 @@ class ResearchRunRow(Base):
             ["analytics.research_evidence_packs.id"],
             name="fk_research_runs_evidence_pack_id_research_evidence_packs",
         ),
+        ForeignKeyConstraint(
+            ["evidence_bundle_id"],
+            ["analytics.research_evidence_bundles.bundle_id"],
+            name=(
+                "fk_research_runs_evidence_bundle_id_research_evidence_bundles"
+            ),
+        ),
         CheckConstraint(
             (
                 "status IN ('queued', 'running', 'succeeded', 'failed', "
@@ -1783,6 +1790,10 @@ class ResearchRunRow(Base):
             "external_request_id",
         ),
         Index(
+            "ix_research_runs_evidence_bundle_id",
+            "evidence_bundle_id",
+        ),
+        Index(
             "uq_research_runs_external_session_id",
             "external_session_id",
             unique=True,
@@ -1814,6 +1825,9 @@ class ResearchRunRow(Base):
     )
     external_session_id: Mapped[str | None] = mapped_column(
         String(160), nullable=True
+    )
+    evidence_bundle_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), nullable=True
     )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
@@ -2087,4 +2101,136 @@ class MarketObservationRow(Base):
 
     snapshot: Mapped[MarketObservationSnapshotRow] = relationship(
         back_populates="observations"
+    )
+
+
+class ResearchEvidenceBundleRow(Base):
+    """One immutable ``ResearchEvidenceBundle`` binding (Stage 4B Phase 3).
+
+    Persists :class:`invest_domain.research.evidence_bundle.
+    ResearchEvidenceBundle`. The synthetic ``bundle_id`` UUID is the
+    storage-assigned primary key. The natural idempotency key is the
+    deterministic ``bundle_hash`` (content-level digest of the bound
+    evidence + market snapshot set) enforced by the
+    ``uq_research_evidence_bundles_bundle_hash`` unique constraint, so
+    a re-run of the same bundle builder cannot produce a duplicate
+    row.
+
+    There is intentionally **no** ``(research_case_id, evidence_pack_id)``
+    unique constraint: the plan requires a changed market snapshot set
+    for the same research case / evidence pack to create a new bundle
+    identity and preserve the full audit history. The repository's
+    :meth:`get_by_case_and_pack` returns the newest bundle
+    (``created_at DESC``, tie-break ``bundle_id DESC``) so callers see
+    a deterministic "current" record while every historical bundle
+    remains addressable via :meth:`list_by_case` or by the synthetic
+    ``bundle_id``.
+
+    ``market_snapshot_ids`` and ``market_snapshot_hashes`` are JSONB
+    arrays stored in the same lexicographic order so the database can
+    enforce ``jsonb_array_length(market_snapshot_ids) =
+    jsonb_array_length(market_snapshot_hashes)`` at the storage
+    boundary and reject malformed payloads. The application layer
+    re-reads the full :class:`MarketObservationSnapshot` from
+    ``analytics.market_observation_snapshots``; the bundle row only
+    carries the immutable identifier + content_hash so the projection
+    can be regenerated on demand.
+    """
+
+    __tablename__ = "research_evidence_bundles"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["research_case_id"],
+            ["analytics.research_cases.case_id"],
+            name=(
+                "fk_research_evidence_bundles_research_case_id_research_cases"
+            ),
+        ),
+        ForeignKeyConstraint(
+            ["evidence_pack_id"],
+            ["analytics.research_evidence_packs.id"],
+            name=(
+                "fk_research_evidence_bundles_evidence_pack_id_"
+                "research_packs"
+            ),
+        ),
+        UniqueConstraint(
+            "bundle_hash",
+            name="uq_research_evidence_bundles_bundle_hash",
+        ),
+        CheckConstraint(
+            "length(bundle_hash) = 64",
+            name="bundle_hash_len64",
+        ),
+        CheckConstraint(
+            "length(evidence_pack_hash) = 64",
+            name="evidence_pack_hash_len64",
+        ),
+        CheckConstraint(
+            "length(schema_version) > 0",
+            name="schema_version_nonempty",
+        ),
+        CheckConstraint(
+            "jsonb_typeof(market_snapshot_ids) = 'array'",
+            name="snapshot_ids_array",
+        ),
+        CheckConstraint(
+            "jsonb_typeof(market_snapshot_hashes) = 'array'",
+            name="snapshot_hashes_array",
+        ),
+        CheckConstraint(
+            "jsonb_array_length(market_snapshot_ids) = "
+            "jsonb_array_length(market_snapshot_hashes)",
+            name="snapshot_ids_hashes_same_length",
+        ),
+        CheckConstraint(
+            "jsonb_typeof(market_snapshot_dates) = 'array'",
+            name="snapshot_dates_array",
+        ),
+        CheckConstraint(
+            "jsonb_array_length(market_snapshot_ids) = "
+            "jsonb_array_length(market_snapshot_dates)",
+            name="snapshot_ids_dates_same_length",
+        ),
+        Index(
+            "ix_research_evidence_bundles_research_case_id",
+            "research_case_id",
+        ),
+        Index(
+            "ix_research_evidence_bundles_evidence_pack_id",
+            "evidence_pack_id",
+        ),
+        {"schema": "analytics"},
+    )
+
+    bundle_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    research_case_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), nullable=False
+    )
+    evidence_pack_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), nullable=False
+    )
+    evidence_pack_hash: Mapped[str] = mapped_column(
+        String(64), nullable=False
+    )
+    as_of_date: Mapped[date] = mapped_column(Date, nullable=False)
+    market_snapshot_ids: Mapped[list[str]] = mapped_column(
+        JSONB, nullable=False, default=list
+    )
+    market_snapshot_hashes: Mapped[list[str]] = mapped_column(
+        JSONB, nullable=False, default=list
+    )
+    market_snapshot_dates: Mapped[list[str]] = mapped_column(
+        JSONB, nullable=False, default=list
+    )
+    schema_version: Mapped[str] = mapped_column(
+        String(32), nullable=False
+    )
+    bundle_hash: Mapped[str] = mapped_column(
+        String(64), nullable=False
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
     )

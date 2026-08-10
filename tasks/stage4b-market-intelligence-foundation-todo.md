@@ -10,8 +10,8 @@
 - [x] Phase 2：Snapshot/item migration and persistence
 - [x] Phase 2：Idempotency, revision, rollback, PostgreSQL integration
 - [x] Checkpoint B：Storage and migration gates pass（Storage 226 tests；迁移 upgrade/downgrade/upgrade；integration 106 tests）
-- [ ] Phase 3：ResearchEvidenceBundle binding
-- [ ] Phase 3：Context Projection and Evidence ID validation
+- [x] Phase 3：ResearchEvidenceBundle binding（含迁移、Repository、UoW、历史快照幂等语义）
+- [x] Phase 3：Context Projection and Evidence ID validation
 - [ ] Phase 3：Fake Runner/ResearchResult integration
 - [ ] Checkpoint C：Full traceability passes
 - [ ] Phase 4：Market Temperature read-only API

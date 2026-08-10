@@ -104,6 +104,10 @@ from invest_domain.research import (
     ResearchCaseStatus,
     ResearchContextPack,
 )
+from invest_domain.research.evidence_bundle import (
+    MarketSnapshotRef,
+    ResearchEvidenceBundle,
+)
 from invest_domain.research.models import FreshnessStatus
 from invest_domain.research.research_run import (
     ResearchResult,
@@ -145,6 +149,7 @@ from invest_storage.models import (
     ResearchCaseRow,
     ResearchContextItemRow,
     ResearchContextPackRow,
+    ResearchEvidenceBundleRow,
     ResearchEvidencePackRow,
     ResearchResultRow,
     ResearchRunRow,
@@ -1469,6 +1474,7 @@ class SqlAlchemyResearchRunRepository:
             error_summary=run.error_summary,
             external_request_id=None,
             external_session_id=None,
+            evidence_bundle_id=None,
         )
         self._session.add(row)
         self._session.flush()
@@ -4736,3 +4742,189 @@ def _row_to_market_observation(row: MarketObservationRow) -> MarketObservation:
         quality_status=QualityStatus(row.quality_status),
         item_hash=row.item_hash,
     )
+
+
+class SqlAlchemyResearchEvidenceBundleRepository:
+    """Persistence for :class:`ResearchEvidenceBundle` (Stage 4B Phase 3).
+
+    Owns ``analytics.research_evidence_bundles`` and honours the
+    immutability contract: there is no ``update`` / ``delete``
+    surface because the bundle is an audit-grade identity record.
+    The natural idempotency key is the deterministic
+    ``bundle_hash`` enforced by the database-level
+    ``uq_research_evidence_bundles_bundle_hash`` unique constraint.
+
+    Per Stage 4B Phase 3 plan, a changed market snapshot set for the
+    same ``(research_case_id, evidence_pack_id)`` pair MUST create a
+    new bundle identity so the full audit history is preserved;
+    there is no ``UNIQUE (research_case_id, evidence_pack_id)``
+    constraint. :meth:`get_by_case_and_pack` therefore returns the
+    newest bundle (``created_at DESC``, tie-break ``bundle_id DESC``)
+    so callers see a deterministic "current" record; the full history
+    remains addressable via :meth:`list_by_case` or by the synthetic
+    ``bundle_id``.
+
+    :meth:`add` uses ``ON CONFLICT (bundle_hash) DO NOTHING`` so a
+    re-build of the same bundle content never produces a duplicate
+    row. When the insert is a no-op the repository refetches the
+    existing row by ``bundle_hash`` and returns the canonical
+    :class:`ResearchEvidenceBundle` so callers always see the
+    storage-assigned identity.
+
+    The ``market_snapshot_ids`` / ``market_snapshot_hashes`` /
+    ``market_snapshot_dates`` JSONB arrays are the only evidence the
+    bundle row carries for the Analytics-owned snapshots; the
+    application layer is responsible for handing the full
+    :class:`MarketObservationSnapshot` to
+    :func:`invest_domain.research.evidence_bundle.build_projection`
+    so the projection can be regenerated from the canonical sources.
+    """
+
+    def __init__(self, session: Session) -> None:
+        self._session = session
+
+    def add(self, bundle: ResearchEvidenceBundle) -> ResearchEvidenceBundle:
+        if not isinstance(bundle, ResearchEvidenceBundle):
+            raise TypeError(
+                "SqlAlchemyResearchEvidenceBundleRepository.add expects a "
+                f"ResearchEvidenceBundle, got {type(bundle).__name__}"
+            )
+        statement = (
+            insert(ResearchEvidenceBundleRow)
+            .values(
+                bundle_id=bundle.bundle_id,
+                research_case_id=bundle.research_case_id,
+                evidence_pack_id=bundle.evidence_pack_id,
+                evidence_pack_hash=bundle.evidence_pack_hash,
+                as_of_date=bundle.as_of_date,
+                market_snapshot_ids=[
+                    item.snapshot_id for item in bundle.market_snapshot_refs
+                ],
+                market_snapshot_hashes=[
+                    item.content_hash for item in bundle.market_snapshot_refs
+                ],
+                market_snapshot_dates=[
+                    item.as_of_date.isoformat()
+                    for item in bundle.market_snapshot_refs
+                ],
+                schema_version=bundle.schema_version,
+                bundle_hash=bundle.bundle_hash,
+                created_at=bundle.created_at,
+            )
+            .on_conflict_do_nothing(
+                index_elements=[ResearchEvidenceBundleRow.bundle_hash],
+            )
+            .returning(ResearchEvidenceBundleRow.bundle_id)
+        )
+        self._session.execute(statement)
+        self._session.flush()
+        existing = self._find_by_bundle_hash(bundle.bundle_hash)
+        if existing is None:
+            raise RuntimeError(
+                "research_evidence_bundles insert succeeded but the row "
+                "was not found on the subsequent read; this indicates "
+                "a session/transaction misconfiguration"
+            )
+        return existing
+
+    def get_by_id(self, bundle_id: UUID) -> ResearchEvidenceBundle | None:
+        row = self._session.get(ResearchEvidenceBundleRow, bundle_id)
+        return _row_to_research_evidence_bundle(row) if row is not None else None
+
+    def get_by_bundle_hash(
+        self, bundle_hash: str
+    ) -> ResearchEvidenceBundle | None:
+        return self._find_by_bundle_hash(bundle_hash)
+
+    def get_by_case_and_pack(
+        self, *, research_case_id: UUID, evidence_pack_id: UUID
+    ) -> ResearchEvidenceBundle | None:
+        """Return the newest bundle for a ``(case, pack)`` pair, or ``None``.
+
+        A ``(research_case_id, evidence_pack_id)`` pair may legitimately
+        have multiple bundles coexisting — every changed market
+        snapshot set creates a fresh ``bundle_hash`` and therefore a
+        fresh bundle row (see plan §4B Phase 3). This helper returns
+        the deterministic "current" record ordered by
+        ``created_at DESC`` with ``bundle_id DESC`` as the tie-break
+        so two bundles stamped at the same instant still resolve
+        deterministically. The full history is addressable via
+        :meth:`list_by_case` or by ``bundle_id``.
+        """
+
+        row = self._session.scalars(
+            select(ResearchEvidenceBundleRow)
+            .where(
+                ResearchEvidenceBundleRow.research_case_id == research_case_id,
+                ResearchEvidenceBundleRow.evidence_pack_id == evidence_pack_id,
+            )
+            .order_by(
+                ResearchEvidenceBundleRow.created_at.desc(),
+                ResearchEvidenceBundleRow.bundle_id.desc(),
+            )
+            .limit(1)
+        ).first()
+        return _row_to_research_evidence_bundle(row) if row is not None else None
+
+    def list_by_case(
+        self, research_case_id: UUID
+    ) -> list[ResearchEvidenceBundle]:
+        rows = self._session.scalars(
+            select(ResearchEvidenceBundleRow)
+            .where(ResearchEvidenceBundleRow.research_case_id == research_case_id)
+            .order_by(
+                ResearchEvidenceBundleRow.created_at.asc(),
+                ResearchEvidenceBundleRow.bundle_id.asc(),
+            )
+        ).all()
+        return [_row_to_research_evidence_bundle(row) for row in rows]
+
+    def _find_by_bundle_hash(
+        self, bundle_hash: str
+    ) -> ResearchEvidenceBundle | None:
+        if (
+            not isinstance(bundle_hash, str)
+            or len(bundle_hash) != 64
+        ):
+            return None
+        row = self._session.scalars(
+            select(ResearchEvidenceBundleRow)
+            .where(ResearchEvidenceBundleRow.bundle_hash == bundle_hash)
+            .limit(1)
+        ).first()
+        return _row_to_research_evidence_bundle(row) if row is not None else None
+
+
+def _row_to_research_evidence_bundle(
+    row: ResearchEvidenceBundleRow,
+) -> ResearchEvidenceBundle:
+    snapshot_ids = [str(item) for item in (row.market_snapshot_ids or [])]
+    snapshot_hashes = [str(item) for item in (row.market_snapshot_hashes or [])]
+    snapshot_dates = [
+        date.fromisoformat(str(item)) for item in (row.market_snapshot_dates or [])
+    ]
+    refs = tuple(
+        MarketSnapshotRef(
+            snapshot_id=snapshot_id,
+            content_hash=content_hash,
+            as_of_date=snapshot_date,
+        )
+        for snapshot_id, content_hash, snapshot_date in zip(
+            snapshot_ids, snapshot_hashes, snapshot_dates, strict=True
+        )
+    )
+    return ResearchEvidenceBundle(
+        bundle_id=row.bundle_id,
+        research_case_id=row.research_case_id,
+        evidence_pack_id=row.evidence_pack_id,
+        evidence_pack_hash=row.evidence_pack_hash,
+        market_snapshot_refs=refs,
+        schema_version=row.schema_version,
+        bundle_hash=row.bundle_hash,
+        created_at=row.created_at,
+        as_of_date=row.as_of_date,
+    )
+
+
+class ResearchEvidenceBundleTransitionError(RuntimeError):
+    """Raised when ``add`` cannot honour the bundle uniqueness contract."""
