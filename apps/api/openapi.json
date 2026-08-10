@@ -1137,6 +1137,136 @@
         "title": "InstrumentResponse",
         "type": "object"
       },
+      "MarketTemperatureObservationResponse": {
+        "properties": {
+          "item_hash": {
+            "title": "Item Hash",
+            "type": "string"
+          },
+          "observation_key": {
+            "title": "Observation Key",
+            "type": "string"
+          },
+          "observed_date": {
+            "format": "date",
+            "title": "Observed Date",
+            "type": "string"
+          },
+          "quality_status": {
+            "title": "Quality Status",
+            "type": "string"
+          },
+          "source_kind": {
+            "title": "Source Kind",
+            "type": "string"
+          },
+          "source_ref": {
+            "title": "Source Ref",
+            "type": "string"
+          },
+          "unit": {
+            "title": "Unit",
+            "type": "string"
+          },
+          "value": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Value"
+          }
+        },
+        "required": [
+          "observation_key",
+          "value",
+          "unit",
+          "observed_date",
+          "source_kind",
+          "source_ref",
+          "quality_status",
+          "item_hash"
+        ],
+        "title": "MarketTemperatureObservationResponse",
+        "type": "object"
+      },
+      "MarketTemperatureResponse": {
+        "properties": {
+          "algorithm_version": {
+            "title": "Algorithm Version",
+            "type": "string"
+          },
+          "as_of_date": {
+            "format": "date",
+            "title": "As Of Date",
+            "type": "string"
+          },
+          "content_hash": {
+            "title": "Content Hash",
+            "type": "string"
+          },
+          "freshness_status": {
+            "title": "Freshness Status",
+            "type": "string"
+          },
+          "input_snapshot_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "string"
+              }
+            ],
+            "title": "Input Snapshot Id"
+          },
+          "observations": {
+            "items": {
+              "$ref": "#/components/schemas/MarketTemperatureObservationResponse"
+            },
+            "title": "Observations",
+            "type": "array"
+          },
+          "quality_status": {
+            "title": "Quality Status",
+            "type": "string"
+          },
+          "scope_key": {
+            "title": "Scope Key",
+            "type": "string"
+          },
+          "scope_type": {
+            "title": "Scope Type",
+            "type": "string"
+          },
+          "snapshot_id": {
+            "title": "Snapshot Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "snapshot_id",
+          "as_of_date",
+          "input_snapshot_id",
+          "algorithm_version",
+          "scope_type",
+          "scope_key",
+          "quality_status",
+          "freshness_status",
+          "content_hash",
+          "observations"
+        ],
+        "title": "MarketTemperatureResponse",
+        "type": "object"
+      },
       "PipelineRunListResponse": {
         "description": "Paginated envelope for the ``GET /api/v1/pipeline-runs`` endpoint.\n\n``total`` counts every ``personal_etf_daily_job`` run (i.e. it is\ncomputed independently of ``limit`` / ``offset``) so the UI can\nrender the page count without an extra round trip. ``items`` is\nalways ordered by ``started_at`` descending and then ``id``\nascending so successive pages are stable.",
         "properties": {
@@ -2247,6 +2377,27 @@
         "summary": "List Etf Instruments",
         "tags": [
           "etf"
+        ]
+      }
+    },
+    "/api/v1/market-temperature/latest": {
+      "get": {
+        "operationId": "get_latest_market_temperature_api_v1_market_temperature_latest_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MarketTemperatureResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Get Latest Market Temperature",
+        "tags": [
+          "market-temperature"
         ]
       }
     },

@@ -4683,6 +4683,16 @@ class SqlAlchemyMarketObservationSnapshotRepository:
         ).all()
         return [self._row_to_snapshot(row) for row in rows]
 
+    def get_latest(self) -> MarketObservationSnapshot | None:
+        row = self._session.scalars(
+            select(MarketObservationSnapshotRow).order_by(
+                MarketObservationSnapshotRow.as_of_date.desc(),
+                MarketObservationSnapshotRow.created_at.desc(),
+                MarketObservationSnapshotRow.id.desc(),
+            ).limit(1)
+        ).first()
+        return self._row_to_snapshot(row) if row is not None else None
+
     def _row_to_snapshot(self, row: MarketObservationSnapshotRow) -> MarketObservationSnapshot:
         item_rows = self._session.scalars(
             select(MarketObservationRow)

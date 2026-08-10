@@ -14,6 +14,7 @@ from invest_storage.repositories import (
     SqlAlchemyDataFreshnessReader,
     SqlAlchemyEvidencePackRepository,
     SqlAlchemyInstrumentRepository,
+    SqlAlchemyMarketObservationSnapshotRepository,
     SqlAlchemyPipelineRunRepository,
     SqlAlchemyResearchCaseRepository,
     SqlAlchemyResearchResultRepository,
@@ -25,6 +26,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from invest_api.application.candidate_pool import CandidatePoolQueryService
 from invest_api.application.data_freshness import DataFreshnessQueryService
 from invest_api.application.etf import EtfQueryService
+from invest_api.application.market_temperature import MarketTemperatureQueryService
 from invest_api.application.pipeline_runs import PipelineRunQueryService
 from invest_api.application.research import ResearchQueryService
 from invest_api.config import get_settings
@@ -127,6 +129,14 @@ def get_research_query_service(
         evidence_repository=SqlAlchemyEvidencePackRepository(session),
         run_repository=SqlAlchemyResearchRunRepository(session),
         result_repository=SqlAlchemyResearchResultRepository(session),
+    )
+
+
+def get_market_temperature_query_service(
+    session: Annotated[Session, Depends(get_db_session)],
+) -> MarketTemperatureQueryService:
+    return MarketTemperatureQueryService(
+        SqlAlchemyMarketObservationSnapshotRepository(session)
     )
 
 
