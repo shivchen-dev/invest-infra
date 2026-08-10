@@ -27,6 +27,10 @@ from decimal import Decimal
 from uuid import UUID, uuid4
 
 import pytest
+from invest_domain.analytics.market_breadth import (
+    MarketBreadthInput,
+    build_market_breadth,
+)
 from invest_domain.analytics.market_temperature import (
     REQUIRED_FACTOR_KEYS,
     build_market_temperature,
@@ -35,7 +39,7 @@ from invest_domain.candidate_pool.models import (
     CandidatePoolRun,
     CandidatePoolStatus,
 )
-from invest_domain.instruments import InstrumentId
+from invest_domain.instruments import Instrument, InstrumentId, InstrumentType
 from invest_domain.market_data import Adjust, BarSource, DailyBar, TradingStatus
 from invest_domain.research import (
     CaseContext,
@@ -52,6 +56,10 @@ from invest_domain.research.research_run import (
     ResearchResult,
     ResearchRun,
     ResearchRunStatus,
+)
+from invest_pipeline.market_breadth_bundle_service import (
+    MarketBreadthBundleSnapshotMissingError,
+    build_and_persist_market_breadth_bundle,
 )
 from invest_storage import (
     ResearchResultConflictError,
@@ -616,6 +624,127 @@ def test_seeded_case_observation_bundle_run_result_traceability(
         reloaded_bundle_for_result.market_snapshot_refs[0].content_hash
         == reloaded_snapshot.content_hash
     )
+
+
+def _seed_market_breadth_bundle_inputs(uow_factory, *, with_snapshot: bool):
+    with uow_factory() as uow:
+        instrument = Instrument(
+            symbol="510300",
+            name="沪深300ETF",
+            exchange="SSE",
+            instrument_type=InstrumentType.ETF,
+            is_active=True,
+        )
+        uow.instruments.upsert_many([instrument])
+        persisted_instrument = uow.instruments.get_by_business_key(
+            exchange="SSE", symbol="510300"
+        )
+        assert persisted_instrument is not None
+        pool = uow.candidate_pool_runs.add(
+            CandidatePoolRun(
+                id=uuid4(),
+                trade_date=AS_OF,
+                algorithm_key="candidate_pool.v1",
+                algorithm_version="v1.0",
+                parameter_set_key="default",
+                parameter_hash="b" * 64,
+                input_snapshot_id=TEST_INPUT_SNAPSHOT_ID,
+                input_row_count=1,
+                included_count=0,
+                status=CandidatePoolStatus.CALCULATED,
+                created_at=CREATED_AT,
+            ),
+            quality_summary={"coverage": 1.0},
+        )
+        case = uow.research_cases.add(
+            ResearchCase.create(
+                instrument_id=persisted_instrument.instrument_id,
+                as_of_date=AS_OF,
+                question=QUESTION,
+                horizon="20-60d",
+                candidate_pool_run_id=pool.id,
+                created_at=CREATED_AT,
+            )
+        )
+        pack = uow.research_evidence_packs.add(
+            _evidence_pack(
+                case_id=case.case_id,
+                instrument_id=persisted_instrument.instrument_id,
+            )
+        )
+        snapshot = None
+        if with_snapshot:
+            snapshot = build_market_breadth(
+                input_snapshot_id=TEST_INPUT_SNAPSHOT_ID,
+                instruments=(
+                    MarketBreadthInput(
+                        instrument_id=uuid4(),
+                        close=Decimal("11"),
+                        prev_close=Decimal("10"),
+                        ma20=Decimal("10"),
+                        observed_date=AS_OF,
+                    ),
+                    MarketBreadthInput(
+                        instrument_id=uuid4(),
+                        close=Decimal("9"),
+                        prev_close=Decimal("10"),
+                        ma20=Decimal("10"),
+                        observed_date=AS_OF,
+                    ),
+                ),
+                as_of_date=AS_OF,
+            )
+            snapshot = uow.market_observation_snapshots.add(snapshot)
+        uow.commit()
+        return pack, snapshot
+
+
+def test_market_breadth_bundle_postgres_round_trip_and_idempotency(uow_factory) -> None:
+    pack, snapshot = _seed_market_breadth_bundle_inputs(
+        uow_factory, with_snapshot=True
+    )
+    assert pack.pack_id is not None
+    assert snapshot is not None
+
+    first = build_and_persist_market_breadth_bundle(
+        uow_factory=uow_factory,
+        evidence_pack_id=pack.pack_id,
+        created_at=CREATED_AT,
+    )
+    second = build_and_persist_market_breadth_bundle(
+        uow_factory=uow_factory,
+        evidence_pack_id=pack.pack_id,
+        created_at=CREATED_AT,
+    )
+
+    assert second.bundle_id == first.bundle_id
+    assert second.bundle_hash == first.bundle_hash
+    with uow_factory() as uow:
+        reloaded = uow.research_evidence_bundles.get_by_id(first.bundle_id)
+        assert reloaded is not None
+        assert reloaded.bundle_hash == first.bundle_hash
+        assert len(reloaded.market_snapshot_refs) == 1
+        ref = reloaded.market_snapshot_refs[0]
+        assert ref.snapshot_id == snapshot.snapshot_id
+        assert ref.content_hash == snapshot.content_hash
+        assert ref.as_of_date == AS_OF
+
+
+def test_market_breadth_bundle_postgres_missing_snapshot_fails_closed(uow_factory) -> None:
+    pack, _ = _seed_market_breadth_bundle_inputs(uow_factory, with_snapshot=False)
+    assert pack.pack_id is not None
+
+    with pytest.raises(MarketBreadthBundleSnapshotMissingError):
+        build_and_persist_market_breadth_bundle(
+            uow_factory=uow_factory,
+            evidence_pack_id=pack.pack_id,
+            created_at=CREATED_AT,
+        )
+    with uow_factory() as uow:
+        assert uow.research_evidence_bundles.get_by_case_and_pack(
+            research_case_id=pack.case.case_id,
+            evidence_pack_id=pack.pack_id,
+        ) is None
 
 
 def test_add_identical_result_is_idempotent(

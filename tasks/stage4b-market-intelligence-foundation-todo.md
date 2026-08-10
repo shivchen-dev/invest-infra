@@ -31,7 +31,7 @@
 - [x] Slice 2 Phase 1：empty / stale / unknown / suspended fail-closed 路径
 - [x] Slice 2 Phase 1：hash / observation-id / scope 稳定性 focused 测试（15 项）
 - [x] Slice 2 Checkpoint A：Domain / arch-check / ruff format pass
-- [ ] Slice 2 Phase 2：Repository / migration / UoW（沿用 `analytics.market_observation_snapshots`，待 A 股 daily bars 接入后启动）
-- [ ] Slice 2 Phase 3：`/api/v1/market-breadth/latest` OpenAPI 冻结 + Router
-- [ ] Slice 2 Phase 4：Bundle 注册（评估是否把 Market Breadth snapshot 加入 `ResearchEvidenceBundle`）
-- [ ] Slice 2 Phase 5：A 股 daily bars Provider 走 Provider Contract + Catalog + Data Admission
+- [x] Slice 2 Phase 2：Repository / migration / UoW + Tushare 股票日线持久化与 Market Breadth 编排
+- [x] Slice 2 Phase 3：`/api/v1/market-breadth/latest` OpenAPI 冻结 + Router
+- [x] Slice 2 Phase 4：Bundle 注册（Market Breadth snapshot 按 Case as-of 绑定至 `ResearchEvidenceBundle`）
+- [x] Slice 2 Phase 5：A 股 daily bars Provider Adapter / Contract / Catalog（Tushare 主源，TDX offline 备用）
