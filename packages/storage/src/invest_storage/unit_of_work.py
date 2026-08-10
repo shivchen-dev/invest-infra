@@ -45,6 +45,7 @@ from invest_storage.repositories import (
     SqlAlchemyIndexIdentityRepository,
     SqlAlchemyIndexProfileRepository,
     SqlAlchemyInstrumentRepository,
+    SqlAlchemyMarketObservationSnapshotRepository,
     SqlAlchemyPipelineRunRepository,
     SqlAlchemyProviderAttemptRepository,
     SqlAlchemyProviderBatchRepository,
@@ -278,6 +279,23 @@ class ResearchContextPackRepositoryPort(Protocol):
 
 
 @runtime_checkable
+class MarketObservationSnapshotRepositoryPort(Protocol):
+    """Subset of the MarketObservationSnapshot repository surface the UoW exposes.
+
+    Stage 4B Phase 2 persistence for
+    ``analytics.market_observation_snapshots`` /
+    ``analytics.market_observations``. ``add`` is idempotent on
+    ``content_hash``; snapshots are immutable so there is no update /
+    delete surface.
+    """
+
+    def add(self, snapshot): ...
+    def get_by_id(self, snapshot_row_id): ...
+    def get_by_content_hash(self, content_hash): ...
+    def list_by_date(self, as_of_date): ...
+
+
+@runtime_checkable
 class ResearchCaseRepositoryPort(Protocol):
     """Subset of the ResearchCase repository surface the UoW exposes."""
 
@@ -484,6 +502,7 @@ class UnitOfWork(Protocol):
     etf_profiles: EtfProfileRepositoryPort
     etf_profile_fields: EtfProfileFieldRepositoryPort
     research_context_packs: ResearchContextPackRepositoryPort
+    market_observation_snapshots: MarketObservationSnapshotRepositoryPort
     research_cases: ResearchCaseRepositoryPort
     research_evidence_packs: ResearchEvidencePackRepositoryPort
     research_runs: ResearchRunRepositoryPort
@@ -536,6 +555,9 @@ class SqlAlchemyUnitOfWork:
         self._etf_profiles: SqlAlchemyEtfProfileRepository | None = None
         self._etf_profile_fields: SqlAlchemyEtfProfileFieldRepository | None = None
         self._research_context_packs: SqlAlchemyResearchContextPackRepository | None = None
+        self._market_observation_snapshots: SqlAlchemyMarketObservationSnapshotRepository | None = (
+            None
+        )
         self._research_cases: SqlAlchemyResearchCaseRepository | None = None
         self._research_evidence_packs: SqlAlchemyEvidencePackRepository | None = None
         self._research_runs: SqlAlchemyResearchRunRepository | None = None
@@ -636,6 +658,14 @@ class SqlAlchemyUnitOfWork:
                 self.session
             )
         return self._research_context_packs
+
+    @property
+    def market_observation_snapshots(self) -> SqlAlchemyMarketObservationSnapshotRepository:
+        if self._market_observation_snapshots is None:
+            self._market_observation_snapshots = SqlAlchemyMarketObservationSnapshotRepository(
+                self.session
+            )
+        return self._market_observation_snapshots
 
     @property
     def research_cases(self) -> SqlAlchemyResearchCaseRepository:
@@ -742,6 +772,7 @@ class SqlAlchemyUnitOfWork:
             self._etf_profiles = None
             self._etf_profile_fields = None
             self._research_context_packs = None
+            self._market_observation_snapshots = None
             self._research_cases = None
             self._research_evidence_packs = None
             self._research_runs = None
@@ -777,6 +808,7 @@ __all__ = [
     "EtfProfileRepositoryPort",
     "InputSnapshotRepositoryPort",
     "InstrumentRepositoryPort",
+    "MarketObservationSnapshotRepositoryPort",
     "PipelineRunRepositoryPort",
     "ProviderAttemptRepositoryPort",
     "ProviderBatchRepositoryPort",

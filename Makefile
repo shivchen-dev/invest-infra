@@ -65,7 +65,7 @@ test-storage:
 	cd packages/storage && PYTHONPATH=../domain/src:../../tests uv run --with pytest --with testcontainers pytest ../../tests/storage --ignore=../../tests/storage/integration -q
 
 test-storage-integration:
-	uv run --project packages/storage --with pytest --with testcontainers --with psycopg2-binary pytest tests/storage/integration -q
+	PYTHONPATH=apps/pipeline/src:packages/domain/src uv run --project packages/storage --with pytest --with testcontainers --with psycopg2-binary pytest tests/storage/integration -q
 
 test-migrations:
 	cd apps/migrations && uv sync

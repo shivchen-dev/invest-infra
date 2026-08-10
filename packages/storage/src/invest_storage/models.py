@@ -1929,3 +1929,162 @@ class ResearchResultRow(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
+
+
+class MarketObservationSnapshotRow(Base):
+    """One immutable ``MarketObservationSnapshot`` observation (Stage 4B Phase 2).
+
+    Persists :class:`invest_domain.analytics.market_observations.
+    MarketObservationSnapshot`. The synthetic ``id`` UUID is the
+    storage-assigned primary key; ``snapshot_id`` is the domain-derived
+    business identifier (``mos:<content_hash[:32]>``) and
+    ``content_hash`` is the natural idempotency key — both are
+    enforced UNIQUE at the database boundary so the same business
+    content can never be published twice, and a different input
+    produces a new snapshot row instead of overwriting history.
+
+    Child rows (:class:`MarketObservationRow`) FK back to this table
+    with ``ON DELETE CASCADE`` so an observation can never outlive
+    its parent snapshot.
+    """
+
+    __tablename__ = "market_observation_snapshots"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["input_snapshot_id"],
+            ["analytics.input_snapshots.id"],
+            name="fk_market_observation_snapshots_input_snapshot_id",
+        ),
+        UniqueConstraint(
+            "snapshot_id",
+            name="uq_market_observation_snapshots_snapshot_id",
+        ),
+        UniqueConstraint(
+            "content_hash",
+            name="uq_market_observation_snapshots_content_hash",
+        ),
+        CheckConstraint(
+            "length(content_hash) = 64",
+            name="ck_market_observation_snapshots_content_hash_len64",
+        ),
+        CheckConstraint(
+            "length(snapshot_id) > 0",
+            name="ck_market_observation_snapshots_snapshot_id_nonempty",
+        ),
+        CheckConstraint(
+            "length(algorithm_version) > 0",
+            name="ck_market_observation_snapshots_algorithm_version_nonempty",
+        ),
+        CheckConstraint(
+            "length(scope_type) > 0",
+            name="ck_market_observation_snapshots_scope_type_nonempty",
+        ),
+        CheckConstraint(
+            "length(scope_key) > 0",
+            name="ck_market_observation_snapshots_scope_key_nonempty",
+        ),
+        Index(
+            "ix_market_observation_snapshots_as_of_date",
+            "as_of_date",
+        ),
+        Index(
+            "ix_market_observation_snapshots_content_hash",
+            "content_hash",
+        ),
+        {"schema": "analytics"},
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    snapshot_id: Mapped[str] = mapped_column(String(48), nullable=False)
+    input_snapshot_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    as_of_date: Mapped[date] = mapped_column(Date, nullable=False)
+    algorithm_version: Mapped[str] = mapped_column(String(80), nullable=False)
+    scope_type: Mapped[str] = mapped_column(String(64), nullable=False)
+    scope_key: Mapped[str] = mapped_column(String(128), nullable=False)
+    quality_status: Mapped[str] = mapped_column(String(24), nullable=False)
+    freshness_status: Mapped[str] = mapped_column(String(24), nullable=False)
+    content_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+    observations: Mapped[list[MarketObservationRow]] = relationship(
+        back_populates="snapshot",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+    )
+
+
+class MarketObservationRow(Base):
+    """One child observation belonging to a :class:`MarketObservationSnapshotRow`.
+
+    One row per ``(snapshot_id, observation_key)`` pair; the composite
+    uniqueness mirrors the domain invariant that observation keys are
+    unique within a snapshot. The runtime value is stored in two
+    discriminated columns — ``value_numeric`` for ``Decimal`` values
+    and ``value_text`` for ``str`` values — with both ``NULL`` meaning
+    the domain value was ``None``; the CHECK constraint rejects rows
+    where both columns are populated. ``item_hash`` is the
+    deterministic per-observation digest computed by the domain layer.
+    """
+
+    __tablename__ = "market_observations"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["snapshot_id"],
+            ["analytics.market_observation_snapshots.id"],
+            name="fk_market_observations_snapshot_id_market_observation_snapshots",
+            ondelete="CASCADE",
+        ),
+        UniqueConstraint(
+            "snapshot_id",
+            "observation_key",
+            name="uq_market_observations_snapshot_key",
+        ),
+        CheckConstraint(
+            "length(item_hash) = 64",
+            name="ck_market_observations_item_hash_len64",
+        ),
+        CheckConstraint(
+            "length(observation_key) > 0",
+            name="ck_market_observations_observation_key_nonempty",
+        ),
+        CheckConstraint(
+            "length(unit) > 0",
+            name="ck_market_observations_unit_nonempty",
+        ),
+        CheckConstraint(
+            "length(source_kind) > 0",
+            name="ck_market_observations_source_kind_nonempty",
+        ),
+        CheckConstraint(
+            "length(source_ref) > 0",
+            name="ck_market_observations_source_ref_nonempty",
+        ),
+        CheckConstraint(
+            "NOT (value_numeric IS NOT NULL AND value_text IS NOT NULL)",
+            name="ck_market_observations_single_value_column",
+        ),
+        Index("ix_market_observations_snapshot_id", "snapshot_id"),
+        Index("ix_market_observations_observed_date", "observed_date"),
+        {"schema": "analytics"},
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    snapshot_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    observation_key: Mapped[str] = mapped_column(String(128), nullable=False)
+    value_numeric: Mapped[Any | None] = mapped_column(Numeric(38, 18), nullable=True)
+    value_text: Mapped[str | None] = mapped_column(Text, nullable=True)
+    unit: Mapped[str] = mapped_column(String(32), nullable=False)
+    observed_date: Mapped[date] = mapped_column(Date, nullable=False)
+    source_kind: Mapped[str] = mapped_column(String(32), nullable=False)
+    source_ref: Mapped[str] = mapped_column(String(128), nullable=False)
+    quality_status: Mapped[str] = mapped_column(String(24), nullable=False)
+    item_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+    snapshot: Mapped[MarketObservationSnapshotRow] = relationship(
+        back_populates="observations"
+    )

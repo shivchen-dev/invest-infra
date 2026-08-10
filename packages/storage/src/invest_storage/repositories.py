@@ -57,6 +57,10 @@ from decimal import Decimal
 from typing import Any
 from uuid import UUID
 
+from invest_domain.analytics.market_observations import (
+    MarketObservation,
+    MarketObservationSnapshot,
+)
 from invest_domain.candidate_pool.models import (
     CandidatePoolItem,
     CandidatePoolRun,
@@ -100,6 +104,7 @@ from invest_domain.research import (
     ResearchCaseStatus,
     ResearchContextPack,
 )
+from invest_domain.research.models import FreshnessStatus
 from invest_domain.research.research_run import (
     ResearchResult,
     ResearchRun,
@@ -131,6 +136,8 @@ from invest_storage.models import (
     IndexProfileRow,
     InputSnapshotRow,
     InstrumentRow,
+    MarketObservationRow,
+    MarketObservationSnapshotRow,
     PipelineRunRow,
     ProviderAttemptRow,
     ProviderRequestRow,
@@ -4577,3 +4584,155 @@ class _DataFreshnessPipelineRunRow:
 
     id: UUID
     status: str | None
+
+
+class SqlAlchemyMarketObservationSnapshotRepository:
+    """Persistence for ``analytics.market_observation_snapshots`` (Stage 4B Phase 2).
+
+    Owns the parent/child pair ``analytics.market_observation_snapshots``
+    / ``analytics.market_observations``. Snapshots are immutable:
+
+    - :meth:`add` is idempotent on ``content_hash`` (the database
+      ``UNIQUE`` constraint is the final guard; the repository uses
+      ``ON CONFLICT DO NOTHING`` and returns the pre-existing row on
+      conflict so a same-input re-run is a no-op instead of an error).
+    - Children are inserted in the same transaction as the parent and
+      re-read on every domain-side round-trip so callers always receive
+      a fully-populated
+      :class:`invest_domain.analytics.market_observations.
+      MarketObservationSnapshot`.
+    - There is no update / delete surface.
+
+    Read paths: :meth:`get_by_id` (storage PK),
+    :meth:`get_by_content_hash` (natural idempotency key) and
+    :meth:`list_by_date` (``as_of_date`` ascending-created order).
+    """
+
+    def __init__(self, session: Session) -> None:
+        self._session = session
+
+    def add(self, snapshot: MarketObservationSnapshot) -> MarketObservationSnapshot:
+        statement = (
+            insert(MarketObservationSnapshotRow)
+            .values(
+                id=uuid.uuid4(),
+                snapshot_id=snapshot.snapshot_id,
+                input_snapshot_id=UUID(str(snapshot.input_snapshot_id)),
+                as_of_date=snapshot.as_of_date,
+                algorithm_version=snapshot.algorithm_version,
+                scope_type=snapshot.scope_type,
+                scope_key=snapshot.scope_key,
+                quality_status=snapshot.quality_status.value,
+                freshness_status=snapshot.freshness_status.value,
+                content_hash=snapshot.content_hash,
+            )
+            .on_conflict_do_nothing(
+                constraint="uq_market_observation_snapshots_content_hash",
+            )
+            .returning(MarketObservationSnapshotRow.id)
+        )
+        inserted_id = self._session.execute(statement).scalar_one_or_none()
+        if inserted_id is None:
+            existing = self.get_by_content_hash(snapshot.content_hash)
+            if existing is None:
+                raise RuntimeError(
+                    "market observation snapshot insert conflicted but the "
+                    "existing row was not found"
+                )
+            return existing
+        for observation in snapshot.observations:
+            self._session.execute(
+                insert(MarketObservationRow).values(
+                    **_market_observation_to_row(observation, inserted_id)
+                )
+            )
+        self._session.flush()
+        return snapshot
+
+    def get_by_id(self, snapshot_row_id: UUID) -> MarketObservationSnapshot | None:
+        row = self._session.get(MarketObservationSnapshotRow, snapshot_row_id)
+        return self._row_to_snapshot(row) if row is not None else None
+
+    def get_by_content_hash(self, content_hash: str) -> MarketObservationSnapshot | None:
+        row = self._session.scalars(
+            select(MarketObservationSnapshotRow)
+            .where(MarketObservationSnapshotRow.content_hash == content_hash)
+            .limit(1)
+        ).first()
+        return self._row_to_snapshot(row) if row is not None else None
+
+    def list_by_date(self, as_of_date: date) -> list[MarketObservationSnapshot]:
+        rows = self._session.scalars(
+            select(MarketObservationSnapshotRow)
+            .where(MarketObservationSnapshotRow.as_of_date == as_of_date)
+            .order_by(
+                MarketObservationSnapshotRow.created_at.asc(),
+                MarketObservationSnapshotRow.id.asc(),
+            )
+        ).all()
+        return [self._row_to_snapshot(row) for row in rows]
+
+    def _row_to_snapshot(self, row: MarketObservationSnapshotRow) -> MarketObservationSnapshot:
+        item_rows = self._session.scalars(
+            select(MarketObservationRow)
+            .where(MarketObservationRow.snapshot_id == row.id)
+            .order_by(MarketObservationRow.observation_key.asc())
+        ).all()
+        observations = tuple(_row_to_market_observation(item) for item in item_rows)
+        return MarketObservationSnapshot(
+            input_snapshot_id=row.input_snapshot_id,
+            as_of_date=row.as_of_date,
+            observations=observations,
+            algorithm_version=row.algorithm_version,
+            scope_type=row.scope_type,
+            scope_key=row.scope_key,
+            quality_status=QualityStatus(row.quality_status),
+            freshness_status=FreshnessStatus(row.freshness_status),
+            content_hash=row.content_hash,
+            snapshot_id=row.snapshot_id,
+        )
+
+
+def _market_observation_to_row(
+    observation: MarketObservation,
+    snapshot_row_id: UUID,
+) -> dict[str, Any]:
+    value_numeric: Decimal | None = None
+    value_text: str | None = None
+    if isinstance(observation.value, Decimal):
+        value_numeric = observation.value
+    elif isinstance(observation.value, str):
+        value_text = observation.value
+    return {
+        "id": uuid.uuid4(),
+        "snapshot_id": snapshot_row_id,
+        "observation_key": observation.observation_key,
+        "value_numeric": value_numeric,
+        "value_text": value_text,
+        "unit": observation.unit,
+        "observed_date": observation.observed_date,
+        "source_kind": observation.source_kind,
+        "source_ref": observation.source_ref,
+        "quality_status": observation.quality_status.value,
+        "item_hash": observation.item_hash,
+    }
+
+
+def _row_to_market_observation(row: MarketObservationRow) -> MarketObservation:
+    value: Decimal | str | None
+    if row.value_numeric is not None:
+        value = row.value_numeric
+    elif row.value_text is not None:
+        value = row.value_text
+    else:
+        value = None
+    return MarketObservation(
+        observation_key=row.observation_key,
+        value=value,
+        unit=row.unit,
+        observed_date=row.observed_date,
+        source_kind=row.source_kind,
+        source_ref=row.source_ref,
+        quality_status=QualityStatus(row.quality_status),
+        item_hash=row.item_hash,
+    )
