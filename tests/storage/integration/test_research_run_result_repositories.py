@@ -21,11 +21,16 @@ round-trips rather than re-asserting migration fidelity.
 
 from __future__ import annotations
 
+import dataclasses
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 from uuid import UUID, uuid4
 
 import pytest
+from invest_domain.analytics.market_temperature import (
+    REQUIRED_FACTOR_KEYS,
+    build_market_temperature,
+)
 from invest_domain.candidate_pool.models import (
     CandidatePoolRun,
     CandidatePoolStatus,
@@ -36,6 +41,9 @@ from invest_domain.research import (
     CaseContext,
     EvidencePack,
     InstrumentSnapshot,
+    ResearchCaseStatus,
+    ResearchEvidenceBundle,
+    ResearchPlaybook,
     SourceReference,
     calculate_market_state_factors,
 )
@@ -50,13 +58,17 @@ from invest_storage import (
     ResearchRunTransitionError,
     SqlAlchemyCandidatePoolRunRepository,
     SqlAlchemyEvidencePackRepository,
+    SqlAlchemyMarketObservationSnapshotRepository,
     SqlAlchemyResearchCaseRepository,
+    SqlAlchemyResearchEvidenceBundleRepository,
     SqlAlchemyResearchResultRepository,
     SqlAlchemyResearchRunRepository,
 )
 from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
+
+from packages.domain.tests.test_research_runner import FakeResearchRunner
 
 INSTRUMENT_ID = UUID("12345678-1234-5678-9234-567812345678")
 SOURCE = BarSource(
@@ -483,6 +495,127 @@ def test_result_tuple_json_roundtrip(
     )
     assert raw_risks["risks"] == ["liquidity", "regulatory"]
     assert raw_risks["evidence_ids"] == list(fetched.evidence_ids)
+
+
+def test_seeded_case_observation_bundle_run_result_traceability(
+    db_session: Session,
+    research_case: UUID,
+    evidence_pack: EvidencePack,
+) -> None:
+    assert evidence_pack.pack_id is not None
+    pack_id = evidence_pack.pack_id
+
+    case_repo = SqlAlchemyResearchCaseRepository(db_session)
+    run_repo = SqlAlchemyResearchRunRepository(db_session)
+    result_repo = SqlAlchemyResearchResultRepository(db_session)
+    bundle_repo = SqlAlchemyResearchEvidenceBundleRepository(db_session)
+    snapshot_repo = SqlAlchemyMarketObservationSnapshotRepository(db_session)
+
+    market_snapshot = build_market_temperature(
+        input_snapshot_id=TEST_INPUT_SNAPSHOT_ID,
+        factor_observations=tuple(
+            item
+            for item in evidence_pack.factors
+            if item.factor_key in REQUIRED_FACTOR_KEYS
+        ),
+        as_of_date=AS_OF,
+    )
+    persisted_snapshot = snapshot_repo.add(market_snapshot)
+
+    bundle = ResearchEvidenceBundle.build(
+        evidence_pack=evidence_pack,
+        market_snapshots=(persisted_snapshot,),
+        created_at=CREATED_AT,
+    )
+    persisted_bundle = bundle_repo.add(bundle)
+
+    seeded_case = case_repo.get(research_case)
+    assert seeded_case is not None
+    draft_to_ready = seeded_case.transition(ResearchCaseStatus.READY, occurred_at=CREATED_AT)
+    case_repo.save_transition(ResearchCaseStatus.DRAFT, draft_to_ready)
+    ready_to_running = draft_to_ready.transition(ResearchCaseStatus.RUNNING, occurred_at=CREATED_AT)
+    case_repo.save_transition(ResearchCaseStatus.READY, ready_to_running)
+
+    playbook = ResearchPlaybook(
+        playbook_key="etf_medium_term_assessment", playbook_version="v0.1.0"
+    )
+
+    run = run_repo.add(
+        ResearchRun.create(
+            case_id=research_case,
+            evidence_pack_id=pack_id,
+            runner_key="fake-runner-v1",
+            playbook_key=playbook.playbook_key,
+            evidence_bundle_id=persisted_bundle.bundle_id,
+        )
+    )
+    queued_to_running = run.start(occurred_at=CREATED_AT)
+    run_repo.save_transition(ResearchRunStatus.QUEUED, queued_to_running)
+
+    running_case = case_repo.get(research_case)
+    assert running_case is not None
+    running_run = run_repo.get(run.run_id)
+    assert running_run is not None
+
+    draft = FakeResearchRunner(clock=lambda: FINISHED_AT).run(
+        case=running_case,
+        run=running_run,
+        evidence_pack=evidence_pack,
+        playbook=playbook,
+        started_at=CREATED_AT,
+    )
+    draft_with_bundle = dataclasses.replace(draft, evidence_bundle_id=persisted_bundle.bundle_id)
+    succeeded_run = running_run.succeed(occurred_at=FINISHED_AT)
+    run_repo.save_transition(ResearchRunStatus.RUNNING, succeeded_run)
+    result = draft_with_bundle.to_result(run=succeeded_run, evidence_pack=evidence_pack)
+    result_repo.add(result)
+
+    completed_case = running_case.transition(ResearchCaseStatus.COMPLETED, occurred_at=FINISHED_AT)
+    case_repo.save_transition(ResearchCaseStatus.RUNNING, completed_case)
+
+    db_session.expire_all()
+
+    reloaded_snapshot = snapshot_repo.get_by_content_hash(persisted_snapshot.content_hash)
+    assert reloaded_snapshot is not None
+    assert reloaded_snapshot.content_hash == persisted_snapshot.content_hash
+    assert reloaded_snapshot.snapshot_id == persisted_snapshot.snapshot_id
+
+    reloaded_bundle = bundle_repo.get_by_id(persisted_bundle.bundle_id)
+    assert reloaded_bundle is not None
+    assert reloaded_bundle.bundle_hash == persisted_bundle.bundle_hash
+
+    reloaded_case = case_repo.get(research_case)
+    assert reloaded_case is not None
+    assert reloaded_case.status is ResearchCaseStatus.COMPLETED
+
+    reloaded_run = run_repo.get(run.run_id)
+    assert reloaded_run is not None
+    assert reloaded_run.status is ResearchRunStatus.SUCCEEDED
+    assert reloaded_run.case_id == research_case
+    assert reloaded_run.evidence_pack_id == pack_id
+    assert reloaded_run.evidence_bundle_id == persisted_bundle.bundle_id
+    assert reloaded_run.playbook_key == "etf_medium_term_assessment"
+
+    reloaded_result = result_repo.get_by_run_id(run.run_id)
+    assert reloaded_result is not None
+    assert reloaded_result.run_id == run.run_id
+    assert reloaded_result.evidence_pack_id == pack_id
+    assert reloaded_result.evidence_bundle_id == persisted_bundle.bundle_id
+    assert set(reloaded_result.evidence_ids).issubset(
+        {item.evidence_id for item in evidence_pack.factors if item.evidence_id is not None}
+    )
+
+    reloaded_bundle_for_result = bundle_repo.get_by_id(persisted_bundle.bundle_id)
+    assert reloaded_bundle_for_result is not None
+    assert reloaded_bundle_for_result.evidence_pack_hash == evidence_pack.pack_hash
+    assert (
+        reloaded_bundle_for_result.market_snapshot_refs[0].snapshot_id
+        == reloaded_snapshot.snapshot_id
+    )
+    assert (
+        reloaded_bundle_for_result.market_snapshot_refs[0].content_hash
+        == reloaded_snapshot.content_hash
+    )
 
 
 def test_add_identical_result_is_idempotent(

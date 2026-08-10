@@ -12,9 +12,9 @@
 - [x] Checkpoint B：Storage and migration gates pass（Storage 226 tests；迁移 upgrade/downgrade/upgrade；integration 106 tests）
 - [x] Phase 3：ResearchEvidenceBundle binding（含迁移、Repository、UoW、历史快照幂等语义）
 - [x] Phase 3：Context Projection and Evidence ID validation
-- [ ] Phase 3：Fake Runner/ResearchResult integration
-- [ ] Checkpoint C：Full traceability passes
-- [ ] Phase 4：Market Temperature read-only API
-- [ ] Phase 4：OpenAPI and security contract
-- [ ] Phase 4：Seeded acceptance report
-- [ ] Final：ARC independent review and worktree audit
+- [x] Phase 3：Fake Runner/ResearchResult integration
+- [x] Checkpoint C：Full traceability passes
+- [x] Phase 4：Market Temperature read-only API
+- [x] Phase 4：OpenAPI and security contract
+- [x] Phase 4：Seeded acceptance report
+- [x] Final：ARC independent review and worktree audit
