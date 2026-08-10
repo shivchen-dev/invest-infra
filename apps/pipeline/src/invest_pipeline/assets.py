@@ -37,14 +37,29 @@ from invest_pipeline.etf_instruments import (
     write_etf_instruments_raw,
 )
 from invest_pipeline.input_snapshot import create_input_snapshot
+from invest_pipeline.market_breadth_service import (
+    MarketBreadthInsufficientDataError,
+    calculate_and_publish_market_breadth,
+    resolve_stock_instrument_ids,
+)
 from invest_pipeline.personal_universe import (
     load_personal_universe,
     resolve_personal_universe,
 )
-from invest_pipeline.provider_factory import build_provider
+from invest_pipeline.provider_factory import build_provider, build_stock_provider
 from invest_pipeline.request_keys import make_daily_bars_request_key
+from invest_pipeline.stock_daily_bars import (
+    upsert_stock_daily_bars,
+    write_stock_daily_bars_raw,
+)
+from invest_pipeline.stock_universe import load_stock_universe
 
 _ETF_INPUT_SNAPSHOT_PARTITIONS = dg.DailyPartitionsDefinition(
+    start_date="2026-07-23"
+)
+
+
+_STOCK_MARKET_DATA_PARTITIONS = dg.DailyPartitionsDefinition(
     start_date="2026-07-23"
 )
 
@@ -659,5 +674,552 @@ def personal_candidate_pool(context) -> dg.MaterializeResult:
             "input_count": result.run.input_row_count,
             "included_count": result.run.included_count,
             "item_count": len(result.result.items),
+        }
+    )
+
+
+# Stage 4B: A-share stock market-data chain.
+#
+# The chain reuses the PR-02 / PR-05 / PR-06 service modules — there is
+# no stock-specific variant — and routes them through the dedicated
+# Tushare ``StockTushareProvider`` via the ``build_stock_provider``
+# factory. Four assets make up the chain; their only relationship with
+# the ETF slice is the shared PR-02 three-layer evidence bundle, which
+# is keyed by ``(provider_key, dataset_key, request_key)`` so the two
+# chains cannot collide.
+
+
+@dg.asset(
+    group_name="stock_market_data",
+    compute_kind="python",
+    partitions_def=_STOCK_MARKET_DATA_PARTITIONS,
+)
+def stock_instruments_raw(context) -> dg.MaterializeResult:
+    """Persist the PR-02 three-layer evidence bundle for A-share master data.
+
+    Calls the Tushare ``StockTushareProvider`` and hands the resulting
+    ``(ProviderRequest, ProviderAttempt, ProviderBatch)`` triple to
+    :func:`invest_pipeline.etf_instruments.write_etf_instruments_raw`,
+    which is provider-agnostic and only depends on the evidence tuple.
+    The provider stamps ``dataset_key="stock_instruments"`` on the
+    persisted request so the downstream :func:`stock_instruments` asset
+    can resolve the matching attempt via
+    ``(provider_key="tushare", dataset_key="stock_instruments",
+    request_key="instruments-{as_of}")`` without colliding with the
+    parallel ETF slice.
+
+    The asset's ``provider_key`` is fixed to ``"tushare"`` because the
+    A-share master-data surface is exposed only by the Tushare adapter
+    today; routing through ``build_stock_provider`` keeps the gate
+    consistent with the PR-1B / ADR-0011 contract (explicit
+    enabled + token check before any HTTP traffic).
+    """
+
+    as_of = date.fromisoformat(context.partition_key)
+    provider = build_stock_provider(get_settings())
+    engine = build_engine(get_settings().database_url)
+    factory = session_factory(engine)
+    try:
+        from invest_storage import SqlAlchemyUnitOfWork
+
+        result = write_etf_instruments_raw(
+            provider,
+            factory,
+            as_of=as_of,
+            unit_of_work_factory=SqlAlchemyUnitOfWork,
+        )
+    finally:
+        engine.dispose()
+
+    context.log.info(
+        "stock_instruments_raw: provider=%s request=%s attempt=%s batch=%s "
+        "status=%s records=%s as_of=%s",
+        provider.provider_key,
+        result.request_id,
+        result.attempt_id,
+        result.batch_id,
+        result.request_status,
+        result.record_count,
+        as_of.isoformat(),
+    )
+    return dg.MaterializeResult(
+        metadata={
+            "provider": provider.provider_key,
+            "dataset_key": "stock_instruments",
+            "request_id": str(result.request_id),
+            "attempt_id": str(result.attempt_id),
+            "batch_id": str(result.batch_id) if result.batch_id else "",
+            "request_status": result.request_status,
+            "attempt_status": result.attempt_status,
+            "record_count": result.record_count,
+            "as_of": as_of.isoformat(),
+            "partition_key": context.partition_key,
+        }
+    )
+
+
+@dg.asset(
+    group_name="stock_market_data",
+    compute_kind="python",
+    deps=[stock_instruments_raw],
+    partitions_def=_STOCK_MARKET_DATA_PARTITIONS,
+)
+def stock_instruments(context) -> dg.MaterializeResult:
+    """Upsert standardized A-share instruments into ``core.instruments``.
+
+    Reuses the provider-agnostic
+    :func:`invest_pipeline.etf_instruments.upsert_etf_instruments` with
+    explicit ``provider_key="tushare"`` and
+    ``dataset_key="stock_instruments"`` so the upstream request lookup
+    resolves the attempt the partitioned raw write just persisted —
+    the service is dataset-agnostic, only the logical-key tuple
+    disambiguates which attempt is consumed. The ``request_key`` the
+    service derives (``instruments-{as_of}``) matches the
+    :meth:`StockTushareProvider.fetch_instruments` request shape.
+
+    If the upstream request is missing or in ``failed`` status the
+    asset surfaces a :class:`MaterializeResult` with ``row_count=0``
+    and a ``skipped`` note rather than raising, mirroring the
+    :func:`etf_instruments` asset's "no retry loop on contract failure"
+    stance.
+    """
+
+    as_of = date.fromisoformat(context.partition_key)
+    engine = build_engine(get_settings().database_url)
+    factory = session_factory(engine)
+    try:
+        from invest_storage import SqlAlchemyUnitOfWork
+
+        with SqlAlchemyUnitOfWork(factory) as uow:
+            stored_request = uow.provider_requests.get_by_logical_key(
+                provider_key="tushare",
+                dataset_key="stock_instruments",
+                request_key=f"instruments-{as_of.isoformat()}",
+            )
+        if stored_request is None or stored_request.status == "failed":
+            context.log.warning(
+                "stock_instruments: upstream attempt failed or missing for %s; "
+                "skipping core.instruments upsert",
+                as_of.isoformat(),
+            )
+            return dg.MaterializeResult(
+                metadata={
+                    "row_count": 0,
+                    "skipped": True,
+                    "reason": "upstream attempt failed or missing",
+                    "as_of": as_of.isoformat(),
+                    "partition_key": context.partition_key,
+                }
+            )
+        count = upsert_etf_instruments(
+            factory,
+            as_of=as_of,
+            provider_key="tushare",
+            dataset_key="stock_instruments",
+            unit_of_work_factory=SqlAlchemyUnitOfWork,
+        )
+    finally:
+        engine.dispose()
+
+    context.log.info(
+        "stock_instruments: upserted %s rows for as_of=%s",
+        count,
+        as_of.isoformat(),
+    )
+    return dg.MaterializeResult(
+        metadata={
+            "row_count": count,
+            "as_of": as_of.isoformat(),
+            "partition_key": context.partition_key,
+            "skipped": False,
+        }
+    )
+
+
+@dg.asset(
+    group_name="stock_market_data",
+    compute_kind="python",
+    deps=[stock_instruments],
+    partitions_def=_STOCK_MARKET_DATA_PARTITIONS,
+)
+def stock_daily_bars_raw(context) -> dg.MaterializeResult:
+    """Persist the PR-02 three-layer evidence bundle for A-share daily bars.
+
+    The symbols the Provider is asked for come from
+    :func:`invest_pipeline.stock_universe.load_stock_universe` — the
+    explicit configuration that prevents an implicit full-market scan —
+    over the one-day window ``[trade_date, trade_date]`` where
+    ``trade_date`` is the Dagster partition key. The Tushare
+    ``StockTushareProvider`` is wired via
+    :func:`invest_pipeline.provider_factory.build_stock_provider`, and
+    the resulting ``(ProviderRequest, ProviderAttempt, ProviderBatch)``
+    triple is handed to
+    :func:`invest_pipeline.stock_daily_bars.write_stock_daily_bars_raw`.
+
+    The asset depends on :func:`stock_instruments` so the canonical
+    ``core.instruments`` rows exist by the time the downstream upsert
+    runs (the daily-bars upsert resolves
+    ``(symbol, exchange) -> core.instruments.id`` via the partial
+    unique business key).
+    """
+
+    settings = get_settings()
+    trade_date = date.fromisoformat(context.partition_key)
+    start = trade_date
+    end = trade_date
+    universe = load_stock_universe(settings.stock_universe_path)
+    symbols = list(universe.symbols)
+
+    provider = build_stock_provider(settings)
+    engine = build_engine(settings.database_url)
+    factory = session_factory(engine)
+    try:
+        from invest_storage import SqlAlchemyUnitOfWork
+
+        result = write_stock_daily_bars_raw(
+            provider,
+            factory,
+            symbols=symbols,
+            start_date=start,
+            end_date=end,
+            unit_of_work_factory=SqlAlchemyUnitOfWork,
+        )
+    finally:
+        engine.dispose()
+
+    context.log.info(
+        "stock_daily_bars_raw: provider=%s request=%s attempt=%s batch=%s "
+        "status=%s records=%s window=%s..%s symbols=%s",
+        provider.provider_key,
+        result.request_id,
+        result.attempt_id,
+        result.batch_id,
+        result.request_status,
+        result.record_count,
+        start.isoformat(),
+        end.isoformat(),
+        len(symbols),
+    )
+    return dg.MaterializeResult(
+        metadata={
+            "provider": provider.provider_key,
+            "dataset_key": "stock_daily_bars",
+            "request_id": str(result.request_id),
+            "attempt_id": str(result.attempt_id),
+            "batch_id": str(result.batch_id) if result.batch_id else "",
+            "request_status": result.request_status,
+            "attempt_status": result.attempt_status,
+            "record_count": result.record_count,
+            "start_date": start.isoformat(),
+            "end_date": end.isoformat(),
+            "partition_key": context.partition_key,
+            "symbol_count": len(symbols),
+        }
+    )
+
+
+@dg.asset(
+    group_name="stock_market_data",
+    compute_kind="python",
+    deps=[stock_daily_bars_raw],
+    partitions_def=_STOCK_MARKET_DATA_PARTITIONS,
+)
+def stock_daily_bars(context) -> dg.MaterializeResult:
+    """Upsert standardized A-share daily bars into ``core.daily_bars``.
+
+    Depends on :func:`stock_daily_bars_raw` and re-opens a fresh
+    transaction to read the persisted attempt's
+    ``response_payload_json`` sidecar. The records are deserialized,
+    the real ``core.instruments.id`` is resolved per
+    ``(symbol, exchange)`` (the exchange is read from the sidecar, NOT
+    inferred from the code prefix), and the resulting
+    :class:`invest_domain.market_data.models.DailyBar` list is handed
+    to :func:`invest_pipeline.stock_daily_bars.upsert_stock_daily_bars`.
+    The repository applies the ADR-0006 §3 revision rules: identical
+    business content is a no-op, content change increments the
+    revision.
+
+    If the upstream request is missing or in ``failed`` status the
+    asset surfaces a :class:`MaterializeResult` with ``inserted=0``
+    and a ``skipped`` note rather than raising, mirroring the
+    :func:`etf_daily_bars` asset's "no retry loop on contract failure"
+    stance.
+    """
+
+    settings = get_settings()
+    trade_date = date.fromisoformat(context.partition_key)
+    start = trade_date
+    end = trade_date
+    universe = load_stock_universe(settings.stock_universe_path)
+    symbols = list(universe.symbols)
+    request_key = make_daily_bars_request_key(start, end, symbols)
+
+    provider = build_stock_provider(settings)
+    engine = build_engine(settings.database_url)
+    factory = session_factory(engine)
+    try:
+        from invest_storage import SqlAlchemyUnitOfWork
+
+        with SqlAlchemyUnitOfWork(factory) as uow:
+            stored_request = uow.provider_requests.get_by_logical_key(
+                provider_key=provider.provider_key,
+                dataset_key="stock_daily_bars",
+                request_key=request_key,
+            )
+        if stored_request is None or stored_request.status == "failed":
+            context.log.warning(
+                "stock_daily_bars: upstream attempt failed or missing for %s; "
+                "skipping core.daily_bars upsert",
+                request_key,
+            )
+            return dg.MaterializeResult(
+                metadata={
+                    "inserted": 0,
+                    "skipped": 0,
+                    "skipped_asset": True,
+                    "reason": "upstream attempt failed or missing",
+                    "request_key": request_key,
+                }
+            )
+        summary = upsert_stock_daily_bars(
+            factory,
+            provider_key=provider.provider_key,
+            dataset_key="stock_daily_bars",
+            request_key=request_key,
+            unit_of_work_factory=SqlAlchemyUnitOfWork,
+        )
+    finally:
+        engine.dispose()
+
+    context.log.info(
+        "stock_daily_bars: inserted=%s skipped=%s total=%s for window=%s..%s",
+        summary.inserted,
+        summary.skipped,
+        summary.total,
+        start.isoformat(),
+        end.isoformat(),
+    )
+    return dg.MaterializeResult(
+        metadata={
+            "inserted": summary.inserted,
+            "skipped": summary.skipped,
+            "total": summary.total,
+            "request_key": request_key,
+            "start_date": start.isoformat(),
+            "end_date": end.isoformat(),
+            "partition_key": context.partition_key,
+        }
+    )
+
+
+@dg.asset(
+    group_name="stock_market_data",
+    compute_kind="python",
+    deps=[stock_instruments],
+    partitions_def=_STOCK_MARKET_DATA_PARTITIONS,
+)
+def stock_input_snapshot(context) -> dg.MaterializeResult:
+    """Build the A-share :class:`InputSnapshot` for the partition trade date.
+
+    Mirrors the personal-universe slice but against the explicit
+    ``config/stock-universe.yaml``: the asset loads the universe via
+    :func:`invest_pipeline.stock_universe.load_stock_universe`,
+    resolves every enabled symbol against an **active** ``STOCK`` row
+    in ``core.instruments`` through
+    :func:`invest_pipeline.market_breadth_service.resolve_stock_instrument_ids`,
+    and persists the resulting ``instrument_ids`` as the
+    partition-aligned :class:`InputSnapshot`. ETFs / indexes are
+    filtered out so the snapshot can never silently grow the universe
+    with non-stock rows.
+
+    The resolver fails fast on missing / ambiguous / non-stock
+    matches and on duplicate universe symbols so a stale universe
+    file surfaces as a hard ``ValueError`` rather than producing a
+    partial snapshot. The partition trade date comes from
+    ``context.partition_key`` only; no ``date.today()`` fallback.
+    """
+
+    from invest_storage import SqlAlchemyUnitOfWork
+
+    snapshot_date = date.fromisoformat(context.partition_key)
+    settings = get_settings()
+    universe = load_stock_universe(settings.stock_universe_path)
+
+    engine = build_engine(settings.database_url)
+    factory = session_factory(engine)
+    try:
+        def _uow_factory() -> Any:
+            return SqlAlchemyUnitOfWork(factory)
+
+        with _uow_factory() as uow:
+            instrument_ids = resolve_stock_instrument_ids(
+                uow, symbols=list(universe.symbols)
+            )
+
+        snapshot = create_input_snapshot(
+            uow_factory=_uow_factory,
+            snapshot_date=snapshot_date,
+            instrument_ids=instrument_ids,
+        )
+    finally:
+        engine.dispose()
+
+    context.log.info(
+        "stock_input_snapshot: snapshot_date=%s row_count=%s content_hash=%s "
+        "universe_size=%s",
+        snapshot.snapshot_date.isoformat(),
+        snapshot.row_count,
+        snapshot.content_hash,
+        len(universe.symbols),
+    )
+    return dg.MaterializeResult(
+        metadata={
+            "snapshot_id": str(snapshot.id),
+            "snapshot_date": snapshot.snapshot_date.isoformat(),
+            "partition_key": context.partition_key,
+            "row_count": snapshot.row_count,
+            "content_hash": snapshot.content_hash,
+            "universe_size": len(universe.symbols),
+        }
+    )
+
+
+@dg.asset(
+    group_name="stock_market_data",
+    compute_kind="python",
+    deps=[stock_input_snapshot, stock_daily_bars],
+    partitions_def=_STOCK_MARKET_DATA_PARTITIONS,
+)
+def market_breadth_snapshot(context) -> dg.MaterializeResult:
+    """Materialise the Stage 4B Market Breadth observation for the partition.
+
+    Resolves the persisted :class:`InputSnapshot` for the partition
+    trade date, hands it to
+    :func:`invest_pipeline.market_breadth_service.calculate_and_publish_market_breadth`
+    (which reads the rolling 20-day window of ``core.daily_bars`` for
+    every resolved instrument, computes the 20-day moving average
+    from the available closes, and persists the resulting
+    :class:`MarketObservationSnapshot` through the existing
+    ``market_observation_snapshots`` repository), and surfaces the
+    result through Dagster metadata.
+
+    The asset surfaces a :class:`MaterializeResult` with
+    ``skipped=True`` / ``invalid=True`` and a human-readable
+    ``reason`` rather than raising whenever the persisted snapshot
+    is not ``COMPLETE`` / ``FRESH`` — i.e. no input snapshot exists
+    for the partition, the breadth service reports insufficient
+    20-day history (the common "freshly-listed symbol" / mixed
+    valid+missing case), or the snapshot is otherwise not a clean
+    success. ``skipped=False`` is reserved for the
+    ``quality_status == COMPLETE`` / ``freshness_status == FRESH``
+    success path so Dagster never enters a retry loop on a
+    contract-failure outcome.
+    """
+
+    from invest_domain.research.models import FreshnessStatus, QualityStatus
+    from invest_storage import SqlAlchemyUnitOfWork
+
+    trade_date = date.fromisoformat(context.partition_key)
+
+    engine = build_engine(get_settings().database_url)
+    factory = session_factory(engine)
+    try:
+        def _uow_factory() -> Any:
+            return SqlAlchemyUnitOfWork(factory)
+
+        with _uow_factory() as uow:
+            snapshots = uow.input_snapshot_repository.list_by_date(trade_date)
+        if not snapshots:
+            raise MarketBreadthInsufficientDataError(
+                f"no stock InputSnapshot persisted for trade_date="
+                f"{trade_date.isoformat()}; re-materialise stock_input_snapshot "
+                "for this partition before retrying market_breadth_snapshot"
+            )
+        # Use the most recently persisted snapshot for the date so a
+        # same-day rerun picks up the latest universe without
+        # re-allocating storage-side identity.
+        input_snapshot = snapshots[-1]
+        result = calculate_and_publish_market_breadth(
+            uow_factory=_uow_factory,
+            input_snapshot=input_snapshot,
+            as_of=trade_date,
+        )
+    except MarketBreadthInsufficientDataError as exc:
+        context.log.warning(
+            "market_breadth_snapshot: insufficient 20-day history for %s; "
+            "skipping without retry: %s",
+            trade_date.isoformat(),
+            exc,
+        )
+        return dg.MaterializeResult(
+            metadata={
+                "as_of": trade_date.isoformat(),
+                "partition_key": context.partition_key,
+                "skipped": True,
+                "invalid": True,
+                "reason": str(exc),
+                "instrument_count": 0,
+            }
+        )
+    finally:
+        engine.dispose()
+
+    quality = result.snapshot.quality_status
+    freshness = result.snapshot.freshness_status
+    if quality is QualityStatus.COMPLETE and freshness is FreshnessStatus.FRESH:
+        context.log.info(
+            "market_breadth_snapshot: trade_date=%s snapshot_id=%s instrument_count=%s "
+            "quality=%s freshness=%s",
+            trade_date.isoformat(),
+            result.snapshot.snapshot_id,
+            result.instrument_count,
+            quality.value,
+            freshness.value,
+        )
+        return dg.MaterializeResult(
+            metadata={
+                "as_of": trade_date.isoformat(),
+                "partition_key": context.partition_key,
+                "snapshot_id": result.snapshot.snapshot_id,
+                "input_snapshot_id": str(result.snapshot.input_snapshot_id),
+                "instrument_count": result.instrument_count,
+                "quality_status": quality.value,
+                "freshness_status": freshness.value,
+                "skipped": False,
+                "invalid": False,
+            }
+        )
+
+    # Non-COMPLETE / non-FRESH snapshot: the breadth service refused
+    # to publish a partial snapshot and recorded a deterministic
+    # ``INVALID / FAILED`` row (or, theoretically, ``PARTIAL`` /
+    # ``STALE``). Surface it as a skipped / invalid asset result so
+    # Dagster does not enter a retry loop on a contract-failure
+    # outcome. ``instrument_count`` is reported unchanged so operators
+    # can audit how many instruments the service considered before
+    # fail-closing.
+    reason = (
+        f"breadth snapshot for {trade_date.isoformat()} is "
+        f"{quality.value}/{freshness.value}: the breadth service "
+        "refused to publish a partial snapshot because at least one "
+        "input-snapshot instrument lacked a valid 20-day history; "
+        "the persisted snapshot is the deterministic INVALID/FAILED "
+        "shape and the asset surfaces it as skipped / invalid"
+    )
+    context.log.warning(
+        "market_breadth_snapshot: %s", reason,
+    )
+    return dg.MaterializeResult(
+        metadata={
+            "as_of": trade_date.isoformat(),
+            "partition_key": context.partition_key,
+            "snapshot_id": result.snapshot.snapshot_id,
+            "input_snapshot_id": str(result.snapshot.input_snapshot_id),
+            "instrument_count": result.instrument_count,
+            "quality_status": quality.value,
+            "freshness_status": freshness.value,
+            "skipped": True,
+            "invalid": quality is QualityStatus.INVALID,
+            "reason": reason,
         }
     )

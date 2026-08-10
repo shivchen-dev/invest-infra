@@ -1,0 +1,15 @@
+version: 1
+
+groups:
+  benchmark:
+    - "600519"
+    - "000001"
+    - "000858"
+  tech:
+    - "600276"
+    - "002415"
+    - "300750"
+
+enabled_groups:
+  - benchmark
+  - tech

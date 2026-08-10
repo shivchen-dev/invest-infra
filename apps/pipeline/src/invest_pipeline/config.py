@@ -33,6 +33,13 @@ class Settings(BaseSettings):
             "candidate_pool_policy_path",
         ),
     )
+    stock_universe_path: Path = Field(
+        default=_REPOSITORY_ROOT / "config" / "stock-universe.yaml",
+        validation_alias=AliasChoices(
+            "INVEST_PIPELINE_STOCK_UNIVERSE_PATH",
+            "stock_universe_path",
+        ),
+    )
 
 
 @lru_cache
