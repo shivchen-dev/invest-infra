@@ -2,7 +2,7 @@
 
 The service is the smallest possible vertical cut of the Stage 4B
 Market Breadth read surface: it pins a single ``scope_type`` /
-``scope_key`` pair (``"market_breadth"`` /
+``scope_key`` pair (``"ashare_universe"`` /
 ``"ashare_active_universe_v1"``) because the API is the only consumer
 of the breadth family in this slice, calls the storage repository's
 :meth:`get_latest_for_scope` method with an optional ``as_of_date``
@@ -30,7 +30,7 @@ from typing import Protocol
 from invest_domain.analytics.market_observations import MarketObservationSnapshot
 from sqlalchemy.exc import SQLAlchemyError
 
-SCOPE_TYPE: str = "market_breadth"
+SCOPE_TYPE: str = "ashare_universe"
 """Fixed ``scope_type`` the read-only API narrows the breadth family to.
 
 The Market Breadth family carries one ``scope_key`` in this slice; the
@@ -78,7 +78,7 @@ class MarketBreadthQueryError(RuntimeError):
 class MarketBreadthQueryService:
     """Application service for the read-only ``/api/v1/market-breadth`` use case.
 
-    The service owns the scope filter (pinned to ``market_breadth`` /
+    The service owns the scope filter (pinned to ``ashare_universe`` /
     ``ashare_active_universe_v1``), the optional ``as_of_date`` default
     (``None`` -> "newest snapshot regardless of date") and the
     :class:`SQLAlchemyError` -> :class:`MarketBreadthQueryError`

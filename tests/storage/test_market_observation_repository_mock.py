@@ -237,7 +237,7 @@ class MarketObservationSnapshotRepositoryMockTests(unittest.TestCase):
         self._session.scalars.side_effect = [parent_result, children_result]
 
         returned = self._repo.get_latest_for_scope(
-            "market_breadth", "ashare_active_universe_v1"
+            "ashare_universe", "ashare_active_universe_v1"
         )
 
         self.assertEqual(returned, snapshot)
@@ -247,7 +247,7 @@ class MarketObservationSnapshotRepositoryMockTests(unittest.TestCase):
         first_statement = self._session.scalars.call_args_list[0].args[0]
         compiled = first_statement.compile()
         params = compiled.params
-        self.assertEqual(params["scope_type_1"], "market_breadth")
+        self.assertEqual(params["scope_type_1"], "ashare_universe")
         self.assertEqual(params["scope_key_1"], "ashare_active_universe_v1")
         # No as_of_date filter applied when caller passes None.
         self.assertNotIn("as_of_date_1", params)
@@ -276,7 +276,7 @@ class MarketObservationSnapshotRepositoryMockTests(unittest.TestCase):
         self._session.scalars.side_effect = [parent_result, children_result]
 
         returned = self._repo.get_latest_for_scope(
-            "market_breadth",
+            "ashare_universe",
             "ashare_active_universe_v1",
             as_of_date=_AS_OF,
         )
@@ -292,7 +292,7 @@ class MarketObservationSnapshotRepositoryMockTests(unittest.TestCase):
         self._session.scalars.return_value = result
 
         returned = self._repo.get_latest_for_scope(
-            "market_breadth", "ashare_active_universe_v1"
+            "ashare_universe", "ashare_active_universe_v1"
         )
 
         self.assertIsNone(returned)

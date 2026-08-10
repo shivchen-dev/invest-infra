@@ -4,7 +4,7 @@ The endpoint tests in :mod:`tests.test_market_breadth_endpoints` mock
 the application service at the FastAPI boundary and verify the HTTP
 contract. These tests bypass the HTTP layer: they construct the real
 service against a mock reader so they can assert the scope-filter
-contract (``market_breadth`` / ``ashare_active_universe_v1``), the
+contract (``ashare_universe`` / ``ashare_active_universe_v1``), the
 optional ``as_of_date`` passthrough, the None-when-missing state and
 the :class:`sqlalchemy.exc.SQLAlchemyError` translation to
 :class:`MarketBreadthQueryError`.
@@ -66,8 +66,8 @@ def _build_service(reader: MagicMock) -> MarketBreadthQueryService:
 class TestScopeConstants:
     """The service pins the breadth scope so callers cannot widen it."""
 
-    def test_scope_type_is_market_breadth(self) -> None:
-        assert SCOPE_TYPE == "market_breadth"
+    def test_scope_type_is_ashare_universe(self) -> None:
+        assert SCOPE_TYPE == "ashare_universe"
 
     def test_scope_key_is_ashare_active_universe_v1(self) -> None:
         assert SCOPE_KEY == "ashare_active_universe_v1"
