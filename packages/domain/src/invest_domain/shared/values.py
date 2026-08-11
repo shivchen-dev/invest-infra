@@ -6,8 +6,13 @@ These enumerations are intentionally restrictive:
   reserved enum members (per ADR-0005) that domain code must reject when
   building ``DailyBar`` instances. Adopting a non-``NONE`` adjustment in
   production requires a new ADR.
-- ``Exchange`` is restricted to ``SSE`` and ``SZSE`` per ADR-0004. Any new
-  exchange must be added by amending ADR-0004 first.
+- ``Exchange`` is restricted to ``SSE`` and ``SZSE`` for the ADR-0004
+  ETF vertical slice. ``BJSE`` (Beijing Stock Exchange) is admitted for
+  the Stage 4B A-share stock scope and remains out of scope for
+  ADR-0004 (i.e. ETF mappers must still reject ``BJSE`` via their
+  own allow-list — the domain enum only widens the canonical set).
+  Any further exchange must be added by amending the relevant ADR
+  and updating domain-level validation here.
 - ``Currency`` is restricted to ``CNY`` for the Phase 1 ETF vertical slice.
 - ``TradingStatus`` enumerates the only two trading-state values a stored
   ``DailyBar`` row may carry. Missing trading days are represented by the
@@ -67,10 +72,15 @@ class Currency(StrEnum):
 class Exchange(StrEnum):
     """On-exchange identifiers accepted in Phase 1.
 
-    Per ADR-0004, only SSE and SZSE are valid for the ETF vertical slice.
-    Adding a new exchange requires amending ADR-0004 and updating the
-    domain-level validation here.
+    Per ADR-0004, only ``SSE`` and ``SZSE`` are valid for the ETF
+    vertical slice. ``BJSE`` is admitted for the Stage 4B A-share
+    stock scope (Tushare ``.BJ`` ts_code suffix) and must not appear
+    in ETF-only flows — ETF mappers enforce their own ADR-0004
+    allow-list and reject ``BJSE`` explicitly. Adding a new exchange
+    requires amending the relevant ADR and updating domain-level
+    validation here.
     """
 
     SSE = "SSE"
     SZSE = "SZSE"
+    BJSE = "BJSE"

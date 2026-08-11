@@ -74,7 +74,7 @@ def _exchange(ts_code: str) -> tuple[str, str]:
         raise ProviderDataContractError(
             "MALFORMED_TS_CODE", f"invalid ts_code {ts_code!r}", provider_key=_PROVIDER_KEY
         ) from exc
-    exchanges = {"SH": "SSE", "SZ": "SZSE"}
+    exchanges = {"SH": "SSE", "SZ": "SZSE", "BJ": "BJSE"}
     if suffix not in exchanges:
         raise ProviderDataContractError(
             "UNSUPPORTED_EXCHANGE",

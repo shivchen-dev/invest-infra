@@ -1,14 +1,19 @@
 from __future__ import annotations
 
 import json
-from datetime import date
+from datetime import UTC, date, datetime
+from uuid import uuid4
 
 import httpx
 import pytest
-from invest_domain.instruments.models import InstrumentType
-from invest_pipeline.adapters.errors import RealProviderRequiresExplicitEnablementError
+from invest_domain.instruments.models import InstrumentId, InstrumentType
+from invest_pipeline.adapters.errors import (
+    ProviderDataContractError,
+    RealProviderRequiresExplicitEnablementError,
+)
 from invest_pipeline.adapters.tushare import StockTushareProvider, TushareSettings
 from invest_pipeline.adapters.tushare.client import TushareClient
+from invest_pipeline.adapters.tushare.mapper import map_stock_basic, map_stock_daily
 
 
 def test_stock_client_uses_tushare_date_format() -> None:
@@ -171,3 +176,153 @@ def test_stock_client_by_trade_date_rejects_non_date() -> None:
     with pytest.raises(TypeError):
         client.fetch_stock_daily_by_trade_date(trade_date="20260710")  # type: ignore[arg-type]
     client.close()
+
+
+def test_stock_basic_maps_bj_suffix_to_bjse_exchange() -> None:
+    response = type(
+        "Response",
+        (),
+        {
+            "raw_payload": {
+                "code": 0,
+                "data": {
+                    "fields": ["ts_code", "name", "list_date", "list_status"],
+                    "items": [["830799.BJ", "某北交所股票", "20210812", "L"]],
+                },
+            }
+        },
+    )()
+    instruments, warnings = map_stock_basic(response)
+    assert warnings == ()
+    assert len(instruments) == 1
+    record = instruments[0]
+    assert record.symbol == "830799"
+    assert record.exchange == "BJSE"
+    assert record.instrument_type is InstrumentType.STOCK
+    assert record.provider_symbol_map["tushare"] == "830799.BJ"
+
+
+def test_stock_basic_preserves_sh_sz_mappings_alongside_bj() -> None:
+    response = type(
+        "Response",
+        (),
+        {
+            "raw_payload": {
+                "code": 0,
+                "data": {
+                    "fields": ["ts_code", "name", "list_date", "list_status"],
+                    "items": [
+                        ["600000.SH", "上证A", "19901219", "L"],
+                        ["000001.SZ", "平安银行", "19910403", "L"],
+                        ["830799.BJ", "某北交所股票", "20210812", "L"],
+                    ],
+                },
+            }
+        },
+    )()
+    instruments, warnings = map_stock_basic(response)
+    assert warnings == ()
+    exchanges = sorted(record.exchange for record in instruments)
+    assert exchanges == ["BJSE", "SSE", "SZSE"]
+
+
+def test_stock_basic_rejects_unknown_exchange_suffix() -> None:
+    response = type(
+        "Response",
+        (),
+        {
+            "raw_payload": {
+                "code": 0,
+                "data": {
+                    "fields": ["ts_code", "name", "list_date", "list_status"],
+                    "items": [["0700.HK", "Tencent", "20040616", "L"]],
+                },
+            }
+        },
+    )()
+    with pytest.raises(ProviderDataContractError) as info:
+        map_stock_basic(response)
+    assert info.value.code == "UNSUPPORTED_EXCHANGE"
+    assert "HK" in str(info.value)
+
+
+def test_stock_daily_maps_bj_suffix_to_bjse_exchange() -> None:
+    response = type(
+        "Response",
+        (),
+        {
+            "raw_payload": {
+                "code": 0,
+                "data": {
+                    "fields": [
+                        "ts_code",
+                        "trade_date",
+                        "open",
+                        "high",
+                        "low",
+                        "close",
+                        "pre_close",
+                        "vol",
+                        "amount",
+                    ],
+                    "items": [["830799.BJ", "2026-07-10", 12, 13, 11, 12.5, 12.2, 300, 400]],
+                },
+            }
+        },
+    )()
+    seen: dict[tuple[str, str], InstrumentId] = {}
+
+    def resolver(symbol: str, exchange: str) -> InstrumentId:
+        key = (symbol, exchange)
+        if key not in seen:
+            seen[key] = InstrumentId.generate()
+        return seen[key]
+
+    bars, warnings = map_stock_daily(
+        response,
+        source_batch_id=uuid4(),
+        observed_at=datetime.now(UTC),
+        instrument_id_resolver=resolver,
+    )
+    assert warnings == ()
+    assert len(bars) == 1
+    bar = bars[0]
+    assert bar.trade_date == date(2026, 7, 10)
+    assert bar.close == pytest.approx(12.5)
+    assert ("830799", "BJSE") in seen
+    assert seen[("830799", "BJSE")] == bar.instrument_id
+
+
+def test_stock_daily_rejects_unknown_exchange_suffix() -> None:
+    response = type(
+        "Response",
+        (),
+        {
+            "raw_payload": {
+                "code": 0,
+                "data": {
+                    "fields": [
+                        "ts_code",
+                        "trade_date",
+                        "open",
+                        "high",
+                        "low",
+                        "close",
+                        "pre_close",
+                        "vol",
+                        "amount",
+                    ],
+                    "items": [["0700.HK", "2026-07-10", 12, 13, 11, 12.5, 12.2, 300, 400]],
+                },
+            }
+        },
+    )()
+    with pytest.raises(ProviderDataContractError) as info:
+        map_stock_daily(
+            response,
+            source_batch_id=uuid4(),
+            observed_at=datetime.now(UTC),
+            instrument_id_resolver=lambda _s, _e: InstrumentId.generate(),
+        )
+    assert info.value.code == "UNSUPPORTED_EXCHANGE"
+    assert "HK" in str(info.value)

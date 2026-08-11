@@ -45,8 +45,11 @@ class TestValueEnums:
     def test_adjust_members_exist(self, member: str) -> None:
         assert hasattr(Adjust, member)
 
-    def test_exchange_allow_list_is_sse_szse(self) -> None:
-        assert {m.value for m in Exchange} == {"SSE", "SZSE"}
+    def test_exchange_allow_list_is_sse_szse_plus_bjse(self) -> None:
+        # ADR-0004 keeps the ETF vertical slice at SSE / SZSE; BJSE is
+        # admitted by the Stage 4B A-share stock scope and the
+        # ETF-only mappers continue to enforce their own allow-list.
+        assert {m.value for m in Exchange} == {"SSE", "SZSE", "BJSE"}
 
     def test_currency_is_cny(self) -> None:
         assert {m.value for m in Currency} == {"CNY"}

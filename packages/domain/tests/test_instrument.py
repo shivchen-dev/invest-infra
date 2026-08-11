@@ -69,6 +69,11 @@ class TestInstrument:
         with pytest.raises(ValueError, match="ADR-0004 allow-list"):
             Instrument("510300", "沪深300ETF", bad_exchange, InstrumentType.ETF)
 
+    def test_bjse_is_accepted_for_stage_4b_stock_scope(self) -> None:
+        item = Instrument("830799", "某北交所股票", "BJSE", InstrumentType.STOCK)
+        assert item.exchange == "BJSE"
+        assert item.business_key == ("BJSE", "830799")
+
     def test_delist_before_list_is_rejected(self) -> None:
         with pytest.raises(ValueError, match="must be on or after"):
             Instrument(
