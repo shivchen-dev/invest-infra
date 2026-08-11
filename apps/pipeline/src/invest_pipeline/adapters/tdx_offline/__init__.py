@@ -7,9 +7,16 @@ Public surface:
 * :func:`read_symbol` resolves and reads the canonical
   ``vipdoc/{market}/lday/{market}{symbol}.day`` file under a given directory.
 * :class:`TdxDailyBar` is the normalized intermediate record.
+* :class:`TdxOfflineSettings` is the operator-facing, disabled-by-default
+  configuration object for the offline provider.
+* :class:`TdxOfflineStockProvider` is the drop-in provider for the
+  A-share stock daily-bars path; it implements the same structural
+  port the Tushare ``StockTushareProvider`` exposes and is the
+  Tushare → TDX offline fallback adapter for the daily-bars slice.
 * All errors inherit from :class:`TdxOfflineError`.
 """
 
+from .config import TdxOfflineSettings
 from .errors import (
     TdxFileMissingError,
     TdxInvalidDateError,
@@ -28,10 +35,11 @@ from .reader import (
     read_symbol,
 )
 from .records import TdxDailyBar
+from .stock_adapter import TdxOfflineStockProvider
 
 __all__ = [
-    "PROVIDER_KEY",
     "DATASET_KEY",
+    "PROVIDER_KEY",
     "RECORD_SIZE",
     "TdxDailyBar",
     "TdxOfflineError",
@@ -42,6 +50,8 @@ __all__ = [
     "TdxInvalidSizeError",
     "TdxInvalidSymbolError",
     "TdxInvalidValueError",
+    "TdxOfflineSettings",
+    "TdxOfflineStockProvider",
     "read_day_file",
     "read_symbol",
 ]

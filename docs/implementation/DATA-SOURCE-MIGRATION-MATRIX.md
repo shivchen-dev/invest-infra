@@ -190,6 +190,13 @@ response 或数据库 row。
 - 禁止把 Plan 文档示例阈值（流动性金额、波动率、上市天数等）当作生产
   参数；M0-DECISIONS §4 O-5 仍未决。
 - 禁止宣告“Provider 已选定/已接入生产 SLA”；O-1 仍阻塞。
+- 保留型 `hithink` 声明（`tasks/hithink-reserved-provider-plan.md`）
+  仅注册到 `provider_catalog.py` 与集中凭据存储
+  （`apps/pipeline/src/invest_pipeline/credentials.py` 的
+  `hithink.api_key`），不接入 runtime factory、不发起任何网络请求；
+  `has_runtime_factory_adapter=False` 由
+  `apps/pipeline/tests/unit/test_provider_catalog.py` /
+  `test_provider_factory_runtime.py` 持续断言。
 
 ## 6. 凭据迁移规则
 

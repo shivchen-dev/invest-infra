@@ -15,7 +15,19 @@ catalog carries no declaration for them. Their public
 historical-quotes endpoints remain internal upstreams of the AkShare
 aggregator (``ak.fund_etf_hist_sina`` / ``ak.fund_etf_hist_em``) and
 surface only as ``source_key`` values on ``BarSource`` rows produced
-by the AkShare adapter. The tests verify:
+by the AkShare adapter. The reserved-provider slice
+(``tasks/hithink-reserved-provider-plan.md``) additionally registers
+``hithink`` as a catalog-only, disabled-by-default declaration that
+advertises the six stock-oriented surfaces the upstream contract
+exposes; it has no runtime factory adapter and stays out of the
+runtime surface. The Stage 4B Phase 5 (slice 1) Tushare → TDX offline
+fallback slice additionally registers ``tdx_offline`` as a
+catalog-only, disabled-by-default declaration for the
+``stock_daily_bars`` capability; the adapter and the operator-facing
+``TdxOfflineSettings`` live in
+:mod:`invest_pipeline.adapters.tdx_offline.stock_adapter` and the
+catalog entry mirrors the same "no runtime factory adapter yet"
+posture as the HiThink reserved slice. The tests verify:
 
 * Each declaration's ``provider_key`` / ``role`` / ``capabilities`` /
   ``enabled_by_default`` matches
@@ -31,13 +43,17 @@ by the AkShare adapter. The tests verify:
   ``KeyError`` for unknown keys (carrying the key as the first
   argument); ``eastmoney`` / ``sina`` / ``tonghuashun`` are rejected
   as unknown keys because the three-provider plan was de-scoped.
-* ``iter_provider_declarations`` returns the five expected entries
+* ``iter_provider_declarations`` returns the eight expected entries
   in a stable, alphabetical order.
+* The reserved ``hithink`` declaration is visible through the
+  catalog but excluded from the runtime surface (see
+  ``HithinkRuntimeExclusionTest``).
 
 The provider factory's runtime surface is intentionally **not**
 exercised here — that lives in ``test_provider_factory_runtime.py``
-and continues to assert the existing three-key factory surface per
-PR-01's "preserve the existing runtime factory behavior" guardrail.
+and continues to assert the existing four-key factory surface per
+PR-01's "preserve the existing runtime factory behavior" guardrail
+and the reserved-provider slice's "no runtime adapter yet" stance.
 """
 
 from __future__ import annotations
@@ -48,8 +64,10 @@ from invest_pipeline.provider_catalog import (
     AKSHARE,
     CIFANGQUANT,
     FIXTURE_DEV,
+    HITHINK,
     QUICKTINY_MCP,
     RSSCAST,
+    TDX_OFFLINE,
     TUSHARE,
     ProviderCapability,
     ProviderDeclaration,
@@ -60,12 +78,14 @@ from invest_pipeline.provider_catalog import (
     runtime_supported_provider_keys,
 )
 
-_ALL_FIVE_PROVIDER_KEYS: tuple[str, ...] = (
+_ALL_CATALOG_PROVIDER_KEYS: tuple[str, ...] = (
     "akshare",
     "cifangquant",
     "fixture_dev",
+    "hithink",
     "quicktiny_mcp",
     "rsscast",
+    "tdx_offline",
     "tushare",
 )
 
@@ -322,6 +342,148 @@ class QuicktinyMcpDeclarationTest(unittest.TestCase):
         self.assertIsInstance(QUICKTINY_MCP.enabled_by_default, bool)
 
 
+class HithinkDeclarationTest(unittest.TestCase):
+    """The ``hithink`` reserved provider matches the
+    ``tasks/hithink-reserved-provider-plan.md`` contract.
+
+    HiThink lands as a catalog-only, disabled-by-default declaration
+    so a future dataset contract can opt in without forcing a
+    catalog migration. The declaration advertises the six surfaces
+    the upstream HiThink contract exposes (``research`` /
+    ``market_snapshot`` / ``stock_daily_bars`` / ``stock_master_data``
+    / ``stock_financials`` / ``stock_valuations``) but omits every
+    ETF / index capability, leaves ``has_runtime_factory_adapter``
+    ``False`` and stays ``enabled_by_default=False``. No runtime
+    factory branch or network client is wired in this slice.
+    """
+
+    def test_provider_key_is_hithink(self) -> None:
+        self.assertEqual(HITHINK.provider_key, "hithink")
+
+    def test_role_is_research_only(self) -> None:
+        # The reserved provider has no production SLA role; matrix §6
+        # plus the "no production SLA path yet" posture in the
+        # reserved-provider plan make ``research_only`` the only safe
+        # role for a catalog-only entry that has not been admitted to
+        # the production data path.
+        self.assertEqual(HITHINK.role, ProviderRole.RESEARCH_ONLY)
+        self.assertEqual(HITHINK.role.value, "research_only")
+
+    def test_capabilities_cover_the_six_planned_surfaces(self) -> None:
+        # The plan lists exactly six advertised surfaces; pin them as
+        # a set so a future regression that drops a capability surfaces
+        # here. The ordered tuple check pins the deterministic order
+        # used by the catalog's iter helper.
+        self.assertEqual(
+            set(HITHINK.capabilities),
+            {
+                ProviderCapability.RESEARCH,
+                ProviderCapability.MARKET_SNAPSHOT,
+                ProviderCapability.STOCK_DAILY_BARS,
+                ProviderCapability.STOCK_MASTER_DATA,
+                ProviderCapability.STOCK_FINANCIALS,
+                ProviderCapability.STOCK_VALUATIONS,
+            },
+        )
+        self.assertEqual(
+            tuple(c.value for c in HITHINK.capabilities),
+            (
+                "research",
+                "market_snapshot",
+                "stock_daily_bars",
+                "stock_master_data",
+                "stock_financials",
+                "stock_valuations",
+            ),
+        )
+
+    def test_etf_capabilities_are_absent(self) -> None:
+        # Reserved-provider contract: HiThink does **not** claim any
+        # ETF surface, mirroring matrix §5.4's negative-capability
+        # rule for non-production providers.
+        for forbidden in (
+            ProviderCapability.ETF_DAILY_BARS,
+            ProviderCapability.ETF_MASTER_DATA,
+        ):
+            with self.subTest(capability=forbidden):
+                self.assertNotIn(forbidden, HITHINK.capabilities)
+
+    def test_index_daily_bars_capability_is_absent(self) -> None:
+        # HiThink is a stock-oriented source; the index daily-bars
+        # surface belongs to the index-only providers and must not be
+        # silently inherited here.
+        self.assertNotIn(ProviderCapability.INDEX_DAILY_BARS, HITHINK.capabilities)
+
+    def test_enabled_by_default_is_false(self) -> None:
+        # Reserved-provider slice contract: HiThink defaults to off
+        # because no dataset contract has been approved yet. Pinning
+        # the boolean type guards against a future regression that
+        # accidentally flips the default.
+        self.assertFalse(HITHINK.enabled_by_default)
+        self.assertIsInstance(HITHINK.enabled_by_default, bool)
+
+    def test_has_runtime_factory_adapter_is_false(self) -> None:
+        # Reserved-provider slice contract: HiThink has **no** runtime
+        # factory adapter in this slice. The flag must stay ``False``
+        # so ``runtime_supported_provider_keys`` keeps excluding it
+        # until a future ADR approves the first dataset contract and
+        # wires a real adapter.
+        self.assertFalse(HITHINK.has_runtime_factory_adapter)
+        self.assertIsInstance(HITHINK.has_runtime_factory_adapter, bool)
+
+
+class HithinkRuntimeExclusionTest(unittest.TestCase):
+    """The reserved ``hithink`` provider stays out of the runtime surface.
+
+    The reserved-provider slice intentionally leaves
+    ``has_runtime_factory_adapter=False`` so the runtime factory
+    (:mod:`invest_pipeline.provider_factory`) refuses to construct
+    ``hithink``. These tests pin the catalog/runtime-key parity for
+    the new entry so a future maintainer cannot silently widen the
+    runtime surface.
+    """
+
+    def test_hithink_is_not_in_runtime_supported_keys(self) -> None:
+        # The four-key runtime surface stays exactly
+        # ``("akshare", "cifangquant", "fixture_dev", "tushare")``;
+        # adding ``hithink`` to it would silently route runtime
+        # traffic to a source that has no real adapter yet.
+        self.assertNotIn("hithink", runtime_supported_provider_keys())
+
+    def test_hithink_is_not_in_runtime_supported_declarations(self) -> None:
+        runtime_declarations = runtime_supported_provider_declarations()
+        self.assertNotIn(HITHINK, runtime_declarations)
+        for declaration in runtime_declarations:
+            with self.subTest(provider_key=declaration.provider_key):
+                self.assertNotEqual(declaration.provider_key, "hithink")
+
+    def test_hithink_is_visible_via_lookup_provider(self) -> None:
+        # ``hithink`` must be discoverable through the catalog even
+        # though it has no runtime adapter: the routing layer /
+        # coverage report still need to know it exists so the
+        # reserved surface is auditable.
+        self.assertIs(lookup_provider("hithink"), HITHINK)
+
+    def test_hithink_is_visible_via_iter_provider_declarations(self) -> None:
+        iterated_keys = {
+            declaration.provider_key for declaration in iter_provider_declarations()
+        }
+        self.assertIn("hithink", iterated_keys)
+
+    def test_runtime_supported_set_remains_strict_subset_of_catalog_set(self) -> None:
+        # The runtime surface is intentionally a strict subset of the
+        # catalog surface — every runtime provider must first be a
+        # catalog declaration so the routing layer can find it. Adding
+        # ``hithink`` must keep this property intact.
+        catalog_keys = {
+            declaration.provider_key for declaration in iter_provider_declarations()
+        }
+        runtime_keys = set(runtime_supported_provider_keys())
+        self.assertTrue(runtime_keys.issubset(catalog_keys))
+        self.assertLess(runtime_keys, catalog_keys)
+        self.assertIn("hithink", catalog_keys - runtime_keys)
+
+
 class EastmoneySinaTonghuashunNotRuntimeTest(unittest.TestCase):
     """The three-provider plan entries are not runtime providers in V2.
 
@@ -557,7 +719,7 @@ class LookupProviderTest(unittest.TestCase):
     """``lookup_provider`` resolves every known key and raises on unknowns."""
 
     def test_lookup_resolves_every_known_key(self) -> None:
-        for key in _ALL_FIVE_PROVIDER_KEYS:
+        for key in _ALL_CATALOG_PROVIDER_KEYS:
             with self.subTest(provider_key=key):
                 declaration = lookup_provider(key)
                 self.assertEqual(declaration.provider_key, key)
@@ -576,6 +738,7 @@ class LookupProviderTest(unittest.TestCase):
         self.assertIs(lookup_provider("akshare"), AKSHARE)
         self.assertIs(lookup_provider("rsscast"), RSSCAST)
         self.assertIs(lookup_provider("quicktiny_mcp"), QUICKTINY_MCP)
+        self.assertIs(lookup_provider("hithink"), HITHINK)
 
     def test_lookup_raises_key_error_for_unknown_key(self) -> None:
         with self.assertRaises(KeyError) as ctx:
@@ -608,7 +771,7 @@ class IterProviderDeclarationsTest(unittest.TestCase):
         declarations = iter_provider_declarations()
         self.assertEqual(
             tuple(declaration.provider_key for declaration in declarations),
-            _ALL_FIVE_PROVIDER_KEYS,
+            _ALL_CATALOG_PROVIDER_KEYS,
         )
 
     def test_iteration_is_alphabetical_by_provider_key(self) -> None:
@@ -637,8 +800,10 @@ class IterProviderDeclarationsTest(unittest.TestCase):
                 AKSHARE.provider_key,
                 CIFANGQUANT.provider_key,
                 FIXTURE_DEV.provider_key,
+                HITHINK.provider_key,
                 QUICKTINY_MCP.provider_key,
                 RSSCAST.provider_key,
+                TDX_OFFLINE.provider_key,
                 TUSHARE.provider_key,
             },
         )
@@ -656,9 +821,12 @@ class CatalogWideInvariantsTest(unittest.TestCase):
         # update is a regression; removing one is a regression. This
         # test pins the membership exactly so the next PR cannot
         # silently drop a provider or silently re-add the
-        # three-provider plan entries.
+        # three-provider plan entries. The reserved ``hithink`` slice
+        # is the only off-cycle addition (the plan is
+        # ``tasks/hithink-reserved-provider-plan.md``) and it remains
+        # a catalog-only, non-runtime entry.
         iterated_keys = {declaration.provider_key for declaration in iter_provider_declarations()}
-        self.assertEqual(iterated_keys, set(_ALL_FIVE_PROVIDER_KEYS))
+        self.assertEqual(iterated_keys, set(_ALL_CATALOG_PROVIDER_KEYS))
 
     def test_catalog_provider_keys_are_unique(self) -> None:
         provider_keys = [declaration.provider_key for declaration in iter_provider_declarations()]

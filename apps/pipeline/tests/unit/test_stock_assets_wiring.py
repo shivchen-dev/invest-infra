@@ -134,7 +134,7 @@ class StockAssetsSourceWiringTest(unittest.TestCase):
     def test_stock_daily_bars_raw_uses_by_trade_date_provider_path(self) -> None:
         body = _asset_body("stock_daily_bars_raw")
         self.assertIn("build_stock_provider(settings)", body)
-        self.assertIn("write_stock_daily_bars_raw_by_trade_date", body)
+        self.assertIn("write_stock_daily_bars_raw_with_tdx_fallback", body)
         # ``stock_daily_bars_raw`` must surface the by-date dataset_key
         # in metadata so an operator can audit which logical-request
         # window a partition materialised.
@@ -147,11 +147,27 @@ class StockAssetsSourceWiringTest(unittest.TestCase):
         # Hard-coded "ts_code" / "all market" defaults must not leak in.
         self.assertNotIn("fetch_stock_basic", body)
         self.assertNotIn("stock_basic", body)
+        # The TDX offline fallback must be wired through the
+        # orchestration helper, not via a stray direct call to
+        # ``write_stock_daily_bars_raw_by_trade_date`` (which would
+        # bypass the fail-closed Tushare-only / TDX-fallback-only
+        # gating the slice requires).
+        self.assertNotIn("write_stock_daily_bars_raw_by_trade_date(", body)
+        # ``TdxOfflineSettings`` must be imported lazily inside the
+        # asset so the helper stays the single opt-in boundary.
+        self.assertIn("TdxOfflineSettings", body)
 
     def test_stock_daily_bars_uses_by_date_dataset_key_and_request_key(self) -> None:
         body = _asset_body("stock_daily_bars")
         self.assertIn("build_stock_provider(settings)", body)
-        self.assertIn("dataset_key=\"stock_daily_bars_by_date\"", body)
+        # The upsert asset must consult BOTH provider candidates — the
+        # Tushare primary ``stock_daily_bars_by_date`` dataset and the
+        # offline fallback ``stock_daily_bars`` dataset — so the
+        # downstream resolution can read whichever request the raw
+        # asset persisted.
+        self.assertIn("\"stock_daily_bars_by_date\"", body)
+        self.assertIn("TDX_OFFLINE_FALLBACK_PROVIDER_KEY", body)
+        self.assertIn("TDX_OFFLINE_FALLBACK_DATASET_KEY", body)
         self.assertIn("upsert_stock_daily_bars", body)
         # Must surface a skipped MaterializeResult rather than raising
         # so a missing or failed upstream attempt does not enter a
@@ -264,9 +280,13 @@ class StockDailyBarsByTradeDateAssetWiringTest(unittest.TestCase):
             session_factory: Any,
             *,
             trade_date: date,
+            tdx_settings: Any = None,
+            tdx_provider_factory: Any = None,
             unit_of_work_factory: Any = None,
         ) -> Any:
             captured["trade_date"] = trade_date
+            captured["tdx_settings"] = tdx_settings
+            captured["tdx_provider_factory"] = tdx_provider_factory
             from uuid import uuid4
 
             return SimpleNamespace(
@@ -283,8 +303,9 @@ class StockDailyBarsByTradeDateAssetWiringTest(unittest.TestCase):
             patch.object(assets, "build_engine", lambda _url: engine),
             patch.object(assets, "session_factory", lambda _engine: MagicMock()),
             patch.object(assets, "build_stock_provider", lambda _settings: MagicMock()),
-            patch.object(
-                assets, "write_stock_daily_bars_raw_by_trade_date", _fake_write
+            patch(
+                "invest_pipeline.stock_daily_bars.write_stock_daily_bars_raw_with_tdx_fallback",
+                _fake_write,
             ),
         ):
             result = _underlying_callable("stock_daily_bars_raw")(
@@ -306,11 +327,26 @@ class StockDailyBarsByTradeDateAssetWiringTest(unittest.TestCase):
             _HISTORICAL_PARTITION,
         )
 
+    def test_raw_asset_passes_tdx_settings_into_orchestration(self) -> None:
+        # ``stock_daily_bars_raw`` must thread the operator-managed
+        # ``TdxOfflineSettings`` through to the orchestration helper so
+        # the asset layer is the single opt-in boundary; the helper
+        # then reads ``enabled`` to decide whether to consult the
+        # offline adapter.
+        captured = self._invoke_raw_with_capture()
+        self.assertIsNotNone(captured["tdx_settings"])
+        self.assertFalse(captured["tdx_settings"].enabled)
+        self.assertIsNone(captured["tdx_provider_factory"])
+
     def test_raw_asset_does_not_load_stock_universe(self) -> None:
-        # The by-date path is universe-agnostic; the asset must NOT
-        # call ``load_stock_universe`` (that's ``stock_input_snapshot``'s
-        # job). A stale universe must never silently re-target or
-        # filter the raw fetch.
+        # The by-date raw path is universe-agnostic for the Tushare
+        # primary (Tushare fetches every A-share for the trade date
+        # without an explicit universe); the offline fallback reads the
+        # persisted active ``STOCK`` universe via
+        # ``list_active_stock_instrument_ids`` (``stock_input_snapshot``
+        # 's job), not via the static ``load_stock_universe`` helper. A
+        # stale universe file must never silently re-target or filter
+        # the raw fetch.
         from uuid import uuid4 as _uuid4
 
         captured_calls: list[Path] = []
@@ -324,9 +360,8 @@ class StockDailyBarsByTradeDateAssetWiringTest(unittest.TestCase):
             patch.object(assets, "build_engine", lambda _url: engine),
             patch.object(assets, "session_factory", lambda _engine: MagicMock()),
             patch.object(assets, "build_stock_provider", lambda _settings: MagicMock()),
-            patch.object(
-                assets,
-                "write_stock_daily_bars_raw_by_trade_date",
+            patch(
+                "invest_pipeline.stock_daily_bars.write_stock_daily_bars_raw_with_tdx_fallback",
                 lambda _provider, _factory, **_kwargs: SimpleNamespace(
                     request_id=_uuid4(),
                     attempt_id=_uuid4(),
@@ -398,6 +433,7 @@ class StockDailyBarsByTradeDateAssetWiringTest(unittest.TestCase):
         self.assertEqual(captured["provider_key"], "tushare")
         self.assertEqual(result.metadata["request_key"], expected_key)
         self.assertEqual(result.metadata["trade_date"], _HISTORICAL_DATE.isoformat())
+        self.assertEqual(result.metadata["provider"], "tushare")
 
 
 class StockAssetsSkippedBehaviourTest(unittest.TestCase):

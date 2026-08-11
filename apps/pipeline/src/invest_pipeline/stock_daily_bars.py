@@ -1,7 +1,7 @@
 """Stock daily-bars ETL service (vertical slice on top of PR-06).
 
 Mirrors :mod:`invest_pipeline.etf_daily_bars` but for A-share stocks
-and the ``stock_daily_bars`` dataset key. Two raw entry points share
+and the ``stock_daily_bars`` dataset key. Three raw entry points share
 the same PR-02 three-layer evidence contract:
 
 - :func:`write_stock_daily_bars_raw` calls the Provider for an
@@ -34,6 +34,31 @@ the same PR-02 three-layer evidence contract:
   sidecar shape and idempotency stay byte-identical — the only
   difference is the (symbols-window vs. by-trade-date) provider call
   and the (provider, dataset_key, request_key) the request carries.
+- :func:`write_stock_daily_bars_raw_with_tdx_fallback` orchestrates
+  the Tushare primary with the opt-in TDX offline fallback. The
+  function preserves Tushare as the primary / default behaviour and
+  only consults the offline adapter when (a) :class:`TdxOfflineSettings`
+  has ``enabled=True`` and (b) the upstream Tushare attempt's
+  ``request_status`` is ``"failed"`` (a successful or partial Tushare
+  run is **always** the answer, even when TDX is enabled). The
+  fallback enumerates the active ``STOCK`` universe from
+  ``core.instruments`` (the persisted universe the dynamic
+  ``stock_input_snapshot`` asset materialises) and passes that set as
+  the symbol list the offline reader needs; the reader refuses to
+  fabricate a batch when the universe is empty, so the helper fails
+  closed with :class:`StockUniverseEmptyError` whenever the upstream
+  ``stock_instruments`` materialisation is missing / stale. The
+  fallback stamps ``provider_key="tdx_offline"`` /
+  ``dataset_key="stock_daily_bars"`` /
+  ``request_key="daily-bars-by-date-{trade_date.isoformat()}"`` so the
+  persisted request is distinct from the parallel Tushare primary
+  request and the downstream :func:`upsert_stock_daily_bars` can
+  resolve whichever provider produced the successful attempt via the
+  logical-key triplet alone — no Dagster metadata, no second network
+  call. The fallback path is fail-closed: a Tushare failure with TDX
+  disabled simply returns the Tushare failure so the asset surfaces
+  the ``skipped`` semantic, mirroring the Slice 2 / Slice 4B-A
+  contract.
 
 Failed attempts persist the request + attempt only; no batch row is
 created, mirroring the contract :mod:`etf_daily_bars` enforces.
@@ -48,7 +73,7 @@ created, mirroring the contract :mod:`etf_daily_bars` enforces.
   or ``dataset_key='stock_daily_bars_by_date'`` (by-date) and the
   service resolves the matching attempt via the logical-key triplet.
 
-Both write entry points accept a ``session_factory`` so unit tests can
+All write entry points accept a ``session_factory`` so unit tests can
 inject a factory that hands out a :class:`unittest.mock.MagicMock`
 session — the asset-level integration is verified via the test suite
 without booting a real database.
@@ -57,7 +82,7 @@ without booting a real database.
 from __future__ import annotations
 
 import json
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
 from typing import Any, Protocol
@@ -79,6 +104,13 @@ from invest_storage import (
 from invest_storage.unit_of_work import SessionProvider, SqlAlchemyUnitOfWork
 from sqlalchemy.orm import sessionmaker
 
+from invest_pipeline.adapters.tdx_offline.config import TdxOfflineSettings
+from invest_pipeline.adapters.tdx_offline.stock_adapter import (
+    PROVIDER_KEY as TDX_OFFLINE_PROVIDER_KEY,
+)
+from invest_pipeline.adapters.tdx_offline.stock_adapter import (
+    TdxOfflineStockProvider,
+)
 from invest_pipeline.etf_instruments import (
     RawEtlResult,
     UnitOfWorkFactory,
@@ -158,9 +190,7 @@ class _StockByTradeDateProviderPort(Protocol):
     @property
     def provider_key(self) -> str: ...
 
-    def fetch_daily_bars_by_trade_date(
-        self, trade_date: date
-    ) -> tuple[Any, Any, Any]: ...
+    def fetch_daily_bars_by_trade_date(self, trade_date: date) -> tuple[Any, Any, Any]: ...
 
     def symbol_and_exchange_for_instrument_id(
         self, instrument_id: Any
@@ -210,9 +240,7 @@ def _persist_stock_daily_bars_raw(
             )
         )
 
-        existing_attempts = uow.provider_attempts.list_by_request(
-            stored_request.id, limit=1000
-        )
+        existing_attempts = uow.provider_attempts.list_by_request(stored_request.id, limit=1000)
         next_attempt_no = (
             max(a.attempt_no for a in existing_attempts) + 1
             if existing_attempts
@@ -278,15 +306,12 @@ def _persist_stock_daily_bars_raw(
             stored_batch_id = stored_batch.id
             record_count = len(batch.records)
             sidecar_records = [
-                _build_sidecar_record(bar, request.provider_key, provider)
-                for bar in batch.records
+                _build_sidecar_record(bar, request.provider_key, provider) for bar in batch.records
             ]
             response_payload_json = serialize_stock_daily_bars(
                 sidecar_records,
                 source_batch_id=stored_batch.id,
-                observed_at=batch.records[0].source.observed_at
-                if batch.records
-                else finished_at,
+                observed_at=batch.records[0].source.observed_at if batch.records else finished_at,
                 provider_key=request.provider_key,
             )
         else:
@@ -295,9 +320,7 @@ def _persist_stock_daily_bars_raw(
         uow.provider_attempts.mark_succeeded(
             stored_attempt.id,
             finished_at=finished_at,
-            response_payload_sha256=batch.raw_payload_hash
-            if batch is not None
-            else "0" * 64,
+            response_payload_sha256=batch.raw_payload_hash if batch is not None else "0" * 64,
             response_payload_json=response_payload_json,
         )
 
@@ -413,6 +436,214 @@ def write_stock_daily_bars_raw_by_trade_date(
         batch=batch,
         unit_of_work_factory=unit_of_work_factory,
     )
+
+
+def write_stock_daily_bars_raw_with_tdx_fallback(
+    tushare_provider: _StockByTradeDateProviderPort,
+    session_factory: SessionProvider | sessionmaker[Any],
+    *,
+    trade_date: date,
+    tdx_settings: TdxOfflineSettings | None = None,
+    tdx_provider_factory: Callable[..., TdxOfflineStockProvider] | None = None,
+    universe_enumerator: Callable[[], list[UUID]] | None = None,
+    unit_of_work_factory: UnitOfWorkFactory = SqlAlchemyUnitOfWork,
+) -> RawEtlResult:
+    """Run the Tushare primary with the opt-in TDX offline fallback.
+
+    The orchestration preserves Tushare as the primary / default
+    behaviour and only consults the offline adapter when (a)
+    :class:`TdxOfflineSettings` has ``enabled=True`` and (b) the
+    upstream Tushare attempt's :attr:`RawEtlResult.request_status` is
+    ``"failed"``. A successful (``"succeeded"`` / ``"partial"``)
+    Tushare result is **always** the answer — the offline fallback is
+    never invoked for those outcomes even when TDX is enabled, so a
+    degraded Tushare partial run cannot be silently overwritten by a
+    less-fresh offline read.
+
+    The fallback enumerates the persisted active ``STOCK`` universe
+    from ``core.instruments`` via
+    :func:`invest_pipeline.market_breadth_service.list_active_stock_instrument_ids`
+    (the same helper the ``stock_input_snapshot`` asset consumes) so
+    the offline reader knows which ``.day`` files to read without
+    relying on a successful Tushare run to provide them. When the
+    persisted universe is empty the helper fails closed with
+    :class:`invest_pipeline.market_breadth_service.StockUniverseEmptyError`
+    — a misconfigured upstream ``stock_instruments`` materialisation
+    surfaces as a hard Dagster failure rather than a partial offline
+    read. The universe lookup is lazy: the helper only opens a UoW
+    when TDX is enabled and Tushare failed, so a healthy Tushare run
+    never pays the universe-enumeration cost.
+
+    The fallback stamps
+    ``provider_key="tdx_offline"`` /
+    ``dataset_key="stock_daily_bars"`` /
+    ``request_key="daily-bars-by-date-{trade_date.isoformat()}"`` on the
+    persisted request, distinct from the parallel Tushare primary
+    request so the two paths cannot collide in
+    ``raw.provider_requests``. The downstream
+    :func:`upsert_stock_daily_bars` resolves whichever provider
+    produced the successful attempt via the logical-key triplet
+    alone — no Dagster metadata, no second network call, no
+    dependency on the runtime factory branch the offline adapter
+    intentionally omits (the catalog pins
+    ``has_runtime_factory_adapter=False`` so
+    :func:`invest_pipeline.provider_factory.build_stock_provider` keeps
+    raising :class:`UnknownProviderError` for ``"tdx_offline"``).
+
+    Parameters
+    ----------
+    tushare_provider:
+        A :class:`_StockByTradeDateProviderPort` that implements the
+        same structural port :class:`StockTushareProvider` exposes
+        (``fetch_daily_bars_by_trade_date`` + ``symbol_and_exchange_for_instrument_id``
+        + ``provider_key``). The orchestration never falls back to a
+        different provider when Tushare returns a non-failed result.
+    session_factory:
+        Either a :class:`SessionProvider` callable or a
+        :class:`sessionmaker` for the persisted ``raw.*`` tables. The
+        universe enumeration also opens a UoW through this factory
+        when TDX is consulted.
+    trade_date:
+        The business trade date the by-date Provider request is keyed
+        against. The function refuses to silently fall back to
+        ``date.today()``; the Dagster asset always supplies the
+        partition key.
+    tdx_settings:
+        Optional pre-built :class:`TdxOfflineSettings`. When ``None``
+        the helper defaults to ``TdxOfflineSettings()`` (which has
+        ``enabled=False``). The fallback branch is gated on
+        ``tdx_settings.enabled`` so the default-off behaviour the
+        Stage 4B Phase 5 (slice 1) catalogue entry preserves is the
+        same shape the orchestration sees.
+    tdx_provider_factory:
+        Optional factory for the :class:`TdxOfflineStockProvider`.
+        When ``None`` the helper constructs the provider directly with
+        the universe symbols the universe enumeration returned.
+        Tests inject a factory so the suite can mock the offline
+        adapter without touching the operator-managed ``vipdoc`` tree.
+    universe_enumerator:
+        Optional callable that returns the persisted active ``STOCK``
+        universe's storage-side ``instrument_id`` UUIDs. When
+        ``None`` the helper defaults to the live
+        :func:`invest_pipeline.market_breadth_service.list_active_stock_instrument_ids`
+        helper. Tests inject a deterministic stub so the suite can
+        drive the orchestration without booting a real database.
+    unit_of_work_factory:
+        UoW factory passed straight through to the two
+        ``write_stock_daily_bars_raw_by_trade_date`` calls; the
+        universe enumeration uses the same factory so the offline
+        fallback reuses the same session lifecycle.
+
+    Returns
+    -------
+    RawEtlResult
+        The Tushare result when Tushare succeeded / partial OR when
+        TDX is disabled; the TDX result when Tushare failed and TDX
+        was enabled and the universe was non-empty. A Tushare failure
+        with TDX disabled surfaces as the Tushare failure so the asset
+        layer can decide whether to skip or rerun.
+    """
+
+    primary = write_stock_daily_bars_raw_by_trade_date(
+        tushare_provider,
+        session_factory,
+        trade_date=trade_date,
+        unit_of_work_factory=unit_of_work_factory,
+    )
+    settings = tdx_settings or TdxOfflineSettings()
+    if primary.request_status != "failed" or not settings.enabled:
+        return primary
+
+    universe_ids = _enumerate_active_stock_instrument_ids(
+        session_factory=session_factory,
+        universe_enumerator=universe_enumerator,
+        unit_of_work_factory=unit_of_work_factory,
+    )
+    symbols = _resolve_active_stock_symbols(
+        session_factory=session_factory,
+        instrument_ids=universe_ids,
+        unit_of_work_factory=unit_of_work_factory,
+    )
+    if not symbols:
+        from invest_pipeline.market_breadth_service import StockUniverseEmptyError
+
+        raise StockUniverseEmptyError(
+            f"tdx_offline fallback for trade_date="
+            f"{trade_date.isoformat()} requires a non-empty active "
+            "STOCK universe; re-materialise stock_instruments before "
+            "retrying stock_daily_bars_raw"
+        )
+    if tdx_provider_factory is None:
+        tdx_provider = TdxOfflineStockProvider(settings, symbols=symbols)
+    else:
+        tdx_provider = tdx_provider_factory(settings=settings, symbols=symbols)
+    return write_stock_daily_bars_raw_by_trade_date(
+        tdx_provider,
+        session_factory,
+        trade_date=trade_date,
+        unit_of_work_factory=unit_of_work_factory,
+    )
+
+
+def _enumerate_active_stock_instrument_ids(
+    *,
+    session_factory: SessionProvider | sessionmaker[Any],
+    universe_enumerator: Callable[[], list[UUID]] | None,
+    unit_of_work_factory: UnitOfWorkFactory,
+) -> list[UUID]:
+    """Return the persisted active ``STOCK`` universe's instrument ids.
+
+    When ``universe_enumerator`` is supplied (the test seam), the
+    helper invokes it directly so the suite can drive the
+    orchestration without booting a real database. When ``None`` the
+    helper opens a fresh UoW through ``unit_of_work_factory`` and
+    delegates to
+    :func:`invest_pipeline.market_breadth_service.list_active_stock_instrument_ids`,
+    the same dynamic-universe source the ``stock_input_snapshot``
+    asset consumes.
+    """
+
+    if universe_enumerator is not None:
+        return list(universe_enumerator())
+    factory = _coerce_session_factory(session_factory)
+    with unit_of_work_factory(factory) as uow:
+        from invest_pipeline.market_breadth_service import (
+            list_active_stock_instrument_ids,
+        )
+
+        return list_active_stock_instrument_ids(uow)
+
+
+def _resolve_active_stock_symbols(
+    *,
+    session_factory: SessionProvider | sessionmaker[Any],
+    instrument_ids: Sequence[UUID],
+    unit_of_work_factory: UnitOfWorkFactory,
+) -> list[str]:
+    """Resolve ``instrument_ids`` to naked ``symbol`` strings for the offline reader.
+
+    The persisted ``core.instruments.id`` UUIDs are mapped back to
+    ``(symbol, exchange)`` via the bulk
+    :meth:`SqlAlchemyInstrumentRepository.get_many_by_ids` helper so the
+    TDX offline provider can register its placeholder cache and the
+    sidecar ``source_provider`` field stays ``"tdx_offline"``. The
+    returned list is deduplicated and sorted so a deterministic
+    ``symbols`` tuple feeds :meth:`TdxOfflineStockProvider.register_symbol`
+    and the upstream ``ProviderBatch.raw_payload_hash`` stays stable
+    across reruns.
+    """
+
+    if not instrument_ids:
+        return []
+    factory = _coerce_session_factory(session_factory)
+    with unit_of_work_factory(factory) as uow:
+        rows = uow.instruments.get_many_by_ids(list(instrument_ids))
+    symbols: set[str] = set()
+    for instrument in rows.values():
+        symbol = getattr(instrument, "symbol", None)
+        if isinstance(symbol, str) and symbol:
+            symbols.add(symbol)
+    return sorted(symbols)
 
 
 def upsert_stock_daily_bars(
@@ -699,10 +930,17 @@ def deserialize_stock_daily_bars(
 
 __all__ = [
     "RawEtlResult",
+    "TDX_OFFLINE_FALLBACK_DATASET_KEY",
+    "TDX_OFFLINE_FALLBACK_PROVIDER_KEY",
     "UpsertSummary",
     "deserialize_stock_daily_bars",
     "serialize_stock_daily_bars",
     "upsert_stock_daily_bars",
     "write_stock_daily_bars_raw",
     "write_stock_daily_bars_raw_by_trade_date",
+    "write_stock_daily_bars_raw_with_tdx_fallback",
 ]  # type: ignore[no-redef]  # noqa: F811
+
+
+TDX_OFFLINE_FALLBACK_PROVIDER_KEY = TDX_OFFLINE_PROVIDER_KEY
+TDX_OFFLINE_FALLBACK_DATASET_KEY = "stock_daily_bars"

@@ -50,7 +50,6 @@ from invest_pipeline.provider_factory import build_provider, build_stock_provide
 from invest_pipeline.request_keys import make_daily_bars_request_key
 from invest_pipeline.stock_daily_bars import (
     upsert_stock_daily_bars,
-    write_stock_daily_bars_raw_by_trade_date,
 )
 from invest_pipeline.stock_universe import load_stock_universe  # noqa: F401
 
@@ -59,14 +58,10 @@ from invest_pipeline.stock_universe import load_stock_universe  # noqa: F401
 # "load_stock_universe", ...)`` without ``create=True``; no asset
 # calls it after the Stage 4B dynamic-universe slice.
 
-_ETF_INPUT_SNAPSHOT_PARTITIONS = dg.DailyPartitionsDefinition(
-    start_date="2026-07-23"
-)
+_ETF_INPUT_SNAPSHOT_PARTITIONS = dg.DailyPartitionsDefinition(start_date="2026-07-23")
 
 
-_STOCK_MARKET_DATA_PARTITIONS = dg.DailyPartitionsDefinition(
-    start_date="2026-07-23"
-)
+_STOCK_MARKET_DATA_PARTITIONS = dg.DailyPartitionsDefinition(start_date="2026-07-23")
 
 
 @dg.asset(group_name="market_data", compute_kind="python")
@@ -550,10 +545,12 @@ def etf_input_snapshot(context) -> dg.MaterializeResult:
     engine = build_engine(settings.database_url)
     factory = session_factory(engine)
     try:
+
         def _uow_factory() -> Any:
             return SqlAlchemyUnitOfWork(factory)
 
         with _uow_factory() as uow:
+
             def _lookup(symbol: str) -> Sequence[Instrument]:
                 rows = uow.session.scalars(
                     select(InstrumentRow).where(InstrumentRow.symbol == symbol)
@@ -571,8 +568,7 @@ def etf_input_snapshot(context) -> dg.MaterializeResult:
         engine.dispose()
 
     context.log.info(
-        "etf_input_snapshot: snapshot_date=%s row_count=%s content_hash=%s "
-        "universe_size=%s",
+        "etf_input_snapshot: snapshot_date=%s row_count=%s content_hash=%s universe_size=%s",
         snapshot.snapshot_date.isoformat(),
         snapshot.row_count,
         snapshot.content_hash,
@@ -641,9 +637,7 @@ def personal_candidate_pool(context) -> dg.MaterializeResult:
             return SqlAlchemyUnitOfWork(factory)
 
         with _uow_factory() as lookup_uow:
-            snapshots = lookup_uow.input_snapshot_repository.list_by_date(
-                trade_date
-            )
+            snapshots = lookup_uow.input_snapshot_repository.list_by_date(trade_date)
         if not snapshots:
             raise CandidatePoolSnapshotNotFoundError(
                 f"no InputSnapshot persisted for trade_date="
@@ -662,8 +656,7 @@ def personal_candidate_pool(context) -> dg.MaterializeResult:
         engine.dispose()
 
     context.log.info(
-        "personal_candidate_pool: trade_date=%s snapshot_id=%s status=%s "
-        "run_id=%s included=%s/%s",
+        "personal_candidate_pool: trade_date=%s snapshot_id=%s status=%s run_id=%s included=%s/%s",
         result.run.trade_date.isoformat(),
         result.run.input_snapshot_id,
         result.run.status.value,
@@ -852,25 +845,35 @@ def stock_daily_bars_raw(context) -> dg.MaterializeResult:
 
     Wires the dedicated Tushare
     :meth:`StockTushareProvider.fetch_daily_bars_by_trade_date` capability
-    through :func:`invest_pipeline.stock_daily_bars.write_stock_daily_bars_raw_by_trade_date`:
+    through :func:`invest_pipeline.stock_daily_bars.write_stock_daily_bars_raw_with_tdx_fallback`:
     a single by-date ``daily`` request that returns every A-share daily
-    bar for the partition's ``trade_date``. The provider stamps
+    bar for the partition's ``trade_date``, with the opt-in TDX offline
+    fallback consulted only after a *failed* Tushare attempt. The
+    orchestration preserves Tushare as the primary / default behaviour:
+    a successful or partial Tushare run is always the answer, even
+    when ``INVEST_PIPELINE_TDX_OFFLINE_ENABLED=true``; the offline
+    reader never silently overwrites a degraded primary read. The
+    Tushare provider stamps
     ``dataset_key='stock_daily_bars_by_date'`` /
     ``request_key='daily-bars-by-date-{trade_date.isoformat()}'`` on the
-    persisted request, distinct from the parallel per-symbol
-    ``dataset_key='stock_daily_bars'`` baseline so the two requests
-    cannot collide in ``raw.provider_requests``. The per-symbol
-    :func:`invest_pipeline.stock_daily_bars.write_stock_daily_bars_raw`
-    baseline is intentionally preserved for any caller that still needs
-    the per-symbol shape.
+    persisted request and the offline fallback stamps the distinct
+    ``(provider_key='tdx_offline', dataset_key='stock_daily_bars',
+    request_key='daily-bars-by-date-{trade_date.isoformat()}')`` tuple,
+    so the two requests cannot collide in ``raw.provider_requests`` and
+    the downstream :func:`stock_daily_bars` asset can resolve
+    whichever provider produced the successful attempt via the
+    logical-key triplet alone — no Dagster metadata, no second network
+    call.
 
     The Tushare ``StockTushareProvider`` is wired via
-    :func:`invest_pipeline.provider_factory.build_stock_provider`. The
-    asset depends on :func:`stock_instruments` so the canonical
-    ``core.instruments`` rows exist by the time the downstream upsert
-    runs (the daily-bars upsert resolves
-    ``(symbol, exchange) -> core.instruments.id`` via the partial
-    unique business key).
+    :func:`invest_pipeline.provider_factory.build_stock_provider`; the
+    fallback reads :class:`TdxOfflineSettings` from the environment
+    (``INVEST_PIPELINE_TDX_OFFLINE_*``) and fails closed on an empty
+    persisted ``STOCK`` universe. The asset depends on
+    :func:`stock_instruments` so the canonical ``core.instruments``
+    rows exist by the time the downstream upsert runs (the daily-bars
+    upsert resolves ``(symbol, exchange) -> core.instruments.id`` via
+    the partial unique business key).
     """
 
     settings = get_settings()
@@ -882,10 +885,16 @@ def stock_daily_bars_raw(context) -> dg.MaterializeResult:
     try:
         from invest_storage import SqlAlchemyUnitOfWork
 
-        result = write_stock_daily_bars_raw_by_trade_date(
+        from invest_pipeline.adapters.tdx_offline.config import TdxOfflineSettings
+        from invest_pipeline.stock_daily_bars import (
+            write_stock_daily_bars_raw_with_tdx_fallback,
+        )
+
+        result = write_stock_daily_bars_raw_with_tdx_fallback(
             provider,
             factory,
             trade_date=trade_date,
+            tdx_settings=TdxOfflineSettings(),
             unit_of_work_factory=SqlAlchemyUnitOfWork,
         )
     finally:
@@ -929,11 +938,23 @@ def stock_daily_bars(context) -> dg.MaterializeResult:
 
     Depends on :func:`stock_daily_bars_raw` and re-opens a fresh
     transaction to read the persisted attempt's
-    ``response_payload_json`` sidecar. The request lookup uses the
-    partition-aligned by-date logical key
-    ``(provider_key='tushare', dataset_key='stock_daily_bars_by_date',
-    request_key='daily-bars-by-date-{trade_date.isoformat()}')`` so the
-    request the raw asset just persisted is the one the upsert reads.
+    ``response_payload_json`` sidecar. The request lookup walks the
+    Stage 4B fallback candidates in priority order — the
+    :func:`invest_pipeline.provider_factory.build_stock_provider`
+    primary first, then the opt-in ``tdx_offline`` fallback — and
+    reads whichever persisted request succeeded. The resolution uses
+    the ``(provider_key, dataset_key, request_key)`` logical-key
+    triplet alone, so the asset does not have to consult Dagster
+    metadata or issue a second network call to learn which provider
+    produced the successful attempt. The two candidates share the
+    by-date ``request_key`` but are distinguished by their
+    ``provider_key`` / ``dataset_key`` pair:
+
+    * ``("tushare", "stock_daily_bars_by_date",
+      "daily-bars-by-date-{trade_date}")`` — the Tushare primary.
+    * ``("tdx_offline", "stock_daily_bars",
+      "daily-bars-by-date-{trade_date}")`` — the offline fallback.
+
     The sidecar records are deserialized, the real
     ``core.instruments.id`` is resolved per ``(symbol, exchange)`` (the
     exchange is read from the sidecar, NOT inferred from the code
@@ -944,7 +965,7 @@ def stock_daily_bars(context) -> dg.MaterializeResult:
     business content is a no-op, content change increments the
     revision.
 
-    If the upstream request is missing or in ``failed`` status the
+    If both persisted requests are missing or in ``failed`` status the
     asset surfaces a :class:`MaterializeResult` with ``inserted=0``
     and a ``skipped`` note rather than raising, mirroring the
     :func:`etf_daily_bars` asset's "no retry loop on contract failure"
@@ -955,19 +976,37 @@ def stock_daily_bars(context) -> dg.MaterializeResult:
     trade_date = date.fromisoformat(context.partition_key)
     request_key = f"daily-bars-by-date-{trade_date.isoformat()}"
 
-    provider = build_stock_provider(settings)
+    primary_provider = build_stock_provider(settings)
     engine = build_engine(settings.database_url)
     factory = session_factory(engine)
     try:
         from invest_storage import SqlAlchemyUnitOfWork
 
+        from invest_pipeline.stock_daily_bars import (
+            TDX_OFFLINE_FALLBACK_DATASET_KEY,
+            TDX_OFFLINE_FALLBACK_PROVIDER_KEY,
+        )
+
+        candidates = [
+            (primary_provider.provider_key, "stock_daily_bars_by_date"),
+            (TDX_OFFLINE_FALLBACK_PROVIDER_KEY, TDX_OFFLINE_FALLBACK_DATASET_KEY),
+        ]
         with SqlAlchemyUnitOfWork(factory) as uow:
-            stored_request = uow.provider_requests.get_by_logical_key(
-                provider_key=provider.provider_key,
-                dataset_key="stock_daily_bars_by_date",
-                request_key=request_key,
-            )
-        if stored_request is None or stored_request.status == "failed":
+            stored_request = None
+            resolved_provider_key: str | None = None
+            resolved_dataset_key: str | None = None
+            for candidate_provider_key, candidate_dataset_key in candidates:
+                stored = uow.provider_requests.get_by_logical_key(
+                    provider_key=candidate_provider_key,
+                    dataset_key=candidate_dataset_key,
+                    request_key=request_key,
+                )
+                if stored is not None and stored.status != "failed":
+                    stored_request = stored
+                    resolved_provider_key = candidate_provider_key
+                    resolved_dataset_key = candidate_dataset_key
+                    break
+        if stored_request is None:
             context.log.warning(
                 "stock_daily_bars: upstream attempt failed or missing for %s; "
                 "skipping core.daily_bars upsert",
@@ -986,8 +1025,8 @@ def stock_daily_bars(context) -> dg.MaterializeResult:
             )
         summary = upsert_stock_daily_bars(
             factory,
-            provider_key=provider.provider_key,
-            dataset_key="stock_daily_bars_by_date",
+            provider_key=resolved_provider_key or "",
+            dataset_key=resolved_dataset_key or "",
             request_key=request_key,
             unit_of_work_factory=SqlAlchemyUnitOfWork,
         )
@@ -995,7 +1034,8 @@ def stock_daily_bars(context) -> dg.MaterializeResult:
         engine.dispose()
 
     context.log.info(
-        "stock_daily_bars: inserted=%s skipped=%s total=%s for trade_date=%s",
+        "stock_daily_bars: provider=%s inserted=%s skipped=%s total=%s for trade_date=%s",
+        resolved_provider_key,
         summary.inserted,
         summary.skipped,
         summary.total,
@@ -1003,6 +1043,7 @@ def stock_daily_bars(context) -> dg.MaterializeResult:
     )
     return dg.MaterializeResult(
         metadata={
+            "provider": resolved_provider_key or "",
             "inserted": summary.inserted,
             "skipped": summary.skipped,
             "total": summary.total,
@@ -1052,6 +1093,7 @@ def stock_input_snapshot(context) -> dg.MaterializeResult:
     engine = build_engine(get_settings().database_url)
     factory = session_factory(engine)
     try:
+
         def _uow_factory() -> Any:
             return SqlAlchemyUnitOfWork(factory)
 
@@ -1067,8 +1109,7 @@ def stock_input_snapshot(context) -> dg.MaterializeResult:
         engine.dispose()
 
     context.log.info(
-        "stock_input_snapshot: snapshot_date=%s row_count=%s content_hash=%s "
-        "universe_size=%s",
+        "stock_input_snapshot: snapshot_date=%s row_count=%s content_hash=%s universe_size=%s",
         snapshot.snapshot_date.isoformat(),
         snapshot.row_count,
         snapshot.content_hash,
@@ -1126,6 +1167,7 @@ def market_breadth_snapshot(context) -> dg.MaterializeResult:
     engine = build_engine(get_settings().database_url)
     factory = session_factory(engine)
     try:
+
         def _uow_factory() -> Any:
             return SqlAlchemyUnitOfWork(factory)
 
@@ -1209,7 +1251,8 @@ def market_breadth_snapshot(context) -> dg.MaterializeResult:
         "shape and the asset surfaces it as skipped / invalid"
     )
     context.log.warning(
-        "market_breadth_snapshot: %s", reason,
+        "market_breadth_snapshot: %s",
+        reason,
     )
     return dg.MaterializeResult(
         metadata={

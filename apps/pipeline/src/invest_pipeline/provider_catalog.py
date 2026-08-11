@@ -17,7 +17,7 @@ endpoints remain internal upstreams of the AkShare aggregator
 is therefore:
 
 ```text
-fixture_dev   cifangquant   akshare   tushare   rsscast   quicktiny_mcp
+fixture_dev   cifangquant   akshare   tushare   rsscast   quicktiny_mcp   hithink   tdx_offline
 ```
 
 The module is intentionally small:
@@ -148,6 +148,8 @@ class ProviderCapability(StrEnum):
     INDEX_DAILY_BARS = "index_daily_bars"
     STOCK_DAILY_BARS = "stock_daily_bars"
     STOCK_MASTER_DATA = "stock_master_data"
+    STOCK_FINANCIALS = "stock_financials"
+    STOCK_VALUATIONS = "stock_valuations"
 
 
 @dataclass(frozen=True, slots=True)
@@ -316,12 +318,78 @@ research surface). The provider stays disabled by default per matrix
 """
 
 
+HITHINK = ProviderDeclaration(
+    provider_key="hithink",
+    role=ProviderRole.RESEARCH_ONLY,
+    capabilities=(
+        ProviderCapability.RESEARCH,
+        ProviderCapability.MARKET_SNAPSHOT,
+        ProviderCapability.STOCK_DAILY_BARS,
+        ProviderCapability.STOCK_MASTER_DATA,
+        ProviderCapability.STOCK_FINANCIALS,
+        ProviderCapability.STOCK_VALUATIONS,
+    ),
+    enabled_by_default=False,
+)
+"""HiThink reserved provider declaration.
+
+The HiThink source is registered as a catalog-only, disabled-by-default
+entry per the ``tasks/hithink-reserved-provider-plan.md`` reserved
+slice. The declaration advertises the six surfaces the upstream
+HiThink contract exposes (``research`` / ``market_snapshot`` /
+``stock_daily_bars`` / ``stock_master_data`` / ``stock_financials`` /
+``stock_valuations``) but explicitly omits every ETF / index capability
+and leaves ``has_runtime_factory_adapter=False`` so the runtime
+factory's :data:`invest_pipeline.provider_factory.KNOWN_PROVIDER_KEYS`
+helper excludes it. ``enabled_by_default=False`` is consistent with
+matrix §6 and the "no production SLA path yet" reserved posture. The
+credential is read lazily through the centralized
+:func:`invest_pipeline.credentials.CredentialStore` against the
+``hithink.api_key`` filename; no runtime factory branch or network
+client is added in this slice.
+"""
+
+
+TDX_OFFLINE = ProviderDeclaration(
+    provider_key="tdx_offline",
+    role=ProviderRole.RESEARCH_ONLY,
+    capabilities=(
+        ProviderCapability.STOCK_DAILY_BARS,
+    ),
+    enabled_by_default=False,
+)
+"""TDX offline provider declaration (Stage 4B Phase 5, slice 1).
+
+The TDX ``.day`` offline adapter is the catalog declaration for the
+Tushare → TDX offline fallback path. The role is ``research_only``
+because the offline reader is a deterministic, file-based backstop
+that exists to keep the daily-bars evidence tuple auditable when the
+Tushare primary source is unavailable — it is **not** a production
+SLA source. The capability set is intentionally narrow: only
+``STOCK_DAILY_BARS`` (the surface the upstream ``vipdoc/<market>/lday``
+files cover). ETF / index / research / market-snapshot / financials /
+valuations capabilities are explicitly omitted so the catalog cannot
+silently widen the offline adapter's role.
+
+``has_runtime_factory_adapter=False`` keeps the declaration
+catalog-only for this slice: the slice ships the adapter, the
+settings, and the catalog entry, but does **not** add a
+:func:`invest_pipeline.provider_factory.build_stock_provider` branch
+or wire the offline read into the ``stock_daily_bars_raw`` Dagster
+asset. The runtime fallback orchestration is documented as a
+follow-up that requires a symbol-enumeration contract the slice did
+not invent.
+"""
+
+
 _PROVIDER_CATALOG: dict[str, ProviderDeclaration] = {
     AKSHARE.provider_key: AKSHARE,
     CIFANGQUANT.provider_key: CIFANGQUANT,
     FIXTURE_DEV.provider_key: FIXTURE_DEV,
+    HITHINK.provider_key: HITHINK,
     QUICKTINY_MCP.provider_key: QUICKTINY_MCP,
     RSSCAST.provider_key: RSSCAST,
+    TDX_OFFLINE.provider_key: TDX_OFFLINE,
     TUSHARE.provider_key: TUSHARE,
 }
 
@@ -329,8 +397,10 @@ _ALL_DECLARATIONS: tuple[ProviderDeclaration, ...] = (
     AKSHARE,
     CIFANGQUANT,
     FIXTURE_DEV,
+    HITHINK,
     QUICKTINY_MCP,
     RSSCAST,
+    TDX_OFFLINE,
     TUSHARE,
 )
 
@@ -427,11 +497,13 @@ __all__ = [
     "AKSHARE",
     "CIFANGQUANT",
     "FIXTURE_DEV",
+    "HITHINK",
     "ProviderCapability",
     "ProviderDeclaration",
     "ProviderRole",
     "QUICKTINY_MCP",
     "RSSCAST",
+    "TDX_OFFLINE",
     "TUSHARE",
     "iter_provider_declarations",
     "lookup_provider",

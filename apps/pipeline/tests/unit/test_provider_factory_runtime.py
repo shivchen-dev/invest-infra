@@ -10,10 +10,14 @@ cover every branch documented in
 * ``cifangquant`` (empty key) -> :class:`ProviderAuthenticationError`.
 * Unknown key -> :class:`UnknownProviderError` carrying the offending key.
 * Catalog-declared but non-runtime providers (for example ``rsscast``
-  / ``quicktiny_mcp``) also raise :class:`UnknownProviderError`
-  because the factory validates the selected key against the
-  catalog-derived :data:`KNOWN_PROVIDER_KEYS` *before* any adapter
-  branch runs (GOV-04).
+  / ``quicktiny_mcp`` / ``hithink``) also raise
+  :class:`UnknownProviderError` because the factory validates the
+  selected key against the catalog-derived :data:`KNOWN_PROVIDER_KEYS`
+  *before* any adapter branch runs (GOV-04). ``hithink`` is the
+  reserved-provider slice (see
+  ``tasks/hithink-reserved-provider-plan.md``); it ships without a
+  runtime factory adapter and must therefore fail the upfront
+  runtime gate just like the MCP research sources.
 * Construction never reaches the network.
 
 Tests always pass an explicit :class:`Settings` (and, for cifang,
@@ -265,8 +269,10 @@ class CatalogDeclaredNonRuntimeProviderRejectionTest(unittest.TestCase):
     layer and coverage reports can reason about every V2 data source.
     Two of those declarations (``rsscast`` and ``quicktiny_mcp``) are
     MCP research sources with no runtime factory adapter: they must
-    not enter the runtime selection surface. The factory validates
-    the selected key against
+    not enter the runtime selection surface. The reserved-provider
+    slice additionally adds ``hithink`` as a catalog-only,
+    disabled-by-default entry that also has no runtime factory
+    adapter. The factory validates the selected key against
     :data:`invest_pipeline.provider_catalog.runtime_supported_provider_keys`
     before any adapter branch runs, so picking one of them raises the
     same :class:`UnknownProviderError` a completely unknown key does.
@@ -284,14 +290,29 @@ class CatalogDeclaredNonRuntimeProviderRejectionTest(unittest.TestCase):
             build_provider(settings)
         self.assertEqual(ctx.exception.args[0], "quicktiny_mcp")
 
+    def test_hithink_provider_key_raises_unknown_provider_error(self) -> None:
+        # Reserved-provider slice: ``hithink`` is visible in the
+        # catalog but has no runtime factory adapter, so the factory
+        # must reject it through the same
+        # :class:`UnknownProviderError` path the MCP research sources
+        # use. The exception carries the offending key as its first
+        # argument so callers can self-diagnose without parsing the
+        # message string.
+        settings = Settings(provider_key="hithink")
+        with self.assertRaises(UnknownProviderError) as ctx:
+            build_provider(settings)
+        self.assertEqual(ctx.exception.args[0], "hithink")
+
     def test_every_catalog_declared_non_runtime_key_is_rejected(self) -> None:
         # Drive the factory with every key that exists in the catalog
         # but is **not** part of the runtime-supported set. None of
         # them should reach an adapter branch — they all fail the
         # upfront runtime gate.
         from invest_pipeline.provider_catalog import (
+            HITHINK,
             QUICKTINY_MCP,
             RSSCAST,
+            TDX_OFFLINE,
             iter_provider_declarations,
             runtime_supported_provider_keys,
         )
@@ -302,13 +323,20 @@ class CatalogDeclaredNonRuntimeProviderRejectionTest(unittest.TestCase):
             for declaration in iter_provider_declarations()
             if declaration.provider_key not in runtime_keys
         ]
-        # The catalog currently has two non-runtime declarations
-        # (``rsscast`` / ``quicktiny_mcp``); the assertion protects
-        # against a future regression that adds a third without a
-        # test covering it.
+        # The catalog currently has four non-runtime declarations
+        # (``rsscast`` / ``quicktiny_mcp`` / ``hithink`` / ``tdx_offline``);
+        # the assertion protects against a future regression that adds a
+        # fifth without a test covering it.
         self.assertEqual(
             sorted(non_runtime_keys),
-            sorted([QUICKTINY_MCP.provider_key, RSSCAST.provider_key]),
+            sorted(
+                [
+                    HITHINK.provider_key,
+                    QUICKTINY_MCP.provider_key,
+                    RSSCAST.provider_key,
+                    TDX_OFFLINE.provider_key,
+                ]
+            ),
         )
         for key in non_runtime_keys:
             with self.subTest(provider_key=key):

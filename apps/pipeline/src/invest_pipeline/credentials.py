@@ -18,6 +18,7 @@ _CREDENTIAL_FILES = {
     "akshare": "akshare.token",
     "rsscast": "rsscast.token",
     "tushare": "tushare.token",
+    "hithink": "hithink.api_key",
 }
 
 
