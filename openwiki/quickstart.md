@@ -1,9 +1,9 @@
 ---
 type: Reference
 title: OpenWiki Quickstart
-description: Entry point for the invest-infra OpenWiki knowledge base. Describes the modular-monolith layout, links every major concept page, and summarizes local startup, migrations, personal daily scheduling and replay/backfill operations, testing, opt-in CifangQuant / Tushare / JiuwenSwarm validation, the DC-2 ETF profile and Stage 4A evidence / context slices, the ADR-0012 evidence-driven Research lifecycle (PR-7 API + JiuwenSwarm adapter + orchestration service + PR-W03 dashboard / PR-W05 case workspace read models), the PR-MCP-MINIMAL read-only MCP server, the DC-3 exposure collection slice, the Research Cockpit web workbench (widget runtime + dashboard widgets + safe markdown renderer), and the centralized provider credential store.
+description: Entry point for the invest-infra OpenWiki knowledge base. Describes the modular-monolith layout, links every major concept page, and summarizes local startup, migrations, personal daily scheduling and replay/backfill operations, testing, opt-in CifangQuant / Tushare / JiuwenSwarm validation, the DC-2 ETF profile and Stage 4A evidence / context slices, the ADR-0012 evidence-driven Research lifecycle (PR-7 API + JiuwenSwarm adapter + orchestration service + PR-W03 dashboard / PR-W05 case workspace read models), the PR-MCP-MINIMAL read-only MCP server, the DC-3 exposure collection slice, the Research Cockpit web workbench (widget runtime + dashboard widgets + safe markdown renderer), the centralized provider credential store, the Stage 4B Market Intelligence foundation (Market Observation / Temperature / Breadth read slices + Tushare-stock by-date pipeline + Research Evidence Bundle chain), and the HiThink reserved provider catalog entry.
 resource: /openwiki/quickstart.md
-tags: [quickstart, navigation, invest-infra, etf-profile, research-context, research-lifecycle, research-cockpit, jiuwenswarm, mcp, exposure, governance]
+tags: [quickstart, navigation, invest-infra, etf-profile, research-context, research-lifecycle, research-cockpit, jiuwenswarm, mcp, exposure, governance, stage4b, market-breadth, market-temperature, market-observations, stock-universe, tdx-offline, evidence-bundle, hithink]
 ---
 
 # OpenWiki quickstart — invest-infra v2
@@ -52,9 +52,11 @@ Read these pages in order:
    including ADR-0012 for the Research lifecycle boundary) and the
    architecture-governance baseline.
 2. [Migrations overview](migrations/overview.md) — how
-   `apps/migrations` owns the schema and the fourteen-revision chain
+   `apps/migrations` owns the schema and the seventeen-revision chain
    (now including `0011` DC-3 exposure, `0012` research cases,
-   `0013` evidence-pack case FK and `0014` research runs).
+   `0013` evidence-pack case FK, `0014` research runs,
+   `0015` market-observation snapshots, `0016` research evidence
+   bundles and `0017` research-result ↔ evidence-bundle FK).
 3. [Domain overview](domain/overview.md) — bounded contexts and the
    canonical hashing scheme (now including the DC-2 `etf_profile`
    context, the Stage 4A `research.context` vocabulary, the
@@ -325,8 +327,51 @@ adds the matching tables; `20260807_0012_research_cases`,
 `20260807_0013_research_evidence_packs_case_fk` and
 `20260807_0014_research_runs` anchor the research lifecycle.
 The AST migration-chain gate now expects a single head at
-`20260807_0014` and round-trips `upgrade head → downgrade base →
+`20260812_0017` and round-trips `upgrade head → downgrade base →
 upgrade head` end-to-end.
+
+Stage 4B lands the **Market Intelligence Foundation** vertical slice on top
+of the Stage 4A evidence / context separation. The pure-domain side carves
+three new analytical modules ([`market_observations`](../packages/domain/src/invest_domain/analytics/market_observations.py) /
+[`market_temperature`](../packages/domain/src/invest_domain/analytics/market_temperature.py) /
+[`market_breadth`](../packages/domain/src/invest_domain/analytics/market_breadth.py)) that share a single `MarketObservationSnapshot`
+vocabulary, plus the [`research.evidence_bundle`](../packages/domain/src/invest_domain/research/evidence_bundle.py)
+domain object that pins a case to one ResearchEvidenceBundle. The pipeline
+gains a Tushare-driven stock-daily-bars + dynamic-universe slice
+([`stock_universe.py`](../apps/pipeline/src/invest_pipeline/stock_universe.py) +
+[`stock_daily_bars.py`](../apps/pipeline/src/invest_pipeline/stock_daily_bars.py)) that materialises
+`stock_input_snapshot` against the active `STOCK` universe, a `tdx_offline`
+adapter ([`adapters/tdx_offline/`](../apps/pipeline/src/invest_pipeline/adapters/tdx_offline/)) that
+reads pre-fetched TDX snapshot archives without ever touching the network,
+the [`market_breadth_service.py`](../apps/pipeline/src/invest_pipeline/market_breadth_service.py) +
+[`market_breadth_bundle_service.py`](../apps/pipeline/src/invest_pipeline/market_breadth_bundle_service.py) application services that bridge the
+snapshot family to the new `ResearchEvidenceBundle`, and Dagster assets
+(`stock_daily_bars_raw` / `stock_daily_bars` / `stock_input_snapshot` /
+`market_breadth_snapshot`). The API exposes two new read-only routes —
+`GET /api/v1/market-temperature/latest` and
+`GET /api/v1/market-breadth/latest` — both thin wrappers over dedicated
+[`MarketTemperatureQueryService`](../apps/api/src/invest_api/application/market_temperature.py) and
+[`MarketBreadthQueryService`](../apps/api/src/invest_api/application/market_breadth.py) services that pin a fixed
+`scope_type` / `scope_key` pair so a snapshot family is never read through
+the wrong route. Migrations
+[`20260810_0015_market_observation_snapshots`](../apps/migrations/migrations/versions/20260810_0015_market_observation_snapshots.py),
+[`20260811_0016_research_evidence_bundles`](../apps/migrations/migrations/versions/20260811_0016_research_evidence_bundles.py) and
+[`20260812_0017_research_result_evidence_bundle_fk`](../apps/migrations/migrations/versions/20260812_0017_research_result_evidence_bundle_fk.py)
+extend the chain (`20260807_0014` → `20260812_0017` head).
+
+The HiThink reserved provider slice ([`tasks/hithink-reserved-provider-plan.md`](../tasks/hithink-reserved-provider-plan.md))
+registers `hithink` as a reserved `ProviderDeclaration` in
+[`provider_catalog.py`](../apps/pipeline/src/invest_pipeline/provider_catalog.py):
+role `research_only`, capabilities `research` / `market_snapshot` /
+`stock_daily_bars` / `stock_master_data` / `stock_financials` /
+`stock_valuations`, `enabled_by_default=False`,
+**`has_runtime_factory_adapter=False`** so `provider_factory.build_provider()`
+keeps failing the future `INVEST_PIPELINE_PROVIDER_KEY=hithink` lookup with
+`UnknownProviderError`. The API key is read lazily via the centralized
+[`invest_pipeline.credentials.CredentialStore`](../apps/pipeline/src/invest_pipeline/credentials.py)
+against `hithink.api_key` (documented in `.env.example`); no network client
+or runtime factory branch lands in this slice, and no test / log embeds the
+credential material.
 
 ## 7. Web data workbench
 

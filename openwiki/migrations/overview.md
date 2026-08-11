@@ -1,9 +1,9 @@
 ---
 type: Concept
 title: Migrations overview
-description: How apps/migrations owns the PostgreSQL schema as an independent Alembic app, the fourteen-revision chain under apps/migrations/migrations/versions (baseline + provider evidence + candidate pool + daily bars + input snapshots + DC-2 etf_profiles + PR-ETF-PROFILE-04 etf_profile_fields + Stage 4A research_context_packs + DC-3 exposure + research_cases + evidence-pack case FK + research_runs/results), and the schema-ownership rules across raw/core/analytics/ops.
+description: How apps/migrations owns the PostgreSQL schema as an independent Alembic app, the seventeen-revision chain under apps/migrations/migrations/versions (baseline + provider evidence + candidate pool + daily bars + input snapshots + DC-2 etf_profiles + PR-ETF-PROFILE-04 etf_profile_fields + Stage 4A research_context_packs + DC-3 exposure + research_cases + evidence-pack case FK + research_runs/results + Stage 4B market_observation_snapshots + research_evidence_bundles + research_result evidence FK), and the schema-ownership rules across raw/core/analytics/ops.
 resource: /openwiki/migrations/overview.md
-tags: [migrations, alembic, postgres, schemas, etf-profile, research-context, exposure, research-lifecycle]
+tags: [migrations, alembic, postgres, schemas, etf-profile, research-context, exposure, research-lifecycle, market-observations, evidence-bundle]
 ---
 
 # Migrations overview
@@ -38,18 +38,22 @@ apps/migrations/
         ├── 20260806_0011_dc3_exposure.py
         ├── 20260807_0012_research_cases.py
         ├── 20260807_0013_research_evidence_packs_case_fk.py
-        └── 20260807_0014_research_runs.py
+        ├── 20260807_0014_research_runs.py
+        ├── 20260810_0015_market_observation_snapshots.py
+        ├── 20260811_0016_research_evidence_bundles.py
+        └── 20260812_0017_research_result_evidence_bundle_fk.py
 ```
 
 The shell entry-point is `cd apps/migrations && uv run alembic ...`,
 which `make migrate` aliases.
 
-## 2. The fourteen-revision chain
+## 2. The seventeen-revision chain
 
 Every revision declares its own `revision`, `down_revision` and a
 single `upgrade()` / `downgrade()` pair. The chain currently ends at
-`20260807_0014_research_runs.py` and is verified by an AST-based
-gate — see [Testing & operations](../testing-and-ops/overview.md#migration-chain-ast-gate).
+`20260812_0017_research_result_evidence_bundle_fk.py` and is verified
+by an AST-based gate — see
+[Testing & operations](../testing-and-ops/overview.md#migration-chain-ast-gate).
 
 | Revision | Purpose | Key additions |
 |----------|---------|---------------|
@@ -67,6 +71,9 @@ gate — see [Testing & operations](../testing-and-ops/overview.md#migration-cha
 | `20260807_0012_research_cases` | Research lifecycle persistence (case header). | Creates `analytics.research_cases` with non-null `instrument_id`, optional `candidate_pool_run_id`, `as_of_date`, `question`, `horizon`, six-value lowercase status, and `created_at` / `closed_at`. CHECK constraints enforce non-blank text and terminal-status/`closed_at` consistency; indexes cover `(instrument_id, as_of_date)` and `status`. |
 | `20260807_0013_research_evidence_packs_case_fk` | Bind research evidence packs to their case. | Adds nullable `research_case_id`, its FK to `analytics.research_cases.case_id`, and an index on the new column. It also adds a global unique constraint on `content_hash`. |
 | `20260807_0014_research_runs` | Research-run and result persistence. | Creates `analytics.research_runs` with five lowercase statuses (`queued`, `running`, `succeeded`, `failed`, `cancelled`), external request/session identity fields, and a partial unique index on non-null `external_session_id`. Creates `analytics.research_results` with one-result-per-run uniqueness, evidence-pack FK, JSONB risks/evidence IDs, version provenance, and payload CHECK constraints. |
+| `20260810_0015_market_observation_snapshots` | Stage 4B Market Observation snapshot family. | Creates `analytics.market_observation_snapshots` (uuid PK, `scope_type` / `scope_key` discriminator pair, `as_of_date`, `instrument_count`, JSONB `observations` keyed on the deterministic `key` family, length-64 `content_hash`, plus the `freshness_status` / `quality_status` enums and the unique `(scope_type, scope_key, as_of_date)` natural key) — the single header row that carries the **three** Stage 4B first-slice observation snapshots (`market_temperature` / `market_breadth.advancing_ratio` / `market_breadth.above_ma20_ratio` / `market_breadth.breadth_participation`). |
+| `20260811_0016_research_evidence_bundles` | Stage 4B Research Evidence Bundle persistence. | Creates `analytics.research_evidence_bundles` (uuid PK, `research_case_id` FK, JSONB `market_observation_refs`, length-64 `content_hash`, JSONB `payload`, `bundle_version` discriminator, plus the unique `(research_case_id)` constraint and the unique `content_hash` index that gates idempotent re-publication) so a single bundle can be looked up per case. |
+| `20260812_0017_research_result_evidence_bundle_fk` | Stage 4B Research-Result ↔ Evidence-Bundle FK. | Adds nullable `evidence_bundle_id` to `analytics.research_results`, the matching `fk_research_results_evidence_bundle_id` FK to `analytics.research_evidence_bundles.bundle_id`, and a `(evidence_bundle_id)` index so the orchestration service can carry the bundle identity through from run → result. |
 
 Older `20260730_0001..0004` revisions are no longer in the chain —
 they were retired when the migrations moved to `apps/migrations/`.
@@ -77,7 +84,7 @@ they were retired when the migrations moved to `apps/migrations/`.
 |--------|----------------|---------------------|---------------|
 | `raw` | Pipeline adapters + application service | `apps/pipeline/src/invest_pipeline/{etf_instruments,etf_daily_bars}.py` through `SqlAlchemyUnitOfWork` | — (read-only by API not currently surfaced). |
 | `core` | Pipeline; normalised row shapes exposed to API | `etf_instruments` / `etf_daily_bars` assets; `etf_profiles` service for the DC-2 static ETF metadata (1-1 with `core.instruments`) | `SqlAlchemyInstrumentRepository`, `SqlAlchemyDailyBarRepository`, `SqlAlchemyEtfProfileRepository`. |
-| `analytics` | Pipeline (input snapshots) + Application (candidate pool) + Research context | `etf_input_snapshot` asset; candidate-pool assets; `etf_profile_context` / `etf_profiles` service; `research_orchestration_service.execute` for case / run / result lifecycle | `InputSnapshotRepository`, `SqlAlchemyCandidatePoolRunRepository`, `SqlAlchemyCandidatePoolItemRepository`, `SqlAlchemyEtfProfileFieldRepository`, `SqlAlchemyResearchContextPackRepository`, `SqlAlchemyResearchCaseRepository`, `SqlAlchemyResearchRunRepository`, `SqlAlchemyResearchResultRepository`, `SqlAlchemyEvidencePackRepository`. |
+| `analytics` | Pipeline (input snapshots) + Application (candidate pool) + Research context + Market Intelligence | `etf_input_snapshot` asset; candidate-pool assets; `etf_profile_context` / `etf_profiles` service; `research_orchestration_service.execute` for case / run / result lifecycle; `market_breadth_service.calculate_and_publish_market_breadth` and `market_breadth_bundle_service` for the Stage 4B snapshot family and Evidence Bundle binding | `InputSnapshotRepository`, `SqlAlchemyCandidatePoolRunRepository`, `SqlAlchemyCandidatePoolItemRepository`, `SqlAlchemyEtfProfileFieldRepository`, `SqlAlchemyResearchContextPackRepository`, `SqlAlchemyResearchCaseRepository`, `SqlAlchemyResearchRunRepository`, `SqlAlchemyResearchResultRepository`, `SqlAlchemyResearchEvidenceBundleRepository`, `SqlAlchemyEvidencePackRepository`, `SqlAlchemyMarketObservationSnapshotRepository`. |
 | `ops` | Pipeline | `ops.pipeline_runs` writes via `SqlAlchemyPipelineRunRepository` | Personal-job history and latest status via the read-only `/api/v1/pipeline-runs` endpoints. |
 
 ## 4. Composability rules
@@ -119,11 +126,17 @@ they were retired when the migrations moved to `apps/migrations/`.
   DC-3 / research-lifecycle slices add seven further revisions
   (`20260804_0008` / `20260805_0009` / `20260805_0010` /
   `20260806_0011` / `20260807_0012` / `20260807_0013` /
-  `20260807_0014`); the chain gate now expects a single head at
-  `20260807_0014` and the test suite still round-trips
-  `upgrade head → downgrade base → upgrade head` end-to-end so the
-  full fourteen-revision chain is exercised. Revision
-  `20260807_0013` adds the indexed `research_case_id` FK and global
-  `content_hash` uniqueness used by the read-only research API;
-  revision `20260807_0014` adds the run/result tables and the
-  external-session and one-result-per-run uniqueness guards.
+  `20260807_0014`); the Stage 4B Market Intelligence foundation adds
+  the three closing revisions (`20260810_0015` /
+  `20260811_0016` / `20260812_0017`); the chain gate now expects a
+  single head at `20260812_0017` and the test suite still
+  round-trips `upgrade head → downgrade base → upgrade head`
+  end-to-end so the full seventeen-revision chain is exercised.
+  Revision `20260807_0013` adds the indexed `research_case_id` FK
+  and global `content_hash` uniqueness used by the read-only
+  research API; revision `20260807_0014` adds the run/result tables
+  and the external-session and one-result-per-run uniqueness
+  guards; revisions `20260810_0015` / `20260811_0016` /
+  `20260812_0017` anchor the Market Observation snapshot family,
+  the Research Evidence Bundle, and the
+  `research_results.evidence_bundle_id` FK respectively.

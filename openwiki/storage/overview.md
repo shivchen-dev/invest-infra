@@ -1,9 +1,9 @@
 ---
 type: Concept
 title: Storage overview
-description: SQLAlchemy 2 ORM models, repositories, the SqlAlchemyUnitOfWork + SessionProvider, Provider evidence, candidate-pool and job-history contracts, ETF profile/context persistence, research lifecycle persistence, and DC-3 index/ETF exposure repositories under packages/storage/src/invest_storage.
+description: SQLAlchemy 2 ORM models, repositories, the SqlAlchemyUnitOfWork + SessionProvider, Provider evidence, candidate-pool and job-history contracts, ETF profile/context persistence, research lifecycle persistence (case + run + result + evidence bundle), the Stage 4B market observation snapshot persistence, and DC-3 index/ETF exposure repositories under packages/storage/src/invest_storage.
 resource: /openwiki/storage/overview.md
-tags: [storage, sqlalchemy, repository, unit-of-work, provider-evidence, etf-profile, research-context, research-lifecycle, exposure]
+tags: [storage, sqlalchemy, repository, unit-of-work, provider-evidence, etf-profile, research-context, research-lifecycle, exposure, market-observations, evidence-bundle, stage4b]
 ---
 
 # Storage overview
@@ -35,9 +35,11 @@ three buckets:
   `CandidatePoolItemRow`, `ResearchEvidencePackRow`,
   `EtfProfileRow`, `EtfProfileFieldRow`, `ResearchContextPackRow`,
   `ResearchContextItemRow`, `ResearchCaseRow`, `ResearchRunRow`,
-  `ResearchResultRow`, `ExposureObservationRow`, `ExposureBundleRow`,
-  `IndexIdentityRow`, `EtfIndexMappingRow`, `IndexProfileRow`,
-  `IndexConstituentSnapshotRow`, `EtfHoldingSnapshotRow`.
+  `ResearchResultRow`, `ResearchEvidenceBundleRow`,
+  `MarketObservationSnapshotRow`, `ExposureObservationRow`,
+  `ExposureBundleRow`, `IndexIdentityRow`, `EtfIndexMappingRow`,
+  `IndexProfileRow`, `IndexConstituentSnapshotRow`,
+  `EtfHoldingSnapshotRow`.
 - **Repositories and DTOs.** `SqlAlchemy*Repository` classes plus the
   `New*` and `Stored*` dataclasses that shape their inputs and outputs.
   The PR-7 + DC-3 + ADR-0012 persistence slices add
@@ -137,6 +139,26 @@ Examples:
   identity is protected by a partial unique index.
 - `SqlAlchemyResearchResultRepository`: `add`, `get_by_id`, and
   `get_by_run_id`; the database permits one immutable result per run.
+  Migration `20260812_0017_research_result_evidence_bundle_fk` adds
+  the nullable `evidence_bundle_id` FK so a successful run can carry
+  its Stage 4B bundle identity end-to-end through `research_run →
+  research_evidence_bundle → research_result`.
+- `SqlAlchemyResearchEvidenceBundleRepository`: `add`, `get_by_id`,
+  `get_by_case` (Stage 4B / migration `20260811_0016`; persists the
+  `ResearchEvidenceBundle` aggregate and exposes the case-anchored
+  read used by the
+  `market_breadth_bundle_service.bind_evidence_bundle` application
+  service). The bundle is uniquely keyed on
+  `(research_case_id, content_hash)` so re-publishing the same
+  canonical bundle is idempotent.
+- `SqlAlchemyMarketObservationSnapshotRepository`: `add`,
+  `get_by_id`, `get_latest_for_scope(scope_type, scope_key, as_of_date=None)`
+  (Stage 4B / migration `20260810_0015`; persists the Market
+  Observation snapshot family used by both the Market Temperature
+  and the Market Breadth read slices). `get_latest_for_scope`
+  narrows the lookup to a single `(scope_type, scope_key)` pair so
+  the API service can never accidentally read a Market Temperature
+  snapshot through the breadth route.
 - `SqlAlchemyEvidencePackRepository`: bind-side reader used by
   the research router's `/api/v1/research-cases/{case_id}/evidence`
   endpoint (`list_by_case(case_id)`). The persistence path that
@@ -169,7 +191,7 @@ individual session handles.
 
 `CandidatePoolRunRow.input_snapshot_id` is a non-null foreign key to
 `analytics.input_snapshots.id`, named `fk_cpool_runs_snapshot_id`. The
-Alembic [migration](../migrations/overview.md#the-fourteen-revision-chain)
+Alembic [migration](../migrations/overview.md#the-seventeen-revision-chain)
 adds the same constraint, so a persisted candidate-pool run cannot point
 at a missing input snapshot. This storage invariant backs the
 [Candidate pool input-snapshot binding](../domain/candidate-pool.md#input-snapshot-binding)

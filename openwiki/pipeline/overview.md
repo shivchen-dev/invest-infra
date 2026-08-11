@@ -1,9 +1,9 @@
 ---
 type: Concept
 title: Pipeline overview
-description: Dagster assets, the guarded personal daily schedule, ETL services, provider adapters, JiuwenSwarm research execution, MCP research transports, research orchestration, DC-3 index/ETF exposure collection, ETF profile/context builders, provider routing, and replay/backfill operations.
+description: Dagster assets, the guarded personal daily schedule, ETL services, provider adapters, JiuwenSwarm research execution, MCP research transports, research orchestration, DC-3 index/ETF exposure collection, ETF profile/context builders, provider routing, the Stage 4B Stock Daily Bars + Market Intelligence Foundation (dynamic stock universe, Tushare by-date daily batches, tdx_offline adapter, market observation snapshot services, market-breadth bundle binding) and replay/backfill operations.
 resource: /openwiki/pipeline/overview.md
-tags: [pipeline, dagster, adapters, etl, fixture_dev, cifang, akshare, tushare, provider-catalog, provider-routing, coverage, historical-backfill, etf-profile, research-context, jiuwenswarm, research-lifecycle, exposure]
+tags: [pipeline, dagster, adapters, etl, fixture_dev, cifang, akshare, tushare, provider-catalog, provider-routing, coverage, historical-backfill, etf-profile, research-context, jiuwenswarm, research-lifecycle, exposure, stage4b, stock-universe, market-breadth, market-observations, evidence-bundle, tdx-offline, hithink]
 ---
 
 # Pipeline overview
@@ -363,7 +363,7 @@ remains gated on ADR-0011 O-1 / O-3 / O-4 closure for production use.
 also fully wired in the factory. The historical three-provider plan
 (`eastmoney` / `sina` / `tonghuashun` Phase-1 stubs) was de-scoped
 in this slice; see [Provider catalog](#7-provider-catalog) for the
-six remaining catalog declarations.
+eight catalog declarations.
 
 ## 5b. `akshare` adapter (PR-02)
 
@@ -523,7 +523,13 @@ is the single source of truth for provider credentials:
 - The `_CREDENTIAL_FILES` table maps every supported provider_key
   to its filename inside the secrets directory
   (`cifangquant.api_key` / `akshare.token` / `rsscast.token` /
-  `tushare.token`).
+  `tushare.token` / `hithink.api_key`). The `hithink` mapping is the
+  reserved entry
+  ([`tasks/hithink-reserved-provider-plan.md`](../../tasks/hithink-reserved-provider-plan.md))
+  exposes today; the file is never read by a runtime factory
+  branch, but `CredentialStore.resolve("hithink", explicit_value)`
+  already returns the value once a real credential is dropped into
+  the centralized secrets directory.
 - `CredentialStore.resolve(provider_key, explicit_value="")` returns
   the explicit value when supplied and otherwise reads and trims
   the matching file. Unknown provider_keys raise `ValueError`;
@@ -763,16 +769,20 @@ Object surface:
   `OUT_OF_SCOPE_FOR_ETF`, `FIXTURE_DEV`. String values are frozen by
   the migration matrix and must not change without an ADR.
 - `ProviderCapability(StrEnum)` — `RESEARCH`, `MARKET_SNAPSHOT`,
-  `ETF_DAILY_BARS`, `ETF_MASTER_DATA`, `INDEX_DAILY_BARS`. The latter
-  three exist so the catalog can explicitly **omit** capabilities a
-  provider must not advertise.
+  `ETF_DAILY_BARS`, `ETF_MASTER_DATA`, `INDEX_DAILY_BARS`,
+  `STOCK_DAILY_BARS`, `STOCK_MASTER_DATA`, `STOCK_FINANCIALS`,
+  `STOCK_VALUATIONS`. The latter six exist so the catalog can
+  explicitly **omit** capabilities a provider must not advertise;
+  `STOCK_FINANCIALS` / `STOCK_VALUATIONS` are the two new
+  identifiers the reserved HiThink slice adds to advertise its
+  upstream stock-finance and stock-valuation surfaces.
 - `ProviderDeclaration` — a frozen dataclass carrying the four
   declaration fields. The `capabilities` tuple is immutable and
   ordered for deterministic output.
 - `lookup_provider(provider_key)` — pure lookup; raises `KeyError`
   with the requested key when the provider is not registered.
 
-The catalog registers **six** frozen declarations
+The catalog registers **eight** frozen declarations
 (`apps/pipeline/src/invest_pipeline/provider_catalog.py`):
 
 | Key | Role | Capabilities | `enabled_by_default` |
@@ -780,16 +790,32 @@ The catalog registers **six** frozen declarations
 | `akshare` | `research_only` | `ETF_DAILY_BARS` / `ETF_MASTER_DATA` / `INDEX_DAILY_BARS` | `False` |
 | `cifangquant` | `secondary` | `ETF_DAILY_BARS` / `ETF_MASTER_DATA` / `INDEX_DAILY_BARS` | `False` |
 | `fixture_dev` | `fixture_dev` | `ETF_DAILY_BARS` / `ETF_MASTER_DATA` | `True` |
+| `hithink` | `research_only` | `RESEARCH` / `MARKET_SNAPSHOT` / `STOCK_DAILY_BARS` / `STOCK_MASTER_DATA` / `STOCK_FINANCIALS` / `STOCK_VALUATIONS` | `False` |
 | `quicktiny_mcp` | `research_only` | `RESEARCH` / `MARKET_SNAPSHOT` | `False` |
 | `rsscast` | `out_of_scope_for_etf` | `INDEX_DAILY_BARS` / `RESEARCH` | `False` |
+| `tdx_offline` | `research_only` | `STOCK_DAILY_BARS` | `False` |
 | `tushare` | `secondary` | `ETF_DAILY_BARS` / `ETF_MASTER_DATA` | `False` |
 
 The negative-capability contract is part of the public catalog
-contract: `quicktiny_mcp` and `rsscast` must never advertise
-`ETF_DAILY_BARS` or `ETF_MASTER_DATA` (matrix §3 / §5.4 / §9.2
-forbid it), and a future regression that silently re-adds an
+contract: `quicktiny_mcp`, `rsscast` and `hithink` must never
+advertise `ETF_DAILY_BARS` or `ETF_MASTER_DATA` (matrix §3 / §5.4
+/ §9.2 forbid it), and a future regression that silently re-adds an
 ETF daily-bars capability to a research-only source would
-violate the catalog's frozen string values. `iter_provider_declarations()`
+violate the catalog's frozen string values. `hithink` additionally
+ships with `has_runtime_factory_adapter=False`, so the
+`invest_pipeline.provider_factory.KNOWN_PROVIDER_KEYS` tuple
+continues to gate the runtime factory at the four
+`fixture_dev` / `cifangquant` / `akshare` / `tushare` branches
+and any future `INVEST_PIPELINE_PROVIDER_KEY=hithink` request
+fails with `UnknownProviderError("hithink")` per the reserved
+[`tasks/hithink-reserved-provider-plan.md`](../../tasks/hithink-reserved-provider-plan.md)
+slice. `tdx_offline` is the Stage 4B Phase 5 (slice 1) Tushare →
+TDX offline fallback catalog entry — it ships with the same
+`has_runtime_factory_adapter=False` flag so the runtime factory
+keeps refusing `INVEST_PIPELINE_PROVIDER_KEY=tdx_offline` with
+`UnknownProviderError("tdx_offline")` until a future slice wires
+a real `build_stock_provider` branch and the by-date asset-level
+fallback orchestration. `iter_provider_declarations()`
 returns the declarations in ascending `provider_key` order so
 tests and the routing layer can iterate the catalog without
 depending on `dict` insertion order. `lookup_provider(key)` raises

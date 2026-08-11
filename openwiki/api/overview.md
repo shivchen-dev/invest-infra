@@ -1,9 +1,9 @@
 ---
 type: Concept
 title: API overview
-description: FastAPI routers, Pydantic response shapes and the read-only endpoint surface for ETF data, candidate-pool results and diffs, personal pipeline-run status and paginated history, data freshness, the PR-7 research-case / evidence / run / result lifecycle queries, the PR-W03 research dashboard aggregate and PR-W05 case workspace read models, and the PR-MCP-MINIMAL Model Context Protocol server, including the legacy /v1/instruments endpoint and the architecture-governance application-service split.
+description: FastAPI routers, Pydantic response shapes and the read-only endpoint surface for ETF data, candidate-pool results and diffs, personal pipeline-run status and paginated history, data freshness, the PR-7 research-case / evidence / run / result lifecycle queries, the PR-W03 research dashboard aggregate and PR-W05 case workspace read models, the Stage 4B market-temperature and market-breadth latest endpoints, and the PR-MCP-MINIMAL Model Context Protocol server, including the legacy /v1/instruments endpoint and the architecture-governance application-service split.
 resource: /openwiki/api/overview.md
-tags: [api, fastapi, routers, pydantic, etf, candidate-pool, research, research-dashboard, research-workspace, mcp, application-service, governance]
+tags: [api, fastapi, routers, pydantic, etf, candidate-pool, research, research-dashboard, research-workspace, mcp, application-service, governance, stage4b, market-breadth, market-temperature]
 ---
 
 # API overview
@@ -34,13 +34,17 @@ apps/api/src/invest_api/
 │   ├── candidate_pool.py  # candidate-pool latest + diff (thin wrappers)
 │   ├── pipeline_runs.py   # personal daily pipeline-run status + history
 │   ├── data_freshness.py  # personal daily data-freshness summary
-│   └── research.py        # PR-7 read-only research lifecycle queries
+│   ├── research.py        # PR-7 read-only research lifecycle queries
+│   ├── market_temperature.py  # Stage 4B market-temperature latest snapshot
+│   └── market_breadth.py  # Stage 4B market-breadth latest snapshot
 ├── application/
 │   ├── etf.py             # EtfQueryService
 │   ├── candidate_pool.py  # CandidatePoolQueryService
 │   ├── pipeline_runs.py   # PipelineRunQueryService
 │   ├── data_freshness.py  # DataFreshnessQueryService
-│   └── research.py        # ResearchQueryService (PR-7)
+│   ├── research.py        # ResearchQueryService (PR-7)
+│   ├── market_temperature.py  # MarketTemperatureQueryService (Stage 4B)
+│   └── market_breadth.py  # MarketBreadthQueryService (Stage 4B)
 ├── mcp_server.py          # PR-MCP-MINIMAL read-only MCP server
 └── schemas/
     ├── __init__.py        # re-exports all public response shapes
@@ -49,7 +53,9 @@ apps/api/src/invest_api/
     ├── candidate_pool.py  # latest, item and diff shapes
     ├── pipeline_runs.py   # PipelineRunResponse + PipelineRunListResponse
     ├── data_freshness.py  # DataFreshnessResponse + status vocabulary
-    └── research.py        # ResearchCase / EvidencePack / Run / Result + lists
+    ├── research.py        # ResearchCase / EvidencePack / Run / Result + lists
+    ├── market_temperature.py  # MarketTemperatureResponse (Stage 4B)
+    └── market_breadth.py  # MarketBreadthResponse (Stage 4B)
 ```
 
 The routers stayed thin per the
@@ -83,6 +89,8 @@ and application service
 | `GET /api/v1/research-runs/{run_id}` | `routers/research.py` | Single research run; missing UUIDs return 404, malformed UUIDs return 422. |
 | `GET /api/v1/research-runs/{run_id}/result` | `routers/research.py` | The single `ResearchResult` belonging to a succeeded run; returns 404 when the run is missing or has not yet produced a result. |
 | `GET /api/v1/research-dashboard` | `routers/research.py` | PR-W03 read-only cockpit dashboard aggregate (counts, latest-case, evidence slot, market-status unavailable placeholder, bounded recent-runs page). |
+| `GET /api/v1/market-temperature/latest` | `routers/market_temperature.py` | Stage 4B Market Temperature snapshot lookup; the application service narrows the snapshot family to the fixed `market_temperature` scope and returns the latest `MarketObservationSnapshot`. Missing snapshots return 404. |
+| `GET /api/v1/market-breadth/latest` | `routers/market_breadth.py` | Stage 4B Market Breadth snapshot lookup scoped to `(scope_type='ashare_universe', scope_key='ashare_active_universe_v1')`; accepts an optional `as_of_date` query parameter for historical lookups and serialises the matching `MarketObservationSnapshot` (carrying `advancing_ratio` / `above_ma20_ratio` / `breadth_participation`). Missing snapshots return 404. |
 
 All endpoints accept the `get_db_session` FastAPI dependency; tests
 override it with a `MagicMock` `Session` and patch the relevant
@@ -480,6 +488,20 @@ tests override those service dependencies.
   reads runs through the same structural port the storage repository
   satisfies. Both additions sit inside the existing
   `ResearchQueryService` so the routers remain thin wrappers.
+- [`application/market_temperature.py`](../../apps/api/src/invest_api/application/market_temperature.py) —
+  `MarketTemperatureQueryService` (Stage 4B) wraps a
+  `MarketTemperatureReader` structural Protocol, translates
+  `sqlalchemy.exc.SQLAlchemyError` into `MarketTemperatureQueryError`
+  so the router can surface a sanitized HTTP 500, and delegates the
+  lookup to `SqlAlchemyMarketObservationSnapshotRepository.get_latest_for_scope`
+  narrowed to the fixed `market_temperature` scope.
+- [`application/market_breadth.py`](../../apps/api/src/invest_api/application/market_breadth.py) —
+  `MarketBreadthQueryService` (Stage 4B) pins
+  `scope_type='ashare_universe'` /
+  `scope_key='ashare_active_universe_v1'` so the breadth route
+  cannot accidentally read a Market Temperature snapshot, and
+  forwards optional `as_of_date` filtering to the same storage
+  repository.
 
 The application services live under `apps/api/src/invest_api/application/`
 so the API depends only on `domain` + `storage`, but the storage calls

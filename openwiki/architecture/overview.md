@@ -1,9 +1,9 @@
 ---
 type: Concept
 title: Architecture overview
-description: Modular-monolith topology, layered rules, four PostgreSQL schemas and ADR index for invest-infra (including ADR-0011 CifangQuant Phase 1 first + second increments, the DC-2 ETF profile framework, the Stage 4A evidence / context separation, the architecture-governance convergence that moved ETF / candidate-pool / data-freshness / pipeline-runs / research queries behind application services, and ADR-0012 that freezes the evidence-driven Research lifecycle boundary between Domain / Pipeline / Storage). Explains why the codebase stays inside independent Python packages and how the layers interact.
+description: Modular-monolith topology, layered rules, four PostgreSQL schemas and ADR index for invest-infra (including ADR-0011 CifangQuant Phase 1 first + second increments, the DC-2 ETF profile framework, the Stage 4A evidence / context separation, the architecture-governance convergence that moved ETF / candidate-pool / data-freshness / pipeline-runs / research queries behind application services, ADR-0012 that freezes the evidence-driven Research lifecycle boundary between Domain / Pipeline / Storage, and the Stage 4B Market Intelligence foundation that adds the Stock Daily Bars pipeline, the Market Observation / Temperature / Breadth read surface, and the Research Evidence Bundle binding). Explains why the codebase stays inside independent Python packages and how the layers interact.
 resource: /openwiki/architecture/overview.md
-tags: [architecture, layering, schemas, adr, cifang, tushare, etf-profile, research-context, research-lifecycle, governance, mcp, exposure]
+tags: [architecture, layering, schemas, adr, cifang, tushare, etf-profile, research-context, research-lifecycle, governance, mcp, exposure, stage4b, market-breadth, market-temperature, market-observations, evidence-bundle, hithink]
 ---
 
 # Architecture overview
@@ -112,7 +112,22 @@ adapter:
   [§5b](../pipeline/overview.md#5b-akshare-adapter-pr-02) and
   [§5d](../pipeline/overview.md#5d-tushare-pro-adapter-phase-1-bounded-increment).
   The QuickTiny and RssCast packages are separate research-only MCP
-  transports and do not implement the ETF daily-bars port.
+  transports and do not implement the ETF daily-bars port. The
+  Tushare adapter additionally exposes a `StockTushareProvider`
+  branch (`apps/pipeline/src/invest_pipeline/adapters/tushare/stock_adapter.py`)
+  for the Stage 4B A-share `stock_daily_bars` /
+  `stock_daily_bars_by_date` dataset keys, plus an opt-in
+  `tdx_offline` package that reads the local TDX `vipdoc` tree of
+  pre-fetched `.day` files for fixture-style A-share offline batches
+  and shares no runtime
+  factory branch. The `provider_catalog` registry also carries a
+  reserved, disabled-by-default `hithink` declaration
+  (see [`tasks/hithink-reserved-provider-plan.md`](../../tasks/hithink-reserved-provider-plan.md))
+  whose credential is read lazily through the centralized
+  `CredentialStore` against the `hithink.api_key` filename but
+  which is intentionally not wired into the runtime factory (the
+  catalog pins `has_runtime_factory_adapter=False` so the runtime
+  factory's `KNOWN_PROVIDER_KEYS` helper excludes it).
 
 The boundary is enforced two ways: the
 [`scripts/check_architecture.py`](../../scripts/check_architecture.py)
