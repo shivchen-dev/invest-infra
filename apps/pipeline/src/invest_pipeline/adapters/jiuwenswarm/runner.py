@@ -29,6 +29,7 @@ from dataclasses import dataclass
 from datetime import datetime
 
 from invest_domain.research import (
+    ContextProjection,
     EvidencePack,
     ResearchPlaybook,
     ResearchRunnerDraft,
@@ -142,6 +143,7 @@ class JiuwenSwarmResearchRunner:
         evidence_pack: EvidencePack,
         playbook: ResearchPlaybook,
         started_at: datetime,
+        projection: ContextProjection | None = None,
     ) -> ResearchRunnerDraft:
         """Submit one gateway request and return a :class:`ResearchRunnerDraft`.
 
@@ -157,6 +159,7 @@ class JiuwenSwarmResearchRunner:
             evidence_pack=evidence_pack,
             playbook=playbook,
             started_at=started_at,
+            projection=projection,
         )
         if outcome.acceptance is not JiuwenSwarmAcceptance.ACCEPTED or outcome.draft is None:
             raise JiuwenSwarmTransportError(
@@ -173,6 +176,7 @@ class JiuwenSwarmResearchRunner:
         evidence_pack: EvidencePack,
         playbook: ResearchPlaybook,
         started_at: datetime,
+        projection: ContextProjection | None = None,
     ) -> JiuwenSwarmRunOutcome:
         """Submit one gateway request and return a :class:`JiuwenSwarmRunOutcome`.
 
@@ -212,6 +216,7 @@ class JiuwenSwarmResearchRunner:
             evidence_pack=evidence_pack,
             playbook=playbook,
             adapter_version=self._adapter_version,
+            projection=projection,
         )
 
         try:

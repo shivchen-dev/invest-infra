@@ -54,7 +54,7 @@ The helper:
   digest in an auditable way instead of silently re-mapping data.
 
 The `InputSnapshot.content_hash` is built on a more restrictive
-algorithm (see [Migrations overview](../migrations/overview.md#the-six-revision-chain))
+algorithm (see [Migrations overview](../migrations/overview.md#2-the-seventeen-revision-chain))
 because it only depends on the byte-sorted `instrument_ids`.
 
 ## 3. The infrastructure-free invariant
@@ -80,7 +80,8 @@ Application services that need a clock or a session accept them as
 parameters. The `MinimumCandidatePoolCalculator.calculate` is the
 canonical example — it is a pure function of `(snapshot, bars, policy)`.
 
-## 4. Ports (`market_data.ports`, `candidate_pool.ports`)
+The `Exchange` enum in [`shared/values.py`](../../packages/domain/src/invest_domain/shared/values.py) now includes `BJSE` for Stage 4B A-share stock data. This widens the canonical domain vocabulary, not the ETF contract: ETF mappers retain their SSE/SZSE allow-list and must reject Beijing exchange rows in ETF-only flows. Tushare and TDX stock mappers are responsible for converting `.BJ` / `bj` source codes to `BJSE`; focused coverage is in `apps/pipeline/tests/unit/test_tushare_stock.py` and the TDX adapter tests. This distinction keeps the stock fallback described in the [pipeline overview](../pipeline/overview.md#7b-stock-daily-bars-fallback-and-tdx-offline-provider) from changing ETF semantics.
+
 
 Ports are declared as `@runtime_checkable` Protocols so both adapters
 and tests can satisfy them structurally. The currently shipped ports:
@@ -102,7 +103,7 @@ removed from `invest_domain.__init__` and from the public re-exports of
 landed; only the minimum calculator's Protocol ships today. The
 `invest_domain.candidate_pool.ports` module now only documents the
 removal — the Protocol will be re-introduced once the M4 algorithm
-lands (see [Candidate pool](candidate-pool.md#what-is-not-in-the-pr-08-algorithm)).
+lands (see [Candidate pool](candidate-pool.md#5-what-is-not-in-the-pr-08-algorithm)).
 
 ## 4A. ETF Profile evidence framework (`etf_profile`)
 

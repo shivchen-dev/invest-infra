@@ -1,7 +1,7 @@
 ---
 type: Reference
 title: OpenWiki Quickstart
-description: Entry point for the invest-infra OpenWiki knowledge base. Describes the modular-monolith layout, links every major concept page, and summarizes local startup, migrations, personal daily scheduling and replay/backfill operations, testing, opt-in CifangQuant / Tushare / JiuwenSwarm validation, the DC-2 ETF profile and Stage 4A evidence / context slices, the ADR-0012 evidence-driven Research lifecycle (PR-7 API + JiuwenSwarm adapter + orchestration service + PR-W03 dashboard / PR-W05 case workspace read models), the PR-MCP-MINIMAL read-only MCP server, the DC-3 exposure collection slice, the Research Cockpit web workbench (widget runtime + dashboard widgets + safe markdown renderer), the centralized provider credential store, the Stage 4B Market Intelligence foundation (Market Observation / Temperature / Breadth read slices + Tushare-stock by-date pipeline + Research Evidence Bundle chain), and the HiThink reserved provider catalog entry.
+description: Entry point for the invest-infra OpenWiki knowledge base. Describes the modular-monolith layout, links every major concept page, and summarizes local startup, migrations, personal daily scheduling and replay/backfill operations, testing, opt-in CifangQuant / Tushare / JiuwenSwarm validation, the DC-2 ETF profile and Stage 4A evidence / context slices, the ADR-0012 evidence-driven Research lifecycle (PR-7 API + JiuwenSwarm adapter + orchestration service + context-projection loader + PR-W03 dashboard / PR-W05 case workspace read models), the PR-MCP-MINIMAL read-only MCP server, the DC-3 exposure collection slice, the Research Cockpit web workbench (widget runtime + dashboard widgets + safe markdown renderer), the centralized provider credential store, the Stage 4B Market Intelligence foundation (Market Observation / Temperature / Breadth read slices + Tushare-stock by-date pipeline + TDX offline fallback + Research Evidence Bundle chain), and the HiThink reserved provider catalog entry.
 resource: /openwiki/quickstart.md
 tags: [quickstart, navigation, invest-infra, etf-profile, research-context, research-lifecycle, research-cockpit, jiuwenswarm, mcp, exposure, governance, stage4b, market-breadth, market-temperature, market-observations, stock-universe, tdx-offline, evidence-bundle, hithink]
 ---
@@ -89,6 +89,16 @@ Read these pages in order:
    migration-chain AST gate, mock vs integration tests, the PostgreSQL e2e,
    compose runtime, replay/runbook controls, and the OpenWiki auto-update
    workflow.
+
+## 2a. Task routing
+
+| Change area or user intent | Relevant wiki page | Exact source entry points | Important symbols or types | Focused tests | Minimal validation command |
+|---|---|---|---|---|---|
+| Change stock daily-bars discovery or TDX fallback | [Pipeline overview](pipeline/overview.md#7b-stock-daily-bars-fallback-and-tdx-offline-provider) | `apps/pipeline/src/invest_pipeline/stock_daily_bars.py`; `apps/pipeline/src/invest_pipeline/assets.py`; `apps/pipeline/src/invest_pipeline/adapters/tdx_offline/` | `stock_daily_bars_by_date`; `TdxOfflineStockProvider`; `enumerate_symbols`; `MARKET_TO_EXCHANGE` | `tests/unit/test_stock_daily_bars_tdx_fallback.py`; `test_tdx_offline_stock_provider.py`; `test_stock_assets_wiring.py` | `cd apps/pipeline && uv run pytest -q tests/unit/test_stock_daily_bars_tdx_fallback.py tests/unit/test_tdx_offline_stock_provider.py tests/unit/test_stock_assets_wiring.py` |
+| Add or change provider declarations and runtime eligibility | [Pipeline overview](pipeline/overview.md#7-provider-catalog) | `apps/pipeline/src/invest_pipeline/provider_catalog.py`; `provider_factory.py`; `credentials.py` | `ProviderDeclaration`; `lookup_provider`; `KNOWN_PROVIDER_KEYS`; `CredentialStore` | `tests/unit/test_provider_catalog.py`; `test_provider_factory_runtime.py`; `test_credentials.py` | `cd apps/pipeline && uv run pytest -q tests/unit/test_provider_catalog.py tests/unit/test_provider_factory_runtime.py tests/unit/test_credentials.py` |
+| Change canonical exchange or stock/ETF mapping rules | [Architecture overview](architecture/overview.md#4-adapter-boundary) | `packages/domain/src/invest_domain/shared/values.py`; `apps/pipeline/src/invest_pipeline/adapters/tushare/mapper.py` | `Exchange`; `_exchange` | `packages/domain/tests/test_instrument.py`; `apps/pipeline/tests/unit/test_tushare_stock.py` | `make test-domain && cd apps/pipeline && uv run pytest -q tests/unit/test_tushare_stock.py` |
+| Rebuild a research `ContextProjection` from bundle + snapshots | [Pipeline overview](pipeline/overview.md#5h-research-context-projection-loader-adr-0012--stage-4b-phase-3) | `apps/pipeline/src/invest_pipeline/research_context_projection.py`; `packages/domain/src/invest_domain/research/evidence_bundle.py` | `load_context_projection`; `ContextProjectionLoadError`; `build_projection`; `ResearchEvidenceBundle` | `apps/pipeline/tests/unit/test_research_context_projection.py`; `packages/domain/tests/test_research_evidence_bundle.py` | `cd apps/pipeline && uv run pytest -q tests/unit/test_research_context_projection.py` |
+
 
 ## 3. Running locally
 

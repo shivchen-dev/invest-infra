@@ -42,6 +42,7 @@ from typing import Protocol
 from uuid import UUID
 
 from invest_domain.research import (
+    ContextProjection,
     EvidencePack,
     ResearchCase,
     ResearchPlaybook,
@@ -59,6 +60,10 @@ from invest_pipeline.adapters.jiuwenswarm.errors import (
     JiuwenSwarmTimeoutUncertainError,
 )
 from invest_pipeline.adapters.jiuwenswarm.runner import JiuwenSwarmRunOutcome
+from invest_pipeline.research_context_projection import (
+    ContextProjectionLoadError,
+    load_context_projection,
+)
 
 __all__ = [
     "ClockFactory",
@@ -100,6 +105,7 @@ class ResearchRunnerWithIdentity(Protocol):
         evidence_pack: EvidencePack,
         playbook: ResearchPlaybook,
         started_at: datetime,
+        projection: ContextProjection | None = None,
     ) -> JiuwenSwarmRunOutcome: ...
 
 
@@ -283,7 +289,7 @@ class ResearchOrchestrationService:
 
         started_at = self._require_aware_utc(self._clock())
 
-        case, run, evidence_pack = self._load_trio_tx1(run_id)
+        case, run, evidence_pack, projection = self._load_trio_tx1(run_id)
         self._validate_runner_playbook(run)
 
         if run.status is ResearchRunStatus.SUCCEEDED:
@@ -324,6 +330,7 @@ class ResearchOrchestrationService:
                 evidence_pack=evidence_pack,
                 playbook=self._playbook,
                 started_at=started_at,
+                projection=projection,
             )
         except JiuwenSwarmTimeoutUncertainError as exc:
             raise self._handle_uncertain_timeout(
@@ -363,8 +370,8 @@ class ResearchOrchestrationService:
     def _load_trio_tx1(
         self,
         run_id: UUID,
-    ) -> tuple[ResearchCase, ResearchRun, EvidencePack]:
-        """Load the case/run/pack trio in a single read transaction."""
+    ) -> tuple[ResearchCase, ResearchRun, EvidencePack, ContextProjection | None]:
+        """Load the case/run/pack trio and optional projection in Tx1."""
 
         with self._uow_factory() as uow:
             run = uow.research_runs.get(run_id)
@@ -390,6 +397,7 @@ class ResearchOrchestrationService:
                     f"{evidence_pack.case.case_id!s} does not match "
                     f"ResearchCase {case.case_id!s}"
                 )
+            projection = None
             if run.evidence_bundle_id is not None:
                 bundle = uow.research_evidence_bundles.get_by_id(
                     run.evidence_bundle_id
@@ -411,6 +419,18 @@ class ResearchOrchestrationService:
                         f"evidence_pack_id {bundle.evidence_pack_id!s} does "
                         f"not match EvidencePack {evidence_pack.pack_id!s}"
                     )
+                try:
+                    projection = load_context_projection(
+                        uow,
+                        case=case,
+                        run=run,
+                        evidence_pack=evidence_pack,
+                    )
+                except (ContextProjectionLoadError, ValueError) as exc:
+                    raise ResearchOrchestrationInputError(
+                        f"Could not load ContextProjection for ResearchRun "
+                        f"{run.run_id!s}: {exc}"
+                    ) from exc
             ctx = case.to_case_context()
             for label, lhs, rhs in (
                 ("instrument_id", ctx.instrument_id, evidence_pack.case.instrument_id),
@@ -423,7 +443,7 @@ class ResearchOrchestrationService:
                         f"ResearchCase.{label} must match EvidencePack.{label}"
                     )
             uow.commit()
-            return case, run, evidence_pack
+            return case, run, evidence_pack, projection
 
     def _validate_runner_playbook(
         self,

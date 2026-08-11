@@ -131,7 +131,7 @@ Examples:
   `save_transition` (PR-7 / ADR-0012; persists the `ResearchCase`
   lifecycle and exposes the read-side `list_recent` /
   `count_all` page used by
-  [`/api/v1/research-cases`](../api/overview.md#routing-surface)).
+  [`/api/v1/research-cases`](../api/overview.md#2-routing-surface)).
 - `SqlAlchemyResearchRunRepository`: `add`, `get`, `list_by_case`,
   `save_transition`, `bind_external_identity`,
   `lookup_by_external_session_id`, `list_recent`, and `count_all`.
@@ -152,13 +152,18 @@ Examples:
   `(research_case_id, content_hash)` so re-publishing the same
   canonical bundle is idempotent.
 - `SqlAlchemyMarketObservationSnapshotRepository`: `add`,
-  `get_by_id`, `get_latest_for_scope(scope_type, scope_key, as_of_date=None)`
-  (Stage 4B / migration `20260810_0015`; persists the Market
-  Observation snapshot family used by both the Market Temperature
-  and the Market Breadth read slices). `get_latest_for_scope`
-  narrows the lookup to a single `(scope_type, scope_key)` pair so
-  the API service can never accidentally read a Market Temperature
-  snapshot through the breadth route.
+  `get_by_id`, `get_latest_for_scope(scope_type, scope_key, as_of_date=None)`,
+  and `get_by_content_hash` (Stage 4B / migration `20260810_0015`;
+  persists the Market Observation snapshot family used by both the
+  Market Temperature and the Market Breadth read slices).
+  `get_latest_for_scope` narrows the lookup to a single
+  `(scope_type, scope_key)` pair so the API service can never
+  accidentally read a Market Temperature snapshot through the
+  breadth route. `get_by_content_hash` is the deterministic lookup
+  the Stage 4B Phase 3
+  [`research_context_projection.load_context_projection`](../pipeline/overview.md#5h-research-context-projection-loader-adr-0012--stage-4b-phase-3)
+  helper uses to resolve each `MarketSnapshotRef.content_hash` in
+  a `ResearchEvidenceBundle` to a concrete snapshot row.
 - `SqlAlchemyEvidencePackRepository`: bind-side reader used by
   the research router's `/api/v1/research-cases/{case_id}/evidence`
   endpoint (`list_by_case(case_id)`). The persistence path that
@@ -191,10 +196,10 @@ individual session handles.
 
 `CandidatePoolRunRow.input_snapshot_id` is a non-null foreign key to
 `analytics.input_snapshots.id`, named `fk_cpool_runs_snapshot_id`. The
-Alembic [migration](../migrations/overview.md#the-seventeen-revision-chain)
+Alembic [migration](../migrations/overview.md#2-the-seventeen-revision-chain)
 adds the same constraint, so a persisted candidate-pool run cannot point
 at a missing input snapshot. This storage invariant backs the
-[Candidate pool input-snapshot binding](../domain/candidate-pool.md#input-snapshot-binding)
+[Candidate pool input-snapshot binding](../domain/candidate-pool.md#3-input-snapshot-binding)
 and the API's published-pool audit response.
 
 ### Pipeline-run audit guards

@@ -23,6 +23,7 @@ from datetime import datetime
 from typing import Protocol, runtime_checkable
 from uuid import UUID
 
+from invest_domain.research.evidence_bundle import ContextProjection
 from invest_domain.research.models import EvidencePack
 from invest_domain.research.research_case import ResearchCase, ResearchCaseStatus
 from invest_domain.research.research_run import (
@@ -173,6 +174,7 @@ class ResearchRunner(Protocol):
         evidence_pack: EvidencePack,
         playbook: ResearchPlaybook,
         started_at: datetime,
+        projection: ContextProjection | None = None,
     ) -> ResearchRunnerDraft:
         ...
 
@@ -355,6 +357,7 @@ def execute_research_attempt(
     runner: ResearchRunner,
     started_at: datetime,
     finished_at: datetime,
+    projection: ContextProjection | None = None,
 ) -> tuple[ResearchCase, ResearchRun, ResearchResult]:
     """Walk ``ready -> running -> draft -> succeeded -> completed``."""
 
@@ -369,12 +372,17 @@ def execute_research_attempt(
         runner=runner,
         started_at=started_at,
     )
+    runner_kwargs = {
+        "case": running_case,
+        "run": started_run,
+        "evidence_pack": evidence_pack,
+        "playbook": playbook,
+        "started_at": started_at,
+    }
+    if projection is not None:
+        runner_kwargs["projection"] = projection
     draft = runner.run(
-        case=running_case,
-        run=started_run,
-        evidence_pack=evidence_pack,
-        playbook=playbook,
-        started_at=started_at,
+        **runner_kwargs,
     )
     completed_case, succeeded_run, result = complete_research_attempt(
         case=running_case,

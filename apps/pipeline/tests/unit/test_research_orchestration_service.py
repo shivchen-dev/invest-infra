@@ -15,6 +15,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 from typing import Any
+from unittest.mock import patch
 from uuid import UUID
 
 from invest_domain.instruments import InstrumentId
@@ -52,6 +53,7 @@ from invest_pipeline.adapters.jiuwenswarm import (
 from invest_pipeline.adapters.jiuwenswarm.codec import coerce_completion
 from invest_pipeline.adapters.jiuwenswarm.mapping import build_draft
 from invest_pipeline.adapters.jiuwenswarm.runner import JiuwenSwarmRunOutcome
+from invest_pipeline.research_context_projection import ContextProjectionLoadError
 from invest_pipeline.research_orchestration_service import (
     ResearchOrchestrationConflictError,
     ResearchOrchestrationFailedError,
@@ -772,10 +774,14 @@ class EvidenceBundleBindingTest(unittest.TestCase):
             case=case, run=run, pack=pack, fake_runner=runner
         )
 
-        outcome = service.execute(run.run_id)
+        with patch(
+            "invest_pipeline.research_orchestration_service.load_context_projection"
+        ) as load_projection:
+            outcome = service.execute(run.run_id)
 
         self.assertIsNotNone(outcome.result)
         self.assertIsNone(outcome.result.evidence_bundle_id)
+        load_projection.assert_not_called()
 
     def test_run_with_valid_bundle_propagates_id_to_result(self) -> None:
         case, run, pack = _ready_case_and_queued_run(evidence_bundle_id=_BUNDLE_ID)
@@ -798,11 +804,76 @@ class EvidenceBundleBindingTest(unittest.TestCase):
             bundle=bundle,
         )
 
-        outcome = service.execute(run.run_id)
+        with patch(
+            "invest_pipeline.research_orchestration_service.load_context_projection",
+            return_value=object(),
+        ) as load_projection:
+            outcome = service.execute(run.run_id)
 
         self.assertFalse(outcome.replay)
         self.assertIsNotNone(outcome.result)
         self.assertEqual(outcome.result.evidence_bundle_id, _BUNDLE_ID)
+        load_projection.assert_called_once()
+
+    def test_bundle_bound_run_loads_projection_inside_tx1(self) -> None:
+        case, run, pack = _ready_case_and_queued_run(evidence_bundle_id=_BUNDLE_ID)
+        bundle = _build_bundle(pack=pack)
+        runner = _FakeRunner(
+            outcome=_accepted_outcome(
+                request_id="req-projection", session_id="sess-projection",
+                draft=_build_draft(
+                    evidence_pack=pack, evidence_bundle_id=_BUNDLE_ID
+                ),
+            )
+        )
+        service, uow, _runner = _build_service(
+            case=case, run=run, pack=pack, fake_runner=runner, bundle=bundle
+        )
+
+        def load_in_tx1(loaded_uow: Any, **_kwargs: Any) -> object:
+            self.assertTrue(loaded_uow.in_use)
+            return object()
+
+        with patch(
+            "invest_pipeline.research_orchestration_service.load_context_projection",
+            side_effect=load_in_tx1,
+        ) as load_projection:
+            service.execute(run.run_id)
+
+        args, kwargs = load_projection.call_args
+        self.assertEqual(len(args), 1)
+        self.assertIs(kwargs["case"], case)
+        self.assertIs(kwargs["run"], run)
+        self.assertIs(kwargs["evidence_pack"], pack)
+
+    def test_projection_loader_failures_are_input_errors(self) -> None:
+        case, run, pack = _ready_case_and_queued_run(evidence_bundle_id=_BUNDLE_ID)
+        bundle = _build_bundle(pack=pack)
+
+        for failure in (
+            ContextProjectionLoadError("bad projection"),
+            ValueError("bad projection"),
+        ):
+            with self.subTest(failure=type(failure).__name__):
+                service, _uow, runner = _build_service(
+                    case=case,
+                    run=run,
+                    pack=pack,
+                    fake_runner=_FakeRunner(),
+                    bundle=bundle,
+                )
+                with (
+                    patch(
+                        "invest_pipeline.research_orchestration_service.load_context_projection",
+                        side_effect=failure,
+                    ),
+                    self.assertRaises(ResearchOrchestrationInputError) as ctx,
+                ):
+                    service.execute(run.run_id)
+
+                self.assertIn("bad projection", str(ctx.exception))
+                self.assertEqual(runner.calls, [])
+
 
 
 if __name__ == "__main__":

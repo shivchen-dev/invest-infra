@@ -33,6 +33,7 @@ from uuid import UUID
 
 from invest_domain import canonical_json
 from invest_domain.research import (
+    ContextProjection,
     EvidencePack,
     ResearchPlaybook,
     ResearchRunnerDraft,
@@ -88,6 +89,7 @@ def build_request(
     evidence_pack: EvidencePack,
     playbook: ResearchPlaybook,
     adapter_version: str,
+    projection: ContextProjection | None = None,
 ) -> JiuwenSwarmGatewayRequest:
     """Build a deterministic gateway request from a running trio.
 
@@ -158,6 +160,8 @@ def build_request(
             "version": playbook.playbook_version,
         },
     }
+    if projection is not None:
+        payload["context_projection"] = projection.to_dict()
 
     return JiuwenSwarmGatewayRequest(
         schema_version=JIUWENSWARM_SCHEMA_VERSION,

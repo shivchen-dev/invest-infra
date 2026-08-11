@@ -24,7 +24,7 @@ Dagster Pipeline ───────────────SQL───┘
 The API and the Pipeline share `packages/domain` and `packages/storage`
 inside one runtime image only when the developer chooses to; in CI each
 project builds and tests independently. Production splits them: see the
-[deployment notes](../testing-and-ops/overview.md#deployment-and-runtime).
+[deployment notes](../testing-and-ops/overview.md#6-deployment-and-runtime).
 
 Key invariants:
 
@@ -65,7 +65,7 @@ SQLAlchemy `UnitOfWork` mediates every transaction.
   — SQLAlchemy 2 ORM, repositories and the `UnitOfWork`.
 - `apps/pipeline/src/invest_pipeline/adapters/<provider_key>/` — Provider
   adapters. Each adapter is the only place a vendor SDK (or fixture in
-  the case of `fixture_dev`) is allowed. See [Adapter boundary](#adapter-boundary).
+  the case of `fixture_dev`) is allowed. See [Adapter boundary](#4-adapter-boundary).
 - `apps/pipeline/src/invest_pipeline/{etf_*,input_snapshot}.py` — ETL
   service modules that the Dagster assets wrap. See
   [Pipeline overview](../pipeline/overview.md).
@@ -118,9 +118,9 @@ adapter:
   for the Stage 4B A-share `stock_daily_bars` /
   `stock_daily_bars_by_date` dataset keys, plus an opt-in
   `tdx_offline` package that reads the local TDX `vipdoc` tree of
-  pre-fetched `.day` files for fixture-style A-share offline batches
-  and shares no runtime
-  factory branch. The `provider_catalog` registry also carries a
+  pre-fetched `.day` files for fixture-style A-share offline batches;
+  the Stage 4B stock by-date fallback selects it at the application
+  layer, not through the generic ETF factory. The `provider_catalog` registry also carries a
   reserved, disabled-by-default `hithink` declaration
   (see [`tasks/hithink-reserved-provider-plan.md`](../../tasks/hithink-reserved-provider-plan.md))
   whose credential is read lazily through the centralized

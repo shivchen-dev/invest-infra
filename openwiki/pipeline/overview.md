@@ -117,6 +117,7 @@ apps/pipeline/src/invest_pipeline/
 ├── real_exposure_cli.py   # manual CLI driver for real-exposure collection (DC-3)
 ├── real_exposure_service.py  # service module behind the DC-3 exposure asset
 ├── research_orchestration_service.py  # PR-7 / ADR-0012 ResearchRunner lifecycle orchestrator
+├── research_context_projection.py  # load_context_projection (Stage 4B Phase 3 bundle -> ContextProjection)
 └── input_snapshot.py      # create_input_snapshot (PR-07)
 ```
 
@@ -557,7 +558,7 @@ produced by the AkShare adapter.
 
 [`apps/pipeline/src/invest_pipeline/adapters/jiuwenswarm/`](../../apps/pipeline/src/invest_pipeline/adapters/jiuwenswarm/)
 is the research-runner adapter behind the
-[`ResearchRunner`](../domain/overview.md#4c-research-lifecycle-researchrunner)
+[`ResearchRunner`](../domain/overview.md#4c-evidence-driven-research-lifecycle-adr-0012)
 domain port that ADR-0012 mandates. It is a pure pipeline-side
 boundary — **no JiuwenSwarm credential or SDK is imported by the
 domain package**. The package lands in three staged slices:
@@ -671,6 +672,50 @@ references are not in the pack, and rejects duplicate-request
 scenarios with `ResearchOrchestrationConflictError` so the
 idempotency-keyed `analytics.research_runs` row is the single
 source of truth.
+
+## 5h. Research context-projection loader (ADR-0012 / Stage 4B Phase 3)
+
+[`apps/pipeline/src/invest_pipeline/research_context_projection.py`](../../apps/pipeline/src/invest_pipeline/research_context_projection.py)
+is the application-layer gateway that rebuilds a
+[`ContextProjection`](../../packages/domain/src/invest_domain/research/evidence_bundle.py)
+for a single `ResearchRun` from the
+`ResearchEvidenceBundle` row plus the `MarketObservationSnapshot`
+rows it references. It is intentionally read-only: the helper
+takes an already-opened `SqlAlchemyUnitOfWork` and the case / run /
+evidence-pack trio that the orchestrator's Tx1 path has already
+loaded, then re-derives the projection through the pure-domain
+`invest_domain.research.evidence_bundle.build_projection` factory.
+It does not open its own transaction and does not call
+`commit` / `rollback`; the orchestrator owns the boundary.
+
+Failures fail closed via a single `ContextProjectionLoadError`
+(a `ValueError`):
+
+- A `ResearchRun` with `evidence_bundle_id is None` cannot silently
+  downgrade to a no-op projection; the helper raises so the caller
+  must opt out explicitly by checking the field before invoking.
+- A missing `ResearchEvidenceBundle` row, missing
+  `MarketObservationSnapshot` row, or any drift on bundle id / case
+  id / pack id / pack hash / as-of date / snapshot id / snapshot
+  content hash / snapshot as-of date / `QualityStatus.COMPLETE` /
+  `FreshnessStatus.FRESH` raises the same exception. The domain
+  `build_projection` then re-validates the supplied upstream
+  evidence so a stale snapshot cannot leak into the AI input even
+  if the storage read lies.
+
+Focused tests live in
+[`apps/pipeline/tests/unit/test_research_context_projection.py`](../../apps/pipeline/tests/unit/test_research_context_projection.py)
+and cover the success path, the missing bundle / missing snapshot
+negatives, the full mismatch matrix, and the legacy `None` case.
+This slice provides the application-side reader that goes through
+`uow.research_evidence_bundles.get_by_id` and
+`uow.market_observation_snapshots.get_by_content_hash`. The
+`ResearchOrchestrationService` loads it inside Tx1 for bundle-bound
+runs, and the JiuwenSwarm adapter forwards the serialized projection
+under `payload.context_projection`. Runs without a Bundle retain the
+legacy EvidencePack-only payload. The bundle / snapshot repositories
+therefore have a verified downstream research consumer
+(see [Storage overview §3](../storage/overview.md#3-repositories-repositoriespy)).
 
 ## 6. ETL service modules
 
@@ -813,13 +858,15 @@ slice. `tdx_offline` is the Stage 4B Phase 5 (slice 1) Tushare →
 TDX offline fallback catalog entry — it ships with the same
 `has_runtime_factory_adapter=False` flag so the runtime factory
 keeps refusing `INVEST_PIPELINE_PROVIDER_KEY=tdx_offline` with
-`UnknownProviderError("tdx_offline")` until a future slice wires
-a real `build_stock_provider` branch and the by-date asset-level
-fallback orchestration. `iter_provider_declarations()`
-returns the declarations in ascending `provider_key` order so
-tests and the routing layer can iterate the catalog without
-depending on `dict` insertion order. `lookup_provider(key)` raises
-`KeyError(key)` so callers can assert on the offending key.
+`UnknownProviderError("tdx_offline")`. The Stage 4B stock by-date
+asset owns an application-level Tushare → TDX fallback on top
+of this catalog entry; see
+[§7b Stock daily-bars fallback and TDX offline provider](#7b-stock-daily-bars-fallback-and-tdx-offline-provider).
+`iter_provider_declarations()` returns the declarations in
+ascending `provider_key` order so tests and the routing layer can
+iterate the catalog without depending on `dict` insertion order.
+`lookup_provider(key)` raises `KeyError(key)` so callers can
+assert on the offending key.
 
 The deterministic routing / coverage layer that consumes this
 catalog lives in `provider_routing/` (`select_providers`,
@@ -827,6 +874,56 @@ catalog lives in `provider_routing/` (`select_providers`,
 operator-facing `provider_coverage_*` helpers and the
 `provider_coverage_cli` runner; the canonical home for that
 material is §12 ([Provider factory](overview.md#12-provider-factory)).
+
+## 7b. Stock daily-bars fallback and TDX offline provider
+
+The Stage 4B stock by-date path is deliberately separate from the
+ETF provider factory. The by-date path is owned by
+[`stock_daily_bars.py`](../../apps/pipeline/src/invest_pipeline/stock_daily_bars.py):
+it prefers the qualified `(market, symbol)` universe and Tushare
+batch provider, then falls back to the local TDX reader when the
+Tushare route is unavailable or produces no usable batch. The
+fallback is an application-level choice; `tdx_offline` remains
+absent from the generic `build_provider()` factory so ETF runtime
+selection cannot accidentally activate local files.
+
+`TdxOfflineStockProvider` in
+[`adapters/tdx_offline/stock_adapter.py`](../../apps/pipeline/src/invest_pipeline/adapters/tdx_offline/stock_adapter.py)
+implements the stock daily-bars shape used by
+`StockTushareProvider`. Its reader discovers only filenames
+matching `sh|sz|bj` plus six digits under `vipdoc/{market}/lday`,
+sorts the result deterministically, applies inclusive date
+filtering, and maps markets through the single `MARKET_TO_EXCHANGE`
+mapping (`sh → SSE`, `sz → SZSE`, `bj → BJSE`). `TdxOfflineSettings`
+is disabled by default, validates a non-negative `record_cap`, and
+redacts `data_root` in logs.
+
+The stock asset also reuses a previously persisted stock-master
+snapshot when one exists, rather than rediscovering the universe
+on every daily-bars run. This preserves the qualified-pair
+identity needed for Beijing symbols and keeps a successful master
+snapshot stable across fallback retries. A missing snapshot is
+the boundary where discovery/provider setup must be revisited; it
+is not silently fabricated.
+
+```mermaid
+flowchart LR
+    M[Qualified stock master snapshot] --> D[stock_daily_bars by-date asset]
+    D --> T[Tushare stock batch]
+    D --> F[TDX offline fallback]
+    F --> R[vipdoc sh sz bj lday files]
+    T --> E[Provider evidence and normalized daily bars]
+    F --> E
+```
+
+Focused checks are
+`apps/pipeline/tests/unit/test_tdx_offline_reader.py`,
+`test_tdx_offline_stock_provider.py`,
+`test_stock_daily_bars_tdx_fallback.py`, and
+`test_stock_assets_wiring.py`; run them with
+`cd apps/pipeline && uv run pytest -q tests/unit/test_tdx_offline_reader.py tests/unit/test_tdx_offline_stock_provider.py tests/unit/test_stock_daily_bars_tdx_fallback.py tests/unit/test_stock_assets_wiring.py`.
+The broader `make test-pipeline` is conditional when changing
+Dagster registration or package-wide contracts.
 
 ## 8. Provider error model
 
@@ -1188,7 +1285,7 @@ the Dagster job; audit failures are non-fatal so they cannot mask the
 primary run result. Every asset's transaction can therefore be
 linked back to a Domain `PipelineRun` value object (with `job_key`,
 `trigger_type` and `error_summary` columns — see
-[Storage overview](../storage/overview.md#where-each-table-is-written));
+[Storage overview](../storage/overview.md#5-where-each-table-is-written));
 the `count_by_status` helper is the basis for the future
 `/v1/pipeline-runs` page noted in PR-09 backward planning. The
 `PipelineRun` domain object carries `job_key` (non-empty string),

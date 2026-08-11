@@ -273,7 +273,15 @@ the asset-level integration paths against fixture data:
   (the CLI subprocess transport). `test_research_orchestration_service.py`
   pins the `ResearchOrchestrationService` lifecycle and the
   `(SUCCEEDED / RUNNER_FAILED / TIMEOUT_UNCERTAIN /
-  RECONCILIATION_REQUIRED)` outcome taxonomy. The DC-3 exposure
+  RECONCILIATION_REQUIRED)` outcome taxonomy. The Stage 4B
+  context-projection slice adds
+  [`test_research_context_projection.py`](../../apps/pipeline/tests/unit/test_research_context_projection.py)
+  (the application-layer
+  `load_context_projection` helper — success path, missing
+  bundle / missing snapshot negatives, the full mismatch matrix
+  on bundle id / case id / pack id / pack hash / as-of date /
+  snapshot id / content hash / `QualityStatus` / `FreshnessStatus`,
+  and the legacy `evidence_bundle_id is None` case). The DC-3 exposure
   slice adds `test_akshare_exposure_mapper.py`,
   `test_akshare_holding_mapper.py`, `test_akshare_client_exposure.py`,
   `test_exposure_service.py`, and `test_exposure_cli.py` plus the

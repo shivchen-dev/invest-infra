@@ -64,7 +64,7 @@ each one delegates to an `application/*.py` query service that owns the
 storage calls, parameter validation, and the 500-detail sanitisation.
 `apps/api/tests/` holds mock-based contract tests for every router
 and application service
-(see [Testing & operations §API tests](../testing-and-ops/overview.md#api-tests)).
+(see [Testing & operations §API tests](../testing-and-ops/overview.md#4-api-tests)).
 
 ## 2. Routing surface
 
@@ -150,7 +150,7 @@ structured code. The router only returns the hard-coded
 `total`, `limit`, and `offset`; history is ordered by `started_at` descending
 with `id` as a deterministic tiebreaker. The storage layer provides the
 job-key-filtered page and exact count documented in the
-[Storage overview](../storage/overview.md#repositories-repositoriespy).
+[Storage overview](../storage/overview.md#3-repositories-repositoriespy).
 
 ### `schemas/data_freshness.py`
 
@@ -181,7 +181,7 @@ EvidencePackResponse, ResearchRunResponse, ResearchResultResponse`). The aliases
 the same Pydantic classes that [`schemas/common.py`](#schemascommonpy)
 re-exports from `schemas/etf.py`, so the public surface is one
 definition with two names. Test code uses this surface
-(see [Testing & operations](../testing-and-ops/overview.md#api-tests)).
+(see [Testing & operations](../testing-and-ops/overview.md#4-api-tests)).
 
 ### `schemas/research.py` (PR-7 read-only research lifecycle)
 

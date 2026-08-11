@@ -53,7 +53,7 @@ The PR-08 calculator returns a `CandidatePoolResult` once a run is
 The calculator consumes the smallest possible input set:
 
 - `InputSnapshot` — the immutable membership list with its
-  `content_hash` ([Candidate pool §3](#input-snapshot-binding)).
+  `content_hash` ([Candidate pool §3](#3-input-snapshot-binding)).
 - `list[DailyBar]` — the standardised bars for one `trade_date`.
 - `CandidatePoolPolicy` — the eligibility / liquidity / scoring
   parameters (all explicit, none implicit).
@@ -152,7 +152,7 @@ Repositories are `SqlAlchemyCandidatePoolRunRepository` and
 `CandidatePoolRunRepository.transition_status`, which issues an
 optimistic `UPDATE … WHERE id=? AND status=?` and raises
 `ConcurrentTransitionError` on a zero-row match — see
-[Storage overview](../storage/overview.md#transactions-and-unit-of-work).
+[Storage overview](../storage/overview.md#4-transactions-and-unit-of-work).
 
 ## 7. How the API reads it
 

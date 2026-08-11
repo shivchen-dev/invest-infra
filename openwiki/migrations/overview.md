@@ -103,7 +103,7 @@ they were retired when the migrations moved to `apps/migrations/`.
   relationship is unavoidable (rare).
 - The JSONB membership list on `analytics.input_snapshots` is kept in
   the same lexicographic byte order used to compute `content_hash`
-  (see [Candidate pool](../domain/candidate-pool.md#input-snapshot-binding)).
+  (see [Candidate pool](../domain/candidate-pool.md#3-input-snapshot-binding)).
 
 ## 5. PR-09 / current diff touches
 

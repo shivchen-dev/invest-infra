@@ -36,6 +36,7 @@ from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 from types import MappingProxyType
 from typing import Any
+from unittest.mock import Mock
 from uuid import UUID, uuid4
 
 from invest_domain.instruments import InstrumentId
@@ -359,6 +360,37 @@ class RequestMappingTest(unittest.TestCase):
         self.assertEqual(request.case_as_of_date, case.as_of_date.isoformat())
         self.assertEqual(request.case_question, case.question)
         self.assertEqual(request.case_horizon, case.horizon)
+
+    def test_request_payload_includes_context_projection_when_provided(self) -> None:
+        case, run, pack = _running_case_and_run()
+        projection = Mock()
+        projection.to_dict.return_value = {"bundle_id": "bundle-1"}
+
+        request = build_request(
+            case=case,
+            run=run,
+            evidence_pack=pack,
+            playbook=_playbook(),
+            adapter_version=_ADAPTER_VERSION,
+            projection=projection,
+        )
+
+        self.assertEqual(
+            request.payload["context_projection"], {"bundle_id": "bundle-1"}
+        )
+        projection.to_dict.assert_called_once_with()
+
+    def test_request_payload_preserves_legacy_shape_without_projection(self) -> None:
+        case, run, pack = _running_case_and_run()
+        request = build_request(
+            case=case,
+            run=run,
+            evidence_pack=pack,
+            playbook=_playbook(),
+            adapter_version=_ADAPTER_VERSION,
+        )
+
+        self.assertNotIn("context_projection", request.payload)
 
     def test_request_is_deterministic_under_same_inputs(self) -> None:
         case, run, pack = _running_case_and_run()
