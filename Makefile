@@ -38,7 +38,7 @@ api-dev:
 	cd apps/api && uv run fastapi dev src/invest_api/main.py --host 0.0.0.0 --port 8000
 
 pipeline-dev:
-	cd apps/pipeline && uv run dagster dev -m invest_pipeline.definitions -h 0.0.0.0 -p 3000
+	cd apps/pipeline && uv run $(PIPELINE_ENV_FILE) dagster dev -m invest_pipeline.definitions -h 0.0.0.0 -p 3000
 
 web-dev:
 	cd apps/web && pnpm dev
