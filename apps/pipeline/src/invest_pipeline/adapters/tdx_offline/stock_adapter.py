@@ -19,6 +19,12 @@ slice. It is intentionally narrow:
   via :func:`map_tdx_daily_bars`; prices and amount are kept as
   :class:`decimal.Decimal` so the binary-float representation TDX
   stores never leaks into the upstream ``DailyBar`` row hash.
+  ``prev_close`` is derived from the same instrument's previous valid
+  trading-day close (per ADR-0005 §3 / Stage 4C Task 1.1): the first
+  bar in the reader's return order carries ``None``; subsequent bars
+  inherit the immediately previous bar's ``close`` within the same
+  per-security sequence, so two symbols read in the same run never
+  share ``prev_close`` state.
 * Missing or invalid ``.day`` files **fail closed** — a missing
   file or a non-32-multiple size surfaces as a
   :class:`ProviderAttemptStatus.FAILED` attempt with
@@ -211,6 +217,7 @@ def _bar_to_daily_bar(
     provider_key: str,
     source_batch_id: UUID,
     observed_at: datetime,
+    prev_close: Any = None,
 ) -> DailyBar:
     """Map one :class:`TdxDailyBar` to a :class:`DailyBar`.
 
@@ -220,6 +227,13 @@ def _bar_to_daily_bar(
     :class:`TradingStatus.NORMAL` — a missing bar in the offline
     file is a *no row*, not a ``SUSPENDED`` row, and is dropped at
     the reader layer (not here).
+
+    ``prev_close`` is the previous valid record's close for the
+    same ``(symbol, exchange)`` pair in the order the reader
+    returned the sequence; the first record in the chain is passed
+    as ``None`` so the domain ``prev_close`` invariant from
+    ADR-0005 §3 (nullable on the first trading session) is
+    preserved.
     """
 
     source = BarSource(
@@ -234,7 +248,7 @@ def _bar_to_daily_bar(
         high=bar.high,
         low=bar.low,
         close=bar.close,
-        prev_close=None,
+        prev_close=prev_close,
         volume=Decimal_int_to_decimal(bar.volume),
         amount=bar.amount,
         adjustment=Adjust.NONE,
@@ -658,6 +672,7 @@ class TdxOfflineStockProvider:
         records: list[DailyBar] = []
         for (symbol, exchange), bars in bars_by_symbol.items():
             placeholder = self._ids.setdefault((symbol, exchange), InstrumentId.generate())
+            previous_close: Any = None
             for bar in bars:
                 records.append(
                     _bar_to_daily_bar(
@@ -666,8 +681,10 @@ class TdxOfflineStockProvider:
                         provider_key=PROVIDER_KEY,
                         source_batch_id=batch_id,
                         observed_at=finished_at,
+                        prev_close=previous_close,
                     )
                 )
+                previous_close = bar.close
 
         duration_ms = max(0, int((finished_at - started_at).total_seconds() * 1000))
         attempt = ProviderAttempt(
@@ -774,6 +791,7 @@ class TdxOfflineStockProvider:
         records: list[DailyBar] = []
         for (symbol, exchange), bars in bars_by_pair.items():
             placeholder = self._ids.setdefault((symbol, exchange), InstrumentId.generate())
+            previous_close: Any = None
             for bar in bars:
                 records.append(
                     _bar_to_daily_bar(
@@ -782,8 +800,10 @@ class TdxOfflineStockProvider:
                         provider_key=PROVIDER_KEY,
                         source_batch_id=batch_id,
                         observed_at=finished_at,
+                        prev_close=previous_close,
                     )
                 )
+                previous_close = bar.close
 
         duration_ms = max(0, int((finished_at - started_at).total_seconds() * 1000))
         attempt = ProviderAttempt(

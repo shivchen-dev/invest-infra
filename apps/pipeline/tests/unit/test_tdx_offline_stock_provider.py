@@ -835,5 +835,195 @@ class Phase1AQualifiedPairsTest(unittest.TestCase):
         )
 
 
+class PrevCloseChainTest(unittest.TestCase):
+    """Per-symbol ``prev_close`` chain: first ``None``, later carry prior close.
+
+    The TDX offline mapping has no per-bar prev_close field on disk,
+    so the adapter walks each symbol/file sequence as returned by the
+    reader and stamps the prior record's close onto the next one.
+    The state is per-symbol/file — the chain restarts at ``None``
+    for every distinct symbol even when several are read in the
+    same run — and the reader is the source of truth for ordering,
+    so the chain inherits whatever duplicate / out-of-order / invalid
+    / empty / single / error behaviour the reader already exposes.
+    """
+
+    def setUp(self) -> None:
+        self._tmp = Path(self._testMethodName)
+        self._tmp.mkdir(parents=True, exist_ok=True)
+
+    def tearDown(self) -> None:
+        import shutil
+
+        shutil.rmtree(self._tmp, ignore_errors=True)
+
+    def _settings(self) -> TdxOfflineSettings:
+        return TdxOfflineSettings(enabled=True, data_root=self._tmp)
+
+    def test_single_record_has_prev_close_none(self) -> None:
+        # A one-bar file produces exactly one record whose
+        # ``prev_close`` is ``None`` — the chain has no prior bar to
+        # borrow from, and there is no fallback to a synthetic
+        # previous close.
+        _write_symbol_file(
+            self._tmp,
+            "sh",
+            "600000",
+            _build_record(20230103, 1234, 1300, 1200, 1275, 100.0, 1000),
+        )
+        provider = TdxOfflineStockProvider(
+            self._settings(), symbols=["600000"], clock=_fixed_clock
+        )
+        _, attempt, batch = provider.fetch_daily_bars(
+            ["600000"], date(2023, 1, 1), date(2023, 12, 31)
+        )
+        self.assertIs(attempt.status, ProviderAttemptStatus.SUCCEEDED)
+        self.assertEqual(len(batch.records), 1)
+        self.assertIsNone(batch.records[0].prev_close)
+        self.assertEqual(batch.records[0].close, Decimal("12.75"))
+
+    def test_first_record_prev_close_is_none(self) -> None:
+        # Multi-day chain, asserted head: the first record carries
+        # ``prev_close=None`` regardless of how many follow.
+        payload = (
+            _build_record(20230103, 1234, 1300, 1200, 1275, 100.0, 1000)
+            + _build_record(20230104, 1280, 1310, 1270, 1290, 200.0, 2000)
+        )
+        _write_symbol_file(self._tmp, "sh", "600000", payload)
+        provider = TdxOfflineStockProvider(
+            self._settings(), symbols=["600000"], clock=_fixed_clock
+        )
+        _, attempt, batch = provider.fetch_daily_bars(
+            ["600000"], date(2023, 1, 1), date(2023, 12, 31)
+        )
+        self.assertIs(attempt.status, ProviderAttemptStatus.SUCCEEDED)
+        self.assertEqual(len(batch.records), 2)
+        self.assertIsNone(batch.records[0].prev_close)
+
+    def test_multi_day_chain_carries_previous_close(self) -> None:
+        # Multi-day chain, asserted tail: each later record carries
+        # the immediately preceding record's close, walked in the
+        # reader's return order. No sort, no filter, no
+        # synthetic-prev fallback.
+        payload = (
+            _build_record(20230103, 1234, 1300, 1200, 1275, 100.0, 1000)
+            + _build_record(20230104, 1280, 1310, 1270, 1290, 200.0, 2000)
+            + _build_record(20230105, 1290, 1320, 1280, 1305, 300.0, 3000)
+        )
+        _write_symbol_file(self._tmp, "sh", "600000", payload)
+        provider = TdxOfflineStockProvider(
+            self._settings(), symbols=["600000"], clock=_fixed_clock
+        )
+        _, attempt, batch = provider.fetch_daily_bars(
+            ["600000"], date(2023, 1, 1), date(2023, 12, 31)
+        )
+        self.assertIs(attempt.status, ProviderAttemptStatus.SUCCEEDED)
+        self.assertEqual(len(batch.records), 3)
+        self.assertIsNone(batch.records[0].prev_close)
+        self.assertEqual(batch.records[1].prev_close, batch.records[0].close)
+        self.assertEqual(batch.records[2].prev_close, batch.records[1].close)
+        self.assertEqual(
+            [str(bar.prev_close) for bar in batch.records],
+            ["None", "12.75", "12.9"],
+        )
+
+    def test_empty_file_produces_no_records(self) -> None:
+        # An empty ``.day`` file yields an empty reader tuple, which
+        # in turn yields no ``DailyBar`` records. The empty path is
+        # preserved — neither the chain state nor the empty attempt
+        # contract change.
+        _write_symbol_file(self._tmp, "sh", "600000", b"")
+        provider = TdxOfflineStockProvider(
+            self._settings(), symbols=["600000"], clock=_fixed_clock
+        )
+        _, attempt, batch = provider.fetch_daily_bars(
+            ["600000"], date(2023, 1, 1), date(2023, 12, 31)
+        )
+        self.assertIs(attempt.status, ProviderAttemptStatus.SUCCEEDED)
+        self.assertIsNone(batch)
+
+    def test_state_is_isolated_per_symbol(self) -> None:
+        # The chain must restart at ``None`` for each distinct
+        # symbol/file — the previous close of one symbol must not
+        # bleed into the chain of another. The reader returns the
+        # symbols in the order they are read; the adapter walks
+        # each sequence independently.
+        sh_payload = (
+            _build_record(20230103, 1000, 1100, 950, 1050, 1.0, 100)
+            + _build_record(20230104, 1060, 1110, 1040, 1090, 2.0, 200)
+            + _build_record(20230105, 1090, 1140, 1080, 1120, 3.0, 300)
+        )
+        sz_payload = (
+            _build_record(20230103, 2000, 2100, 1950, 2050, 4.0, 400)
+            + _build_record(20230104, 2060, 2110, 2040, 2090, 5.0, 500)
+        )
+        _write_symbol_file(self._tmp, "sh", "600000", sh_payload)
+        _write_symbol_file(self._tmp, "sz", "000001", sz_payload)
+        provider = TdxOfflineStockProvider(
+            self._settings(), symbols=["600000", "000001"], clock=_fixed_clock
+        )
+        _, attempt, batch = provider.fetch_daily_bars(
+            ["600000", "000001"], date(2023, 1, 1), date(2023, 12, 31)
+        )
+        self.assertIs(attempt.status, ProviderAttemptStatus.SUCCEEDED)
+        self.assertEqual(len(batch.records), 5)
+        # Group by exchange so the per-symbol chain assertions are
+        # robust against iteration order over the dict.
+        by_exchange: dict[str, list[Any]] = {}
+        for record in batch.records:
+            resolved = provider.symbol_and_exchange_for_instrument_id(
+                record.instrument_id
+            )
+            by_exchange.setdefault(resolved[1], []).append(record)
+        self.assertEqual(set(by_exchange), {"SSE", "SZSE"})
+        self.assertEqual(len(by_exchange["SSE"]), 3)
+        self.assertEqual(len(by_exchange["SZSE"]), 2)
+        # Each symbol's chain starts at ``None`` — the last close
+        # of the other symbol is never reused.
+        for chain in by_exchange.values():
+            self.assertIsNone(chain[0].prev_close)
+        # Each subsequent bar in a chain carries the prior close of
+        # the same chain.
+        for chain in by_exchange.values():
+            for previous, current in zip(chain, chain[1:]):
+                self.assertEqual(current.prev_close, previous.close)
+
+    def test_chain_works_for_by_pairs_path(self) -> None:
+        # The market-qualified pair path goes through
+        # ``_fetch_by_pairs``; the chain semantics must be identical
+        # so the by-pairs fallback cannot drift from the per-symbol
+        # one.
+        sh_payload = (
+            _build_record(20230103, 1000, 1100, 950, 1050, 1.0, 100)
+            + _build_record(20230104, 1060, 1110, 1040, 1090, 2.0, 200)
+        )
+        bj_payload = (
+            _build_record(20230105, 1500, 1600, 1450, 1550, 3.0, 300)
+            + _build_record(20230106, 1560, 1610, 1540, 1590, 4.0, 400)
+            + _build_record(20230107, 1590, 1640, 1580, 1620, 5.0, 500)
+        )
+        _write_symbol_file(self._tmp, "sh", "600000", sh_payload)
+        _write_symbol_file(self._tmp, "bj", "110001", bj_payload)
+        provider = TdxOfflineStockProvider(self._settings())
+        _, attempt, batch = provider.fetch_daily_bars_by_pairs(
+            [("sh", "600000"), ("bj", "110001")],
+            date(2023, 1, 1),
+            date(2023, 12, 31),
+        )
+        self.assertIs(attempt.status, ProviderAttemptStatus.SUCCEEDED)
+        self.assertEqual(len(batch.records), 5)
+        by_exchange: dict[str, list[Any]] = {}
+        for record in batch.records:
+            resolved = provider.symbol_and_exchange_for_instrument_id(
+                record.instrument_id
+            )
+            by_exchange.setdefault(resolved[1], []).append(record)
+        self.assertEqual(set(by_exchange), {"SSE", "BJSE"})
+        for chain in by_exchange.values():
+            self.assertIsNone(chain[0].prev_close)
+            for previous, current in zip(chain, chain[1:]):
+                self.assertEqual(current.prev_close, previous.close)
+
+
 if __name__ == "__main__":
     unittest.main()
