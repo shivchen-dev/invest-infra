@@ -438,6 +438,29 @@ def write_stock_daily_bars_raw_by_trade_date(
     )
 
 
+def write_stock_daily_bars_raw_by_pairs(
+    provider: Any,
+    session_factory: SessionProvider | sessionmaker[Any],
+    *,
+    pairs: Sequence[tuple[str, str]],
+    trade_date: date,
+    unit_of_work_factory: UnitOfWorkFactory = SqlAlchemyUnitOfWork,
+) -> RawEtlResult:
+    """Persist one TDX evidence bundle for explicit market-qualified pairs."""
+
+    request, attempt, batch = provider.fetch_daily_bars_by_pairs(
+        pairs, trade_date, trade_date
+    )
+    return _persist_stock_daily_bars_raw(
+        provider,
+        session_factory,
+        request=request,
+        attempt=attempt,
+        batch=batch,
+        unit_of_work_factory=unit_of_work_factory,
+    )
+
+
 def write_stock_daily_bars_raw_with_tdx_fallback(
     tushare_provider: _StockByTradeDateProviderPort,
     session_factory: SessionProvider | sessionmaker[Any],
@@ -554,32 +577,24 @@ def write_stock_daily_bars_raw_with_tdx_fallback(
     if primary.request_status != "failed" or not settings.enabled:
         return primary
 
-    universe_ids = _enumerate_active_stock_instrument_ids(
-        session_factory=session_factory,
-        universe_enumerator=universe_enumerator,
-        unit_of_work_factory=unit_of_work_factory,
-    )
-    symbols = _resolve_active_stock_symbols(
-        session_factory=session_factory,
-        instrument_ids=universe_ids,
-        unit_of_work_factory=unit_of_work_factory,
-    )
-    if not symbols:
+    if tdx_provider_factory is None:
+        tdx_provider = TdxOfflineStockProvider(settings)
+    else:
+        tdx_provider = tdx_provider_factory(settings=settings)
+    pairs = tdx_provider.discover_symbols()
+    if not pairs:
         from invest_pipeline.market_breadth_service import StockUniverseEmptyError
 
         raise StockUniverseEmptyError(
             f"tdx_offline fallback for trade_date="
-            f"{trade_date.isoformat()} requires a non-empty active "
-            "STOCK universe; re-materialise stock_instruments before "
-            "retrying stock_daily_bars_raw"
+            f"{trade_date.isoformat()} requires a non-empty vipdoc "
+            "universe; download TDX daily data before retrying "
+            "stock_daily_bars_raw"
         )
-    if tdx_provider_factory is None:
-        tdx_provider = TdxOfflineStockProvider(settings, symbols=symbols)
-    else:
-        tdx_provider = tdx_provider_factory(settings=settings, symbols=symbols)
-    return write_stock_daily_bars_raw_by_trade_date(
+    return write_stock_daily_bars_raw_by_pairs(
         tdx_provider,
         session_factory,
+        pairs=pairs,
         trade_date=trade_date,
         unit_of_work_factory=unit_of_work_factory,
     )

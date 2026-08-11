@@ -8,9 +8,9 @@
 
 ### Phase 1：TDX 日线独立可用
 
-- [ ] 支持 `vipdoc/bj/lday` 北交所文件与 `BJSE` 映射。
-- [ ] 增加 TDX 日线目录枚举，避免按日期读取时依赖 Tushare 提供 symbol universe。
-- [ ] 将 TDX 日线 fallback 接入真实 Dagster stock asset，并保留 evidence lineage。
+- [x] 支持 `vipdoc/bj/lday` 北交所文件与 `BJSE` 映射。
+- [x] 增加 TDX 日线目录枚举，避免按日期读取时依赖 Tushare 提供 symbol universe。
+- [x] 将 TDX 日线 fallback 接入真实 Dagster stock asset，并保留 evidence lineage。
 
 ### Phase 2：股票主数据低频缓存
 

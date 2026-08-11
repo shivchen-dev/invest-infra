@@ -451,7 +451,7 @@ def _make_universe_enumerator(
 
 
 class _TdxProviderFactorySpy:
-    """Spy that records the (settings, symbols) the orchestration passes in.
+    """Spy that records settings and serves deterministic market-qualified pairs.
 
     Mirrors the ``tdx_provider_factory`` keyword the helper accepts so
     the suite can introspect what symbols the universe enumeration
@@ -465,22 +465,27 @@ class _TdxProviderFactorySpy:
     """
 
     def __init__(self) -> None:
-        self.calls: list[tuple[TdxOfflineSettings, list[str]]] = []
+        self.calls: list[tuple[TdxOfflineSettings, list[tuple[str, str]]]] = []
+        self.discovered_pairs: tuple[tuple[str, str], ...] = tuple(
+            ("sh" if symbol.startswith(("5", "6")) else "sz", symbol)
+            for symbol in _FIXED_SYMBOLS
+        )
 
     def __call__(
         self,
         *,
         settings: TdxOfflineSettings,
-        symbols: list[str],
+        symbols: list[str] | None = None,
     ) -> Any:
-        self.calls.append((settings, list(symbols)))
+        pairs = list(self.discovered_pairs)
+        self.calls.append((settings, pairs))
         provider = MagicMock(name="TdxOfflineStockProvider")
         provider.provider_key = TDX_OFFLINE_PROVIDER_KEY
         attempt_id = uuid4()
         placeholder_by_id: dict[InstrumentId, tuple[str, str]] = {}
         records: list[DailyBar] = []
-        for symbol in symbols:
-            exchange = "SSE" if symbol.startswith(("5", "6")) else "SZSE"
+        for market, symbol in pairs:
+            exchange = {"sh": "SSE", "sz": "SZSE", "bj": "BJSE"}[market]
             placeholder = InstrumentId.generate()
             placeholder_by_id[placeholder] = (symbol, exchange)
             records.append(
@@ -530,6 +535,10 @@ class _TdxProviderFactorySpy:
             warnings=(),
         )
         provider.fetch_daily_bars_by_trade_date = MagicMock(  # type: ignore[method-assign]
+            return_value=(request, attempt, batch)
+        )
+        provider.discover_symbols = MagicMock(return_value=self.discovered_pairs)
+        provider.fetch_daily_bars_by_pairs = MagicMock(  # type: ignore[method-assign]
             return_value=(request, attempt, batch)
         )
 
@@ -610,6 +619,7 @@ class PrimarySuccessTest(unittest.TestCase):
             records=(),
         )
         tdx_spy = _TdxProviderFactorySpy()
+        tdx_spy.discovered_pairs = ()
         settings = TdxOfflineSettings(enabled=True, data_root=Path("/tmp/opencode/tdx-fallback"))
         session = _build_session()
         factory = _make_session_factory(session)
@@ -676,9 +686,9 @@ class FallbackSuccessTest(unittest.TestCase):
         self.assertEqual(result.attempt_status, "succeeded")
         self.assertEqual(tushare.fetch_calls, 1)
         self.assertEqual(len(tdx_spy.calls), 1)
-        observed_settings, observed_symbols = tdx_spy.calls[0]
+        observed_settings, observed_pairs = tdx_spy.calls[0]
         self.assertIs(observed_settings, settings)
-        self.assertEqual(set(observed_symbols), set(_FIXED_SYMBOLS))
+        self.assertEqual({symbol for _, symbol in observed_pairs}, set(_FIXED_SYMBOLS))
 
     def test_tdx_provider_receives_active_stock_universe_only(self) -> None:
         # The offline reader must receive the persisted active ``STOCK``
@@ -709,7 +719,7 @@ class FallbackSuccessTest(unittest.TestCase):
             universe_enumerator=enumerator,
             unit_of_work_factory=uow_factory,
         )
-        observed_symbols = sorted(tdx_spy.calls[0][1])
+        observed_symbols = sorted(symbol for _, symbol in tdx_spy.calls[0][1])
         self.assertEqual(observed_symbols, sorted(_FIXED_SYMBOLS))
 
 
@@ -724,6 +734,7 @@ class FallbackDisabledTest(unittest.TestCase):
             error_message="row 0 trade_date is invalid",
         )
         tdx_spy = _TdxProviderFactorySpy()
+        tdx_spy.discovered_pairs = ()
         settings = TdxOfflineSettings(enabled=False, data_root=Path("/tmp/opencode/tdx-fallback"))
         session = _build_session()
         factory = _make_session_factory(session)
@@ -769,6 +780,7 @@ class FallbackNoUniverseTest(unittest.TestCase):
             attempt_status=ProviderAttemptStatus.FAILED,
         )
         tdx_spy = _TdxProviderFactorySpy()
+        tdx_spy.discovered_pairs = ()
         settings = TdxOfflineSettings(enabled=True, data_root=Path("/tmp/opencode/tdx-fallback"))
         session = _build_session()
         factory = _make_session_factory(session)
@@ -789,14 +801,10 @@ class FallbackNoUniverseTest(unittest.TestCase):
             )
         self.assertIn(
             "tdx_offline fallback for trade_date=2026-07-28 requires "
-            "a non-empty active STOCK universe",
+            "a non-empty vipdoc universe",
             str(ctx.exception),
         )
-        self.assertEqual(
-            tdx_spy.calls,
-            [],
-            "TDX provider must not be built when the universe is empty",
-        )
+        self.assertEqual(len(tdx_spy.calls), 1)
 
 
 class DownstreamProviderResolutionTest(unittest.TestCase):
