@@ -4,11 +4,18 @@ The reader is intentionally narrow:
 
 * parses one 32-byte little-endian record per bar
 * resolves a bar file from a root directory using the canonical
-  ``vipdoc/{market}/lday/{market}{symbol}.day`` layout
+  ``vipdoc/{market}/lday/{market}{symbol}.day`` layout for the three
+  supported A-share markets: ``sh`` (Shanghai), ``sz`` (Shenzhen) and
+  ``bj`` (Beijing)
+* maps the TDX market code to the canonical exchange identifier the
+  domain layer uses: ``sh -> SSE``, ``sz -> SZSE``, ``bj -> BJSE``
 * validates each record strictly and surfaces specific exceptions
 * performs optional inclusive date filtering on ``YYYYMMDD`` integers
 * returns parsed bars as :class:`~invest_pipeline.adapters.tdx_offline.records.TdxDailyBar`
   instances whose monetary fields are :class:`decimal.Decimal` values
+* enumerates the ``vipdoc/{sh,sz,bj}/lday`` tree for read-only symbol
+  discovery so the by-date fallback can build its own universe without
+  depending on a successful Tushare run
 
 The reader does not perform ETF-protocol parsing, adjustment, instrument
 mapping or persistence; those responsibilities are intentionally left out of
@@ -18,11 +25,13 @@ this spike.
 from __future__ import annotations
 
 import math
+import re
 import struct
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from datetime import date as _date
 from decimal import Decimal
 from pathlib import Path
+from types import MappingProxyType
 
 from .errors import (
     TdxFileMissingError,
@@ -40,7 +49,18 @@ DATASET_KEY = "stock_daily_bars"
 
 RECORD_SIZE = 32
 _RECORD_STRUCT = struct.Struct("<5IfI4x")
-_MARKETS = frozenset({"sh", "sz"})
+
+_MARKETS: frozenset[str] = frozenset({"sh", "sz", "bj"})
+
+MARKET_TO_EXCHANGE: Mapping[str, str] = MappingProxyType(
+    {
+        "sh": "SSE",
+        "sz": "SZSE",
+        "bj": "BJSE",
+    }
+)
+
+_LDAY_FILENAME_RE = re.compile(r"^(?P<market>sh|sz|bj)(?P<symbol>\d{6})\.day$")
 
 
 def _coerce_date_filter(value: int | _date | None) -> int | None:
@@ -130,6 +150,74 @@ def _resolve_symbol_path(
     return Path(root) / "vipdoc" / market / "lday" / f"{market}{symbol}.day"
 
 
+def market_to_exchange(market: str) -> str:
+    """Return the canonical exchange identifier for a TDX market code.
+
+    The mapping is the single source of truth for the TDX ``sh`` / ``sz``
+    / ``bj`` market codes → domain-layer ``SSE`` / ``SZSE`` / ``BJSE``
+    exchange identifiers. Callers must use the canonical exchange string
+    when stamping the persisted ``raw.provider_requests`` row so the
+    upstream application service can route the offline evidence to the
+    correct ``core.instruments`` / ``core.daily_bars`` partition.
+    """
+
+    try:
+        return MARKET_TO_EXCHANGE[market]
+    except KeyError as exc:
+        raise TdxInvalidMarketError(
+            f"Unsupported TDX market {market!r}; expected one of {sorted(_MARKETS)}"
+        ) from exc
+
+
+def enumerate_symbols(root: Path | str) -> tuple[tuple[str, str], ...]:
+    """Enumerate the offline ``vipdoc`` tree for read-only symbol discovery.
+
+    Scans every known market directory (``sh`` / ``sz`` / ``bj``) under
+    ``root/vipdoc/{market}/lday`` and returns the regular files whose
+    name matches the canonical ``<market><6digits>.day`` layout as a
+    deterministic, sorted tuple of ``(market, symbol)`` pairs.
+
+    The scan is **strict about the schema but lenient about filesystem
+    noise**: directories that do not exist are silently skipped (so the
+    helper degrades to a partial enumeration when an operator has only
+    downloaded one or two markets), and files that do not match the
+    canonical filename pattern — minute-line ``.lc1`` / ``.lc5`` files,
+    ``index.*`` manifests, ``stockinfo`` snapshots — are silently
+    dropped. The read-only helper never raises on an unrecognised
+    filename; callers that want strict validation can pipe the result
+    through :func:`read_symbol` which still enforces the same
+    market and symbol checks as before.
+
+    The result is sorted lexicographically by ``(market, symbol)`` so
+    the by-date fallback can compare two enumerations byte-for-byte
+    and the caller never has to sort the output themselves.
+    """
+
+    root_path = Path(root)
+    if not root_path.exists():
+        return ()
+    if not root_path.is_dir():
+        return ()
+
+    pairs: list[tuple[str, str]] = []
+    for market in sorted(_MARKETS):
+        lday = root_path / "vipdoc" / market / "lday"
+        if not lday.is_dir():
+            continue
+        for entry in lday.iterdir():
+            if not entry.is_file():
+                continue
+            match = _LDAY_FILENAME_RE.match(entry.name)
+            if match is None:
+                continue
+            discovered_market = match.group("market")
+            if discovered_market != market:
+                continue
+            pairs.append((discovered_market, match.group("symbol")))
+    pairs.sort()
+    return tuple(pairs)
+
+
 def _apply_date_filters(
     bars: Iterable[TdxDailyBar],
     start: int | None,
@@ -205,9 +293,12 @@ def read_symbol(
 
 
 __all__ = [
-    "PROVIDER_KEY",
     "DATASET_KEY",
+    "MARKET_TO_EXCHANGE",
+    "PROVIDER_KEY",
     "RECORD_SIZE",
+    "enumerate_symbols",
+    "market_to_exchange",
     "read_day_file",
     "read_symbol",
 ]

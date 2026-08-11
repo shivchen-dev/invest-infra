@@ -35,11 +35,22 @@ helper already consumes. The tests pin four invariants:
   ``TDX_OFFLINE`` declaration is catalog-only and disabled by
   default. The Tushare adapter's existing ``stock_daily_bars_raw``
   wiring is unchanged.
+* **Phase 1A (TDX production fallback)** — Beijing (``bj``) and
+  the market-qualified pair path. The provider accepts an explicit
+  ``(market, symbol)`` pair via :meth:`register_pair` and
+  :meth:`fetch_daily_bars_by_pairs`, and exposes a read-only
+  :meth:`discover_symbols` method that scans the operator's
+  ``vipdoc`` tree for the by-date fallback. The existing
+  :meth:`register_symbol` / :meth:`fetch_daily_bars` callers
+  continue to work — the prefix-based heuristic still routes
+  ``5`` / ``6`` symbols to ``sh`` and everything else to ``sz``.
 
 Slice 1 deliberately does **not** wire the runtime fallback into
 the ``stock_daily_bars_raw`` Dagster asset — the asset-level
 fallback orchestration is a follow-up that requires a
-symbol-enumeration contract the slice does not invent.
+symbol-enumeration contract. Phase 1A (this slice) adds the
+market-qualified pair path and the read-only ``discover_symbols``
+helper; the asset wiring itself remains a follow-up.
 """
 
 from __future__ import annotations
@@ -607,6 +618,220 @@ class ApplicationServiceCompatibilityTest(unittest.TestCase):
         self.assertEqual(
             [record["symbol"] for record in payload["records"]],
             ["600000", "600000"],
+        )
+
+
+class Phase1AQualifiedPairsTest(unittest.TestCase):
+    """Phase 1A (TDX production fallback) market-qualified pair path.
+
+    The Phase 1A slice widens the adapter so Beijing (``bj``)
+    symbols can be read alongside Shanghai (``sh``) and Shenzhen
+    (``sz``) without breaking the existing
+    :meth:`register_symbol` / :meth:`fetch_daily_bars` callers. The
+    new entry points — :meth:`register_pair`,
+    :meth:`discover_symbols` and :meth:`fetch_daily_bars_by_pairs` —
+    accept an explicit ``(market, symbol)`` pair so a caller can opt
+    out of the prefix-based heuristic.
+    """
+
+    def setUp(self) -> None:
+        self._tmp = Path(self._testMethodName)
+        self._tmp.mkdir(parents=True, exist_ok=True)
+        self._settings = TdxOfflineSettings(enabled=True, data_root=self._tmp)
+
+    def tearDown(self) -> None:
+        import shutil
+
+        shutil.rmtree(self._tmp, ignore_errors=True)
+
+    def test_register_pair_bj_returns_bjse_placeholder(self) -> None:
+        provider = TdxOfflineStockProvider(self._settings)
+        placeholder = provider.register_pair("bj", "110001")
+        resolved = provider.symbol_and_exchange_for_instrument_id(placeholder)
+        self.assertEqual(resolved, ("110001", "BJSE"))
+
+    def test_register_pair_idempotent(self) -> None:
+        provider = TdxOfflineStockProvider(self._settings)
+        first = provider.register_pair("bj", "110001")
+        second = provider.register_pair("bj", "110001")
+        self.assertEqual(first, second)
+
+    def test_register_pair_rejects_unknown_market(self) -> None:
+        provider = TdxOfflineStockProvider(self._settings)
+        from invest_pipeline.adapters.tdx_offline import TdxInvalidMarketError
+
+        with self.assertRaises(TdxInvalidMarketError):
+            provider.register_pair("us", "110001")
+
+    def test_register_pair_rejects_invalid_symbol(self) -> None:
+        provider = TdxOfflineStockProvider(self._settings)
+        from invest_pipeline.adapters.tdx_offline import TdxInvalidSymbolError
+
+        with self.assertRaises(TdxInvalidSymbolError):
+            provider.register_pair("bj", "12345")
+
+    def test_discover_symbols_returns_pairs_for_populated_tree(self) -> None:
+        payload = _build_record(20230103, 1000, 1100, 950, 1050, 1.0, 100)
+        _write_symbol_file(self._tmp, "sh", "600000", payload)
+        _write_symbol_file(self._tmp, "sz", "000001", payload)
+        _write_symbol_file(self._tmp, "bj", "110001", payload)
+
+        provider = TdxOfflineStockProvider(self._settings)
+        pairs = provider.discover_symbols()
+
+        self.assertEqual(
+            pairs,
+            (
+                ("bj", "110001"),
+                ("sh", "600000"),
+                ("sz", "000001"),
+            ),
+        )
+
+    def test_discover_symbols_handles_empty_tree(self) -> None:
+        provider = TdxOfflineStockProvider(self._settings)
+        self.assertEqual(provider.discover_symbols(), ())
+
+    def test_discover_symbols_handles_missing_data_root(self) -> None:
+        # ``discover_symbols`` is a pure filesystem scan over the
+        # configured ``data_root``; it never raises on a missing
+        # root so the by-date fallback can rely on a successful
+        # call to a non-existent tree.
+        settings = TdxOfflineSettings(
+            enabled=True, data_root=self._tmp / "does_not_exist"
+        )
+        provider = TdxOfflineStockProvider(settings)
+        self.assertEqual(provider.discover_symbols(), ())
+
+    def test_discover_symbols_works_when_disabled(self) -> None:
+        # The discovery primitive is metadata-only; it does not
+        # consult the ``enabled`` flag so a follow-up asset can
+        # build the universe before flipping the provider on.
+        settings = TdxOfflineSettings(enabled=False, data_root=self._tmp)
+        _write_symbol_file(self._tmp, "bj", "110001", b"")
+        provider = TdxOfflineStockProvider(settings)
+        self.assertEqual(provider.discover_symbols(), (("bj", "110001"),))
+
+    def test_fetch_daily_bars_by_pairs_bj(self) -> None:
+        payload = _build_record(20230103, 1500, 1600, 1450, 1550, 100.0, 1000)
+        _write_symbol_file(self._tmp, "bj", "110001", payload)
+
+        provider = TdxOfflineStockProvider(self._settings)
+        request, attempt, batch = provider.fetch_daily_bars_by_pairs(
+            [("bj", "110001")], date(2023, 1, 1), date(2023, 12, 31)
+        )
+
+        self.assertIs(attempt.status, ProviderAttemptStatus.SUCCEEDED)
+        self.assertEqual(request.request_key, "daily-bars-by-pairs-2023-01-01-2023-12-31-bj110001")
+        self.assertEqual(request.params["pairs"], [["bj", "110001"]])
+        self.assertEqual(len(batch.records), 1)
+        self.assertEqual(batch.records[0].trade_date, date(2023, 1, 3))
+        self.assertEqual(batch.records[0].close, Decimal("15.50"))
+        # The market-qualified path must stamp the canonical
+        # exchange identifier on every record so the upstream
+        # service can route the offline evidence to the
+        # ``core.instruments`` / ``core.daily_bars`` partition.
+        self.assertEqual(
+            provider.symbol_and_exchange_for_instrument_id(
+                batch.records[0].instrument_id
+            ),
+            ("110001", "BJSE"),
+        )
+
+    def test_fetch_daily_bars_by_pairs_supports_multiple_markets(self) -> None:
+        sh_payload = _build_record(20230103, 1000, 1100, 950, 1050, 1.0, 100)
+        sz_payload = _build_record(20230104, 2000, 2100, 1950, 2050, 2.0, 200)
+        bj_payload = _build_record(20230105, 3000, 3100, 2950, 3050, 3.0, 300)
+        _write_symbol_file(self._tmp, "sh", "600000", sh_payload)
+        _write_symbol_file(self._tmp, "sz", "000001", sz_payload)
+        _write_symbol_file(self._tmp, "bj", "110001", bj_payload)
+
+        provider = TdxOfflineStockProvider(self._settings)
+        request, attempt, batch = provider.fetch_daily_bars_by_pairs(
+            [("sh", "600000"), ("sz", "000001"), ("bj", "110001")],
+            date(2023, 1, 1),
+            date(2023, 12, 31),
+        )
+
+        self.assertIs(attempt.status, ProviderAttemptStatus.SUCCEEDED)
+        self.assertEqual(
+            sorted(record.trade_date for record in batch.records),
+            [date(2023, 1, 3), date(2023, 1, 4), date(2023, 1, 5)],
+        )
+        # The request key is sorted by ``(market, symbol)`` so two
+        # callers passing the same set of pairs in different
+        # orders collide on the same ``raw.provider_requests`` row.
+        self.assertEqual(
+            request.request_key,
+            "daily-bars-by-pairs-2023-01-01-2023-12-31-bj110001-sh600000-sz000001",
+        )
+
+    def test_fetch_daily_bars_by_pairs_fails_closed_on_missing_file(self) -> None:
+        provider = TdxOfflineStockProvider(self._settings)
+        request, attempt, batch = provider.fetch_daily_bars_by_pairs(
+            [("bj", "999999")], date(2023, 1, 1), date(2023, 12, 31)
+        )
+        self.assertIs(attempt.status, ProviderAttemptStatus.FAILED)
+        self.assertEqual(attempt.error_code, "tdx_file_missing")
+        self.assertIsNone(batch)
+
+    def test_fetch_daily_bars_by_pairs_rejects_empty_pairs(self) -> None:
+        provider = TdxOfflineStockProvider(self._settings)
+        with self.assertRaises(ValueError):
+            provider.fetch_daily_bars_by_pairs(
+                [], date(2023, 1, 1), date(2023, 12, 31)
+            )
+
+    def test_fetch_daily_bars_by_pairs_rejects_inverted_dates(self) -> None:
+        provider = TdxOfflineStockProvider(self._settings)
+        with self.assertRaises(ValueError):
+            provider.fetch_daily_bars_by_pairs(
+                [("bj", "110001")], date(2023, 12, 31), date(2023, 1, 1)
+            )
+
+    def test_fetch_daily_bars_by_pairs_rejects_unknown_market(self) -> None:
+        provider = TdxOfflineStockProvider(self._settings)
+        from invest_pipeline.adapters.tdx_offline import TdxInvalidMarketError
+
+        with self.assertRaises(TdxInvalidMarketError):
+            provider.fetch_daily_bars_by_pairs(
+                [("us", "110001")], date(2023, 1, 1), date(2023, 12, 31)
+            )
+
+    def test_existing_sh_sz_callers_continue_to_work(self) -> None:
+        # The Phase 1A slice must not break the existing SH/SZ
+        # contract: a caller that registers and fetches plain
+        # symbols still gets the same prefix-based routing and the
+        # same ``SSE`` / ``SZSE`` exchange stamp on the sidecar.
+        sh_payload = _build_record(20230103, 1000, 1100, 950, 1050, 1.0, 100)
+        sz_payload = _build_record(20230104, 2000, 2100, 1950, 2050, 2.0, 200)
+        _write_symbol_file(self._tmp, "sh", "600000", sh_payload)
+        _write_symbol_file(self._tmp, "sz", "000001", sz_payload)
+
+        provider = TdxOfflineStockProvider(
+            self._settings, symbols=["600000", "000001"]
+        )
+        request, attempt, batch = provider.fetch_daily_bars(
+            ["600000", "000001"], date(2023, 1, 1), date(2023, 12, 31)
+        )
+
+        self.assertIs(attempt.status, ProviderAttemptStatus.SUCCEEDED)
+        self.assertEqual(len(batch.records), 2)
+        # The audit ``exchange`` stamp is the canonical
+        # identifier; the prefix-based heuristic still resolves
+        # ``600000`` to ``SSE`` and ``000001`` to ``SZSE``.
+        exchanges = {
+            provider.symbol_and_exchange_for_instrument_id(
+                record.instrument_id
+            )
+            for record in batch.records
+        }
+        self.assertEqual(exchanges, {("600000", "SSE"), ("000001", "SZSE")})
+        # The request key is the slice-1 contract and must remain
+        # unchanged for downstream consumers that correlate audit
+        # rows by ``request_key``.
+        self.assertEqual(
+            request.request_key, "daily-bars-2023-01-01-2023-12-31-000001-600000"
         )
 
 

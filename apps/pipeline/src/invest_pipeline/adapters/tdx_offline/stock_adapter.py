@@ -1,4 +1,4 @@
-"""TDX ``.day`` offline stock provider — Stage 4B Phase 5 (slice 1).
+"""TDX ``.day`` offline stock provider — Stage 4B Phase 5 (slice 1 + slice 2).
 
 This module wires the offline reader spike
 (:mod:`invest_pipeline.adapters.tdx_offline.reader`) into the V2
@@ -30,16 +30,24 @@ slice. It is intentionally narrow:
   the offline adapter is to be the deterministic
   ``Tushare → TDX offline`` fallback; failing open would defeat the
   contract.
+* Slice 2 (TDX production fallback, Phase 1A) widens the adapter so
+  Beijing Stock Exchange (``bj``) symbols can be read alongside
+  Shanghai (``sh``) and Shenzhen (``sz``). The existing
+  :meth:`TdxOfflineStockProvider.register_symbol` /
+  :meth:`TdxOfflineStockProvider.fetch_daily_bars` callers continue
+  to work — the prefix-based heuristic still routes ``5`` / ``6``
+  symbols to ``sh`` and everything else to ``sz`` — and the new
+  :meth:`register_pair`, :meth:`discover_symbols` and
+  :meth:`fetch_daily_bars_by_pairs` entry points accept an
+  explicit ``(market, symbol)`` pair so a caller can opt out of
+  the heuristic and read ``bj`` files unambiguously.
 
-Slice 1 deliberately does not wire the runtime fallback into the
-``stock_daily_bars_raw`` Dagster asset. The provider, the settings,
-and the catalog entry are landing in this slice; the asset-level
-fallback orchestration is documented in
-:mod:`invest_pipeline.adapters.tdx_offline` as a follow-up that
-requires a symbol-enumeration contract (a future slice must decide
-how the by-date asset learns which symbols to read from the offline
-``vipdoc`` tree without relying on a successful Tushare run to
-provide them).
+The slice 1 / slice 2 split deliberately does not wire the runtime
+fallback into the ``stock_daily_bars_raw`` Dagster asset. The
+provider, the settings, and the catalog entry landed in slice 1;
+slice 2 adds Beijing support, the read-only filesystem enumeration
+and the market-qualified fetch path the asset-level fallback
+orchestration will consume in a follow-up slice.
 """
 
 from __future__ import annotations
@@ -77,21 +85,30 @@ from invest_pipeline.adapters.tdx_offline.errors import (
 )
 from invest_pipeline.adapters.tdx_offline.reader import (
     DATASET_KEY,
+    MARKET_TO_EXCHANGE,
     PROVIDER_KEY,
+    enumerate_symbols,
+    market_to_exchange,
     read_symbol,
 )
 from invest_pipeline.adapters.tdx_offline.records import TdxDailyBar
 
 _DEFAULT_BY_DATE_REQUEST_KEY = "daily-bars-by-date-{trade_date}"
 _PER_SYMBOL_REQUEST_KEY_TEMPLATE = "daily-bars-{start}-{end}-{symbols}"
+_BY_PAIRS_REQUEST_KEY_TEMPLATE = "daily-bars-by-pairs-{start}-{end}-{pairs}"
 
 _MARKET_SH = "sh"
 _MARKET_SZ = "sz"
-_MARKET_TO_EXCHANGE: dict[str, str] = {
-    _MARKET_SH: "SSE",
-    _MARKET_SZ: "SZSE",
+
+# The reader's :data:`MARKET_TO_EXCHANGE` is the single source of truth for
+# the TDX market → canonical exchange mapping. The adapter keeps an
+# ``_EXCHANGE_TO_MARKET`` reverse-lookup so a persisted
+# ``(symbol, exchange)`` pair from the upstream sidecar can be mapped
+# back to a TDX market code without re-walking the tree.
+_MARKET_TO_EXCHANGE: dict[str, str] = dict(MARKET_TO_EXCHANGE)
+_EXCHANGE_TO_MARKET: dict[str, str] = {
+    exchange: market for market, exchange in _MARKET_TO_EXCHANGE.items()
 }
-_EXCHANGE_TO_MARKET: dict[str, str] = {value: key for key, value in _MARKET_TO_EXCHANGE.items()}
 
 _TDX_FILE_MISSING_CODE = "tdx_file_missing"
 _TDX_INVALID_SIZE_CODE = "tdx_invalid_size"
@@ -126,20 +143,32 @@ def _resolve_market(symbol: str) -> str:
     prefixes (``0xxxxx`` / ``3xxxxx``) all fall under the Shenzhen
     branch. The rule is deterministic and unit-testable without a
     network call.
+
+    The prefix-based heuristic is intentionally **limited to the
+    Shanghai and Shenzhen markets**: Beijing (``bj``) symbols cannot
+    be reliably inferred from a six-digit code alone, so callers that
+    need to read ``bj`` files must pass the market explicitly via
+    :meth:`TdxOfflineStockProvider.register_pair` or
+    :meth:`TdxOfflineStockProvider.discover_symbols`.
+    """
+
+    _validate_six_digit_symbol(symbol)
+    return _MARKET_SH if symbol.startswith(("5", "6")) else _MARKET_SZ
+
+
+def _validate_six_digit_symbol(symbol: str) -> None:
+    """Reject a symbol that is not a six-digit string.
+
+    The helper is the single source of truth for the six-digit
+    invariant: callers that bypass the prefix-based
+    :func:`_resolve_market` heuristic (e.g. the market-qualified
+    :meth:`TdxOfflineStockProvider.register_pair` path) share the
+    same validation so a malformed symbol cannot leak into the
+    filesystem resolver.
     """
 
     if not isinstance(symbol, str) or not symbol.isdigit() or len(symbol) != 6:
         raise TdxInvalidSymbolError(f"Symbol must be six digits, got {symbol!r}")
-    return _MARKET_SH if symbol.startswith(("5", "6")) else _MARKET_SZ
-
-
-def _market_to_exchange(market: str) -> str:
-    try:
-        return _MARKET_TO_EXCHANGE[market]
-    except KeyError as exc:
-        raise TdxInvalidMarketError(
-            f"Unsupported TDX market {market!r}; expected one of {sorted(_MARKET_TO_EXCHANGE)}"
-        ) from exc
 
 
 def _yyyymmdd_to_date(value: int) -> date:
@@ -163,6 +192,16 @@ def _per_symbol_request_key(start_date: date, end_date: date, symbols: Sequence[
 
 def _by_date_request_key(trade_date: date) -> str:
     return _DEFAULT_BY_DATE_REQUEST_KEY.format(trade_date=trade_date.isoformat())
+
+
+def _by_pairs_request_key(
+    start_date: date, end_date: date, pairs: Sequence[tuple[str, str]]
+) -> str:
+    return _BY_PAIRS_REQUEST_KEY_TEMPLATE.format(
+        start=start_date.isoformat(),
+        end=end_date.isoformat(),
+        pairs="-".join(f"{market}{symbol}" for market, symbol in sorted(pairs)),
+    )
 
 
 def _bar_to_daily_bar(
@@ -325,7 +364,7 @@ class TdxOfflineStockProvider:
 
     def _register_symbol(self, symbol: str) -> None:
         market = _resolve_market(symbol)
-        exchange = _market_to_exchange(market)
+        exchange = market_to_exchange(market)
         self._ids.setdefault((symbol, exchange), InstrumentId.generate())
 
     def symbol_and_exchange_for_instrument_id(
@@ -425,13 +464,116 @@ class TdxOfflineStockProvider:
         """
 
         market = _resolve_market(symbol)
-        exchange = _market_to_exchange(market)
+        exchange = market_to_exchange(market)
         existing = self._ids.get((symbol, exchange))
         if existing is not None:
             return existing
         placeholder = InstrumentId.generate()
         self._ids[(symbol, exchange)] = placeholder
         return placeholder
+
+    def register_pair(self, market: str, symbol: str) -> InstrumentId:
+        """Register an explicit ``(market, symbol)`` pair with the provider.
+
+        Unlike :meth:`register_symbol`, this entry point does **not**
+        infer the market from the symbol prefix: callers that know the
+        market — typically because they obtained the pair from
+        :meth:`discover_symbols` or the upstream Tushare sidecar — can
+        register Beijing (``bj``) symbols and any other market
+        unambiguously. Registering the same pair twice is a no-op and
+        returns the existing placeholder.
+
+        Both the market and the symbol are validated up-front so a
+        malformed pair surfaces as the same
+        :class:`TdxInvalidMarketError` /
+        :class:`TdxInvalidSymbolError` the rest of the reader layer
+        already raises — no silent coercion, no deferred
+        ``TdxFileMissingError`` at fetch time.
+        """
+
+        exchange = market_to_exchange(market)
+        _validate_six_digit_symbol(symbol)
+        existing = self._ids.get((symbol, exchange))
+        if existing is not None:
+            return existing
+        placeholder = InstrumentId.generate()
+        self._ids[(symbol, exchange)] = placeholder
+        return placeholder
+
+    def discover_symbols(self) -> tuple[tuple[str, str], ...]:
+        """Scan the operator-managed ``vipdoc`` tree for available symbols.
+
+        Returns a deterministic, sorted tuple of ``(market, symbol)``
+        pairs. The discovery is a pure filesystem scan over
+        ``self._settings.data_root``; it does not open any ``.day``
+        file, does not depend on the ``enabled`` flag, and never raises
+        on filesystem noise (missing directories, stray
+        ``index.*`` / ``.lc1`` / ``.lc5`` artefacts). The by-date
+        fallback uses the result to build its own universe so the
+        offline read no longer relies on a successful Tushare run to
+        provide the symbol list.
+
+        The pair ordering matches the reader's
+        :func:`enumerate_symbols` helper, so two providers scanning the
+        same root produce byte-for-byte identical results.
+        """
+
+        return enumerate_symbols(self._settings.data_root)
+
+    def fetch_daily_bars_by_pairs(
+        self,
+        pairs: Sequence[tuple[str, str]],
+        start_date: date,
+        end_date: date,
+    ) -> tuple[ProviderRequest, ProviderAttempt, ProviderBatch[DailyBar] | None]:
+        """Fetch bars for an explicit sequence of ``(market, symbol)`` pairs.
+
+        The by-pairs path is the market-qualified counterpart of
+        :meth:`fetch_daily_bars`: the market is read from each pair
+        (not inferred from the symbol prefix), so Beijing (``bj``)
+        symbols and any other market that does not have a deterministic
+        symbol-prefix heuristic are handled correctly. The provider
+        still fail-closes on the first error per pair so the upstream
+        application service can rerun the whole window without a
+        partial commit, mirroring the existing ``fetch_daily_bars``
+        contract.
+
+        Every pair is validated up-front (market must be a known TDX
+        code, symbol must be six digits) so a malformed pair surfaces
+        as the same :class:`TdxInvalidMarketError` /
+        :class:`TdxInvalidSymbolError` the rest of the reader layer
+        already raises. Missing files are still reported as a
+        ``FAILED`` attempt with ``error_code="tdx_file_missing"`` so
+        the application service can rerun the whole window without a
+        partial commit.
+        """
+
+        if not pairs:
+            raise ValueError("pairs must not be empty")
+        if end_date < start_date:
+            raise ValueError("end_date must be on or after start_date")
+        for market, symbol in pairs:
+            market_to_exchange(market)
+            _validate_six_digit_symbol(symbol)
+
+        request_id = uuid4()
+        request = ProviderRequest(
+            provider_key=PROVIDER_KEY,
+            dataset_key=DATASET_KEY,
+            request_key=_by_pairs_request_key(start_date, end_date, pairs),
+            params={
+                "pairs": [list(pair) for pair in pairs],
+                "start_date": start_date.isoformat(),
+                "end_date": end_date.isoformat(),
+            },
+        )
+        return self._fetch_by_pairs(
+            request=request,
+            request_id=request_id,
+            pairs=tuple(pairs),
+            start_date=start_date,
+            end_date=end_date,
+        )
 
     def _fetch(
         self,
@@ -492,7 +634,7 @@ class TdxOfflineStockProvider:
                     ),
                 )
                 return request, attempt, None
-            exchange = _market_to_exchange(market)
+            exchange = market_to_exchange(market)
             bars_by_symbol[(symbol, exchange)] = bars
             self._ids.setdefault((symbol, exchange), InstrumentId.generate())
 
@@ -538,6 +680,122 @@ class TdxOfflineStockProvider:
         )
         raw_payload = _build_raw_payload(
             bars_by_symbol=bars_by_symbol,
+            started_at=started_at,
+            finished_at=finished_at,
+        )
+        batch = ProviderBatch[DailyBar](
+            attempt_id=request_id,
+            records=tuple(records),
+            raw_payload_hash=_raw_payload_hash(raw_payload),
+            warnings=(),
+            status=ProviderBatchStatus.SUCCEEDED,
+        )
+        return request, attempt, batch
+
+    def _fetch_by_pairs(
+        self,
+        *,
+        request: ProviderRequest,
+        request_id: UUID,
+        pairs: Sequence[tuple[str, str]],
+        start_date: date,
+        end_date: date,
+    ) -> tuple[ProviderRequest, ProviderAttempt, ProviderBatch[DailyBar] | None]:
+        if not self._settings.enabled:
+            attempt = self._fail_attempt(
+                request_id=request_id,
+                error_code=_TDX_DISABLED_CODE,
+                error_message=(
+                    "TdxOfflineStockProvider is disabled by default; "
+                    "set INVEST_PIPELINE_TDX_OFFLINE_ENABLED=true "
+                    "and the operator-managed data_root to read the offline .day files"
+                ),
+            )
+            return request, attempt, None
+
+        started_at = self._clock()
+        bars_by_pair: dict[tuple[str, str], tuple[TdxDailyBar, ...]] = {}
+        first_error: tuple[str, str] | None = None
+
+        for market, symbol in pairs:
+            try:
+                bars = read_symbol(
+                    self._settings.data_root,
+                    market,
+                    symbol,
+                    start_date=_date_to_yyyymmdd(start_date),
+                    end_date=_date_to_yyyymmdd(end_date),
+                )
+            except TdxOfflineError as exc:
+                if first_error is None:
+                    first_error = (
+                        _TDX_ERROR_CODE_BY_EXCEPTION.get(type(exc), "tdx_unknown"),
+                        str(exc),
+                    )
+                continue
+            if not bars:
+                continue
+            if sum(len(records) for records in bars_by_pair.values()) + len(bars) > (
+                self._settings.record_cap
+            ):
+                finished_at = self._clock()
+                attempt = self._fail_attempt(
+                    request_id=request_id,
+                    started_at=started_at,
+                    finished_at=finished_at,
+                    error_code=_TDX_RECORD_CAP_CODE,
+                    error_message=(
+                        f"offline read exceeds record_cap={self._settings.record_cap}; "
+                        "raise TdxOfflineSettings.record_cap or narrow the pair set"
+                    ),
+                )
+                return request, attempt, None
+            exchange = market_to_exchange(market)
+            bars_by_pair[(symbol, exchange)] = bars
+            self._ids.setdefault((symbol, exchange), InstrumentId.generate())
+
+        finished_at = self._clock()
+
+        if first_error is not None:
+            error_code, error_message = first_error
+            attempt = self._fail_attempt(
+                request_id=request_id,
+                started_at=started_at,
+                finished_at=finished_at,
+                error_code=error_code,
+                error_message=error_message,
+            )
+            return request, attempt, None
+
+        if not bars_by_pair:
+            return request, self._empty_attempt(request_id, started_at, finished_at), None
+
+        batch_id = uuid4()
+        records: list[DailyBar] = []
+        for (symbol, exchange), bars in bars_by_pair.items():
+            placeholder = self._ids.setdefault((symbol, exchange), InstrumentId.generate())
+            for bar in bars:
+                records.append(
+                    _bar_to_daily_bar(
+                        bar=bar,
+                        instrument_id=placeholder,
+                        provider_key=PROVIDER_KEY,
+                        source_batch_id=batch_id,
+                        observed_at=finished_at,
+                    )
+                )
+
+        duration_ms = max(0, int((finished_at - started_at).total_seconds() * 1000))
+        attempt = ProviderAttempt(
+            request_id=request_id,
+            attempt_number=1,
+            status=ProviderAttemptStatus.SUCCEEDED,
+            started_at=started_at,
+            finished_at=finished_at,
+            duration_ms=duration_ms,
+        )
+        raw_payload = _build_raw_payload(
+            bars_by_symbol=bars_by_pair,
             started_at=started_at,
             finished_at=finished_at,
         )
