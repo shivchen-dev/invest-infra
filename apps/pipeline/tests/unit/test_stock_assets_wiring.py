@@ -65,6 +65,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import MagicMock, patch
+from uuid import uuid4
 
 import dagster as dg
 import invest_storage
@@ -489,6 +490,86 @@ class StockAssetsSkippedBehaviourTest(unittest.TestCase):
         self.assertTrue(result.metadata["skipped_asset"])
         self.assertEqual(result.metadata["inserted"], 0)
 
+
+class StockInstrumentsSnapshotReuseTest(unittest.TestCase):
+    """``stock_instruments`` reuses the latest earlier successful snapshot."""
+
+    def _invoke(
+        self,
+        stored_request: Any,
+        prior_rows: list[tuple[Any, Any]],
+    ) -> tuple[Any, MagicMock]:
+        uow = MagicMock(name="UoW")
+        uow.__enter__ = MagicMock(return_value=uow)
+        uow.__exit__ = MagicMock(return_value=False)
+        uow.provider_requests.get_by_logical_key.return_value = stored_request
+        uow.session.execute.return_value.all.return_value = prior_rows
+        uow.instruments.upsert_many.return_value = 1
+
+        engine = MagicMock()
+        with (
+            patch.object(assets, "build_engine", lambda _url: engine),
+            patch.object(assets, "session_factory", lambda _engine: MagicMock()),
+            patch.object(
+                invest_storage,
+                "SqlAlchemyUnitOfWork",
+                lambda _factory: uow,
+            ),
+        ):
+            result = _underlying_callable("stock_instruments")(
+                dg.build_asset_context(partition_key=_HISTORICAL_PARTITION)
+            )
+        return result, uow
+
+    def test_current_success_keeps_normal_upsert_path(self) -> None:
+        current_request = SimpleNamespace(id=uuid4(), status="succeeded")
+        with patch.object(assets, "upsert_etf_instruments", return_value=3) as upsert:
+            result, _uow = self._invoke(current_request, [])
+
+        upsert.assert_called_once()
+        self.assertEqual(result.metadata["row_count"], 3)
+        self.assertFalse(result.metadata["reused_snapshot"])
+        self.assertFalse(result.metadata["skipped"])
+
+    def test_missing_current_request_reuses_latest_earlier_success(self) -> None:
+        prior_request = SimpleNamespace(
+            id=uuid4(),
+            provider_key="tushare",
+            dataset_key="stock_instruments",
+            request_key="instruments-2026-07-30",
+        )
+        prior_attempt = SimpleNamespace(
+            status="succeeded",
+            response_payload_json={"records": [{"symbol": "600519"}]},
+        )
+        with (
+            patch.object(assets, "deserialize_records", return_value=["record"]) as deserialize,
+            patch.object(assets, "upsert_etf_instruments") as normal_upsert,
+        ):
+            result, uow = self._invoke(
+                stored_request=None,
+                prior_rows=[(prior_request, prior_attempt)],
+            )
+
+        deserialize.assert_called_once_with(prior_attempt.response_payload_json)
+        uow.instruments.upsert_many.assert_called_once_with(["record"])
+        normal_upsert.assert_not_called()
+        self.assertEqual(result.metadata["row_count"], 1)
+        self.assertFalse(result.metadata["skipped"])
+        self.assertTrue(result.metadata["reused_snapshot"])
+        self.assertEqual(result.metadata["source_as_of"], "2026-07-30")
+        self.assertEqual(result.metadata["source_request_id"], str(prior_request.id))
+        self.assertEqual(result.metadata["as_of"], _HISTORICAL_PARTITION)
+        self.assertEqual(result.metadata["partition_key"], _HISTORICAL_PARTITION)
+
+    def test_missing_current_request_without_prior_snapshot_keeps_skip(self) -> None:
+        with patch.object(assets, "upsert_etf_instruments") as normal_upsert:
+            result, _uow = self._invoke(stored_request=None, prior_rows=[])
+
+        normal_upsert.assert_not_called()
+        self.assertEqual(result.metadata["row_count"], 0)
+        self.assertTrue(result.metadata["skipped"])
+        self.assertFalse(result.metadata["reused_snapshot"])
 
 class SettingsStockUniversePathTest(unittest.TestCase):
     """``Settings.stock_universe_path`` defaults to the repository config file."""

@@ -7,7 +7,7 @@ from typing import Any
 import dagster as dg
 from invest_domain.instruments import Instrument
 from invest_storage.database import build_engine, session_factory
-from invest_storage.models import InstrumentRow
+from invest_storage.models import InstrumentRow, ProviderAttemptRow, ProviderRequestRow
 from invest_storage.repositories import (
     NewProviderAttempt,
     NewProviderBatch,
@@ -22,6 +22,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from invest_pipeline.adapters import FixtureDevInstrumentProvider
+from invest_pipeline.adapters.fixture_dev.adapter import deserialize_records
 from invest_pipeline.candidate_pool_service import (
     CandidatePoolSnapshotNotFoundError,
     calculate_and_publish_candidate_pool,
@@ -795,6 +796,49 @@ def stock_instruments(context) -> dg.MaterializeResult:
                 request_key=f"instruments-{as_of.isoformat()}",
             )
         if stored_request is None or stored_request.status == "failed":
+            with SqlAlchemyUnitOfWork(factory) as uow:
+                earlier_snapshots = uow.session.execute(
+                    select(ProviderRequestRow, ProviderAttemptRow)
+                    .join(
+                        ProviderAttemptRow,
+                        ProviderAttemptRow.provider_request_id == ProviderRequestRow.id,
+                    )
+                    .where(
+                        ProviderRequestRow.provider_key == "tushare",
+                        ProviderRequestRow.dataset_key == "stock_instruments",
+                        ProviderRequestRow.request_key.like("instruments-____-__-__"),
+                        ProviderRequestRow.request_key < f"instruments-{as_of.isoformat()}",
+                        ProviderAttemptRow.status == "succeeded",
+                        ProviderAttemptRow.response_payload_json.is_not(None),
+                    )
+                    .order_by(
+                        ProviderRequestRow.request_key.desc(),
+                        ProviderAttemptRow.attempt_no.desc(),
+                    )
+                ).all()
+                for prior_request, prior_attempt in earlier_snapshots:
+                    source_as_of_text = prior_request.request_key.removeprefix(
+                        "instruments-"
+                    )
+                    try:
+                        source_as_of = date.fromisoformat(source_as_of_text)
+                    except ValueError:
+                        continue
+                    if source_as_of >= as_of:
+                        continue
+                    records = deserialize_records(prior_attempt.response_payload_json)
+                    count = uow.instruments.upsert_many(records)
+                    return dg.MaterializeResult(
+                        metadata={
+                            "row_count": count,
+                            "skipped": False,
+                            "reused_snapshot": True,
+                            "source_as_of": source_as_of.isoformat(),
+                            "source_request_id": str(prior_request.id),
+                            "as_of": as_of.isoformat(),
+                            "partition_key": context.partition_key,
+                        }
+                    )
             context.log.warning(
                 "stock_instruments: upstream attempt failed or missing for %s; "
                 "skipping core.instruments upsert",
@@ -804,6 +848,7 @@ def stock_instruments(context) -> dg.MaterializeResult:
                 metadata={
                     "row_count": 0,
                     "skipped": True,
+                    "reused_snapshot": False,
                     "reason": "upstream attempt failed or missing",
                     "as_of": as_of.isoformat(),
                     "partition_key": context.partition_key,
@@ -830,6 +875,7 @@ def stock_instruments(context) -> dg.MaterializeResult:
             "as_of": as_of.isoformat(),
             "partition_key": context.partition_key,
             "skipped": False,
+            "reused_snapshot": False,
         }
     )
 
