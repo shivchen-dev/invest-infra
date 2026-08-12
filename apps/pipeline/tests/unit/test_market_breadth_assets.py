@@ -307,7 +307,7 @@ class MarketBreadthSnapshotAssetTest(unittest.TestCase):
             patch.object(assets, "session_factory", lambda _engine: MagicMock()),
             patch.object(invest_storage, "SqlAlchemyUnitOfWork", lambda _factory: uow),
             patch.object(
-                assets, "calculate_and_publish_market_breadth", _fake_publish
+                assets, "calculate_and_publish_market_breadth_v2", _fake_publish
             ),
         ):
             assets.market_breadth_snapshot.op.compute_fn.decorated_fn(
@@ -347,7 +347,7 @@ class MarketBreadthSnapshotAssetTest(unittest.TestCase):
             patch.object(assets, "session_factory", lambda _engine: MagicMock()),
             patch.object(invest_storage, "SqlAlchemyUnitOfWork", lambda _factory: uow),
             patch.object(
-                assets, "calculate_and_publish_market_breadth", _fake_publish
+                assets, "calculate_and_publish_market_breadth_v2", _fake_publish
             ),
         ):
             result = assets.market_breadth_snapshot.op.compute_fn.decorated_fn(
@@ -373,14 +373,14 @@ class MarketBreadthSnapshotAssetTest(unittest.TestCase):
         uow.input_snapshot_repository = repo
         engine = _patch_engine()
 
-        service_invoked = MagicMock(name="calculate_and_publish_market_breadth")
+        service_invoked = MagicMock(name="calculate_and_publish_market_breadth_v2")
 
         with (
             patch.object(assets, "build_engine", lambda _url: engine),
             patch.object(assets, "session_factory", lambda _engine: MagicMock()),
             patch.object(invest_storage, "SqlAlchemyUnitOfWork", lambda _factory: uow),
             patch.object(
-                assets, "calculate_and_publish_market_breadth", service_invoked
+                assets, "calculate_and_publish_market_breadth_v2", service_invoked
             ),
         ):
             result = assets.market_breadth_snapshot.op.compute_fn.decorated_fn(
@@ -399,7 +399,7 @@ class MarketBreadthSnapshotAssetTest(unittest.TestCase):
         """A persisted ``INVALID / FAILED`` snapshot must surface as ``skipped`` / ``invalid``.
 
         The breadth service fail-closes when any instrument lacks a
-        valid 20-day history (the all-filtered or mixed valid+missing
+        valid 250-normal-bar history (the all-filtered or mixed valid+missing
         cases) and the resulting snapshot is the deterministic
         ``INVALID / FAILED`` shape. The asset must mirror that as
         ``skipped=True`` / ``invalid=True`` with a ``reason`` instead
@@ -437,7 +437,7 @@ class MarketBreadthSnapshotAssetTest(unittest.TestCase):
             patch.object(assets, "session_factory", lambda _engine: MagicMock()),
             patch.object(invest_storage, "SqlAlchemyUnitOfWork", lambda _factory: uow),
             patch.object(
-                assets, "calculate_and_publish_market_breadth", _fake_publish
+                assets, "calculate_and_publish_market_breadth_v2", _fake_publish
             ),
         ):
             result = assets.market_breadth_snapshot.op.compute_fn.decorated_fn(
@@ -493,7 +493,7 @@ class MarketBreadthSnapshotAssetTest(unittest.TestCase):
             patch.object(assets, "session_factory", lambda _engine: MagicMock()),
             patch.object(invest_storage, "SqlAlchemyUnitOfWork", lambda _factory: uow),
             patch.object(
-                assets, "calculate_and_publish_market_breadth", _fake_publish
+                assets, "calculate_and_publish_market_breadth_v2", _fake_publish
             ),
         ):
             result = assets.market_breadth_snapshot.op.compute_fn.decorated_fn(
@@ -504,3 +504,45 @@ class MarketBreadthSnapshotAssetTest(unittest.TestCase):
         assert result.metadata["invalid"] is False
         assert result.metadata["quality_status"] == QualityStatus.PARTIAL.value
         assert _TRADE_DATE.isoformat() in result.metadata["reason"]
+
+    def test_market_breadth_snapshot_delegates_to_v2_service(self) -> None:
+        """Asset delegates to v2 once with input_snapshot and as_of from the partition."""
+
+        snapshot = _build_snapshot()
+        repo = MagicMock(name="SnapshotRepo")
+        repo.list_by_date = MagicMock(return_value=[snapshot])
+        uow = MagicMock(name="UoW")
+        uow.__enter__ = MagicMock(return_value=uow)
+        uow.__exit__ = MagicMock(return_value=False)
+        uow.input_snapshot_repository = repo
+        engine = _patch_engine()
+
+        v2_result = MarketBreadthPublishResult(
+            snapshot=_build_breadth_snapshot(
+                snapshot.id,
+                quality=QualityStatus.COMPLETE,
+                freshness=FreshnessStatus.FRESH,
+                as_of=_TRADE_DATE,
+            ),
+            input_snapshot=snapshot,
+            instrument_count=2,
+        )
+        v2_spy = MagicMock(name="calculate_and_publish_market_breadth_v2", return_value=v2_result)
+
+        with (
+            patch.object(assets, "build_engine", lambda _url: engine),
+            patch.object(assets, "session_factory", lambda _engine: MagicMock()),
+            patch.object(invest_storage, "SqlAlchemyUnitOfWork", lambda _factory: uow),
+            patch.object(assets, "calculate_and_publish_market_breadth_v2", v2_spy),
+        ):
+            result = assets.market_breadth_snapshot.op.compute_fn.decorated_fn(
+                dg.build_asset_context(partition_key=_TRADE_DATE.isoformat())
+            )
+
+        v2_spy.assert_called_once()
+        call_kwargs = v2_spy.call_args.kwargs
+        assert call_kwargs["input_snapshot"] is snapshot
+        assert call_kwargs["as_of"] == _TRADE_DATE
+        assert result.metadata["skipped"] is False
+        assert result.metadata["invalid"] is False
+        engine.dispose.assert_called_once_with()

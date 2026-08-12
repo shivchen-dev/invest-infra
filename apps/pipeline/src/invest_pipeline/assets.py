@@ -40,7 +40,7 @@ from invest_pipeline.etf_instruments import (
 from invest_pipeline.input_snapshot import create_input_snapshot
 from invest_pipeline.market_breadth_service import (
     MarketBreadthInsufficientDataError,
-    calculate_and_publish_market_breadth,
+    calculate_and_publish_market_breadth_v2,
     list_active_stock_instrument_ids,
 )
 from invest_pipeline.personal_universe import (
@@ -1180,24 +1180,27 @@ def stock_input_snapshot(context) -> dg.MaterializeResult:
     partitions_def=_STOCK_MARKET_DATA_PARTITIONS,
 )
 def market_breadth_snapshot(context) -> dg.MaterializeResult:
-    """Materialise the Stage 4B Market Breadth observation for the partition.
+    """Materialise the Stage 4C Market Breadth (v2) observation for the partition.
 
     Resolves the persisted :class:`InputSnapshot` for the partition
     trade date, hands it to
-    :func:`invest_pipeline.market_breadth_service.calculate_and_publish_market_breadth`
-    (which reads the rolling 20-day window of ``core.daily_bars`` for
-    every resolved instrument, computes the 20-day moving average
-    from the available closes, and persists the resulting
-    :class:`MarketObservationSnapshot` through the existing
-    ``market_observation_snapshots`` repository), and surfaces the
-    result through Dagster metadata.
+    :func:`invest_pipeline.market_breadth_service.calculate_and_publish_market_breadth_v2`
+    (which reads the rolling 250-normal-bar window of ``core.daily_bars``
+    for every resolved instrument, computes MA20 / MA60 from the
+    available closes, derives ``is_new_high`` / ``is_new_low`` against
+    the same 250-bar window, and persists the resulting
+    :class:`MarketObservationSnapshot` carrying the six v2 ratios
+    ``advancing_ratio`` / ``declining_ratio`` / ``above_ma20_ratio``
+    / ``above_ma60_ratio`` / ``new_high_ratio`` / ``new_low_ratio``
+    through the existing ``market_observation_snapshots`` repository),
+    and surfaces the result through Dagster metadata.
 
     The asset surfaces a :class:`MaterializeResult` with
     ``skipped=True`` / ``invalid=True`` and a human-readable
     ``reason`` rather than raising whenever the persisted snapshot
     is not ``COMPLETE`` / ``FRESH`` — i.e. no input snapshot exists
     for the partition, the breadth service reports insufficient
-    20-day history (the common "freshly-listed symbol" / mixed
+    250-normal-bar history (the common "freshly-listed symbol" / mixed
     valid+missing case), or the snapshot is otherwise not a clean
     success. ``skipped=False`` is reserved for the
     ``quality_status == COMPLETE`` / ``freshness_status == FRESH``
@@ -1229,14 +1232,14 @@ def market_breadth_snapshot(context) -> dg.MaterializeResult:
         # same-day rerun picks up the latest universe without
         # re-allocating storage-side identity.
         input_snapshot = snapshots[-1]
-        result = calculate_and_publish_market_breadth(
+        result = calculate_and_publish_market_breadth_v2(
             uow_factory=_uow_factory,
             input_snapshot=input_snapshot,
             as_of=trade_date,
         )
     except MarketBreadthInsufficientDataError as exc:
         context.log.warning(
-            "market_breadth_snapshot: insufficient 20-day history for %s; "
+            "market_breadth_snapshot: insufficient 250-normal-bar history for %s; "
             "skipping without retry: %s",
             trade_date.isoformat(),
             exc,
@@ -1292,7 +1295,7 @@ def market_breadth_snapshot(context) -> dg.MaterializeResult:
         f"breadth snapshot for {trade_date.isoformat()} is "
         f"{quality.value}/{freshness.value}: the breadth service "
         "refused to publish a partial snapshot because at least one "
-        "input-snapshot instrument lacked a valid 20-day history; "
+        "input-snapshot instrument lacked a valid 250-normal-bar history; "
         "the persisted snapshot is the deterministic INVALID/FAILED "
         "shape and the asset surfaces it as skipped / invalid"
     )
