@@ -2248,3 +2248,49 @@ class ResearchEvidenceBundleRow(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
+
+
+class StockPriceLimitRow(Base):
+    __tablename__ = "stock_price_limits"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["instrument_id"], ["core.instruments.id"],
+            name="fk_stock_price_limits_instrument_id_core_instruments",
+        ),
+        ForeignKeyConstraint(
+            ["source_batch_id"], ["raw.provider_batches.id"],
+            name="fk_stock_price_limits_source_batch_id_raw_provider_batches",
+        ),
+        UniqueConstraint(
+            "instrument_id", "trade_date", "revision", "row_hash",
+            name="uq_stock_price_limits_instrument_trade_date_revision_row_hash",
+        ),
+        CheckConstraint("revision >= 1", name="ck_stock_price_limits_revision_positive"),
+        CheckConstraint("length(regime_id) > 0", name="ck_stock_price_limits_regime_id_nonempty"),
+        CheckConstraint("length(status) > 0", name="ck_stock_price_limits_status_nonempty"),
+        CheckConstraint(
+            "length(source_provider) > 0",
+            name="ck_stock_price_limits_source_provider_nonempty",
+        ),
+        CheckConstraint("length(row_hash) = 64", name="ck_stock_price_limits_row_hash_len64"),
+        Index("ix_stock_price_limits_instrument_trade_date", "instrument_id", "trade_date"),
+        Index("ix_stock_price_limits_trade_date", "trade_date"),
+        {"schema": "core"},
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    instrument_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    trade_date: Mapped[date] = mapped_column(Date, nullable=False)
+    regime_id: Mapped[str] = mapped_column(String(80), nullable=False)
+    limit_up_price: Mapped[Any | None] = mapped_column(Numeric(38, 18), nullable=True)
+    limit_down_price: Mapped[Any | None] = mapped_column(Numeric(38, 18), nullable=True)
+    status: Mapped[str] = mapped_column(String(24), nullable=False)
+    reference_price: Mapped[Any | None] = mapped_column(Numeric(38, 18), nullable=True)
+    source_provider: Mapped[str] = mapped_column(String(64), nullable=False)
+    source_batch_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
+    observed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    revision: Mapped[int] = mapped_column(Integer, nullable=False)
+    row_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )

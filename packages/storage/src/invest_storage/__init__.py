@@ -28,6 +28,7 @@ from invest_storage.models import (
     ResearchEvidencePackRow,
     ResearchResultRow,
     ResearchRunRow,
+    StockPriceLimitRow,
 )
 from invest_storage.repositories import (
     InputSnapshotRepository,
@@ -161,6 +162,7 @@ __all__ = [
     "ResearchResultRow",
     "ResearchRunRepositoryPort",
     "ResearchRunRow",
+    "StockPriceLimitRow",
     "ResearchRunTransitionError",
     "SessionProvider",
     "SqlAlchemyCandidatePoolItemRepository",
