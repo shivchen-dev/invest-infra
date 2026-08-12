@@ -88,10 +88,13 @@ def _make_declaration(
 class DatasetRegistryTest(unittest.TestCase):
     """The :class:`Dataset` enum and capability mapping are frozen by PR-05."""
 
-    def test_dataset_enum_has_the_five_expected_values(self) -> None:
-        # The five dataset strings are persisted in raw.provider_*
+    def test_dataset_enum_has_the_nine_expected_values(self) -> None:
+        # The dataset strings are persisted in raw.provider_*
         # and must not change without a migration. Pin them so a
-        # future regression surfaces here.
+        # future regression surfaces here. The five original values
+        # (Stage 4B / PR-05) are followed by the four Stage 4C
+        # Phase 0 Task 0.1 additions
+        # (``tasks/stage4c-core-data-layer-integration-plan.md``).
         self.assertEqual(
             tuple(member.value for member in Dataset),
             (
@@ -100,6 +103,10 @@ class DatasetRegistryTest(unittest.TestCase):
                 "index_daily_bars",
                 "research",
                 "market_snapshot",
+                "stock_minute_bars",
+                "stock_block_memberships",
+                "stock_price_limits",
+                "tdx_gui_analysis_results",
             ),
         )
 
@@ -152,6 +159,171 @@ class DatasetRegistryTest(unittest.TestCase):
         # ``None`` so the call site surfaces the bug.
         with self.assertRaises(ValueError):
             required_capability_for("etf_daily_bars")  # type: ignore[arg-type]
+
+
+class Stage4CDatasetRegistryTest(unittest.TestCase):
+    """Stage 4C Phase 0 Task 0.1 dataset / capability contracts.
+
+    The four new datasets
+    (``STOCK_MINUTE_BARS`` / ``STOCK_BLOCK_MEMBERSHIPS`` /
+    ``STOCK_PRICE_LIMITS`` / ``TDX_GUI_ANALYSIS_RESULTS``) and the
+    matching :class:`ProviderCapability` members are frozen in this
+    slice so a later Stage 4C phase can register the first runtime
+    provider for each surface without having to migrate
+    ``raw.provider_*`` keys. The tests in this class pin:
+
+    * The dataset string values are stable and persisted exactly as
+      catalogued.
+    * Each dataset maps 1:1 onto a same-stem capability via
+      :data:`DATASET_CAPABILITIES` and the helper accessors.
+    * The mapping is complete (every dataset has an entry).
+    * No existing provider declares any of the new capabilities, so
+      a routing call against the new datasets currently raises
+      :class:`NoEligibleProviderError` with the persisted dataset
+      string as the first argument.
+    * The existing :class:`ProviderDeclaration` surface is unchanged:
+      no provider silently inherits any of the new capabilities.
+    """
+
+    def test_stage4c_dataset_string_values_are_frozen(self) -> None:
+        # The string values are persisted in raw.provider_*.dataset_key
+        # and must not change without a migration. Pin them so a
+        # future regression surfaces here.
+        self.assertEqual(
+            Dataset.STOCK_MINUTE_BARS.value,
+            "stock_minute_bars",
+        )
+        self.assertEqual(
+            Dataset.STOCK_BLOCK_MEMBERSHIPS.value,
+            "stock_block_memberships",
+        )
+        self.assertEqual(
+            Dataset.STOCK_PRICE_LIMITS.value,
+            "stock_price_limits",
+        )
+        self.assertEqual(
+            Dataset.TDX_GUI_ANALYSIS_RESULTS.value,
+            "tdx_gui_analysis_results",
+        )
+
+    def test_stage4c_capability_string_values_are_frozen(self) -> None:
+        # Mirror of the dataset check: the capability string values
+        # are referenced from matrix / plan documents and must stay
+        # stable.
+        self.assertEqual(
+            ProviderCapability.STOCK_MINUTE_BARS.value,
+            "stock_minute_bars",
+        )
+        self.assertEqual(
+            ProviderCapability.STOCK_BLOCK_MEMBERSHIPS.value,
+            "stock_block_memberships",
+        )
+        self.assertEqual(
+            ProviderCapability.STOCK_PRICE_LIMITS.value,
+            "stock_price_limits",
+        )
+        self.assertEqual(
+            ProviderCapability.TDX_GUI_ANALYSIS.value,
+            "tdx_gui_analysis",
+        )
+
+    def test_dataset_capabilities_mapping_covers_stage4c_entries(self) -> None:
+        # Every Stage 4C dataset must resolve to its same-stem
+        # capability via the mapping. The mapping is the single
+        # source of truth for the routing layer; the helper
+        # accessors are thin wrappers over the same dict.
+        for dataset, capability in (
+            (Dataset.STOCK_MINUTE_BARS, ProviderCapability.STOCK_MINUTE_BARS),
+            (
+                Dataset.STOCK_BLOCK_MEMBERSHIPS,
+                ProviderCapability.STOCK_BLOCK_MEMBERSHIPS,
+            ),
+            (
+                Dataset.STOCK_PRICE_LIMITS,
+                ProviderCapability.STOCK_PRICE_LIMITS,
+            ),
+            (
+                Dataset.TDX_GUI_ANALYSIS_RESULTS,
+                ProviderCapability.TDX_GUI_ANALYSIS,
+            ),
+        ):
+            with self.subTest(dataset=dataset):
+                self.assertIs(
+                    DATASET_CAPABILITIES[dataset],
+                    capability,
+                )
+                self.assertIs(required_capability_for(dataset), capability)
+                self.assertTrue(dataset_requires_capability(dataset, capability))
+
+    def test_dataset_capabilities_mapping_is_complete_after_stage4c(self) -> None:
+        # The :func:`select_providers` helper relies on a complete
+        # mapping — a missing entry would surface as ``KeyError``
+        # rather than the documented :class:`NoEligibleProviderError`,
+        # so the equality check pins the contract.
+        self.assertEqual(set(DATASET_CAPABILITIES), set(Dataset))
+
+    def test_stage4c_datasets_have_no_eligible_provider_yet(self) -> None:
+        # No provider declares any of the new capabilities in this
+        # slice; a routing call against the new datasets must raise
+        # :class:`NoEligibleProviderError` carrying the persisted
+        # dataset string. This negative assertion locks in the
+        # "do not claim capabilities for providers that are not
+        # implemented yet" guardrail from the Phase 0 plan.
+        declarations = (
+            FIXTURE_DEV,
+            CIFANGQUANT,
+            QUICKTINY_MCP,
+        )
+        for dataset in (
+            Dataset.STOCK_MINUTE_BARS,
+            Dataset.STOCK_BLOCK_MEMBERSHIPS,
+            Dataset.STOCK_PRICE_LIMITS,
+            Dataset.TDX_GUI_ANALYSIS_RESULTS,
+        ):
+            with self.subTest(dataset=dataset):
+                with self.assertRaises(NoEligibleProviderError) as ctx:
+                    select_providers(declarations, dataset, enabled_only=False)
+                self.assertEqual(ctx.exception.args[0], dataset.value)
+                self.assertIs(ctx.exception.dataset, dataset)
+
+    def test_existing_providers_do_not_advertise_stage4c_capabilities(self) -> None:
+        # The Phase 0 contract forbids widening any existing
+        # declaration with a Stage 4C capability. Pin every existing
+        # declaration's capability set against the four new members
+        # so a future regression that silently broadens a
+        # catalogued provider surfaces here rather than silently
+        # enabling an unimplemented provider.
+        for declaration in (
+            FIXTURE_DEV,
+            CIFANGQUANT,
+            QUICKTINY_MCP,
+            RSSCAST,
+        ):
+            with self.subTest(provider_key=declaration.provider_key):
+                advertised = set(declaration.capabilities)
+                for forbidden in (
+                    ProviderCapability.STOCK_MINUTE_BARS,
+                    ProviderCapability.STOCK_BLOCK_MEMBERSHIPS,
+                    ProviderCapability.STOCK_PRICE_LIMITS,
+                    ProviderCapability.TDX_GUI_ANALYSIS,
+                ):
+                    self.assertNotIn(forbidden, advertised)
+
+    def test_tdx_offline_capability_set_is_unchanged(self) -> None:
+        # Stage 4B Phase 5 ships ``tdx_offline`` with the single
+        # ``STOCK_DAILY_BARS`` capability. Phase 0 must not widen
+        # it: the offline reader does not yet cover minute bars /
+        # block / price-limit / GUI surfaces, and the Phase 0 plan
+        # explicitly forbids pre-emptive catalog entries.
+        # Importing here keeps the test self-contained — the
+        # constant is exported by ``provider_catalog`` but the
+        # dedicated import makes the regression target obvious.
+        from invest_pipeline.provider_catalog import TDX_OFFLINE
+
+        self.assertEqual(
+            tuple(c.value for c in TDX_OFFLINE.capabilities),
+            ("stock_daily_bars",),
+        )
 
 
 class SelectProvidersCapabilityTest(unittest.TestCase):

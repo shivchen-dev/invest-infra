@@ -20,6 +20,18 @@ is therefore:
 fixture_dev   cifangquant   akshare   tushare   rsscast   quicktiny_mcp   hithink   tdx_offline
 ```
 
+Stage 4C Phase 0 Task 0.1
+(``tasks/stage4c-core-data-layer-integration-plan.md``) freezes four
+new :class:`ProviderCapability` members (``STOCK_MINUTE_BARS`` /
+``STOCK_BLOCK_MEMBERSHIPS`` / ``STOCK_PRICE_LIMITS`` /
+``TDX_GUI_ANALYSIS``) but does **not** register any matching
+provider declaration in this slice: the corresponding providers
+(``tdx_offline_minute`` / ``tdx_local_block`` / ``tdx_gui_analysis``)
+land in later Stage 4C phases and the task's "do not claim
+capabilities for providers that are not implemented yet" guardrail
+forbids pre-emptive catalog entries. The TDX offline slice's
+``STOCK_DAILY_BARS`` capability is intentionally kept unchanged.
+
 The module is intentionally small:
 
 * No HTTP, MCP or SDK transport is imported.
@@ -130,10 +142,37 @@ class ProviderCapability(StrEnum):
       storage with the ETF path but historically came from a
       different source family (matrix §2 observed CifangQuant, AkShare
       and RssCast as indirect / direct index sources).
+    * ``STOCK_DAILY_BARS`` / ``STOCK_MASTER_DATA`` /
+      ``STOCK_FINANCIALS`` / ``STOCK_VALUATIONS`` cover the A-share
+      stock surfaces the existing Tushare / TDX offline adapters
+      observe (Stage 4B Phase 5). They are advertised by HiThink's
+      reserved declaration and the Tushare ETF/stock declaration but
+      **not** by the TDX offline slice (whose capability set stays
+      narrowly ``STOCK_DAILY_BARS`` per
+      ``tasks/plan-tdx-production-fallback.md``).
     * ``RESEARCH`` / ``MARKET_SNAPSHOT`` cover the non-deterministic
       surfaces (Quicktiny, RssCast research feeds, etc.) that must
       never be persisted as ``core.daily_bars`` per the plan §3 and
       matrix §5.4.
+
+    Stage 4C Phase 0 Task 0.1 freezes the four additional capabilities
+    the new core data layer introduces
+    (``tasks/stage4c-core-data-layer-integration-plan.md``):
+
+    * ``STOCK_MINUTE_BARS`` — A-share intraday 1/5-minute bars
+      (Phase 3, ``.lc1`` / ``.lc5`` TDX offline reader slice).
+    * ``STOCK_BLOCK_MEMBERSHIPS`` — block / sector / industry /
+      concept membership snapshot (Phase 2).
+    * ``STOCK_PRICE_LIMITS`` — daily price-limit rules (Phase 1.2,
+      versioned per regulation regime).
+    * ``TDX_GUI_ANALYSIS`` — TDX GUI export results
+      (Phase 4, ``tdx_gui_analysis`` independent provider slice).
+
+    None of these new capabilities are advertised by a registered
+    provider yet (the matching provider declarations belong to
+    later Stage 4C phases), but freezing the enum members now keeps
+    the contract stable and prevents a future regression from
+    silently renaming a persisted capability string.
 
     The catalog **must not** omit these enum members while
     RssCast / Quicktiny stay research-only: a missing enum value
@@ -150,6 +189,10 @@ class ProviderCapability(StrEnum):
     STOCK_MASTER_DATA = "stock_master_data"
     STOCK_FINANCIALS = "stock_financials"
     STOCK_VALUATIONS = "stock_valuations"
+    STOCK_MINUTE_BARS = "stock_minute_bars"
+    STOCK_BLOCK_MEMBERSHIPS = "stock_block_memberships"
+    STOCK_PRICE_LIMITS = "stock_price_limits"
+    TDX_GUI_ANALYSIS = "tdx_gui_analysis"
 
 
 @dataclass(frozen=True, slots=True)
@@ -368,8 +411,13 @@ Tushare primary source is unavailable — it is **not** a production
 SLA source. The capability set is intentionally narrow: only
 ``STOCK_DAILY_BARS`` (the surface the upstream ``vipdoc/<market>/lday``
 files cover). ETF / index / research / market-snapshot / financials /
-valuations capabilities are explicitly omitted so the catalog cannot
-silently widen the offline adapter's role.
+valuations / minute / block / price-limit / GUI capabilities are
+explicitly omitted so the catalog cannot silently widen the offline
+adapter's role — Stage 4C Phase 0 Task 0.1 freezes the new capability
+enum members without registering the offline reader for them. The
+``STOCK_DAILY_BARS`` capability set stays exactly as the Stage 4B
+slice shipped it: slice 2's Beijing / by-pairs widening does **not**
+introduce a new capability.
 
 ``has_runtime_factory_adapter=False`` keeps the declaration
 catalog-only for this slice: the slice ships the adapter, the

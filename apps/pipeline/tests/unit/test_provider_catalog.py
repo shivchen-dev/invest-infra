@@ -139,6 +139,77 @@ class DeclarationShapeTest(unittest.TestCase):
         self.assertFalse(declaration.has_runtime_factory_adapter)
 
 
+class Stage4CCapabilityEnumTest(unittest.TestCase):
+    """Stage 4C Phase 0 Task 0.1 freezes four new capability members.
+
+    The contract freezing slice adds the four
+    :class:`ProviderCapability` members the new core data layer
+    introduces but does **not** register any matching provider
+    declaration. The tests in this class pin:
+
+    * The four new enum members exist and carry the canonical
+      snake_case string values the persisted evidence tables and
+      plan documents reference.
+    * No registered provider advertises any of the new capabilities.
+      The Phase 0 plan's "do not claim capabilities for providers
+      that are not implemented yet" guardrail is exercised end-to-end
+      against the catalog surface so a future regression that
+      silently widens a declaration's capability set surfaces here.
+    """
+
+    def test_stage4c_capability_string_values_are_frozen(self) -> None:
+        # The capability string values are referenced from matrix /
+        # plan documents and must stay stable. Pin them so a future
+        # regression surfaces here.
+        self.assertEqual(
+            ProviderCapability.STOCK_MINUTE_BARS.value,
+            "stock_minute_bars",
+        )
+        self.assertEqual(
+            ProviderCapability.STOCK_BLOCK_MEMBERSHIPS.value,
+            "stock_block_memberships",
+        )
+        self.assertEqual(
+            ProviderCapability.STOCK_PRICE_LIMITS.value,
+            "stock_price_limits",
+        )
+        self.assertEqual(
+            ProviderCapability.TDX_GUI_ANALYSIS.value,
+            "tdx_gui_analysis",
+        )
+
+    def test_stage4c_capability_members_are_provider_capability_enum(self) -> None:
+        # The new members are part of the public enum contract so
+        # downstream code can refer to them by name. ``StrEnum``
+        # members are still :class:`ProviderCapability` instances.
+        for capability in (
+            ProviderCapability.STOCK_MINUTE_BARS,
+            ProviderCapability.STOCK_BLOCK_MEMBERSHIPS,
+            ProviderCapability.STOCK_PRICE_LIMITS,
+            ProviderCapability.TDX_GUI_ANALYSIS,
+        ):
+            with self.subTest(capability=capability):
+                self.assertIsInstance(capability, ProviderCapability)
+
+    def test_no_registered_provider_advertises_stage4c_capabilities(self) -> None:
+        # Phase 0 freezes the capability enum but does not register
+        # any provider declaration for the matching surfaces. Pin
+        # the absence so a future regression that silently broadens
+        # an existing declaration (or adds a pre-emptive provider
+        # entry) surfaces here.
+        forbidden = (
+            ProviderCapability.STOCK_MINUTE_BARS,
+            ProviderCapability.STOCK_BLOCK_MEMBERSHIPS,
+            ProviderCapability.STOCK_PRICE_LIMITS,
+            ProviderCapability.TDX_GUI_ANALYSIS,
+        )
+        for declaration in iter_provider_declarations():
+            with self.subTest(provider_key=declaration.provider_key):
+                advertised = set(declaration.capabilities)
+                for capability in forbidden:
+                    self.assertNotIn(capability, advertised)
+
+
 class FixtureDevDeclarationTest(unittest.TestCase):
     """The ``fixture_dev`` declaration matches the matrix §3 / §6 decision."""
 

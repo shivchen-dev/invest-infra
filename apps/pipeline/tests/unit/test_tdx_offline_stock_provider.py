@@ -985,7 +985,7 @@ class PrevCloseChainTest(unittest.TestCase):
         # Each subsequent bar in a chain carries the prior close of
         # the same chain.
         for chain in by_exchange.values():
-            for previous, current in zip(chain, chain[1:]):
+            for previous, current in zip(chain, chain[1:], strict=False):
                 self.assertEqual(current.prev_close, previous.close)
 
     def test_chain_works_for_by_pairs_path(self) -> None:
@@ -1021,7 +1021,7 @@ class PrevCloseChainTest(unittest.TestCase):
         self.assertEqual(set(by_exchange), {"SSE", "BJSE"})
         for chain in by_exchange.values():
             self.assertIsNone(chain[0].prev_close)
-            for previous, current in zip(chain, chain[1:]):
+            for previous, current in zip(chain, chain[1:], strict=False):
                 self.assertEqual(current.prev_close, previous.close)
 
 
