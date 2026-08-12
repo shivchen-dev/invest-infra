@@ -83,6 +83,7 @@ from invest_domain.analytics.market_breadth import (
     TRADING_STATUS_UNKNOWN,
     MarketBreadthInput,
     build_market_breadth,
+    build_market_breadth_v2,
 )
 from invest_domain.analytics.market_observations import MarketObservationSnapshot
 from invest_domain.input_snapshot import InputSnapshot
@@ -120,11 +121,17 @@ _MIN_BREADTH_HISTORY = 20
 # so the 60th natural day before ``as_of`` is included on the boundary.
 _BREADTH_LOOKBACK_NATURAL_DAYS = 60
 
+_MIN_V2_BREADTH_HISTORY = 250
+_V2_BREADTH_LOOKBACK_NATURAL_DAYS = 400
+_V2_MA20_PERIOD = 20
+_V2_MA60_PERIOD = 60
+
 __all__ = [
     "MarketBreadthInsufficientDataError",
     "MarketBreadthPublishResult",
     "StockUniverseEmptyError",
     "calculate_and_publish_market_breadth",
+    "calculate_and_publish_market_breadth_v2",
     "list_active_stock_instrument_ids",
     "resolve_stock_instrument_ids",
 ]
@@ -374,6 +381,32 @@ def _bars_in_window(
     )
 
 
+def _bars_in_window_v2(
+    uow: UnitOfWork,
+    *,
+    instrument_id: UUID,
+    end_date: date,
+) -> list[StoredDailyBar]:
+    """Return daily bars for ``instrument_id`` in the v2 rolling window.
+
+    The window is :data:`_V2_BREADTH_LOOKBACK_NATURAL_DAYS` calendar days
+    wide to ensure 250 normal bars are available; the repository returns
+    rows ordered by ``trade_date ASC`` (one per trading date, highest
+    revision wins), so the **last** element is always the most recent bar
+    and :func:`_select_breadth_input_v2` can tail-slice safely.
+    """
+
+    start_date = end_date - timedelta(days=_V2_BREADTH_LOOKBACK_NATURAL_DAYS - 1)
+    return list(
+        uow.daily_bars.list_latest_by_instrument_and_range(
+            instrument_id=instrument_id,
+            start_date=start_date,
+            end_date=end_date,
+            adjustment=Adjust.NONE,
+        )
+    )
+
+
 def _select_breadth_input(
     *,
     instrument_id: UUID,
@@ -443,6 +476,103 @@ def _resolve_trading_status(raw: str) -> str:
     if raw == TRADING_STATUS_SUSPENDED:
         return TRADING_STATUS_SUSPENDED
     return TRADING_STATUS_UNKNOWN
+
+
+def _select_breadth_input_v2(
+    *,
+    instrument_id: UUID,
+    bars: Sequence[StoredDailyBar],
+    as_of: date,
+) -> MarketBreadthInput | None:
+    """Build a v2 :class:`MarketBreadthInput` from the rolling 250-day bars.
+
+    Returns ``None`` when any of ``close``, ``prev_close``, ``high``,
+    ``low`` is missing / non-finite / non-positive, when the latest
+    bar is not on ``as_of``, or when fewer than
+    :data:`_MIN_V2_BREADTH_HISTORY` ``normal`` bars are available in
+    the rolling window.
+
+    MA20 is computed from the **closing prices of the most recent 20
+    normal bars**; MA60 is computed from the **closing prices of the
+    most recent 60 normal bars**. ``is_new_high`` is ``True`` when the
+    latest bar's ``high`` is the maximum of all 250 normal bars' highs.
+    ``is_new_low`` is ``True`` when the latest bar's ``low`` is the
+    minimum of all 250 normal bars' lows.
+    """
+
+    if not bars:
+        return None
+    latest = bars[-1]
+    if latest.trade_date != as_of:
+        return None
+    normal_bars = [bar for bar in bars if bar.trading_status == "normal"]
+    if len(normal_bars) < _MIN_V2_BREADTH_HISTORY:
+        return None
+    recent_normal_bars = normal_bars[-_MIN_V2_BREADTH_HISTORY:]
+
+    closes_ma20 = []
+    for bar in recent_normal_bars[-_V2_MA20_PERIOD:]:
+        value = bar.close
+        if value is None or not value.is_finite() or value <= 0:
+            return None
+        closes_ma20.append(value)
+    ma20 = sum(closes_ma20, Decimal(0)) / Decimal(len(closes_ma20))
+    if not ma20.is_finite() or ma20 <= 0:
+        return None
+
+    closes_ma60 = []
+    for bar in recent_normal_bars[-_V2_MA60_PERIOD:]:
+        value = bar.close
+        if value is None or not value.is_finite() or value <= 0:
+            return None
+        closes_ma60.append(value)
+    ma60 = sum(closes_ma60, Decimal(0)) / Decimal(len(closes_ma60))
+    if not ma60.is_finite() or ma60 <= 0:
+        return None
+
+    if (
+        latest.close is None
+        or not latest.close.is_finite()
+        or latest.close <= 0
+    ):
+        return None
+    if (
+        latest.prev_close is None
+        or not latest.prev_close.is_finite()
+        or latest.prev_close <= 0
+    ):
+        return None
+    if latest.high is None or not latest.high.is_finite() or latest.high <= 0:
+        return None
+    if latest.low is None or not latest.low.is_finite() or latest.low <= 0:
+        return None
+
+    highs: list[Decimal] = []
+    for bar in recent_normal_bars:
+        if bar.high is None or not bar.high.is_finite() or bar.high <= 0:
+            return None
+        highs.append(bar.high)
+    lows: list[Decimal] = []
+    for bar in recent_normal_bars:
+        if bar.low is None or not bar.low.is_finite() or bar.low <= 0:
+            return None
+        lows.append(bar.low)
+
+    is_new_high = latest.high >= max(highs)
+    is_new_low = latest.low <= min(lows)
+
+    trading_status = _resolve_trading_status(latest.trading_status)
+    return MarketBreadthInput(
+        instrument_id=instrument_id,
+        close=latest.close,
+        prev_close=latest.prev_close,
+        ma20=ma20,
+        observed_date=as_of,
+        trading_status=trading_status,
+        ma60=ma60,
+        is_new_high=is_new_high,
+        is_new_low=is_new_low,
+    )
 
 
 def calculate_and_publish_market_breadth(
@@ -523,6 +653,93 @@ def calculate_and_publish_market_breadth(
         if expected > 0 and len(inputs) != expected:
             inputs = []
         snapshot = build_market_breadth(
+            input_snapshot_id=input_snapshot.id,
+            instruments=inputs,
+            as_of_date=as_of,
+        )
+        persisted = uow.market_observation_snapshots.add(snapshot)
+        uow.commit()
+    return MarketBreadthPublishResult(
+        snapshot=persisted,
+        input_snapshot=input_snapshot,
+        instrument_count=len(inputs),
+    )
+
+
+def calculate_and_publish_market_breadth_v2(
+    *,
+    uow_factory: UnitOfWorkFactory,
+    input_snapshot: InputSnapshot,
+    as_of: date,
+) -> MarketBreadthPublishResult:
+    """Calculate the v2 breadth snapshot for ``as_of`` and persist it.
+
+    The v2 algorithm uses 250 normal bars to compute MA20 (last 20 closes),
+    MA60 (last 60 closes), and determines is_new_high / is_new_low by
+    comparing the latest bar's high/low against the 250-bar window's
+    max high and min low.
+
+    The service is a thin orchestration layer over the existing
+    ``invest_domain.analytics.market_breadth.build_market_breadth_v2``
+    builder and the pre-existing
+    :class:`invest_storage.SqlAlchemyMarketObservationSnapshotRepository`
+    write path — it never bypasses those contracts and never opens a
+    new table or migration.
+
+    Parameters
+    ----------
+    uow_factory:
+        A callable that hands out a fresh :class:`UnitOfWork` for the
+        breadth read path. The service only opens one UoW so the
+        breadth computation sees a consistent slice of
+        ``core.daily_bars``.
+    input_snapshot:
+        The stock :class:`InputSnapshot` previously persisted by the
+        :func:`invest_pipeline.assets.stock_input_snapshot` asset. Its
+        ``snapshot_date`` must equal ``as_of``; a mismatch is a
+        configuration / partition-alignment error and is raised
+        immediately.
+    as_of:
+        The business trade date for the breadth snapshot. The service
+        derives the rolling 250-day window from this value and never
+        falls back to ``date.today()``.
+
+    Returns
+    -------
+    MarketBreadthPublishResult
+        A value object carrying the freshly-persisted
+        :class:`MarketObservationSnapshot`, the input snapshot that
+        bound the universe, and the count of instruments that
+        contributed valid breadth inputs.
+    """
+
+    if input_snapshot.snapshot_date != as_of:
+        raise ValueError(
+            f"as_of {as_of.isoformat()} does not match input_snapshot."
+            f"snapshot_date {input_snapshot.snapshot_date.isoformat()}; "
+            "the breadth service refuses to silently fall back to a "
+            "different trade date"
+        )
+
+    with uow_factory() as uow:
+        inputs: list[MarketBreadthInput] = []
+        expected = len(input_snapshot.instrument_ids)
+        for instrument_id in input_snapshot.instrument_ids:
+            bars = _bars_in_window_v2(
+                uow,
+                instrument_id=instrument_id,
+                end_date=as_of,
+            )
+            breadth_input = _select_breadth_input_v2(
+                instrument_id=instrument_id,
+                bars=bars,
+                as_of=as_of,
+            )
+            if breadth_input is not None:
+                inputs.append(breadth_input)
+        if expected > 0 and len(inputs) != expected:
+            inputs = []
+        snapshot = build_market_breadth_v2(
             input_snapshot_id=input_snapshot.id,
             instruments=inputs,
             as_of_date=as_of,

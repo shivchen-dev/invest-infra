@@ -46,7 +46,7 @@ from __future__ import annotations
 
 import unittest
 from collections.abc import Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 from typing import Any
@@ -55,8 +55,11 @@ from uuid import UUID, uuid4
 
 from invest_domain.analytics.market_breadth import (
     ABOVE_MA20_RATIO,
+    ABOVE_MA60_RATIO,
     ADVANCING_RATIO,
     DECLINING_RATIO,
+    NEW_HIGH_RATIO,
+    NEW_LOW_RATIO,
 )
 from invest_domain.analytics.market_observations import (
     MarketObservationSnapshot,
@@ -67,6 +70,7 @@ from invest_domain.research.models import FreshnessStatus, QualityStatus
 from invest_pipeline.market_breadth_service import (
     StockUniverseEmptyError,
     calculate_and_publish_market_breadth,
+    calculate_and_publish_market_breadth_v2,
     list_active_stock_instrument_ids,
     resolve_stock_instrument_ids,
 )
@@ -123,6 +127,7 @@ class _FakeDailyBarsRepo:
     """Fake for :class:`invest_storage.repositories.SqlAlchemyDailyBarRepository`."""
 
     bars_by_instrument: dict[UUID, list[StoredDailyBar]] = field(default_factory=dict)
+    recorded_calls: list[tuple[UUID, date, date, Any]] = field(default_factory=list)
 
     def list_latest_by_instrument_and_range(
         self,
@@ -132,6 +137,7 @@ class _FakeDailyBarsRepo:
         end_date: date,
         adjustment: Any,
     ) -> Sequence[StoredDailyBar]:
+        self.recorded_calls.append((instrument_id, start_date, end_date, adjustment))
         return list(self.bars_by_instrument.get(instrument_id, ()))
 
 
@@ -178,14 +184,16 @@ def _make_bar(
     close: str = "10",
     prev_close: str = "10",
     trading_status: str = "normal",
+    high: str = "11",
+    low: str = "9",
 ) -> StoredDailyBar:
     return StoredDailyBar(
         id=uuid4(),
         instrument_id=instrument_id,
         trade_date=trade_date,
         open=Decimal("10"),
-        high=Decimal("11"),
-        low=Decimal("9"),
+        high=Decimal(high),
+        low=Decimal(low),
         close=Decimal(close),
         prev_close=Decimal(prev_close),
         volume=Decimal("100"),
@@ -860,3 +868,289 @@ class MarketBreadthServiceWeekendSpanTest(unittest.TestCase):
         # close == prev_close for every bar → no advances, no declines.
         self.assertEqual(observations_by_key[ADVANCING_RATIO], Decimal("0"))
         self.assertEqual(observations_by_key[DECLINING_RATIO], Decimal("0"))
+
+
+# ---------------------------------------------------------------------------
+# v2 helpers
+# ---------------------------------------------------------------------------
+
+
+def _v2_bars_history(
+    instrument_id: UUID,
+    *,
+    end_date: date,
+    days: int,
+    closes: list[str] | None = None,
+    highs: list[str] | None = None,
+    lows: list[str] | None = None,
+) -> list[StoredDailyBar]:
+    start = end_date - timedelta(days=days - 1)
+    bars: list[StoredDailyBar] = []
+    for offset in range(days):
+        close = closes[offset] if closes else "10"
+        prev = closes[offset - 1] if (closes and offset > 0) else "10"
+        high = highs[offset] if highs else "11"
+        low = lows[offset] if lows else "9"
+        bars.append(
+            _make_bar(
+                instrument_id,
+                start + timedelta(days=offset),
+                close=close,
+                prev_close=prev,
+                high=high,
+                low=low,
+            )
+        )
+    return bars
+
+
+# ---------------------------------------------------------------------------
+# v2 happy path - 6 metrics
+# ---------------------------------------------------------------------------
+
+
+class MarketBreadthServiceV2HappyPathTest(unittest.TestCase):
+    """Happy path through the v2 breadth service with 6 metrics."""
+
+    def test_persists_six_ratio_observations_for_full_universe(self) -> None:
+        instrument_a = _make_instrument(_SYMBOL_A)
+        instrument_b = _make_instrument(_SYMBOL_B)
+        ids = (instrument_a.instrument_id.value, instrument_b.instrument_id.value)
+
+        # 250 normal bars - v2 requires 250, ending on _AS_OF
+        history_a = _v2_bars_history(
+            ids[0],
+            end_date=_AS_OF,
+            days=250,
+            closes=["11"] * 250,
+            highs=["12"] * 250,
+            lows=["10"] * 250,
+        )
+        history_b = _v2_bars_history(
+            ids[1],
+            end_date=_AS_OF,
+            days=250,
+            closes=["9"] * 250,
+            highs=["10"] * 250,
+            lows=["8"] * 250,
+        )
+        uow_factory, observations = _make_uow_factory(
+            {ids[0]: history_a, ids[1]: history_b}
+        )
+
+        snapshot = _build_input_snapshot(instrument_ids=ids)
+        result = calculate_and_publish_market_breadth_v2(
+            uow_factory=uow_factory,
+            input_snapshot=snapshot,
+            as_of=_AS_OF,
+        )
+
+        self.assertEqual(result.instrument_count, 2)
+        self.assertEqual(observations.persisted, [result.snapshot])
+        keys = {obs.observation_key for obs in result.snapshot.observations}
+        self.assertEqual(
+            keys,
+            {
+                ADVANCING_RATIO,
+                DECLINING_RATIO,
+                ABOVE_MA20_RATIO,
+                ABOVE_MA60_RATIO,
+                NEW_HIGH_RATIO,
+                NEW_LOW_RATIO,
+            },
+        )
+        self.assertEqual(result.snapshot.quality_status, QualityStatus.COMPLETE)
+        self.assertEqual(result.snapshot.freshness_status, FreshnessStatus.FRESH)
+
+
+# ---------------------------------------------------------------------------
+# v2 insufficient data
+# ---------------------------------------------------------------------------
+
+
+class MarketBreadthServiceV2InsufficientDataTest(unittest.TestCase):
+    """v2 breadth service fails closed with insufficient 250-bar history."""
+
+    def test_persists_invalid_snapshot_when_history_below_250_normal_bars(self) -> None:
+        instrument = _make_instrument(_SYMBOL_A)
+        instrument_id = instrument.instrument_id.value
+        # Only 249 bars - insufficient for v2
+        short_history = _v2_bars_history(
+            instrument_id,
+            end_date=_AS_OF,
+            days=249,
+        )
+        uow_factory, observations = _make_uow_factory(
+            {instrument_id: short_history}
+        )
+
+        snapshot = _build_input_snapshot(instrument_ids=(instrument_id,))
+        result = calculate_and_publish_market_breadth_v2(
+            uow_factory=uow_factory,
+            input_snapshot=snapshot,
+            as_of=_AS_OF,
+        )
+        self.assertEqual(result.instrument_count, 0)
+        self.assertEqual(observations.persisted, [result.snapshot])
+        self.assertEqual(result.snapshot.quality_status, QualityStatus.INVALID)
+        self.assertEqual(result.snapshot.freshness_status, FreshnessStatus.FAILED)
+
+
+# ---------------------------------------------------------------------------
+# v2 deterministic repeat
+# ---------------------------------------------------------------------------
+
+
+class MarketBreadthServiceV2DeterministicRepeatTest(unittest.TestCase):
+    """v2 breadth service produces deterministic results on repeat."""
+
+    def test_repeat_run_produces_identical_snapshot(self) -> None:
+        instrument = _make_instrument(_SYMBOL_A)
+        instrument_id = instrument.instrument_id.value
+
+        history = _v2_bars_history(
+            instrument_id,
+            end_date=_AS_OF,
+            days=250,
+            closes=["10"] * 250,
+            highs=["11"] * 250,
+            lows=["9"] * 250,
+        )
+        uow_factory, observations = _make_uow_factory({instrument_id: history})
+
+        snapshot = _build_input_snapshot(instrument_ids=(instrument_id,))
+
+        result1 = calculate_and_publish_market_breadth_v2(
+            uow_factory=uow_factory,
+            input_snapshot=snapshot,
+            as_of=_AS_OF,
+        )
+        result2 = calculate_and_publish_market_breadth_v2(
+            uow_factory=uow_factory,
+            input_snapshot=snapshot,
+            as_of=_AS_OF,
+        )
+
+        self.assertEqual(result1.instrument_count, result2.instrument_count)
+        self.assertEqual(
+            result1.snapshot.content_hash, result2.snapshot.content_hash
+        )
+        obs1 = {o.observation_key: o.value for o in result1.snapshot.observations}
+        obs2 = {o.observation_key: o.value for o in result2.snapshot.observations}
+        self.assertEqual(obs1, obs2)
+
+
+# ---------------------------------------------------------------------------
+# v2 v1 compatibility - v1 still produces 3 metrics
+# ---------------------------------------------------------------------------
+
+
+class MarketBreadthServiceV2V1CompatibilityTest(unittest.TestCase):
+    """v2 call does not affect v1; v1 still publishes 3 metrics."""
+
+    def test_v1_still_publishes_three_metrics(self) -> None:
+        instrument = _make_instrument(_SYMBOL_A)
+        instrument_id = instrument.instrument_id.value
+
+        history = _v2_bars_history(
+            instrument_id,
+            end_date=_AS_OF,
+            days=250,
+            closes=["10"] * 250,
+            highs=["11"] * 250,
+            lows=["9"] * 250,
+        )
+        uow_factory, _ = _make_uow_factory({instrument_id: history})
+
+        snapshot = _build_input_snapshot(instrument_ids=(instrument_id,))
+        result = calculate_and_publish_market_breadth(
+            uow_factory=uow_factory,
+            input_snapshot=snapshot,
+            as_of=_AS_OF,
+        )
+
+        self.assertEqual(result.instrument_count, 1)
+        keys = {obs.observation_key for obs in result.snapshot.observations}
+        self.assertEqual(
+            keys,
+            {ADVANCING_RATIO, DECLINING_RATIO, ABOVE_MA20_RATIO},
+        )
+        self.assertNotIn(ABOVE_MA60_RATIO, keys)
+        self.assertNotIn(NEW_HIGH_RATIO, keys)
+        self.assertNotIn(NEW_LOW_RATIO, keys)
+
+
+# ---------------------------------------------------------------------------
+# v2 invalid historical high/low regression
+# ---------------------------------------------------------------------------
+
+
+class MarketBreadthServiceV2InvalidHistoricalHighLowTest(unittest.TestCase):
+    """Regression: any invalid historical high or low in the 250-bar window causes INVALID."""
+
+    def test_invalid_historical_high_or_low_causes_invalid_snapshot(self) -> None:
+        for field_name in ("high", "low"):
+            with self.subTest(field=field_name):
+                instrument = _make_instrument(_SYMBOL_A)
+                instrument_id = instrument.instrument_id.value
+                history = _v2_bars_history(
+                    instrument_id,
+                    end_date=_AS_OF,
+                    days=250,
+                    closes=["10"] * 250,
+                    highs=["11"] * 250,
+                    lows=["9"] * 250,
+                )
+                history[125] = replace(history[125], **{field_name: Decimal("0")})
+                uow_factory, observations = _make_uow_factory({instrument_id: history})
+                snapshot = _build_input_snapshot(instrument_ids=(instrument_id,))
+                result = calculate_and_publish_market_breadth_v2(
+                    uow_factory=uow_factory,
+                    input_snapshot=snapshot,
+                    as_of=_AS_OF,
+                )
+                self.assertEqual(result.instrument_count, 0)
+                self.assertEqual(observations.persisted, [result.snapshot])
+                self.assertEqual(result.snapshot.quality_status, QualityStatus.INVALID)
+                self.assertEqual(result.snapshot.freshness_status, FreshnessStatus.FAILED)
+
+
+# ---------------------------------------------------------------------------
+# v2 repository query date range
+# ---------------------------------------------------------------------------
+
+
+class MarketBreadthServiceV2QueryDateRangeTest(unittest.TestCase):
+    """v2 repository query uses correct 400-day window: start=as_of-399, end=as_of."""
+
+    def test_v2_query_date_range_is_as_of_minus_399_to_as_of(self) -> None:
+        instrument = _make_instrument(_SYMBOL_A)
+        instrument_id = instrument.instrument_id.value
+        history = _v2_bars_history(
+            instrument_id,
+            end_date=_AS_OF,
+            days=250,
+            closes=["10"] * 250,
+            highs=["11"] * 250,
+            lows=["9"] * 250,
+        )
+        daily_bars_repo = _FakeDailyBarsRepo(bars_by_instrument={instrument_id: history})
+        observations = _FakeMarketObservationRepo()
+        uow = _FakeUoW(daily_bars=daily_bars_repo, market_observation_snapshots=observations)
+
+        def _factory() -> _FakeUoW:
+            return uow
+
+        snapshot = _build_input_snapshot(instrument_ids=(instrument_id,))
+        calculate_and_publish_market_breadth_v2(
+            uow_factory=_factory,
+            input_snapshot=snapshot,
+            as_of=_AS_OF,
+        )
+
+        self.assertEqual(len(daily_bars_repo.recorded_calls), 1)
+        cid, start, end, adj = daily_bars_repo.recorded_calls[0]
+        self.assertEqual(cid, instrument_id)
+        self.assertEqual(start, _AS_OF - timedelta(days=399))
+        self.assertEqual(end, _AS_OF)
+        self.assertEqual(adj.value, "none")
