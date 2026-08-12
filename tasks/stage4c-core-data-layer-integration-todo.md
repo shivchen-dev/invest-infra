@@ -15,7 +15,7 @@
 - [ ] 冻结 A 股价格限制规则与版本
 - [ ] 建设 `stock_price_limits` Raw/Core 事实
 - [ ] 扩展 Market Breadth v2
-- [ ] 发布 Limit Sentiment 日频观察
+- [x] 发布 Limit Sentiment 日频观察（Domain 合同与纯聚合器已完成；Pipeline 接线待后续切片）
 - [ ] 完成 Tushare/TDX 一致性检查
 - [ ] Checkpoint B：日频闭环、迁移和降级验证
 
