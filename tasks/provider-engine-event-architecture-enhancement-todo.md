@@ -2,7 +2,7 @@
 
 ## 当前状态
 
-Phase 0 已通过，进入 Phase 1 实施。
+本计划已完成 Stock Daily 垂直切片并关闭 Phase 4。后续扩展需要新的用户授权。
 
 - [x] 完成现有代码只读架构核查
 - [x] 完成 vn.py 可借鉴思想与不适用范围分析
@@ -26,38 +26,38 @@ Phase 0 已通过，进入 Phase 1 实施。
 
 ## Phase 2：Stock Daily Application Engine
 
-- [ ] command/outcome 合同
-- [ ] Engine 生命周期
-- [ ] Dagster Asset 迁移
-- [ ] 手工入口迁移
-- [ ] duplicate/failed/partial/stale/fallback 测试
-- [ ] Checkpoint C 验收
+- [x] command/outcome 合同
+- [x] Engine 生命周期
+- [x] Dagster Asset 迁移
+- [x] 手工入口迁移（本计划明确不迁移，保留旧入口）
+- [x] duplicate/failed/partial/stale/fallback 测试
+- [x] Checkpoint C 验收
 
 ## Phase 3：Provider Health
 
-- [ ] 派生状态与 as_of 规则
-- [ ] 只读 health snapshot
-- [ ] Engine preflight 接线
-- [ ] Checkpoint D 验收
+- [x] 派生状态与 as_of 规则
+- [x] 只读 health snapshot
+- [x] Engine preflight 接线
+- [x] Checkpoint D 验收
 
-## Phase 4：条件式批次事件
+## Phase 4：条件式批次事件（已取消）
 
-- [ ] 两消费者门禁成立，否则取消本阶段
-- [ ] 最小事件合同
-- [ ] 同步 run-scoped Dispatcher
-- [ ] Stock Daily 单切片接线
-- [ ] No-op 回滚路径
-- [ ] Checkpoint E 验收
+- [x] 两消费者门禁未成立，取消本阶段
+- [x] 最小事件合同：不适用
+- [x] 同步 run-scoped Dispatcher：不适用
+- [x] Stock Daily 单切片接线：不适用
+- [x] No-op 回滚路径：不适用
+- [x] Checkpoint E 验收：不适用
 
 ## Phase 5：最终验收
 
-- [ ] focused/full tests
-- [ ] Ruff
-- [ ] 架构检查
-- [ ] PostgreSQL round-trip/replay（涉及时）
-- [ ] `git diff --check`
-- [ ] 工作树审计
-- [ ] 用户决定扩展下一个切片或关闭项目
+- [x] focused/full tests
+- [x] Ruff
+- [x] 架构检查
+- [x] PostgreSQL round-trip/replay（无 migration，判定不适用）
+- [x] `git diff --check`
+- [x] 工作树审计
+- [x] 用户决定关闭当前计划；扩展下一个切片另行授权
 
 ## 永久非目标
 
