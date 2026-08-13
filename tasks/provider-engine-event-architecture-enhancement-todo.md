@@ -19,8 +19,8 @@ Phase 0 已通过，进入 Phase 1 实施。
 
 ## Phase 1：Provider Runtime Registry
 
-- [ ] characterization tests
-- [ ] 最小 Registry
+- [x] characterization tests
+- [x] 最小 Registry
 - [ ] Stock Daily 单调用点迁移
 - [ ] Checkpoint B 验收
 
