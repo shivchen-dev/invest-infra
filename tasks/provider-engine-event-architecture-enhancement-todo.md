@@ -22,7 +22,7 @@ Phase 0 已通过，进入 Phase 1 实施。
 - [x] characterization tests
 - [x] 最小 Registry
 - [x] Stock Daily 单调用点迁移
-- [ ] Checkpoint B 验收
+- [x] Checkpoint B 验收
 
 ## Phase 2：Stock Daily Application Engine
 
