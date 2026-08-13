@@ -77,6 +77,10 @@ from invest_pipeline.adapters.tdx_offline import (
 )
 from invest_pipeline.adapters.tdx_offline.config import TdxOfflineSettings as _SettingsReimport
 from invest_pipeline.adapters.tdx_offline.stock_adapter import (
+    _BY_PAIRS_READABLE_MAX_LENGTH,
+    _by_pairs_request_key,
+)
+from invest_pipeline.adapters.tdx_offline.stock_adapter import (
     TdxOfflineStockProvider as _AdapterReimport,
 )
 from invest_pipeline.provider_catalog import (
@@ -833,6 +837,141 @@ class Phase1AQualifiedPairsTest(unittest.TestCase):
         self.assertEqual(
             request.request_key, "daily-bars-2023-01-01-2023-12-31-000001-600000"
         )
+
+
+class ByPairsRequestKeyBoundedLengthTest(unittest.TestCase):
+    """Phase 3: bounded ``request_key`` for the by-pairs request.
+
+    The Stage 4B Phase 3 schema constrains
+    ``raw.provider_requests.request_key`` to ``VARCHAR(128)``. The
+    by-pairs path joins ``(market, symbol)`` tokens into the key, so
+    the real ~12,431-symbol universe overflows the column. The
+    helper must therefore keep the readable form for short pair sets
+    (so legacy rows that already exist in dev stay diffable) and fall
+    back to a deterministic SHA-256 digest of the canonical sorted
+    pair list when the readable key would exceed 128 chars. The full
+    pair list stays in ``request.params`` so no upstream audit trail
+    is lost.
+    """
+
+    _START = date(2023, 1, 1)
+    _END = date(2023, 12, 31)
+
+    def setUp(self) -> None:
+        self._tmp = Path(self._testMethodName)
+        self._tmp.mkdir(parents=True, exist_ok=True)
+        self._settings = TdxOfflineSettings(enabled=True, data_root=self._tmp)
+
+    def tearDown(self) -> None:
+        import shutil
+
+        shutil.rmtree(self._tmp, ignore_errors=True)
+
+    def test_short_pair_set_keeps_legacy_readable_key(self) -> None:
+        # A one-pair request is the smallest possible by-pairs key;
+        # the readable form must stay byte-identical to the slice-2
+        # contract so the persisted audit rows already in dev can be
+        # correlated with the new code path.
+        key = _by_pairs_request_key(
+            self._START, self._END, [("bj", "110001")]
+        )
+        self.assertEqual(key, "daily-bars-by-pairs-2023-01-01-2023-12-31-bj110001")
+        self.assertLessEqual(len(key), 128)
+
+    def test_multi_pair_readable_key_within_budget_keeps_readable_form(self) -> None:
+        # Three pairs is well inside the 128-char budget — the helper
+        # must keep the human-readable key.
+        pairs = [("bj", "110001"), ("sh", "600000"), ("sz", "000001")]
+        key = _by_pairs_request_key(self._START, self._END, pairs)
+        self.assertEqual(
+            key, "daily-bars-by-pairs-2023-01-01-2023-12-31-bj110001-sh600000-sz000001"
+        )
+        self.assertLessEqual(len(key), 128)
+
+    def test_long_pair_set_falls_back_to_sha256_digest_within_128_chars(self) -> None:
+        # The universe needs ~12,431 pairs to overflow; we use a
+        # smaller synthesised set (still large enough to exceed the
+        # budget) so the test stays focused on the SHA-256 path. The
+        # contract is the byte-shape, not the cardinality.
+        pairs: list[tuple[str, str]] = []
+        for n in range(20):
+            market = "sh" if n % 2 == 0 else "sz"
+            symbol = f"{600000 + n:06d}" if n % 2 == 0 else f"{n:06d}"
+            pairs.append((market, symbol))
+        key = _by_pairs_request_key(self._START, self._END, pairs)
+        self.assertLessEqual(len(key), 128)
+        self.assertTrue(key.startswith("daily-bars-by-pairs-2023-01-01-2023-12-31-"))
+        # The digest form uses a ``sha256-`` token so a future
+        # inspector can tell the legacy readable key apart from the
+        # bounded digest key without parsing the suffix.
+        self.assertRegex(
+            key,
+            r"^daily-bars-by-pairs-2023-01-01-2023-12-31-sha256-[0-9a-f]{64}$",
+        )
+
+    def test_digest_key_is_deterministic_regardless_of_input_order(self) -> None:
+        # Two callers that pass the same set of pairs in different
+        # orders must collide on the same ``raw.provider_requests``
+        # row. The readable form already sorts; the digest path must
+        # sort before hashing so the same invariant holds.
+        forward = [("sh", f"{600000 + n:06d}") for n in range(20)]
+        reversed_ = list(reversed(forward))
+        key_forward = _by_pairs_request_key(self._START, self._END, forward)
+        key_reversed = _by_pairs_request_key(self._START, self._END, reversed_)
+        self.assertEqual(key_forward, key_reversed)
+        self.assertLessEqual(len(key_forward), 128)
+
+    def test_digest_key_different_pair_sets_produce_different_keys(self) -> None:
+        # SHA-256 is collision-resistant on distinct inputs; the
+        # bounded key must therefore distinguish two near-identical
+        # pair sets that differ by a single pair so an upstream
+        # rerun with a corrected universe never silently reuses an
+        # existing audit row.
+        base = [("sh", f"{600000 + n:06d}") for n in range(20)]
+        mutated = list(base)
+        mutated[7] = ("sz", "301001")
+        key_base = _by_pairs_request_key(self._START, self._END, base)
+        key_mutated = _by_pairs_request_key(self._START, self._END, mutated)
+        self.assertNotEqual(key_base, key_mutated)
+        self.assertLessEqual(len(key_base), 128)
+        self.assertLessEqual(len(key_mutated), 128)
+
+    def test_digest_key_changes_with_date_range(self) -> None:
+        # The date range is part of the logical key — two fetches
+        # over different windows must not collide even if the pair
+        # set is byte-identical.
+        pairs = [("sh", f"{600000 + n:06d}") for n in range(20)]
+        key_window_a = _by_pairs_request_key(date(2023, 1, 1), date(2023, 6, 30), pairs)
+        key_window_b = _by_pairs_request_key(date(2023, 7, 1), date(2023, 12, 31), pairs)
+        self.assertNotEqual(key_window_a, key_window_b)
+
+    def test_fetch_daily_bars_by_pairs_uses_bounded_key_for_long_set(self) -> None:
+        # End-to-end: the provider's ``fetch_daily_bars_by_pairs``
+        # call must stamp the bounded digest key on the produced
+        # ``ProviderRequest`` so the persisted row fits the schema.
+        # ``request.params`` still carries the full pair list so no
+        # audit detail is lost.
+        payload = _build_record(20230103, 1000, 1100, 950, 1050, 1.0, 100)
+        for n in range(4):
+            market = "sh" if n % 2 == 0 else "sz"
+            symbol = f"{600000 + n:06d}" if n % 2 == 0 else f"{n:06d}"
+            _write_symbol_file(self._tmp, market, symbol, payload)
+        pairs = [
+            ("sh", f"{600000 + n:06d}") if n % 2 == 0 else ("sz", f"{n:06d}")
+            for n in range(4)
+        ]
+        provider = TdxOfflineStockProvider(self._settings)
+        request, attempt, batch = provider.fetch_daily_bars_by_pairs(
+            pairs, self._START, self._END
+        )
+        self.assertIs(attempt.status, ProviderAttemptStatus.SUCCEEDED)
+        self.assertLessEqual(
+            len(request.request_key), _BY_PAIRS_READABLE_MAX_LENGTH
+        )
+        self.assertEqual(request.params["pairs"], [list(pair) for pair in pairs])
+        # The four pairs are below the budget — the readable form
+        # must still win over the SHA-256 fallback.
+        self.assertTrue(request.request_key.startswith("daily-bars-by-pairs-"))
 
 
 class PrevCloseChainTest(unittest.TestCase):

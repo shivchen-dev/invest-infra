@@ -28,13 +28,20 @@
 
 #### 持续约束
 
-- [ ] TDX 仅补充代码/市场发现，不伪造名称、上市状态等主数据字段。
+- [x] TDX 仅补充代码/市场发现，不伪造名称、上市状态等主数据字段；真实验收使用 market-qualified pairs，名称/上市状态仍由 `core.instruments` 负责。
 
 ### Phase 3：生产验收
 
-- [ ] 用真实 TDX 数据跑单日股票日线链路。
-- [ ] 验证 Tushare 限流时日线仍可入库、主数据缓存不丢失。
-- [ ] 验证沪深北交易所映射、证据链和失败可审计性。
+- [x] 用真实 TDX 数据跑单日股票日线链路：2026-08-12 真实 `vipdoc` 数据发现 12,431 个 pairs，读取并生成 9,405 条日线；SSE/SZSE/BJSE 探针均成功。
+- [x] 验证 Tushare 限流时日线仍可入库、主数据缓存不丢失：限流/失败快照复用合同测试通过；TDX fallback 真实写入 PostgreSQL evidence 三层，request/attempt/batch 均为 `succeeded`。
+- [x] 验证沪深北交易所映射、证据链和失败可审计性：`raw.provider_requests.request_key` 长度 113（VARCHAR(128) 内），完整 pairs 保存在 `request_params`，batch `record_count=9405`，payload hash 已持久化；缺失/非法文件失败合同测试通过。
+
+#### Phase 3 验收记录（2026-08-13）
+
+- PostgreSQL 容器：`invest-infra-postgres-1`，迁移至 head。
+- TDX 数据根目录：`/home/claw/windows-ltsc/shared/tdx-data`。
+- 单日：`2026-08-12`；request key：`daily-bars-by-pairs-2026-08-12-2026-08-12-sha256-...`。
+- 回归：TDX provider `58 passed`；fallback + Asset wiring `33 passed`；Ruff、`git diff --check` 通过。
 
 ## 约束
 

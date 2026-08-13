@@ -102,6 +102,8 @@ from invest_pipeline.adapters.tdx_offline.records import TdxDailyBar
 _DEFAULT_BY_DATE_REQUEST_KEY = "daily-bars-by-date-{trade_date}"
 _PER_SYMBOL_REQUEST_KEY_TEMPLATE = "daily-bars-{start}-{end}-{symbols}"
 _BY_PAIRS_REQUEST_KEY_TEMPLATE = "daily-bars-by-pairs-{start}-{end}-{pairs}"
+_BY_PAIRS_READABLE_MAX_LENGTH = 128
+_BY_PAIRS_DIGEST_TAG = "sha256"
 
 _MARKET_SH = "sh"
 _MARKET_SZ = "sz"
@@ -203,10 +205,20 @@ def _by_date_request_key(trade_date: date) -> str:
 def _by_pairs_request_key(
     start_date: date, end_date: date, pairs: Sequence[tuple[str, str]]
 ) -> str:
+    sorted_pairs = sorted(pairs)
+    readable = _BY_PAIRS_REQUEST_KEY_TEMPLATE.format(
+        start=start_date.isoformat(),
+        end=end_date.isoformat(),
+        pairs="-".join(f"{market}{symbol}" for market, symbol in sorted_pairs),
+    )
+    if len(readable) <= _BY_PAIRS_READABLE_MAX_LENGTH:
+        return readable
+    canonical = ",".join(f"{market}{symbol}" for market, symbol in sorted_pairs)
+    digest = sha256(canonical.encode("ascii")).hexdigest()
     return _BY_PAIRS_REQUEST_KEY_TEMPLATE.format(
         start=start_date.isoformat(),
         end=end_date.isoformat(),
-        pairs="-".join(f"{market}{symbol}" for market, symbol in sorted(pairs)),
+        pairs=f"{_BY_PAIRS_DIGEST_TAG}-{digest}",
     )
 
 
