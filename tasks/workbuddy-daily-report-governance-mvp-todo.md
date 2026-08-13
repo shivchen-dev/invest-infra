@@ -1,67 +1,45 @@
-# WorkBuddy 每日报告治理 MVP 执行清单
+# WorkBuddy 候选线索入口 MVP 执行清单
 
-> 当前状态：M0 合同冻结完成；M1 校验器完成；M2 归档 + latest 指针完成；
-> M1/M2 收口补丁已加入路径穿越防护（trade_date / workflow_run_id fail-closed）；
-> 规则版本兼容矩阵（`COMPATIBLE_RULES_VERSIONS = {"1.1.1", "1.1.2"}`）已落地
+> 当前状态：业务定位已收缩；生产规则 2.0.0 和候选入口 M0 合同已冻结；代码尚未按新合同实施。
 
-## M0 合同冻结
+## 已完成：合同收缩
 
-- [x] 定义最小输入字段和版本策略（result 事实优先，quality 诊断化）
-- [x] 定义 accepted / partial / rejected 判定
-- [x] 冻结最小评分兼容合同
-- [x] 冻结合法 Override 规则（首版默认禁用）
-- [x] 固定 2026-08-13 遗留样本预期 Finding
-- [x] 确定规则 1.1.2 golden candidate 目标合同
-- [x] 显式兼容矩阵 `COMPATIBLE_RULES_VERSIONS = {"1.1.1", "1.1.2"}`（PATCH/MINOR/MAJOR 策略）
-- [x] 1.1.1 真实样本不再因版本号被单独拒绝；最终 accepted/partial/rejected 由内容校验决定
-- [x] 真实样本回归 opt-in `WORKBUDDY_REAL_SAMPLE_DIR`，默认测试不依赖仓库外路径
-- [x] 用户授权收缩并冻结 M0 合同
-- [x] 兼容 `result.status`，取消 `quality_report.producer_status` 硬要求
-- [x] 将阶段 count、生产者 hash 和重复追溯字段降为可选/诊断
+- [x] WorkBuddy 重新定位为候选线索生产者
+- [x] 生产端必需产物收缩为单一 candidates JSON
+- [x] 必需字段收缩为 run 身份、策略身份、status、symbol 和 reason
+- [x] 评分、排名、阶段、source refs、Markdown、quality report 降为可选
+- [x] legacy 三件套严格审计与候选入口分离
+- [x] 冻结 `WORKBUDDY-CANDIDATE-INTAKE-M0-CONTRACT.md`
 
-## M1 校验器
+## 待实施：M1 适配与校验
 
-- [x] 输入文件与跨文件标识一致性
-- [x] 阶段数量、集合与衔接校验
-- [x] 缺失数据处理校验
-- [x] 单维分与综合分重算
-- [x] 排名与候选状态重算
-- [x] source reference 校验
-- [x] Markdown 固定字段一致性校验
-- [x] 按 1.1.1 / 1.1.2 合同同步 validator：规则版本、`result.status` 别名、quality_report 最小字段
-- [x] governed-quality-report.json 生成
-- [x] trade_date 严格 YYYY-MM-DD + 真实日期校验（fail-closed）
-- [x] workflow_run_id 单路径段字符集 + 长度上限校验（fail-closed）
-  - 安全普通点号（如 `wr.001`）允许；以字母或数字开头；仅 ASCII `[A-Za-z0-9._-]`，长度 1–128
-- [x] 路径安全回归测试（绝对路径、`../`、`/`、`\`、空白、超长、`.`、`..`、`.hidden`、`wr.001` 合法）
-- [x] 规则版本兼容矩阵测试（1.1.1 accepted、1.1.2 accepted、1.1.3 / 2.0.0 fail-closed exit 4）
+- [ ] Candidate Intake DTO / finding 模型
+- [ ] 2.0.0 candidates JSON parser
+- [ ] 1.1.1 / 1.1.2 三件套 candidate extractor
+- [ ] run-level 轻量校验
+- [ ] item-level 错误隔离
+- [ ] 标准化 intake result
 
-## M2 归档
+## 待实施：M2 归档与候选池
 
-- [x] 完整 SHA-256 和 manifest
-- [x] 日期/run ID 不可变目录
-- [x] 相同内容重复导入幂等
-- [x] 同 run ID 不同内容拒绝
-- [x] accepted-only latest 原子更新（含 fcntl.flock 并发防护）
-- [x] validate/import CLI
-- [x] archive 边界对 trade_date / workflow_run_id 再校验（防御纵深）
+- [ ] 原始候选 artifact 不可变归档
+- [ ] run 幂等与内容冲突保护
+- [ ] symbol resolution
+- [ ] `(trade_date, strategy_id, normalized_symbol)` 业务去重
+- [ ] 无法映射项 `needs_symbol_resolution`
+- [ ] 候选池投影
 
-## M3 验收
+## 待验收：M3
 
-- [x] 2026-08-13 真实样本回归：版本兼容检查通过；当前样本因缺失可复算评分、ranking 等内容问题 rejected（exit 3）
-- [x] 1.1.1 / 1.1.2 真实三件套不再因版本号被单独拒绝（最终状态由内容校验决定）
-- [x] 1.1.3 / 2.0.0 fail-closed（exit 4）
-- [x] 异常 fixture 测试（合成异常 / 路径穿越 fixture）
-- [x] Pipeline focused tests（test_workbuddy_reports_validator + test_workbuddy_reports_archive）
-- [x] 相关全量回归（Pipeline）
-- [x] 完整 diff 独立验收（正确性、路径安全、范围与 staged diff）
-- [ ] 用户审核结果
+- [ ] 现有 1.1.1 真实样本候选可提取
+- [ ] 2.0.0 最小样本可导入
+- [ ] 评分不可复算、ranking 缺失、source refs 不完整不阻断
+- [ ] 单项拒绝不阻断同批其他项
+- [ ] 重复导入幂等，冲突不覆盖
+- [ ] focused tests 和 Pipeline 回归通过
 
-## 明确暂缓
+## Legacy 能力
 
-- [ ] PostgreSQL
-- [ ] API / Web
-- [ ] Dagster Sensor
-- [ ] ExternalObservation / Evidence
-- [ ] 月度索引
-- [ ] 原始连接器响应长期保存
+- [x] `workbuddy_reports` 严格报告审计代码保留
+- [x] 明确 legacy 审计不是候选入池前置
+- [ ] 代码和 CLI 命名中增加 legacy/audit 语义（待实施时处理）
