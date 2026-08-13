@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from datetime import date
+from types import SimpleNamespace
 from typing import Any
 
 import dagster as dg
@@ -53,6 +54,8 @@ from invest_pipeline.request_keys import make_daily_bars_request_key
 from invest_pipeline.stock_daily_bars import (
     upsert_stock_daily_bars,
 )
+from invest_pipeline.stock_daily_bars_application import StockDailyBarsEngine
+from invest_pipeline.stock_daily_bars_engine import StockDailyBarsCommand
 from invest_pipeline.stock_universe import load_stock_universe  # noqa: F401
 
 # ``load_stock_universe`` is preserved as a module-level attribute so
@@ -926,9 +929,13 @@ def stock_daily_bars_raw(context) -> dg.MaterializeResult:
     settings = get_settings()
     trade_date = date.fromisoformat(context.partition_key)
 
-    provider = ProviderRuntimeRegistry().resolve_stock(settings).provider
     engine = build_engine(settings.database_url)
     factory = session_factory(engine)
+    raw_result_holder: dict[str, Any] = {}
+
+    def resolver(command: StockDailyBarsCommand):
+        return ProviderRuntimeRegistry().resolve_stock(settings).provider
+
     try:
         from invest_storage import SqlAlchemyUnitOfWork
 
@@ -937,37 +944,55 @@ def stock_daily_bars_raw(context) -> dg.MaterializeResult:
             write_stock_daily_bars_raw_with_tdx_fallback,
         )
 
-        result = write_stock_daily_bars_raw_with_tdx_fallback(
-            provider,
-            factory,
+        def raw_ingestor(provider, command: StockDailyBarsCommand):
+            raw_result = write_stock_daily_bars_raw_with_tdx_fallback(
+                provider,
+                factory,
+                trade_date=command.trade_date,
+                tdx_settings=TdxOfflineSettings(),
+                unit_of_work_factory=SqlAlchemyUnitOfWork,
+            )
+            raw_result_holder["result"] = raw_result
+            return raw_result
+
+        def core_publisher(raw, command: StockDailyBarsCommand):
+            return SimpleNamespace(inserted=0, skipped=0)
+
+        command = StockDailyBarsCommand(
             trade_date=trade_date,
-            tdx_settings=TdxOfflineSettings(),
-            unit_of_work_factory=SqlAlchemyUnitOfWork,
+            trigger_type="dagster",
+            config_snapshot={"provider_key": settings.provider_key},
         )
+        outcome = StockDailyBarsEngine(
+            resolver,
+            raw_ingestor,
+            core_publisher,
+        ).execute(command)
     finally:
         engine.dispose()
 
+    raw_result = raw_result_holder.get("result")
     context.log.info(
         "stock_daily_bars_raw: provider=%s request=%s attempt=%s batch=%s "
         "status=%s records=%s trade_date=%s",
-        provider.provider_key,
-        result.request_id,
-        result.attempt_id,
-        result.batch_id,
-        result.request_status,
-        result.record_count,
+        outcome.provider_key,
+        outcome.request_id,
+        outcome.attempt_id,
+        outcome.batch_id,
+        outcome.status,
+        outcome.record_count,
         trade_date.isoformat(),
     )
     return dg.MaterializeResult(
         metadata={
-            "provider": provider.provider_key,
+            "provider": outcome.provider_key,
             "dataset_key": "stock_daily_bars_by_date",
-            "request_id": str(result.request_id),
-            "attempt_id": str(result.attempt_id),
-            "batch_id": str(result.batch_id) if result.batch_id else "",
-            "request_status": result.request_status,
-            "attempt_status": result.attempt_status,
-            "record_count": result.record_count,
+            "request_id": str(outcome.request_id),
+            "attempt_id": str(outcome.attempt_id),
+            "batch_id": str(outcome.batch_id) if outcome.batch_id else "",
+            "request_status": getattr(raw_result, "request_status", "failed"),
+            "attempt_status": getattr(raw_result, "attempt_status", "failed"),
+            "record_count": outcome.record_count,
             "trade_date": trade_date.isoformat(),
             "partition_key": context.partition_key,
         }

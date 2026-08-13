@@ -247,33 +247,23 @@ class StockAssetsRuntimeWiringTest(unittest.TestCase):
             f"{asset_name} must pass a Settings instance to build_stock_provider",
         )
 
-    def _invoke_raw_and_capture_registry(self) -> list[Settings]:
-        captured: list[Settings] = []
-
-        def _raise_after_capture(settings: Settings) -> MagicMock:
-            captured.append(settings)
-            raise RuntimeError("STOP_AFTER_RESOLVE_STOCK")
-
+    def _invoke_raw_and_capture_registry(self) -> dg.MaterializeResult:
         registry = MagicMock()
-        registry.resolve_stock.side_effect = _raise_after_capture
+        registry.resolve_stock.side_effect = RuntimeError("STOP_AFTER_RESOLVE_STOCK")
         context = MagicMock()
         context.partition_key = _HISTORICAL_PARTITION
-        with (
-            patch("invest_pipeline.assets.ProviderRuntimeRegistry", return_value=registry),
-            self.assertRaises(RuntimeError),
-        ):
-            _underlying_callable("stock_daily_bars_raw")(context)
+        with patch("invest_pipeline.assets.ProviderRuntimeRegistry", return_value=registry):
+            result = _underlying_callable("stock_daily_bars_raw")(context)
         registry.resolve_stock.assert_called_once()
         self.assertIsInstance(registry.resolve_stock.call_args.args[0], Settings)
-        return captured
+        self.assertEqual(result.metadata["request_status"], "failed")
+        return result
 
     def test_stock_instruments_raw_invokes_build_stock_provider(self) -> None:
         self._assert_factory_called_with_settings("stock_instruments_raw")
 
     def test_stock_daily_bars_raw_invokes_registry_with_settings(self) -> None:
-        captured = self._invoke_raw_and_capture_registry()
-        self.assertEqual(len(captured), 1)
-        self.assertIsInstance(captured[0], Settings)
+        self._invoke_raw_and_capture_registry()
 
     def test_stock_daily_bars_invokes_build_stock_provider(self) -> None:
         self._assert_factory_called_with_settings("stock_daily_bars")
@@ -329,7 +319,9 @@ class StockDailyBarsByTradeDateAssetWiringTest(unittest.TestCase):
                 assets,
                 "ProviderRuntimeRegistry",
                 return_value=SimpleNamespace(
-                    resolve_stock=lambda _settings: SimpleNamespace(provider=MagicMock())
+                    resolve_stock=lambda _settings: SimpleNamespace(
+                        provider=MagicMock(provider_key="fixture_dev")
+                    )
                 ),
             ),
             patch(
@@ -392,7 +384,9 @@ class StockDailyBarsByTradeDateAssetWiringTest(unittest.TestCase):
                 assets,
                 "ProviderRuntimeRegistry",
                 return_value=SimpleNamespace(
-                    resolve_stock=lambda _settings: SimpleNamespace(provider=MagicMock())
+                    resolve_stock=lambda _settings: SimpleNamespace(
+                        provider=MagicMock(provider_key="fixture_dev")
+                    )
                 ),
             ),
             patch(
