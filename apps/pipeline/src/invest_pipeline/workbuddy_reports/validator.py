@@ -3,7 +3,9 @@
 Implements the hard-validation surface defined by
 ``docs/implementation/WORKBUDDY-GOVERNANCE-M0-CONTRACT.md`` sections
 2–6 and 9.  The contract is the authoritative specification; this
-module only encodes the rules frozen for M0 (rules version ``1.1.2``,
+module only encodes the rules frozen for M0 (rules versions
+``1.1.1`` and ``1.1.2`` are both accepted via the explicit,
+private rules-version compat set;
 ``sector-seven-step-v2`` strategy compatibility contract).
 
 The public entry point is :func:`validate_triplet`.  The CLI is exposed
@@ -31,6 +33,11 @@ __all__ = [
 
 SUPPORTED_RULES_VERSION = "1.1.2"
 TOLERANCE = 0.01
+# Private rules-version compat set; explicit fail-closed matrix of versions
+# accepted by the M0 contract.  Both ``1.1.1`` and ``1.1.2`` share the same
+# minimal fact contract enforced elsewhere; ``1.1.3`` / ``2.0.0`` are not
+# members and must be rejected with ``unsupported_version``.
+_COMPATIBLE_RULES_VERSIONS: frozenset[str] = frozenset({"1.1.1", "1.1.2"})
 _TRADE_DATE_PATTERN = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 _WORKFLOW_RUN_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 _PRODUCER_STATUSES = frozenset(
@@ -455,17 +462,15 @@ def _check_report_rules_version(
     errors: list[str],
     error_codes: list[str],
 ) -> None:
+    supported = ", ".join(sorted(_COMPATIBLE_RULES_VERSIONS))
     for label, payload in (("result", result), ("quality_report", quality)):
         version = payload.get("report_rules_version")
-        if version != SUPPORTED_RULES_VERSION:
+        if version not in _COMPATIBLE_RULES_VERSIONS:
             errors.append(
                 f"{label}.report_rules_version={version!r} not supported; "
-                f"first supported rules version is {SUPPORTED_RULES_VERSION}"
+                f"accepted rules versions are: {supported}"
             )
             error_codes.append("unsupported_version")
-
-
-
 
 
 def _check_stages(stages: Any, errors: list[str], warnings: list[str]) -> None:

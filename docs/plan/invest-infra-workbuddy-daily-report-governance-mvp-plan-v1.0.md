@@ -1,11 +1,11 @@
 # WorkBuddy 每日报告治理 MVP 实施计划
 
-> 文档版本：v1.2
+> 文档版本：v1.3
 > 文档状态：Draft for Review
 > 制定日期：2026-08-13
 > 适用仓库：`invest-infra`
 > 关联计划：Stage 4D Unified Investment Workbench
-> 生产规则：`WORKBUDDY-REPORT-RULES.md` 1.1.2
+> 生产规则：`WORKBUDDY-REPORT-RULES.md` 1.1.1、1.1.2
 > 实施原则：先解决校验可信、历史不覆盖和正式版本指向，不提前建设完整集成平台
 
 ## 1. 目标
@@ -87,6 +87,16 @@ rejected   存在结构、计算、排名、来源或一致性错误
 - 任一硬校验失败、未执行、规则合同不明确或规则版本不受支持，治理状态为 `rejected`。
 
 `producer_status` 仅作为 `result` 输入事实记录，不得覆盖或直接决定 `governance_status`。旧报告的 `result.status` 可兼容映射为 `producer_status` 并记录 warning；不要求 `quality_report` 重复该字段。
+
+### 4.1 规则版本兼容策略（PATCH/MINOR/MAJOR）
+
+`report_rules_version` 采用 **显式兼容矩阵（set 查找）**，不做字符串范围比较。首版冻结 `COMPATIBLE_RULES_VERSIONS = {"1.1.1", "1.1.2"}`：
+
+- **PATCH**（如 `1.1.1` → `1.1.2`）：共用同一最小事实合同，直接纳入 `COMPATIBLE_RULES_VERSIONS`；
+- **MINOR**（如 `1.1.2` → `1.2.0`）：默认不进入兼容矩阵；必须由 WorkBuddy 升级 `WORKBUDDY-REPORT-RULES.md` 并经过 contract 重新冻结；
+- **MAJOR**（如 `1.1.2` → `2.0.0`）：默认不进入兼容矩阵；必须建立新的治理合同；
+- 不在矩阵内的版本一律 `unsupported_version`（exit 4）。
+- 真实 1.1.1 样本不再因版本号被单独拒绝；其最终 `accepted` / `partial` / `rejected` 完全由内容校验决定。**不要求 WorkBuddy 必须按 1.1.2 重新生成才能进入 accepted 回归。**
 
 ## 5. 目录设计
 

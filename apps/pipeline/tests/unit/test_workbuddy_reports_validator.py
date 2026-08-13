@@ -649,6 +649,70 @@ def test_rejected_when_report_rules_version_unsupported(tmp_path: Path) -> None:
     assert any("report_rules_version" in err for err in verdict["errors"])
 
 
+# ---------------------------------------------------------------------------
+# Rules-version compatibility matrix (PATCH/MINOR/MAJOR strategy)
+# ---------------------------------------------------------------------------
+
+
+_ACCEPTED_RULES_VERSIONS = pytest.mark.parametrize(
+    "rules_version", ["1.1.1", "1.1.2"]
+)
+
+
+@_ACCEPTED_RULES_VERSIONS
+def test_accepted_when_report_rules_version_is_in_compat_matrix(
+    tmp_path: Path, rules_version: str
+) -> None:
+    """Versions in the explicit compat matrix are not rejected on version grounds."""
+    from invest_pipeline.workbuddy_reports import validate_triplet
+
+    result_path, report_path, quality_path = _write_triplet(
+        tmp_path,
+        result_overrides={"report_rules_version": rules_version},
+        quality_overrides={"report_rules_version": rules_version},
+    )
+
+    verdict = validate_triplet(
+        result_path=str(result_path),
+        report_path=str(report_path),
+        quality_path=str(quality_path),
+    )
+
+    assert verdict["governance_status"] == "accepted", verdict
+    assert verdict["errors"] == [], verdict
+    assert "unsupported_version" not in verdict.error_codes
+
+
+_REJECTED_RULES_VERSIONS = pytest.mark.parametrize(
+    "rules_version", ["1.1.3", "2.0.0"]
+)
+
+
+@_REJECTED_RULES_VERSIONS
+def test_rejected_when_report_rules_version_not_in_compat_matrix(
+    tmp_path: Path, rules_version: str
+) -> None:
+    """Versions outside the compat matrix fail-closed with exit code 4."""
+    from invest_pipeline.workbuddy_reports import validate_triplet
+
+    result_path, report_path, quality_path = _write_triplet(
+        tmp_path,
+        result_overrides={"report_rules_version": rules_version},
+        quality_overrides={"report_rules_version": rules_version},
+    )
+
+    verdict = validate_triplet(
+        result_path=str(result_path),
+        report_path=str(report_path),
+        quality_path=str(quality_path),
+    )
+
+    assert verdict["governance_status"] == "rejected", verdict
+    assert "unsupported_version" in verdict.error_codes, verdict
+    assert any("report_rules_version" in err for err in verdict["errors"])
+    assert verdict.exit_code == 4, verdict
+
+
 def test_rejected_when_schema_major_ge_2(tmp_path: Path) -> None:
     from invest_pipeline.workbuddy_reports import validate_triplet
 
@@ -999,3 +1063,30 @@ def test_cli_exit_codes(tmp_path: Path) -> None:
     assert proc.returncode == 3, (proc.stdout, proc.stderr)
     payload = json.loads(proc.stdout)
     assert payload["governance_status"] == "rejected"
+
+
+# ---------------------------------------------------------------------------
+# Opt-in real-sample regression
+# ---------------------------------------------------------------------------
+
+
+def test_real_sample_not_rejected_on_version_alone() -> None:
+    """Opt-in: when ``WORKBUDDY_REAL_SAMPLE_DIR`` points at a real
+    1.1.1 / 1.1.2 triplet the validator must not reject it on version
+    grounds; the content-level verdict is unconstrained."""
+    real_dir = os.environ.get("WORKBUDDY_REAL_SAMPLE_DIR")
+    if not real_dir:
+        pytest.skip("WORKBUDDY_REAL_SAMPLE_DIR not set")
+    from invest_pipeline.workbuddy_reports import discover_triplet, validate_triplet
+
+    triple = discover_triplet(real_dir)
+    assert triple is not None, f"WORKBUDDY_REAL_SAMPLE_DIR={real_dir!r} has no canonical triplet"
+    result_path, report_path, quality_path = triple
+    verdict = validate_triplet(
+        result_path=result_path,
+        report_path=report_path,
+        quality_path=quality_path,
+    )
+
+    assert "unsupported_version" not in verdict.error_codes, verdict
+    assert not any("report_rules_version" in err for err in verdict["errors"]), verdict

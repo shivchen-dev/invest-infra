@@ -4,6 +4,7 @@
 > 日期：2026-08-13
 > 对应计划：`docs/plan/invest-infra-workbuddy-daily-report-governance-mvp-plan-v1.0.md`
 > 生产规则：`WORKBUDDY-REPORT-RULES.md` 1.1.2
+> 兼容规则版本：`1.1.1`、`1.1.2`（显式矩阵）
 
 ## 1. M0 边界
 
@@ -11,11 +12,36 @@
 
 ## 2. 支持版本与输入
 
+### 2.1 规则版本兼容矩阵
+
+`report_rules_version` 采用 **显式兼容矩阵**（set 查找），不做字符串范围比较。首次冻结为：
+
+```text
+compatible_rules_versions = {"1.1.1", "1.1.2"}
+```
+
+| 版本 | 含义 | 状态 |
+|---|---|---|
+| `1.1.1` | 实际历史 1.1.1 三件套（PATCH 偏移） | 兼容（已归一到最小事实合同） |
+| `1.1.2` | 冻结的目标合同 | 兼容（首版原本支持） |
+| 其他 `1.1.x` / `1.0.x` / `2.0.x` | 未知版本 | `unsupported_version`（exit 4） |
+
+PATCH/MINOR/MAJOR 策略：
+
+- **PATCH**（如 `1.1.1` → `1.1.2`）：不引入新的硬门槛，纳入 `COMPATIBLE_RULES_VERSIONS`；
+- **MINOR**（如 `1.1.2` → `1.2.0`）：默认不进入兼容矩阵，必须由 WorkBuddy 升级 `WORKBUDDY-REPORT-RULES.md` 并经过 contract 重新冻结后才能纳入；
+- **MAJOR**（如 `1.1.2` → `2.0.0`）：默认不进入兼容矩阵，必须建立新的治理合同；
+- **1.1.1 与 1.1.2 共用同一最小事实合同**，因此归一到现有 `validate_triplet` 检查路径，无需分支化适配。
+
 首个受支持规则版本固定为：
 
 ```text
-report_rules_version = 1.1.2
+SUPPORTED_RULES_VERSION = "1.1.2"
 ```
+
+添加新版本到兼容矩阵必须同步更新本文档 `2.1` 表格与 `M0 Decision Record` 的对应条目。
+
+### 2.2 输入与文件角色
 
 输入目录必须提供本次运行对应的三个逻辑角色：
 
@@ -39,7 +65,7 @@ producer_status
 
 `result.status` 兼容映射为 `producer_status` 并记 warning；不要求 `quality_report` 重复 `producer_status`。`sources`、`stages` 必须存在；存在评分、排名或候选结果时，对应的 `scores`、`ranking`、`candidates` 必须存在。`task_id`、模板版本、开始/结束时间、生产者 hash 和质量检查证据均为可选诊断字段。schema 接受简写 `1.0` 和规范命名空间形式，解析后统一为内部版本 `1.0`。
 
-未知 `report_rules_version`、无法识别的 schema major version 或核心身份不一致是硬失败。历史报告不得用当前规则静默重解释。
+未知 `report_rules_version`（即不在 `COMPATIBLE_RULES_VERSIONS` 中）、无法识别的 schema major version 或核心身份不一致是硬失败。**真实 1.1.1 样本不再因版本号被单独拒绝**，其最终 `accepted` / `partial` / `rejected` 完全由内容校验决定；历史报告不得用当前规则静默重解释。
 
 ## 3. 治理状态判定
 
@@ -199,14 +225,23 @@ stdout 固定输出一个 JSON 对象；诊断日志写 stderr。`validate` 不�
 
 预期总状态：`rejected`。至少应识别：
 
-1. `report_rules_version=1.1.0`，不属于首个受支持的 1.1.2 合同；
+1. 历史上 `report_rules_version` 声明为 `1.1.0`，不属于当前 `COMPATIBLE_RULES_VERSIONS`（`1.1.1` / `1.1.2`）；
 2. 质量报告和 Markdown 仍要求、引用生产者 manifest；
 3. `source_refs` 中存在把整个 Python 对象字符串拼入 ID 的 `src_sector_{...}`，且样本未提供可解析的来源定义集合；
 4. 生产者自检证据模糊和 manifest 引用作为 warning 记录，不单独构成 rejected。
 
 该样本用于证明治理器不采信生产者自报的 14/14 通过。
 
-规则 1.1.2 三件套作为 M1 golden candidate 的目标合同。2026-08-14 实盘核对发现现存 `sector_result_2026-08-13.json` 与 `sector_quality_2026-08-13.json` 仍声明 `report_rules_version=1.1.1`，因此当前真实样本必须按 unsupported version 拒绝，不能作为 1.1.2 golden fixture；需由 WorkBuddy 按 1.1.2 重新生成后再执行 accepted 回归。文件命名、schema 简写、模板字段别名、Markdown 非核心元数据缺失、`result.status` 兼容映射和 `qc_14` 摘要错误均按兼容/warning 处理；M1 必须独立复算其阶段、评分、排名、关键 Markdown 字段和 hash 后，才能由治理器输出最终 `accepted`。
+### 10.1 1.1.1 真实样本与 1.1.2 golden candidate
+
+`COMPATIBLE_RULES_VERSIONS` 已将 `1.1.1` 与 `1.1.2` 一并纳入，因此 1.1.1 真实样本不再因版本号被单独拒绝；其最终 `accepted` / `partial` / `rejected` 完全由内容校验（阶段、评分、排名、来源、Markdown 一致性、hash 等）决定。
+
+- 1.1.2 仍是 M1 golden candidate 的目标合同；
+- 1.1.1 真实样本可以在内容全部满足硬检查后获得 `accepted`；
+- **不再要求 WorkBuddy 必须按 1.1.2 重新生成才能进入 accepted 回归**——只要 WorkBuddy 提供的 1.1.1 样本在治理侧独立复算后满足所有硬检查，治理器即可输出 `accepted`；
+- 文件命名、schema 简写、模板字段别名、Markdown 非核心元数据缺失、`result.status` 兼容映射和 `qc_14` 摘要错误均按兼容/warning 处理；M1 必须独立复算其阶段、评分、排名、关键 Markdown 字段和 hash 后，才能由治理器输出最终 `accepted`。
+
+真实样本回归测试采用 opt-in 方式（环境变量 `WORKBUDDY_REAL_SAMPLE_DIR` 指向样本目录），不出现在默认测试集中；默认测试集不依赖仓库外路径。
 
 ## 11. M0 完成门槛
 
@@ -215,7 +250,8 @@ stdout 固定输出一个 JSON 对象；诊断日志写 stderr。`validate` 不�
 - [x] 遗留真实样本的预期拒绝 Finding 已固定；
 - [x] `sector-seven-step-v2` 最小评分兼容合同已冻结；
 - [x] 规则 1.1.2 golden candidate 的目标合同已确定；
-- [ ] WorkBuddy 已按 1.1.2 重新生成可供 accepted 回归的真实三件套；
+- [x] 规则 1.1.1 纳入显式兼容矩阵（`COMPATIBLE_RULES_VERSIONS`），真实样本不必先重生成 1.1.2；
+- [x] 真实样本回归已执行：1.1.1 不再因版本号拒绝，当前因内容缺失被拒绝；
 - [x] 用户授权收缩并冻结 M0 合同。
 
 M0 已完成，可以进入 M1；golden candidate 的 `accepted` 结论必须由 M1 独立校验器实际复算得出，不预先采信生产者结论。
