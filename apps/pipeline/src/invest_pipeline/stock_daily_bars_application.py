@@ -5,6 +5,7 @@ from __future__ import annotations
 import re
 from typing import Any, Protocol
 
+from .provider_health import ProviderHealthSnapshot, ProviderHealthStatus
 from .stock_daily_bars_engine import StockDailyBarsCommand, StockDailyBarsOutcome
 
 
@@ -20,21 +21,45 @@ class CorePublisher(Protocol):
     def __call__(self, raw: Any, command: StockDailyBarsCommand) -> Any: ...
 
 
+class HealthPreflight(Protocol):
+    def __call__(
+        self, command: StockDailyBarsCommand
+    ) -> ProviderHealthSnapshot | None: ...
+
+
+_UNHEALTHY_PREFLIGHT_SUMMARY = "provider health preflight not healthy"
+
+
 class StockDailyBarsEngine:
     def __init__(
         self,
         resolver: ProviderResolver,
         raw_ingestor: RawIngestor,
         core_publisher: CorePublisher,
+        *,
+        health_preflight: HealthPreflight | None = None,
     ) -> None:
         self._resolver = resolver
         self._raw_ingestor = raw_ingestor
         self._core_publisher = core_publisher
+        self._health_preflight = health_preflight
 
     def execute(self, command: StockDailyBarsCommand) -> StockDailyBarsOutcome:
         raw: Any = None
         provider: Any = None
         try:
+            if self._health_preflight is not None:
+                snapshot = self._health_preflight(command)
+                if snapshot is not None and (
+                    snapshot.status is not ProviderHealthStatus.HEALTHY
+                ):
+                    return self._outcome(
+                        raw,
+                        provider,
+                        "FAILED",
+                        error_summary=_UNHEALTHY_PREFLIGHT_SUMMARY,
+                    )
+
             provider = self._resolver(command)
             raw = self._raw_ingestor(provider, command)
 
