@@ -145,8 +145,9 @@ response 或数据库 row。
   10jqka）目前没有对应的开源历史行情 endpoint 在 V2 中作为 AkShare
   内部上游使用。三源作为独立 runtime Provider 的可能性留待未来 ADR
   评估；当前 slice 的 plan / todo 文档以 planned-only 形式保留历史
-  提案（`tasks/plan-data-source-three-provider.md` 与
-  `tasks/todo-data-source-three-provider.md`）。
+  提案（已归档至
+  `docs/archive/2026-08-13-plan-cleanup/plan-data-source-three-provider.md` 与
+  `docs/archive/2026-08-13-plan-cleanup/todo-data-source-three-provider.md`）。
 - 配置驱动的 Provider Registry/Factory、`fixture_dev` 与每个归档源对应
   的 redacted config 模板。
 - `ProviderAuthenticationError` / `ProviderRateLimitError` 等错误分类

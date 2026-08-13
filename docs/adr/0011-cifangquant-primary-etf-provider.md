@@ -11,7 +11,8 @@ Provider 选型延后到 O-1 业务确认之后；ADR-0004 / ADR-0005 进一步�
 Phase 1 仅服务 SSE / SZSE 场内 ETF、`adjustment=none` 与版本化日历的契约。
 `fixture_dev` 是当前唯一默认启用的 Provider。
 
-`tasks/plan.md` 与 `docs/implementation/DATA-SOURCE-MIGRATION-MATRIX.md`
+`docs/archive/2026-08-13-plan-cleanup/plan.md` 与
+`docs/implementation/DATA-SOURCE-MIGRATION-MATRIX.md`
 均把 `cifang` 列为“经归档观察到的候选 ETF 主数据来源”，但 ADR-0003 明确
 要求：在用户完成合同、再分发、限频、历史回填起点与收盘 cutoff 确认前，
 不得宣告 Provider 已选定，更不得直接沿用归档实现的默认 `qfq` 复权。
