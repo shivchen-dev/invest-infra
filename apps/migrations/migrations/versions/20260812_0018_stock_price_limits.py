@@ -4,6 +4,7 @@ Revision ID: 20260812_0018
 Revises: 20260812_0017
 Create Date: 2026-08-12
 """
+
 from __future__ import annotations
 
 from collections.abc import Sequence
@@ -63,23 +64,23 @@ def upgrade() -> None:
         ),
         sa.CheckConstraint(
             "revision >= 1",
-            name="ck_stock_price_limits_revision_positive",
+            name="revision_positive",
         ),
         sa.CheckConstraint(
             "length(regime_id) > 0",
-            name="ck_stock_price_limits_regime_id_nonempty",
+            name="regime_id_nonempty",
         ),
         sa.CheckConstraint(
             "length(status) > 0",
-            name="ck_stock_price_limits_status_nonempty",
+            name="status_nonempty",
         ),
         sa.CheckConstraint(
             "length(source_provider) > 0",
-            name="ck_stock_price_limits_source_provider_nonempty",
+            name="source_provider_nonempty",
         ),
         sa.CheckConstraint(
             "length(row_hash) = 64",
-            name="ck_stock_price_limits_row_hash_len64",
+            name="row_hash_len64",
         ),
         schema="core",
     )
