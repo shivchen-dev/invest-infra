@@ -1,69 +1,33 @@
 # Stage 4C Core Data Layer Integration — Todo
 
-## Phase 0：合同与可行性
+## 4C-MVP：日频市场状态闭环
 
-- [ ] 冻结 dataset、capability、Provider key 与 owner
-- [ ] 冻结 raw/core/analytics schema、hash、quality、freshness 合同
-- [ ] 完成 `.lc1/.lc5`、block、gpcw 真实样本 Spike
-- [ ] 完成 `mootdx` 采用方式 ADR 与 MIT notice 策略
-- [ ] 生成覆盖率、历史深度、缺口率和容量基线
-- [ ] Checkpoint A：人工审核合同、ADR、样本和覆盖阈值
+- [x] 冻结 `stock_price_limits` Raw/Core 合同、规则版本和 fail-closed 状态
+- [x] 建设 `stock_price_limits` migration、repository、UoW 与发布服务
+- [x] 完成幂等、revision、provenance、缺失前收和未知规则测试
+- [x] 完成 TDX `prev_close` 推导与边界测试
+- [x] 完成版本化价格限制 Domain policy 与 fixture provider
+- [x] 完成 Market Breadth v2 Domain、Pipeline 发布与 Asset 激活
+- [x] 完成 Limit Sentiment Domain 合同、聚合器与 Pipeline 持久化服务
+- [x] 完成 Market Breadth / Limit Sentiment PostgreSQL round-trip
+- [x] 完成 Tushare/TDX close、prev_close、覆盖率一致性检查
+- [x] 完成主源失败、过期、partial/stale 的降级验证（fail-closed 门禁）
+- [x] 完成 migration rollback/upgrade 与 seeded replay
+- [x] Checkpoint B：全量测试、Ruff、架构检查、diff 检查、工作树审计
+- [x] 用户已确认验收，4C-MVP closed
 
-## Phase 1：日频市场状态
+## 明确延期，不阻塞 4C-MVP
 
-- [ ] 补齐 TDX `prev_close` 语义和边界测试
-- [ ] 冻结 A 股价格限制规则与版本
-- [ ] 建设 `stock_price_limits` Raw/Core 事实
-- [ ] 扩展 Market Breadth v2
-- [x] 发布 Limit Sentiment 日频观察（Domain 合同与纯聚合器已完成；Pipeline 接线待后续切片）
-- [ ] 完成 Tushare/TDX 一致性检查
-- [ ] Checkpoint B：日频闭环、迁移和降级验证
+- [ ] 板块字典、成员 snapshot persistence 与 Block Rotation
+- [ ] `.lc1/.lc5` 分钟线、增量、高水位、容量和性能基准
+- [ ] 开板、封板、连板及盘中动能
+- [ ] TDX GUI 状态机、公式白名单与导出解析
+- [ ] `gpcw` 财务 Provider
+- [ ] ResearchEvidenceBundle 新快照注册与 ContextProjection 扩展
 
-## Phase 2：板块轮动
+## 永久不在本阶段
 
-- [ ] 建设 `tdx_local_block` Provider
-- [ ] 建设板块字典与成员 snapshot persistence
-- [ ] 实现 snapshot diff、改名和删除语义
-- [ ] 生成行业/概念日频聚合
-- [ ] 发布 Block Rotation 观察
-- [ ] 增加历史穿越防护
-- [ ] Checkpoint C：轮动事实追溯与覆盖降级验证
-
-## Phase 3：分钟行情
-
-- [ ] 实现 `.lc1/.lc5` 窄 reader 与 golden tests
-- [ ] 建设 `tdx_offline_minute` Provider
-- [ ] 建设分钟 persistence、分区与增量高水位
-- [ ] 实现 revision、缺口和乱序检测
-- [ ] 建设开板/封板/分钟成交动能证据
-- [ ] 完成容量和性能基准
-- [ ] Checkpoint D：分钟回放、存储预算与盘中证据验证
-
-## Phase 4：TDX GUI 原生分析
-
-- [ ] 冻结白名单公式、参数、universe 与客户端版本合同
-- [ ] 实现启动/登录/刷新/执行/导出/解析状态机
-- [ ] 固化 ASCII 文件名、GB18030、Tab/schema 契约
-- [ ] 建设 `tdx_gui_analysis` Raw/Core 链路
-- [ ] 实现命中数、行数、schema、hash 一致性门禁
-- [ ] 完成一个白名单公式无人值守 E2E
-- [ ] Checkpoint E：故障注入、不污染 Core、现有实例隔离
-
-## Phase 5：Research 与验收
-
-- [ ] 注册 complete Analytics snapshot 到 ResearchEvidenceBundle
-- [ ] 扩展 ContextProjection 和 Evidence ID 校验
-- [ ] 保持旧 EvidencePack/ResearchRun 兼容
-- [ ] 完成 seeded Case 全链路回放
-- [ ] 完成主源失败、损坏文件和 GUI 漂移降级验收
-- [ ] 生成 coverage、capacity、license 和 Stage 4C acceptance report
-- [ ] Final：ARC 独立检查、全量测试、工作树审计、用户审核
-
-## 明确不在本清单
-
-- Dashboard/UI
-- 北向/主力资金流
-- Tick/Level-2/盘口
-- 私有行情协议生产化
+- Dashboard/UI、投资评分、回测、交易
+- 北向、主力资金流、Tick、Level-2、盘口
+- 未授权私有在线协议生产化
 - 历史板块成员回填
-- 多公式批量运行、投资评分、回测和交易
