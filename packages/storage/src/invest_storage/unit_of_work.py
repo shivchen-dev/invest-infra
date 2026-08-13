@@ -55,6 +55,7 @@ from invest_storage.repositories import (
     SqlAlchemyResearchEvidenceBundleRepository,
     SqlAlchemyResearchResultRepository,
     SqlAlchemyResearchRunRepository,
+    SqlAlchemyStockPriceLimitRepository,
 )
 
 
@@ -223,6 +224,29 @@ class DailyBarRepositoryPort(Protocol):
     ): ...
     def list_latest_by_instruments_and_range(
         self, *, instrument_ids, start_date, end_date, adjustment
+    ): ...
+
+
+@runtime_checkable
+class StockPriceLimitRepositoryPort(Protocol):
+    """Subset of the StockPriceLimit repository surface the UoW exposes.
+
+    The :class:`invest_storage.repositories.SqlAlchemyStockPriceLimitRepository`
+    is the only adapter; the Protocol keeps the application layer
+    decoupled from the concrete class. ``upsert_many`` is the only
+    write path so callers cannot bypass the row-hash comparison that
+    drives the revision allocation. ``get_latest`` and ``get_exact``
+    mirror the snapshot-vs-replay split, indexed by
+    ``(instrument_id, trade_date)``.
+    """
+
+    def upsert_many(self, limits): ...
+    def get_latest(self, *, instrument_id, trade_date): ...
+    def get_exact(
+        self, *, instrument_id, trade_date, revision: int
+    ): ...
+    def list_by_instrument_and_range(
+        self, *, instrument_id, start_date, end_date
     ): ...
 
 
@@ -527,6 +551,7 @@ class UnitOfWork(Protocol):
     candidate_pool_runs: CandidatePoolRunRepositoryPort
     candidate_pool_items: CandidatePoolItemRepositoryPort
     daily_bars: DailyBarRepositoryPort
+    stock_price_limits: StockPriceLimitRepositoryPort
     etf_profiles: EtfProfileRepositoryPort
     etf_profile_fields: EtfProfileFieldRepositoryPort
     research_context_packs: ResearchContextPackRepositoryPort
@@ -581,6 +606,7 @@ class SqlAlchemyUnitOfWork:
         self._candidate_pool_runs: SqlAlchemyCandidatePoolRunRepository | None = None
         self._candidate_pool_items: SqlAlchemyCandidatePoolItemRepository | None = None
         self._daily_bars: SqlAlchemyDailyBarRepository | None = None
+        self._stock_price_limits: SqlAlchemyStockPriceLimitRepository | None = None
         self._etf_profiles: SqlAlchemyEtfProfileRepository | None = None
         self._etf_profile_fields: SqlAlchemyEtfProfileFieldRepository | None = None
         self._research_context_packs: SqlAlchemyResearchContextPackRepository | None = None
@@ -668,6 +694,12 @@ class SqlAlchemyUnitOfWork:
         if self._daily_bars is None:
             self._daily_bars = SqlAlchemyDailyBarRepository(self.session)
         return self._daily_bars
+
+    @property
+    def stock_price_limits(self) -> SqlAlchemyStockPriceLimitRepository:
+        if self._stock_price_limits is None:
+            self._stock_price_limits = SqlAlchemyStockPriceLimitRepository(self.session)
+        return self._stock_price_limits
 
     @property
     def etf_profiles(self) -> SqlAlchemyEtfProfileRepository:
@@ -811,6 +843,7 @@ class SqlAlchemyUnitOfWork:
             self._candidate_pool_runs = None
             self._candidate_pool_items = None
             self._daily_bars = None
+            self._stock_price_limits = None
             self._etf_profiles = None
             self._etf_profile_fields = None
             self._research_context_packs = None
@@ -859,6 +892,7 @@ __all__ = [
     "ProviderBatchRepositoryPort",
     "ProviderRequestRepositoryPort",
     "SessionProvider",
+    "StockPriceLimitRepositoryPort",
     "SqlAlchemyUnitOfWork",
     "UnitOfWork",
 ]  # noqa: E501

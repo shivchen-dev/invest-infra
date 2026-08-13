@@ -38,13 +38,21 @@ from invest_domain.instruments import (
 )
 from invest_domain.market_data.values import Adjust
 from invest_domain.shared.values import Currency
-from invest_storage.models import DailyBarRow, InstrumentRow, RawProviderBatchRow
+from invest_storage.models import (
+    DailyBarRow,
+    InstrumentRow,
+    RawProviderBatchRow,
+    StockPriceLimitRow,
+)
 from invest_storage.repositories import (
+    NewPriceLimit,
     NewProviderBatch,
     SqlAlchemyDailyBarRepository,
     SqlAlchemyInstrumentRepository,
     SqlAlchemyProviderBatchRepository,
+    SqlAlchemyStockPriceLimitRepository,
     StoredDailyBar,
+    StoredPriceLimit,
     StoredProviderBatch,
 )
 
@@ -172,6 +180,127 @@ def _make_daily_bar_row(
     row.row_hash = str(revision) * 64
     row.created_at = datetime(2024, 1, 3, tzinfo=UTC)
     return row
+
+
+def _make_stock_price_limit_row(
+    *,
+    instrument_id: UUID,
+    trade_date: date,
+    revision: int,
+    row_hash: str = "0" * 64,
+) -> MagicMock:
+    row = MagicMock(spec=StockPriceLimitRow)
+    row.id = uuid4()
+    row.instrument_id = instrument_id
+    row.trade_date = trade_date
+    row.regime_id = "normal"
+    row.limit_up_price = Decimal("11.50")
+    row.limit_down_price = Decimal("9.50")
+    row.status = "active"
+    row.reference_price = Decimal("10.50")
+    row.source_provider = "fixture_dev"
+    row.source_batch_id = uuid4()
+    row.observed_at = datetime(2024, 1, 3, tzinfo=UTC)
+    row.revision = revision
+    row.row_hash = row_hash
+    row.created_at = datetime(2024, 1, 3, tzinfo=UTC)
+    return row
+
+
+class SqlAlchemyStockPriceLimitRepositoryMockTests(unittest.TestCase):
+    """Focused coverage for :class:`SqlAlchemyStockPriceLimitRepository`.
+
+    Verifies the row-hash idempotency contract of
+    :meth:`SqlAlchemyStockPriceLimitRepository.upsert_many`: a
+    re-collect with the same business content is a no-op while
+    changed content advances the revision counter.
+    """
+
+    def setUp(self) -> None:
+        self._session = MagicMock(name="Session")
+        self._repo = SqlAlchemyStockPriceLimitRepository(self._session)
+
+    def _stub_latest_and_max(
+        self,
+        *,
+        existing: MagicMock | None,
+        max_revision: int | None,
+    ) -> None:
+        """Configure ``session.execute`` for get_latest + _next_revision."""
+
+        latest_result = MagicMock(name="get_latest_result")
+        latest_result.scalar_one_or_none.return_value = existing
+        max_result = MagicMock(name="max_revision_result")
+        max_result.scalar.return_value = max_revision
+        self._session.execute.side_effect = [latest_result, max_result]
+
+    def test_upsert_many_skips_insert_when_row_hash_matches_latest(self) -> None:
+        instrument_id = uuid4()
+        trade_date = date(2024, 1, 3)
+        existing = _make_stock_price_limit_row(
+            instrument_id=instrument_id,
+            trade_date=trade_date,
+            revision=1,
+        )
+        self._stub_latest_and_max(existing=existing, max_revision=1)
+
+        result = self._repo.upsert_many(
+            [
+                NewPriceLimit(
+                    instrument_id=instrument_id,
+                    trade_date=trade_date,
+                    regime_id="normal",
+                    limit_up_price=Decimal("11.50"),
+                    limit_down_price=Decimal("9.50"),
+                    status="active",
+                    reference_price=Decimal("10.50"),
+                    source_provider="fixture_dev",
+                    source_batch_id=uuid4(),
+                    observed_at=datetime(2024, 1, 3, tzinfo=UTC),
+                    row_hash=existing.row_hash,
+                ),
+            ]
+        )
+
+        self.assertEqual(result, [])
+        self._session.add.assert_not_called()
+        self._session.flush.assert_not_called()
+
+    def test_upsert_many_advances_revision_when_row_hash_changes(self) -> None:
+        instrument_id = uuid4()
+        trade_date = date(2024, 1, 3)
+        existing = _make_stock_price_limit_row(
+            instrument_id=instrument_id,
+            trade_date=trade_date,
+            revision=2,
+            row_hash="a" * 64,
+        )
+        self._stub_latest_and_max(existing=existing, max_revision=2)
+
+        result = self._repo.upsert_many(
+            [
+                NewPriceLimit(
+                    instrument_id=instrument_id,
+                    trade_date=trade_date,
+                    regime_id="normal",
+                    limit_up_price=Decimal("11.50"),
+                    limit_down_price=Decimal("9.50"),
+                    status="active",
+                    reference_price=Decimal("10.50"),
+                    source_provider="fixture_dev",
+                    source_batch_id=uuid4(),
+                    observed_at=datetime(2024, 1, 3, tzinfo=UTC),
+                    row_hash="b" * 64,
+                ),
+            ]
+        )
+
+        self.assertEqual(len(result), 1)
+        self.assertIsInstance(result[0], StoredPriceLimit)
+        self.assertEqual(result[0].revision, 3)
+        self.assertEqual(result[0].row_hash, "b" * 64)
+        self._session.add.assert_called_once()
+        self._session.flush.assert_called_once()
 
 
 class SqlAlchemyDailyBarRepositoryMockTests(unittest.TestCase):

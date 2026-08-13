@@ -153,6 +153,7 @@ from invest_storage.models import (
     ResearchEvidencePackRow,
     ResearchResultRow,
     ResearchRunRow,
+    StockPriceLimitRow,
 )
 
 
@@ -316,6 +317,60 @@ class NewDailyBar:
     amount: Decimal | None
     adjustment: Adjust
     trading_status: TradingStatus
+    source_provider: str
+    source_batch_id: UUID | None
+    observed_at: datetime
+    row_hash: str
+
+
+@dataclass(frozen=True, slots=True)
+class StoredPriceLimit:
+    """Domain-side view of a persisted ``core.stock_price_limits`` row.
+
+    Carries every field the storage layer owns for a per-day upper/lower
+    price-limit snapshot, plus the storage-assigned ``id`` and the
+    server-generated ``created_at``. ``row_hash`` is the deterministic
+    business-content digest that drives the ADR-0006-style revision
+    comparison in :meth:`SqlAlchemyStockPriceLimitRepository.upsert_many`.
+    """
+
+    id: UUID
+    instrument_id: UUID
+    trade_date: date
+    regime_id: str
+    limit_up_price: Decimal | None
+    limit_down_price: Decimal | None
+    status: str
+    reference_price: Decimal | None
+    source_provider: str
+    source_batch_id: UUID | None
+    observed_at: datetime
+    revision: int
+    row_hash: str
+    created_at: datetime | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class NewPriceLimit:
+    """Input shape for :meth:`SqlAlchemyStockPriceLimitRepository.upsert_many`.
+
+    The caller is responsible for validating the business content and
+    computing ``row_hash``; this dataclass is the "transport" shape the
+    application service uses. ``revision`` on the input is not
+    meaningful - the repository always allocates it from the current
+    maximum for the ``(instrument_id, trade_date)`` logical key
+    (starting at ``1`` when no row exists). Re-collects of the same
+    business content are a no-op at the core layer; only the
+    ``raw.provider_batches`` audit row records the re-collection.
+    """
+
+    instrument_id: UUID
+    trade_date: date
+    regime_id: str
+    limit_up_price: Decimal | None
+    limit_down_price: Decimal | None
+    status: str
+    reference_price: Decimal | None
     source_provider: str
     source_batch_id: UUID | None
     observed_at: datetime
@@ -1194,6 +1249,199 @@ class SqlAlchemyDailyBarRepository:
             self._session.add(row)
             self._session.flush()
             written.append(_row_to_stored_daily_bar(row))
+        return written
+
+
+class SqlAlchemyStockPriceLimitRepository:
+    """Read/write access to ``core.stock_price_limits`` with revision semantics.
+
+    The repository owns the revision-allocation algorithm shared with
+    the DailyBar repository (ADR-0006 §3 family): a write only advances
+    the revision when the incoming business content (as identified by
+    ``row_hash``) differs from the latest persisted row for
+    ``(instrument_id, trade_date)``. Re-collects of the same business
+    content are a no-op; the new ``raw.provider_batches`` row still
+    records the audit trail but no additional ``core.stock_price_limits``
+    row is created.
+
+    All write paths route through :meth:`upsert_many`; there is no
+    single-row ``add`` so callers cannot accidentally bypass the
+    row-hash comparison. The database-level ``UNIQUE (instrument_id,
+    trade_date, revision, row_hash)`` constraint is the final
+    concurrency guard, but the repository reads the latest revision
+    inside the same UnitOfWork so the deterministic content comparison
+    runs before the INSERT.
+    """
+
+    def __init__(self, session: Session) -> None:
+        self._session = session
+
+    def _next_revision(
+        self,
+        *,
+        instrument_id: UUID,
+        trade_date: date,
+    ) -> int:
+        """Return the next ``revision`` number for the given logical key.
+
+        The lookup is scoped to the current session so the read sees
+        any rows added by :meth:`upsert_many` earlier in the same
+        transaction (identity-map behaviour). Returns ``1`` when no
+        row exists for the logical key.
+        """
+
+        current_max = self._session.execute(
+            select(func.max(StockPriceLimitRow.revision)).where(
+                StockPriceLimitRow.instrument_id == instrument_id,
+                StockPriceLimitRow.trade_date == trade_date,
+            )
+        ).scalar()
+        return 1 if current_max is None else int(current_max) + 1
+
+    def get_latest(
+        self,
+        *,
+        instrument_id: UUID | InstrumentId,
+        trade_date: date,
+    ) -> StoredPriceLimit | None:
+        """Return the row with the highest ``revision`` for the logical key.
+
+        Per the same snapshot-vs-replay split as
+        :meth:`SqlAlchemyDailyBarRepository.get_latest`, this is the
+        recommended read surface for new snapshot builders. The caller
+        may also use :meth:`get_exact` to pin a specific revision for
+        replay.
+        """
+
+        raw_id = instrument_id.value if isinstance(instrument_id, InstrumentId) else instrument_id
+        row = self._session.execute(
+            select(StockPriceLimitRow)
+            .where(
+                StockPriceLimitRow.instrument_id == raw_id,
+                StockPriceLimitRow.trade_date == trade_date,
+            )
+            .order_by(StockPriceLimitRow.revision.desc())
+            .limit(1)
+        ).scalar_one_or_none()
+        return _row_to_stored_price_limit(row) if row is not None else None
+
+    def get_exact(
+        self,
+        *,
+        instrument_id: UUID | InstrumentId,
+        trade_date: date,
+        revision: int,
+    ) -> StoredPriceLimit | None:
+        """Return the row at the exact ``revision`` for the logical key."""
+
+        if revision < 1:
+            raise ValueError(f"revision must be >= 1, got {revision}")
+        raw_id = instrument_id.value if isinstance(instrument_id, InstrumentId) else instrument_id
+        row = self._session.execute(
+            select(StockPriceLimitRow)
+            .where(
+                StockPriceLimitRow.instrument_id == raw_id,
+                StockPriceLimitRow.trade_date == trade_date,
+                StockPriceLimitRow.revision == revision,
+            )
+            .limit(1)
+        ).scalar_one_or_none()
+        return _row_to_stored_price_limit(row) if row is not None else None
+
+    def list_by_instrument_and_range(
+        self,
+        *,
+        instrument_id: UUID | InstrumentId,
+        start_date: date,
+        end_date: date,
+    ) -> Sequence[StoredPriceLimit]:
+        """Return every revision of the limits in ``[start_date, end_date]``.
+
+        The result includes all revisions of the matching
+        ``(instrument_id, trade_date)`` pairs, ordered by ``trade_date``
+        then ``revision`` ascending so the caller can group revisions in
+        a single pass. Callers that need "the latest revision per day"
+        should feed the result through :meth:`get_latest`.
+        """
+
+        if end_date < start_date:
+            raise ValueError(
+                f"end_date {end_date.isoformat()} must be on or after "
+                f"start_date {start_date.isoformat()}"
+            )
+        raw_id = instrument_id.value if isinstance(instrument_id, InstrumentId) else instrument_id
+        rows = (
+            self._session.execute(
+                select(StockPriceLimitRow)
+                .where(
+                    StockPriceLimitRow.instrument_id == raw_id,
+                    StockPriceLimitRow.trade_date >= start_date,
+                    StockPriceLimitRow.trade_date <= end_date,
+                )
+                .order_by(
+                    StockPriceLimitRow.trade_date.asc(),
+                    StockPriceLimitRow.revision.asc(),
+                )
+            )
+            .scalars()
+            .all()
+        )
+        return [_row_to_stored_price_limit(row) for row in rows]
+
+    def upsert_many(self, limits: Sequence[NewPriceLimit]) -> list[StoredPriceLimit]:
+        """Persist ``limits`` into ``core.stock_price_limits`` under revision rules.
+
+        The algorithm mirrors ADR-0006 §3:
+
+        - For each limit, look up the latest persisted row for the
+          ``(instrument_id, trade_date)`` logical key.
+        - If no row exists, insert with ``revision = 1``.
+        - If a row exists and its ``row_hash`` equals the incoming
+          ``row_hash``, skip — the re-collect is a no-op at the core
+          layer, only the ``raw.provider_batches`` audit row is added.
+        - If a row exists and the hashes differ, insert with
+          ``revision = latest + 1``.
+
+        Returns the list of rows actually written (rows whose content
+        matched the latest revision are NOT in the result). The order
+        of the returned list mirrors the input order so callers can
+        correlate ``upsert_many`` invocations with the original
+        Provider batch.
+        """
+
+        if not limits:
+            return []
+
+        written: list[StoredPriceLimit] = []
+        for limit in limits:
+            latest = self.get_latest(
+                instrument_id=limit.instrument_id,
+                trade_date=limit.trade_date,
+            )
+            if latest is not None and latest.row_hash == limit.row_hash:
+                continue
+            next_revision = self._next_revision(
+                instrument_id=limit.instrument_id,
+                trade_date=limit.trade_date,
+            )
+            row = StockPriceLimitRow(
+                id=uuid.uuid4(),
+                instrument_id=limit.instrument_id,
+                trade_date=limit.trade_date,
+                regime_id=limit.regime_id,
+                limit_up_price=limit.limit_up_price,
+                limit_down_price=limit.limit_down_price,
+                status=limit.status,
+                reference_price=limit.reference_price,
+                source_provider=limit.source_provider,
+                source_batch_id=limit.source_batch_id,
+                observed_at=limit.observed_at,
+                revision=next_revision,
+                row_hash=limit.row_hash,
+            )
+            self._session.add(row)
+            self._session.flush()
+            written.append(_row_to_stored_price_limit(row))
         return written
 
 
@@ -2091,6 +2339,25 @@ def _row_to_stored_daily_bar(row: DailyBarRow) -> StoredDailyBar:
         amount=_as_decimal(row.amount),
         adjustment=row.adjustment,
         trading_status=row.trading_status,
+        source_provider=row.source_provider,
+        source_batch_id=row.source_batch_id,
+        observed_at=row.observed_at,
+        revision=row.revision,
+        row_hash=row.row_hash,
+        created_at=row.created_at,
+    )
+
+
+def _row_to_stored_price_limit(row: StockPriceLimitRow) -> StoredPriceLimit:
+    return StoredPriceLimit(
+        id=row.id,
+        instrument_id=row.instrument_id,
+        trade_date=row.trade_date,
+        regime_id=row.regime_id,
+        limit_up_price=_as_decimal(row.limit_up_price),
+        limit_down_price=_as_decimal(row.limit_down_price),
+        status=row.status,
+        reference_price=_as_decimal(row.reference_price),
         source_provider=row.source_provider,
         source_batch_id=row.source_batch_id,
         observed_at=row.observed_at,
