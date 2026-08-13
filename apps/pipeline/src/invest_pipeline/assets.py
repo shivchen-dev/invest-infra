@@ -48,6 +48,7 @@ from invest_pipeline.personal_universe import (
     resolve_personal_universe,
 )
 from invest_pipeline.provider_factory import build_provider, build_stock_provider
+from invest_pipeline.provider_runtime_registry import ProviderRuntimeRegistry
 from invest_pipeline.request_keys import make_daily_bars_request_key
 from invest_pipeline.stock_daily_bars import (
     upsert_stock_daily_bars,
@@ -925,7 +926,7 @@ def stock_daily_bars_raw(context) -> dg.MaterializeResult:
     settings = get_settings()
     trade_date = date.fromisoformat(context.partition_key)
 
-    provider = build_stock_provider(settings)
+    provider = ProviderRuntimeRegistry().resolve_stock(settings).provider
     engine = build_engine(settings.database_url)
     factory = session_factory(engine)
     try:
