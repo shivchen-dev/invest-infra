@@ -10,8 +10,17 @@ from invest_pipeline.provider_coverage_report import (
     SymbolCoverageRow,
 )
 from invest_pipeline.provider_quality import (
+    DECISION_REASON_FAILED_SYMBOLS,
+    DECISION_REASON_LOW_COMPLETENESS,
+    DECISION_REASON_LOW_COVERAGE,
+    DECISION_REASON_STALE_OR_FAILED_FRESHNESS,
+    DEFAULT_MIN_COMPLETENESS_RATIO,
+    DEFAULT_MIN_COVERAGE_RATIO,
     ETF_DAILY_BAR_REGISTRY,
     ProviderDatasetRegistration,
+    ProviderPublishDecision,
+    decide_provider_publishability,
+    decision_from_score,
     evaluate_provider_quality,
     iter_etf_daily_bar_registrations,
 )
@@ -307,3 +316,314 @@ def test_invalid_as_of_date_is_rejected() -> None:
             ("510300",),
             datetime(2026, 8, 4),
         )
+
+
+# --- Stage 4C fail-closed publishability gate ---------------------------
+
+
+def test_decide_provider_publishability_complete_is_publishable() -> None:
+    report = coverage_report(symbol_row("159915"), symbol_row("510300"))
+    policy = registration()
+
+    decision = decide_provider_publishability(
+        report,
+        policy,
+        ("510300", "159915"),
+        date(2026, 8, 4),
+    )
+
+    assert isinstance(decision, ProviderPublishDecision)
+    assert decision.publishable is True
+    assert decision.reasons == ()
+    assert decision.provider_key == "fixture_dev"
+    assert decision.dataset is Dataset.ETF_DAILY_BARS
+    assert decision.coverage_ratio == Decimal("1")
+    assert decision.completeness_ratio == Decimal("1")
+    assert decision.freshness_status == "fresh"
+    assert decision.failed_symbols == ()
+
+
+def test_decide_provider_publishability_missing_provider_fails_closed() -> None:
+    decision = decide_provider_publishability(
+        coverage_report(provider_key=None),
+        registration(reliability_score=Decimal("0.80")),
+        ("510300", "159915"),
+        date(2026, 8, 4),
+    )
+
+    assert decision.publishable is False
+    assert decision.reasons == (
+        DECISION_REASON_LOW_COVERAGE,
+        DECISION_REASON_LOW_COMPLETENESS,
+        DECISION_REASON_STALE_OR_FAILED_FRESHNESS,
+        DECISION_REASON_FAILED_SYMBOLS,
+    )
+    assert decision.failed_symbols == ("159915", "510300")
+
+
+def test_decide_provider_publishability_low_coverage_is_rejected() -> None:
+    decision = decide_provider_publishability(
+        coverage_report(symbol_row("510300")),
+        registration(reliability_score=Decimal("0.70")),
+        ("510300", "159915"),
+        date(2026, 8, 4),
+    )
+
+    assert decision.publishable is False
+    assert DECISION_REASON_LOW_COVERAGE in decision.reasons
+    assert decision.coverage_ratio == Decimal("0.5")
+    assert decision.completeness_ratio == Decimal("0.5")
+    assert decision.freshness_status == "fresh"
+    assert DECISION_REASON_LOW_COMPLETENESS in decision.reasons
+
+
+def test_decide_provider_publishability_partial_completeness_is_rejected() -> None:
+    partial_fields: tuple[str, ...] = ("close",)
+    decision = decide_provider_publishability(
+        coverage_report(symbol_row("510300", fields=partial_fields)),
+        registration(),
+        ("510300",),
+        date(2026, 8, 4),
+    )
+
+    assert decision.publishable is False
+    assert DECISION_REASON_LOW_COMPLETENESS in decision.reasons
+    assert decision.completeness_ratio == Decimal("0")
+    assert decision.freshness_status == "fresh"
+
+
+def test_decide_provider_publishability_thresholds_are_independent() -> None:
+    decision = decide_provider_publishability(
+        coverage_report(symbol_row("510300")),
+        registration(reliability_score=Decimal("0.70")),
+        ("510300", "159915"),
+        date(2026, 8, 4),
+        min_completeness_ratio=Decimal("0.75"),
+        min_coverage_ratio=Decimal("0.25"),
+    )
+
+    assert decision.publishable is False
+    assert DECISION_REASON_LOW_COMPLETENESS in decision.reasons
+    assert DECISION_REASON_LOW_COVERAGE not in decision.reasons
+
+
+def test_decide_provider_publishability_warning_freshness_is_rejected() -> None:
+    covered_date = date(2026, 8, 4)
+    decision = decide_provider_publishability(
+        coverage_report(
+            symbol_row(
+                "510300",
+                covered_start=covered_date,
+                covered_end=covered_date,
+            )
+        ),
+        registration(freshness_sla_days=1),
+        ("510300",),
+        date(2026, 8, 6),
+    )
+
+    assert decision.publishable is False
+    assert decision.reasons == (DECISION_REASON_STALE_OR_FAILED_FRESHNESS,)
+    assert decision.freshness_status == "warning"
+    assert decision.freshness_days == 2
+
+
+def test_decide_provider_publishability_failed_freshness_is_rejected() -> None:
+    covered_date = date(2026, 8, 4)
+    decision = decide_provider_publishability(
+        coverage_report(
+            symbol_row(
+                "510300",
+                covered_start=covered_date,
+                covered_end=covered_date,
+            )
+        ),
+        registration(freshness_sla_days=1),
+        ("510300",),
+        date(2026, 8, 10),
+    )
+
+    assert decision.publishable is False
+    assert decision.reasons == (DECISION_REASON_STALE_OR_FAILED_FRESHNESS,)
+    assert decision.freshness_status == "failed"
+    assert decision.freshness_days == 6
+
+
+def test_decide_provider_publishability_symbol_error_yields_failed_symbols() -> None:
+    error = CoverageError(
+        provider_key="fixture_dev",
+        symbol="510300",
+        code="provider_error",
+        message="failed",
+    )
+    decision = decide_provider_publishability(
+        coverage_report(symbol_row("510300", errors=(error,))),
+        registration(),
+        ("510300",),
+        date(2026, 8, 4),
+    )
+
+    assert decision.publishable is False
+    assert DECISION_REASON_FAILED_SYMBOLS in decision.reasons
+    assert decision.failed_symbols == ("510300",)
+    assert decision.freshness_status == "fresh"
+
+
+def test_decide_provider_publishability_custom_thresholds_relaxed() -> None:
+    decision = decide_provider_publishability(
+        coverage_report(symbol_row("510300")),
+        registration(reliability_score=Decimal("0.70")),
+        ("510300", "159915"),
+        date(2026, 8, 4),
+        min_coverage_ratio=Decimal("0.5"),
+        min_completeness_ratio=Decimal("0.5"),
+    )
+
+    assert decision.publishable is True
+    assert decision.reasons == ()
+    assert decision.coverage_ratio == Decimal("0.5")
+    assert decision.completeness_ratio == Decimal("0.5")
+
+
+def test_decide_provider_publishability_thresholds_do_not_lower_freshness() -> None:
+    covered_date = date(2026, 8, 4)
+    decision = decide_provider_publishability(
+        coverage_report(
+            symbol_row(
+                "510300",
+                covered_start=covered_date,
+                covered_end=covered_date,
+            )
+        ),
+        registration(freshness_sla_days=1),
+        ("510300",),
+        date(2026, 8, 6),
+        min_coverage_ratio=Decimal("0"),
+        min_completeness_ratio=Decimal("0"),
+    )
+
+    assert decision.publishable is False
+    assert decision.reasons == (DECISION_REASON_STALE_OR_FAILED_FRESHNESS,)
+
+
+def test_decide_provider_publishability_defaults_are_perfect() -> None:
+    assert Decimal("1") == DEFAULT_MIN_COVERAGE_RATIO
+    assert Decimal("1") == DEFAULT_MIN_COMPLETENESS_RATIO
+
+
+@pytest.mark.parametrize("threshold", [Decimal("-0.01"), Decimal("1.01"), Decimal("NaN")])
+def test_decide_provider_publishability_invalid_thresholds_are_rejected(
+    threshold: Decimal,
+) -> None:
+    with pytest.raises(ValueError, match="between 0 and 1"):
+        decide_provider_publishability(
+            coverage_report(symbol_row("510300")),
+            registration(),
+            ("510300",),
+            date(2026, 8, 4),
+            min_coverage_ratio=threshold,
+        )
+
+
+@pytest.mark.parametrize("threshold", [0, 0.5, "0.5", True])
+def test_decide_provider_publishability_threshold_must_be_decimal(
+    threshold: object,
+) -> None:
+    with pytest.raises(ValueError, match="must be a Decimal"):
+        decide_provider_publishability(
+            coverage_report(symbol_row("510300")),
+            registration(),
+            ("510300",),
+            date(2026, 8, 4),
+            min_completeness_ratio=threshold,  # type: ignore[arg-type]
+        )
+
+
+def test_decision_from_score_rejects_non_score_input() -> None:
+    with pytest.raises(ValueError, match="score must be a ProviderQualityScore"):
+        decision_from_score(object())  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize("threshold", [Decimal("-0.5"), Decimal("1.5"), Decimal("NaN")])
+def test_decision_from_score_invalid_threshold_is_rejected(
+    threshold: Decimal,
+) -> None:
+    score = evaluate_provider_quality(
+        coverage_report(symbol_row("510300")),
+        registration(),
+        ("510300",),
+        date(2026, 8, 4),
+    )
+
+    with pytest.raises(ValueError):
+        decision_from_score(score, min_coverage_ratio=threshold)
+
+
+def test_provider_publish_decision_is_immutable() -> None:
+    decision = decide_provider_publishability(
+        coverage_report(symbol_row("510300")),
+        registration(),
+        ("510300",),
+        date(2026, 8, 4),
+    )
+
+    with pytest.raises(FrozenInstanceError):
+        decision.publishable = False  # type: ignore[misc]
+
+
+def test_decide_provider_publishability_is_deterministic() -> None:
+    arguments = (
+        coverage_report(symbol_row("510300")),
+        registration(reliability_score=Decimal("0.70")),
+        ("510300", "159915"),
+        date(2026, 8, 4),
+    )
+
+    first = decide_provider_publishability(*arguments)
+    second = decide_provider_publishability(*arguments)
+
+    assert first == second
+    assert first.reasons == second.reasons
+
+
+def test_decision_from_score_is_deterministic_and_ordered() -> None:
+    error = CoverageError(
+        provider_key="fixture_dev",
+        symbol="510300",
+        code="provider_error",
+        message="failed",
+    )
+    score = evaluate_provider_quality(
+        coverage_report(symbol_row("510300", errors=(error,))),
+        registration(),
+        ("510300",),
+        date(2026, 8, 4),
+    )
+
+    first = decision_from_score(score)
+    second = decision_from_score(score)
+
+    assert first == second
+    assert first.reasons == second.reasons
+
+
+def test_decide_provider_publishability_reasons_order_is_stable() -> None:
+    error = CoverageError(
+        provider_key="fixture_dev",
+        symbol="510300",
+        code="provider_error",
+        message="failed",
+    )
+    decision = decide_provider_publishability(
+        coverage_report(symbol_row("159915"), symbol_row("510300", errors=(error,))),
+        registration(),
+        ("510300", "159915"),
+        date(2026, 8, 5),
+    )
+
+    assert decision.publishable is False
+    assert decision.reasons == (
+        DECISION_REASON_LOW_COVERAGE,
+        DECISION_REASON_STALE_OR_FAILED_FRESHNESS,
+        DECISION_REASON_FAILED_SYMBOLS,
+    )

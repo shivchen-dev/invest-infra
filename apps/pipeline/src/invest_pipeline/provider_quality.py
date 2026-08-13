@@ -22,7 +22,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import date
 from decimal import Decimal, localcontext
-from typing import Literal
+from typing import Final, Literal
 
 from invest_pipeline.provider_catalog import lookup_provider
 from invest_pipeline.provider_coverage_report import (
@@ -68,18 +68,14 @@ class ProviderDatasetRegistration:
             raise ValueError("freshness_sla_days must be a non-negative integer")
         if not isinstance(self.supported_fields, frozenset) or not self.supported_fields:
             raise ValueError("supported_fields must be a non-empty frozenset")
-        if any(
-            not isinstance(field, str) or not field.strip()
-            for field in self.supported_fields
-        ):
+        if any(not isinstance(field, str) or not field.strip() for field in self.supported_fields):
             raise ValueError("supported_fields must contain non-empty strings")
 
         declaration = lookup_provider(self.provider_key)
         required_capability = required_capability_for(self.dataset)
         if required_capability not in declaration.capabilities:
             raise ValueError(
-                f"provider {self.provider_key!r} does not support dataset "
-                f"{self.dataset.value!r}"
+                f"provider {self.provider_key!r} does not support dataset {self.dataset.value!r}"
             )
 
 
@@ -143,18 +139,14 @@ def _validated_expected_symbols(expected_symbols: tuple[str, ...]) -> tuple[str,
     return tuple(sorted(expected_symbols))
 
 
-def _provider_row(
-    report: CoverageReportModel, provider_key: str
-) -> ProviderCoverageRow | None:
+def _provider_row(report: CoverageReportModel, provider_key: str) -> ProviderCoverageRow | None:
     return next(
         (row for row in report.providers if row.provider_key == provider_key),
         None,
     )
 
 
-def _has_complete_fields(
-    row: SymbolCoverageRow, supported_fields: frozenset[str]
-) -> bool:
+def _has_complete_fields(row: SymbolCoverageRow, supported_fields: frozenset[str]) -> bool:
     return supported_fields.issubset(row.fields)
 
 
@@ -214,17 +206,13 @@ def evaluate_provider_quality(
             and (
                 rows[symbol].covered_start is None
                 or rows[symbol].covered_end is None
-                or not _has_complete_fields(
-                    rows[symbol], registration.supported_fields
-                )
+                or not _has_complete_fields(rows[symbol], registration.supported_fields)
                 or bool(rows[symbol].errors)
             )
         )
     )
     covered_count = (
-        0
-        if provider is None
-        else len(symbols) - len(missing_symbols) - len(failed_symbols)
+        0 if provider is None else len(symbols) - len(missing_symbols) - len(failed_symbols)
     )
     covered_ends = tuple(
         rows[symbol].covered_end
@@ -267,10 +255,134 @@ def evaluate_provider_quality(
 
 
 __all__ = [
+    "DECISION_REASON_FAILED_SYMBOLS",
+    "DECISION_REASON_LOW_COMPLETENESS",
+    "DECISION_REASON_LOW_COVERAGE",
+    "DECISION_REASON_STALE_OR_FAILED_FRESHNESS",
+    "DEFAULT_MIN_COMPLETENESS_RATIO",
+    "DEFAULT_MIN_COVERAGE_RATIO",
     "ETF_DAILY_BAR_REGISTRY",
     "FreshnessStatus",
     "ProviderDatasetRegistration",
+    "ProviderPublishDecision",
     "ProviderQualityScore",
+    "decide_provider_publishability",
+    "decision_from_score",
     "evaluate_provider_quality",
     "iter_etf_daily_bar_registrations",
 ]
+
+
+# Stage 4C fail-closed publishability gate.
+#
+# Defaults require perfect coverage and field completeness along with a
+# ``fresh`` freshness status. The freshness requirement is intentionally
+# not parameterised: downstreams may not lower it below the strict
+# ``fresh`` baseline that ``evaluate_provider_quality`` reports.
+DECISION_REASON_LOW_COVERAGE: Final = "low_coverage"
+DECISION_REASON_LOW_COMPLETENESS: Final = "low_completeness"
+DECISION_REASON_STALE_OR_FAILED_FRESHNESS: Final = "stale_or_failed_freshness"
+DECISION_REASON_FAILED_SYMBOLS: Final = "failed_symbols"
+
+DEFAULT_MIN_COVERAGE_RATIO: Final[Decimal] = Decimal("1")
+DEFAULT_MIN_COMPLETENESS_RATIO: Final[Decimal] = Decimal("1")
+_REQUIRED_FRESHNESS_STATUS: Final[FreshnessStatus] = "fresh"
+
+
+@dataclass(frozen=True, slots=True)
+class ProviderPublishDecision:
+    """Immutable fail-closed publishability decision for a provider."""
+
+    provider_key: str
+    dataset: Dataset
+    publishable: bool
+    reasons: tuple[str, ...]
+    coverage_ratio: Decimal
+    completeness_ratio: Decimal
+    freshness_days: int | None
+    freshness_status: FreshnessStatus
+    failed_symbols: tuple[str, ...]
+
+
+def _validated_decision_threshold(value: object, name: str) -> Decimal:
+    if not isinstance(value, Decimal) or isinstance(value, bool):
+        raise ValueError(f"{name} must be a Decimal")
+    if not value.is_finite() or not (Decimal("0") <= value <= Decimal("1")):
+        raise ValueError(f"{name} must be between 0 and 1 inclusive")
+    return value
+
+
+def _has_fresh_status(status: FreshnessStatus) -> bool:
+    return status == _REQUIRED_FRESHNESS_STATUS
+
+
+def decide_provider_publishability(
+    report: CoverageReportModel,
+    registration: ProviderDatasetRegistration,
+    expected_symbols: tuple[str, ...],
+    as_of_date: date,
+    *,
+    min_coverage_ratio: Decimal = DEFAULT_MIN_COVERAGE_RATIO,
+    min_completeness_ratio: Decimal = DEFAULT_MIN_COMPLETENESS_RATIO,
+) -> ProviderPublishDecision:
+    """Return an immutable fail-closed publishability decision.
+
+    The function delegates the underlying quality scoring to
+    :func:`evaluate_provider_quality`; it never modifies that contract.
+    The freshness requirement is fixed at ``fresh`` and may not be
+    lowered by callers.
+    """
+    score = evaluate_provider_quality(
+        report,
+        registration,
+        expected_symbols,
+        as_of_date,
+    )
+    return decision_from_score(
+        score,
+        min_coverage_ratio=min_coverage_ratio,
+        min_completeness_ratio=min_completeness_ratio,
+    )
+
+
+def decision_from_score(
+    score: ProviderQualityScore,
+    *,
+    min_coverage_ratio: Decimal = DEFAULT_MIN_COVERAGE_RATIO,
+    min_completeness_ratio: Decimal = DEFAULT_MIN_COMPLETENESS_RATIO,
+) -> ProviderPublishDecision:
+    """Build an immutable publishability decision from a quality score.
+
+    Reasons are appended in a stable, deterministic order:
+    ``low_coverage``, ``low_completeness``,
+    ``stale_or_failed_freshness``, ``failed_symbols``.
+    """
+    if not isinstance(score, ProviderQualityScore):
+        raise ValueError("score must be a ProviderQualityScore")
+
+    minimum_coverage = _validated_decision_threshold(min_coverage_ratio, "min_coverage_ratio")
+    minimum_completeness = _validated_decision_threshold(
+        min_completeness_ratio, "min_completeness_ratio"
+    )
+
+    reasons: list[str] = []
+    if score.coverage_ratio < minimum_coverage:
+        reasons.append(DECISION_REASON_LOW_COVERAGE)
+    if score.completeness_ratio < minimum_completeness:
+        reasons.append(DECISION_REASON_LOW_COMPLETENESS)
+    if not _has_fresh_status(score.freshness_status):
+        reasons.append(DECISION_REASON_STALE_OR_FAILED_FRESHNESS)
+    if score.failed_symbols:
+        reasons.append(DECISION_REASON_FAILED_SYMBOLS)
+
+    return ProviderPublishDecision(
+        provider_key=score.provider_key,
+        dataset=score.dataset,
+        publishable=not reasons,
+        reasons=tuple(reasons),
+        coverage_ratio=score.coverage_ratio,
+        completeness_ratio=score.completeness_ratio,
+        freshness_days=score.freshness_days,
+        freshness_status=score.freshness_status,
+        failed_symbols=score.failed_symbols,
+    )
