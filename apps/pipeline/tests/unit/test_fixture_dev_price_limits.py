@@ -11,6 +11,7 @@ from invest_domain.market_data.models import (
 )
 from invest_domain.market_data.price_limits import (
     KnownPriceLimit,
+    UnknownPriceLimit,
     UnlimitedPriceLimit,
 )
 from invest_pipeline.adapters.fixture_dev.price_limits import (
@@ -79,6 +80,41 @@ class SuccessBundleTest(unittest.TestCase):
         assert first is not None and second is not None
         assert first.raw_payload_hash == second.raw_payload_hash
         assert first.records == second.records
+
+    def test_records_expose_exchange_status_and_stable_row_hash(self) -> None:
+        first = _record_for("600000")
+        second = _record_for("600000")
+
+        assert first.exchange == "SSE"
+        assert first.status == "known"
+        assert first.row_hash == second.row_hash
+
+        assert _record_for("830002").exchange == "BSE"
+        assert _record_for("830002").status == "unlimited"
+        assert _record_for("000001").exchange == "SZSE"
+
+    def test_row_hash_changes_when_business_content_changes(self) -> None:
+        record = _record_for("600000")
+        changed = PriceLimitRecord(
+            instrument_id=record.instrument_id,
+            exchange=record.exchange,
+            trade_date=record.trade_date,
+            prev_close=Decimal("10.01"),
+            policy_result=record.policy_result,
+        )
+
+        assert changed.row_hash != record.row_hash
+
+    def test_unknown_result_maps_to_unknown_status(self) -> None:
+        record = PriceLimitRecord(
+            instrument_id="999999",
+            exchange="SSE",
+            trade_date=TRADE_DATE,
+            prev_close=Decimal("10.00"),
+            policy_result=UnknownPriceLimit(reason="missing rule"),
+        )
+
+        assert record.status == "unknown"
 
 
 class BoardCoverageTest(unittest.TestCase):

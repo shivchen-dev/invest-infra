@@ -46,6 +46,7 @@ from invest_domain.market_data.price_limits import (
     UnknownPriceLimit,
     UnlimitedPriceLimit,
 )
+from invest_domain.shared.canonical import canonical_sha256
 
 _FIXTURE_DATE = date(2026, 8, 11)
 _DATASET_KEY = "stock_price_limits"
@@ -57,6 +58,7 @@ class PriceLimitRecord:
     """One published price-limit fact and the policy result behind it."""
 
     instrument_id: str
+    exchange: str
     trade_date: date
     prev_close: Decimal
     policy_result: PriceLimitResult
@@ -84,6 +86,29 @@ class PriceLimitRecord:
         if isinstance(self.policy_result, (KnownPriceLimit, UnlimitedPriceLimit)):
             return self.policy_result.regime_id
         return None
+
+    @property
+    def status(self) -> str:
+        if isinstance(self.policy_result, KnownPriceLimit):
+            return "known"
+        if isinstance(self.policy_result, UnlimitedPriceLimit):
+            return "unlimited"
+        return "unknown"
+
+    @property
+    def row_hash(self) -> str:
+        return canonical_sha256(
+            {
+                "instrument_id": self.instrument_id,
+                "exchange": self.exchange,
+                "trade_date": self.trade_date,
+                "regime_id": self.rule_version,
+                "limit_up_price": self.limit_up_price,
+                "limit_down_price": self.limit_down_price,
+                "status": self.status,
+                "reference_price": self.prev_close,
+            }
+        )
 
     @property
     def source_refs(self) -> tuple[str, ...]:
@@ -340,6 +365,7 @@ class FixtureDevStockPriceLimitsProvider:
             records.append(
                 PriceLimitRecord(
                     instrument_id=symbol,
+                    exchange=facts.market,
                     trade_date=trade_date,
                     prev_close=facts.reference_price,
                     policy_result=result,
