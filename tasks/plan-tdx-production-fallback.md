@@ -14,8 +14,20 @@
 
 ### Phase 2：股票主数据低频缓存
 
-- [ ] 保留 `core.instruments` 为权威主数据缓存。
-- [ ] Tushare `stock_basic` 改为低频刷新；接口限流时复用最近一次成功快照。
+#### Phase 2.1：最近成功快照复用（已完成）
+
+- [x] 保留 `core.instruments` 为权威主数据缓存，由 `stock_instruments` 资产直接 upsert。
+- [x] `stock_instruments` 资产在当前 attempt `status == "failed"`（含 Tushare 限流）或缺失时，复用最近一次 `succeeded` attempt 的 `response_payload_json`，通过 `reused_snapshot` / `source_as_of` / `source_request_id` metadata 透出，且不进入 skip 分支。
+
+#### Phase 2.2：限流策略与刷新节奏（保守收口，已完成）
+
+- [x] 失败/限流触发的快照复用：当前 request `failed`（含 Tushare 限流）时复用最近一次成功 snapshot；新增单测 `test_rate_limited_current_request_reuses_latest_earlier_success`（`StockInstrumentsSnapshotReuseTest`）锁住该不变量。
+- [x] 本期不引入新的刷新节奏。
+- [x] 本期不改 Dagster 调度频率。
+- [x] 主动请求降频（proactive request reduction）需另立决策，不在本期收口范围内。
+
+#### 持续约束
+
 - [ ] TDX 仅补充代码/市场发现，不伪造名称、上市状态等主数据字段。
 
 ### Phase 3：生产验收

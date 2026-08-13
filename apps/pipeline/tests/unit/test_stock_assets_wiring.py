@@ -599,6 +599,39 @@ class StockInstrumentsSnapshotReuseTest(unittest.TestCase):
         self.assertTrue(result.metadata["skipped"])
         self.assertFalse(result.metadata["reused_snapshot"])
 
+    def test_rate_limited_current_request_reuses_latest_earlier_success(self) -> None:
+        failed_request = MagicMock(name="FailedCurrentRequest")
+        failed_request.status = "failed"
+        prior_request = SimpleNamespace(
+            id=uuid4(),
+            provider_key="tushare",
+            dataset_key="stock_instruments",
+            request_key="instruments-2026-07-30",
+        )
+        prior_attempt = SimpleNamespace(
+            status="succeeded",
+            response_payload_json={"records": [{"symbol": "600519"}]},
+        )
+        with (
+            patch.object(assets, "deserialize_records", return_value=["record"]) as deserialize,
+            patch.object(assets, "upsert_etf_instruments") as normal_upsert,
+        ):
+            result, uow = self._invoke(
+                stored_request=failed_request,
+                prior_rows=[(prior_request, prior_attempt)],
+            )
+
+        deserialize.assert_called_once_with(prior_attempt.response_payload_json)
+        uow.instruments.upsert_many.assert_called_once_with(["record"])
+        normal_upsert.assert_not_called()
+        self.assertEqual(result.metadata["row_count"], 1)
+        self.assertFalse(result.metadata["skipped"])
+        self.assertTrue(result.metadata["reused_snapshot"])
+        self.assertEqual(result.metadata["source_as_of"], "2026-07-30")
+        self.assertEqual(result.metadata["source_request_id"], str(prior_request.id))
+        self.assertEqual(result.metadata["as_of"], _HISTORICAL_PARTITION)
+        self.assertEqual(result.metadata["partition_key"], _HISTORICAL_PARTITION)
+
 class SettingsStockUniversePathTest(unittest.TestCase):
     """``Settings.stock_universe_path`` defaults to the repository config file."""
 
