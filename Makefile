@@ -2,7 +2,7 @@ SHELL := /bin/bash
 
 PIPELINE_ENV_FILE := $(if $(wildcard apps/pipeline/.env),--env-file apps/pipeline/.env)
 
-.PHONY: help up down logs api-dev pipeline-dev web-dev migrate openapi-generate test lint arch-check lock test-domain test-storage test-storage-integration test-migrations test-pipeline test-api test-web provider-smoke personal-daily-run historical-daily-bars-backfill reprocess-date personal-backfill exposure-fixture-run
+.PHONY: help up down logs api-dev pipeline-dev web-dev migrate openapi-generate test lint arch-check lock test-domain test-storage test-storage-integration test-migrations test-pipeline test-api test-web provider-smoke personal-daily-run historical-daily-bars-backfill reprocess-date personal-backfill exposure-fixture-run workbuddy-result-import
 
 help:
 	@echo "make up              启动 PostgreSQL、API、Web、Dagster"
@@ -21,6 +21,7 @@ help:
 	@echo "make personal-daily-run  手动运行 personal_etf_daily_job（PR-4）"
 	@echo "make historical-daily-bars-backfill  手动回填历史 ETF 日线（不触发 Dagster 作业 / 候选池 / 输入快照）"
 	@echo "make exposure-fixture-run  手动从 Fixture 持久化 Exposure（DC-3，无网络）"
+	@echo "make workbuddy-result-import  导入 Win 共享目录中的 WorkBuddy 候选结果"
 
 up:
 	docker compose up --build
@@ -283,3 +284,9 @@ exposure-fixture-run:
 	INVEST_PIPELINE_AUTO_SCHEDULE_ENABLED=false uv run --project apps/pipeline $(PIPELINE_ENV_FILE) python -m invest_pipeline.exposure_cli \
 		--etf-id '$(ETF_ID)' \
 		$(if $(EXPOSURE_FIXTURE_PATH),--fixture-path '$(EXPOSURE_FIXTURE_PATH)')
+
+# 导入 Win 容器共享目录中的 WorkBuddy candidates_*.json。
+workbuddy-result-import:
+	INVEST_PIPELINE_AUTO_SCHEDULE_ENABLED=false uv run --project apps/pipeline $(PIPELINE_ENV_FILE) python -m invest_pipeline.workbuddy_bridge_cli \
+		$(if $(BRIDGE_ROOT),--bridge-root '$(BRIDGE_ROOT)') \
+		$(if $(SOURCE_DIR),--source-dir '$(SOURCE_DIR)')

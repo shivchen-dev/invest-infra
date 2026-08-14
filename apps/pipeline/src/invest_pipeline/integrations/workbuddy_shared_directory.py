@@ -34,8 +34,13 @@ class SharedDirectoryImport:
 class SharedDirectoryWorkBuddyGateway:
     """Claim and process WorkBuddy packages with atomic directory moves."""
 
-    def __init__(self, bridge_root: str | Path) -> None:
+    def __init__(self, bridge_root: str | Path, source_dir: str | Path | None = None) -> None:
         self.root = Path(bridge_root).resolve()
+        self.source = (
+            Path(source_dir).resolve()
+            if source_dir is not None
+            else self.root / "选股报告"
+        )
         self.inbox = self.root / "workbuddy" / "results"
         self.processing = self.root / "workbuddy" / "processing"
         self.archive = self.root / "workbuddy" / "archive"
@@ -51,6 +56,12 @@ class SharedDirectoryWorkBuddyGateway:
             for path in sorted(self.inbox.iterdir(), key=lambda item: item.name)
             if path.is_dir() and _PACKAGE_RE.fullmatch(path.name)
         )
+
+    def discover_candidates(self) -> tuple[Path, ...]:
+        """Return flat candidate JSON files in deterministic order."""
+        if not self.source.is_dir():
+            return ()
+        return tuple(sorted(self.source.glob("candidates_*.json"), key=lambda item: item.name))
 
     def process_once(self, *, uow, resolver=None) -> tuple[SharedDirectoryImport, ...]:
         """Claim every package visible at the start and process it once."""
@@ -79,12 +90,45 @@ class SharedDirectoryWorkBuddyGateway:
             except Exception as exc:
                 self._finish(claimed, self.failed / package_name.removesuffix(".ready"))
                 outcomes.append(SharedDirectoryImport(package_name, None, str(exc)))
+        for candidate_path in self.discover_candidates():
+            package_name = candidate_path.name
+            try:
+                claimed = self._claim_file(candidate_path)
+            except FileNotFoundError:
+                continue
+            try:
+                payload = _read_json(claimed)
+                result = self._import_payload(payload, uow=uow, resolver=resolver)
+                self._finish(claimed, self.archive / package_name)
+                outcomes.append(SharedDirectoryImport(package_name, result))
+            except Exception as exc:
+                self._finish(claimed, self.failed / package_name)
+                outcomes.append(SharedDirectoryImport(package_name, None, str(exc)))
         return tuple(outcomes)
+
+    def _import_payload(self, payload: dict[str, Any], *, uow, resolver=None) -> BridgeImportResult:
+        normalized = self._normalize_payload(payload)
+        archive_outcome = archive_candidates(normalized, str(self.import_archive))
+        if archive_outcome.conflict:
+            raise ValueError("archive conflict for workflow run")
+        return import_archived_candidate_run(
+            self.import_archive,
+            trade_date=normalized["trade_date"],
+            workflow_run_id=normalized["workflow_run_id"],
+            uow=uow,
+            resolver=resolver,
+        )
 
     def _claim(self, ready_path: Path) -> Path:
         self.processing.mkdir(parents=True, exist_ok=True)
         target = self.processing / ready_path.name.removesuffix(".ready")
         os.replace(ready_path, target)
+        return target
+
+    def _claim_file(self, candidate_path: Path) -> Path:
+        self.processing.mkdir(parents=True, exist_ok=True)
+        target = self.processing / candidate_path.name
+        os.replace(candidate_path, target)
         return target
 
     def _finish(self, claimed: Path, target: Path) -> None:

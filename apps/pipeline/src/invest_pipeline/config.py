@@ -3,7 +3,7 @@ from __future__ import annotations
 from functools import lru_cache
 from pathlib import Path
 
-from pydantic import AliasChoices, Field
+from pydantic import AliasChoices, Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 _REPOSITORY_ROOT = Path(__file__).resolve().parents[4]
@@ -40,6 +40,26 @@ class Settings(BaseSettings):
             "stock_universe_path",
         ),
     )
+    workbuddy_bridge_root: Path = Field(
+        default=Path("/shared"),
+        validation_alias=AliasChoices(
+            "INVEST_PIPELINE_WORKBUDDY_BRIDGE_ROOT",
+            "workbuddy_bridge_root",
+        ),
+    )
+    workbuddy_source_dir: Path = Field(
+        default=Path("/shared/选股报告"),
+        validation_alias=AliasChoices(
+            "INVEST_PIPELINE_WORKBUDDY_SOURCE_DIR",
+            "workbuddy_source_dir",
+        ),
+    )
+
+    @model_validator(mode="after")
+    def derive_workbuddy_source_dir(self) -> Settings:
+        if "workbuddy_source_dir" not in self.model_fields_set:
+            self.workbuddy_source_dir = self.workbuddy_bridge_root / "选股报告"
+        return self
 
 
 @lru_cache
