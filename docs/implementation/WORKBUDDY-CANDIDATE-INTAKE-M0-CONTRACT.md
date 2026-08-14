@@ -6,12 +6,12 @@
 
 ## 1. 业务定位
 
-WorkBuddy 输出是待投研系统验证的候选线索，不是正式研究结论。候选入池与报告审计是两条独立流程：
+WorkBuddy 输出是待投研系统验证的外部候选线索，不是正式研究结论。外部候选准入与报告审计是两条独立流程：
 
 ```text
-WorkBuddy candidates JSON → 轻量入口校验 → 候选池
+WorkBuddy candidates JSON → 轻量入口校验 → ExternalObservation
                                            ↓
-                              投研系统补数、研究、评分、排名
+                              正式数据验证 / 准入 → 研究
 
 WorkBuddy 三件套 → legacy 严格报告审计（可选）
 ```
@@ -28,9 +28,9 @@ WorkBuddy 三件套 → legacy 严格报告审计（可选）
 
 单个候选缺少非空 `symbol` 或 `reason` 时，只拒绝该项并记录 finding，不影响同批其他项。
 
-## 3. 不阻断入池的内容
+## 3. 不阻断外部准入的内容
 
-WorkBuddy 分数、排名、阶段过程、来源明细、Markdown、质量报告和生产者自检均为可选上下文。它们可被原样留存，但不能决定候选是否入池。
+WorkBuddy 分数、排名、阶段过程、来源明细、Markdown、质量报告和生产者自检均为可选上下文。它们可被原样留存，但不能决定外部候选是否准入。
 
 ## 4. 投研系统责任
 
@@ -40,7 +40,9 @@ WorkBuddy 分数、排名、阶段过程、来源明细、Markdown、质量报�
 - 以 `(trade_date, strategy_id, normalized_symbol)` 去重；
 - 留存原始 symbol、reason、可选分数与附件引用；
 - 为无法映射项标记 `needs_symbol_resolution`，不回写 WorkBuddy 文件；
-- 完成后续数据补全、研究、评分、排名和发布。
+- 完成证券身份、时间、来源和正式数据验证；
+- 通过准入后创建 Research Case 并进入研究流程；
+- 不重复实现 WorkBuddy 的选股、评分和排名算法。
 
 ## 5. 导入结果
 
@@ -56,7 +58,7 @@ findings[]
 archive_uri
 ```
 
-原始候选 JSON 按运行不可变归档。候选入池不使用 `latest-accepted.json`，也不依赖 legacy 报告审计的 `accepted/partial/rejected` 状态。
+原始候选 JSON 按运行不可变归档。外部候选准入不使用 `latest-accepted.json`，也不依赖 legacy 报告审计的 `accepted/partial/rejected` 状态。
 
 ## 6. 兼容边界
 

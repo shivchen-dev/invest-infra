@@ -14,7 +14,7 @@
 ```text
 阶段 0：合同与现场前置验证
   ↓ Gate 0
-阶段 1：候选导入闭环
+阶段 1：外部候选准入闭环
   ↓ Gate 1
 阶段 2：只读工作台 MVP
   ↓ Gate 2
@@ -61,7 +61,7 @@ WorkBuddy candidates JSON / legacy 三件套
 
 ```text
 合同 / ADR / 真实样本 / 路径权限
-  └─ Candidate Intake → Stage 4D 投影合同
+  └─ Candidate Intake → ExternalObservation 准入合同
        └─ Domain + Migration + Repository
             └─ Artifact Bridge + Ingestor + SharedDirectory Adapter
                  └─ Query API + Artifact Preview + Integration Health
@@ -121,9 +121,11 @@ WorkBuddy candidates JSON / legacy 三件套
 - [ ] 路径、权限和原子写入策略已确认；
 - [ ] 阶段 1 的输入/输出合同无开放歧义。
 
-## 5. 阶段 1：候选导入闭环
+## 5. 阶段 1：外部候选准入闭环
 
-对应原蓝图：D1–D3。目标是交付可重复、可诊断、可恢复的 `共享目录 → PostgreSQL` 纵向闭环，不包含 Web。
+对应原蓝图：D1–D3。目标是交付可重复、可诊断、可恢复的
+`共享目录 → ExternalObservation → 准入状态` 纵向闭环，不包含 Web，
+也不把 WorkBuddy 结果接入投研系统内部 CandidatePool 计算。
 
 ### 5.1 交付任务
 
@@ -133,7 +135,7 @@ WorkBuddy candidates JSON / legacy 三件套
 
 验收标准：
 
-- 生产者状态、intake 状态、候选规则版本及 schema 版本可持久化；
+- 生产者状态、intake 状态、外部准入规则版本及 schema 版本可持久化；
 - 唯一键、event sequence、artifact hash 和 Observation 状态转换受约束；
 - migration upgrade/downgrade 与事务 rollback 可验证。
 
@@ -157,7 +159,7 @@ WorkBuddy candidates JSON / legacy 三件套
 
 #### 任务 1.3：接入 WorkBuddy Shared Directory Adapter
 
-实现 2.0.0/legacy 输入适配，并将 Candidate Intake 归档与标准化结果投影到 Stage 4D 对象。
+实现 2.0.0/legacy 输入适配，并将 Candidate Intake 归档与标准化结果投影为 Stage 4D ExternalWorkflow/Artifact/Observation 对象。
 
 验收标准：
 
@@ -170,7 +172,7 @@ WorkBuddy candidates JSON / legacy 三件套
 
 依赖：任务 1.2。
 
-### Gate 1：候选导入闭环
+### Gate 1：外部候选准入闭环
 
 - [ ] 正常、partial、failed、坏批次和坏项均可诊断；
 - [ ] 重复导入幂等；

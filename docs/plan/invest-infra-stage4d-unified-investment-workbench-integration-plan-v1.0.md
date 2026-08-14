@@ -250,7 +250,7 @@ Command API
 
 ### ADR-07：共享目录只保存不可变消息与产物
 
-消费者不得修改生产者文件。修订必须生成新版本和新 hash。WorkBuddy 候选 JSON 经 Candidate Intake 做轻量结构校验、按项隔离和不可变归档后即可投影为候选线索；三件套严格报告审计是可选旁路，不得成为入池前置。原始文件归档是生产输入权威源，数据库是标准化候选、业务状态、关联和查询权威源。
+消费者不得修改生产者文件。修订必须生成新版本和新 hash。WorkBuddy 候选 JSON 经 Candidate Intake 做轻量结构校验、按项隔离和不可变归档后，投影为 ExternalObservation；三件套严格报告审计是可选旁路。WorkBuddy 不接入投研系统内部 CandidatePool 计算，原始文件归档是生产输入权威源，数据库是外部观察、准入状态、关联和查询权威源。
 
 ---
 
@@ -332,7 +332,7 @@ Candidate Intake（轻量校验 + item-level 隔离）
         ↓
 ExternalWorkflowRun / ExternalArtifact
         ↓
-ExternalObservation / Candidate Pool Intake
+ExternalObservation / External Candidate Admission
         ↓
 Observation Admission
         ↓
@@ -362,7 +362,7 @@ Review Case / Quality Metrics
 | 快速筛选和比较 | 主责 | 正式验证和重算 | 高价值任务可参与 |
 | 自动晨报和盘后报告 | 主责 | 保存摘要、状态和附件 | 重大主题可深研 |
 | ETF 正式主数据和行情 | 只读消费 | 唯一正式 owner | 只读消费 |
-| Candidate Pool | 可提供探索候选 | 正式 owner | 解释，不修改 |
+| Candidate Pool | 可提供探索候选 | 仅维护既有内部候选池兼容能力；不负责 WorkBuddy 选股 | 解释，不修改 |
 | ExternalObservation | 生产 | 持久化、验证和准入 | 可作为上下文阅读 |
 | Evidence Pack/Bundle | 不修改 | 正式 owner | 只读消费 |
 | Research Run | 可发起升级 | 生命周期 owner | 执行引擎 |
@@ -420,7 +420,7 @@ Command API 创建任务
 → 机会雷达并排展示“外部结果 vs 正式验证”
 ```
 
-外部评分和正式 Candidate Pool 排名必须分栏展示，不能合并成一个分数。
+如同时展示既有内部 Candidate Pool 排名，必须与 WorkBuddy 外部评分分栏展示，不能合并成一个分数。
 
 ## 7.3 正式研究升级
 
@@ -957,12 +957,12 @@ bridge://artifacts/<run_id>/report.md
 Stage 4D 导入器消费 Candidate Intake 生成的不可变原始归档和标准化 intake result：
 
 - 批次结构合法：写入运行和 Artifact，逐项处理 candidates；
-- 合法候选：创建 ExternalObservation / Candidate Pool Intake，进入机会雷达的“待验证”集合；
+- 合法候选：创建 ExternalObservation，进入机会雷达的“待验证”集合；
 - 无法映射 symbol：创建 `needs_symbol_resolution` finding，不影响同批其他候选；
 - 单项缺少 symbol/reason：只拒绝该项；
 - 批次 JSON 不可解析或运行身份不合法：记录失败运行与诊断 Artifact，整批拒绝。
 
-WorkBuddy 生产分数、ranking、stages、source refs、Markdown 和 quality report 均为可选上下文，不参与候选入池准入。
+WorkBuddy 生产分数、ranking、stages、source refs、Markdown 和 quality report 均为可选上下文，不参与外部候选准入判定；准入只由投研系统的身份、来源、时间和正式数据验证规则决定。
 
 ## 11.4 Manifest
 
@@ -1277,7 +1277,7 @@ Dashboard 一屏展示：
 
 - WorkBuddy 新发现候选；
 - 已验证候选；
-- 外部结果与正式 Candidate Pool 冲突；
+- 外部结果与既有内部 Candidate Pool 冲突（仅提示，不阻断 WorkBuddy 外部准入）；
 - 待创建 Research Case；
 - 待升级 JiuwenSwarm。
 
@@ -1413,7 +1413,7 @@ Research Provenance
 Case 概览
 ├─ ETF / 研究问题 / horizon / 状态
 ├─ WorkBuddy 发现来源
-├─ 正式 Candidate Pool
+├─ 外部候选准入状态
 └─ 下一步动作
 
 External Discovery

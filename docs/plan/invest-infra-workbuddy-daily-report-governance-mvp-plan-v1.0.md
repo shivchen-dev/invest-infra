@@ -7,7 +7,7 @@
 
 ## 1. 目标
 
-将 WorkBuddy 定位为候选线索生产者。投研系统以宽进严管方式导入候选：入口只保证“可识别、可去重、可留档”，正式数据补全、研究、评分、排名和发布由 `invest-infra` 完成。
+将 WorkBuddy 定位为外部候选生产者。投研系统以宽进严管方式接收候选：入口只保证“可识别、可去重、可留档”，正式身份、数据和来源验证由 `invest-infra` 完成；选股、评分和排名仍由 WorkBuddy 负责。
 
 ## 2. 职责边界
 
@@ -24,8 +24,9 @@
 - 解析最小候选 JSON，并兼容从历史三件套提取 candidates；
 - 映射证券主数据、去重并标记无法映射项；
 - 不可变留存原始输入和导入 findings；
-- 将合法候选写入投研候选池；
-- 在后续流程完成数据补全、研究、评分、排名和发布。
+- 将合法候选写入 ExternalObservation，进入待验证状态；
+- 在后续流程完成正式数据验证和准入，准入后进入 Research Case；
+- 不重复开发 WorkBuddy 的选股、评分和排名功能。
 
 ## 3. 最小流程
 
@@ -35,7 +36,8 @@ WorkBuddy candidate artifact
 → item-level symbol/reason validation
 → symbol resolution + deduplication
 → immutable raw archive
-→ candidate pool intake
+→ ExternalObservation pending_validation
+→ formal data validation / admission
 → invest-infra research pipeline
 ```
 
@@ -69,17 +71,17 @@ WorkBuddy candidate artifact
 - [x] 实现 run-level 和 item-level 轻量校验；
 - [x] 输出标准化 candidate intake result。
 
-### M2：归档、去重与候选池接入
+### M2：归档、去重与外部候选准入接入
 
 - [x] 原始产物不可变归档；
 - [x] 实现运行幂等与内容冲突保护；
 - [x] 实现 symbol resolution 和业务去重；
-- [x] 投影至投研系统候选池（纯函数切片，数据库投影待 Stage 4D）。
+- [x] 投影至 ExternalObservation pending_validation（纯函数切片，数据库准入由 Stage 4D 负责）。
 
 ### M3：真实样本验收
 
 - [ ] 现有 1.1.1 真实样本能提取候选；
-- [x] 评分不可复算、ranking 缺失、source refs 不完整不阻断入池；
+- [x] 评分不可复算、ranking 缺失、source refs 不完整不阻断外部候选准入；
 - [x] 验证单项拒绝、去重、幂等和原始归档；
 - [x] Pipeline 回归通过。
 
@@ -88,9 +90,9 @@ WorkBuddy candidate artifact
 - WorkBuddy 只需输出可识别候选及入选理由；
 - 一个坏候选不影响同批其他候选；
 - 现有真实样本不再因报告审计问题无法入池；
-- 投研系统承担正式数据、研究、评分、排名和发布责任；
+- 投研系统承担正式身份、数据、来源验证和研究责任，不重复实现 WorkBuddy 的选股、评分、排名；
 - 原始候选输入可留档、重复导入幂等、冲突不覆盖；
-- legacy 严格审计可独立使用，但不阻断候选池。
+- legacy 严格审计可独立使用，但不阻断外部候选准入。
 
 ## 7. 暂缓
 

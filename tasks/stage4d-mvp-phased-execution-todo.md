@@ -7,7 +7,7 @@
 ## 阶段 0：合同与现场前置验证
 
 - [ ] 0.1 冻结治理边界和 ADR
-- [ ] 0.2 冻结 Candidate Intake → Stage 4D 投影合同
+- [ ] 0.2 冻结 Candidate Intake → ExternalObservation 准入合同
 - [ ] 0.3 验收真实 WorkBuddy 2.0.0 样本
 - [ ] 0.4 验收真实 legacy 1.1.x 三件套样本
 - [ ] 0.5 验证 Windows/Linux 路径、权限和原子写入
@@ -19,17 +19,17 @@
 - [ ] 阶段 1 输入/输出合同无开放歧义
 - [ ] 用户批准进入阶段 1
 
-## 阶段 1：候选导入闭环
+## 阶段 1：外部候选准入闭环
 
 - [x] 1.1 ExternalWorkflow/Artifact/Observation Domain
 - [x] 1.2 Repository、UoW、SQLAlchemy Model 和 Migration（ORM、migration、三类 Repository/UoW 接入及 mock 回归测试已完成）
 - [x] 1.3 Artifact Bridge 与安全导入（归档路径约束、manifest/hash 校验、稳定 UUID、幂等导入和异常拒绝已完成）
 - [x] 1.4 SharedDirectoryWorkBuddyGateway 与输入适配（ready claim、归档/失败移动、2.0.0/legacy 识别和异常隔离已完成）
-- [x] 1.5 Candidate Intake → PostgreSQL 投影（合法候选、symbol 状态、findings 已投影至 Integration Observation；正式 CandidatePool 计算仍由内部数据校验阶段负责）
+- [x] 1.5 Candidate Intake → PostgreSQL 外部准入投影（合法候选、symbol 状态、findings 已投影至 ExternalObservation；WorkBuddy 不进入内部 CandidatePool 计算）
 - [x] 1.6 Fake WorkBuddy E2E（ready package → claim → archive → Bridge → Repository 全链路测试已完成）
 - [ ] 1.7 真实 WorkBuddy 导入演示
 
-### Gate 1
+### Gate 1：外部候选准入闭环
 
 - [ ] 正常、partial、failed、坏批次和坏项可诊断
 - [ ] 重复导入幂等且失败后可恢复
