@@ -66,7 +66,7 @@
   `ExternalResearchHandoffService` 仅允许“已准入外部证据 + 已持久化完整
   `EvidencePack`”创建 `jiuwenswarm-runner-v1` 的 queued `ResearchRun`，并复用
   现有 `ResearchOrchestrationService` 执行；Fake runner 后端 E2E 已通过，
-  真实 runner 组合根仍待完成）
+  真实 runner 组合根已完成；可调用的受控任务入口仍待完成）
 - [ ] 3.6 Research Workspace External Discovery/Admission Widgets
 - [ ] 3.7 Integration Timeline 与 Artifact Viewer
 - [ ] 3.8 Fake Jiuwen E2E
