@@ -584,6 +584,11 @@ application services and reuse the same sanitized 500-detail pattern.
   `(case_id, observation_id)` unique index plus the
   `evidence_id` unique index are the database-level idempotency
   guarantees.
+- `POST /api/v1/research-cases/from-external-observations/{observation_id}`
+  — creates a Research Case from an admitted observation with the
+  requested `question` / `horizon`, then binds the immutable external
+  Evidence Item. Requires a resolved `instrument_id`; repeated calls
+  return the existing Case/Evidence pair with `created_case=false`.
 
 ### Application services (architecture governance §6 convergence)
 

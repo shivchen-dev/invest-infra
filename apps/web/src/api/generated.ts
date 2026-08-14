@@ -59,6 +59,10 @@ export interface paths {
      */
     get: operations["list_etf_instruments_api_v1_etf_instruments_get"];
   };
+  "/api/v1/external-observations/{observation_id}/admission-decisions": {
+    /** Decide Admission */
+    post: operations["decide_admission_api_v1_external_observations__observation_id__admission_decisions_post"];
+  };
   "/api/v1/external-workflows": {
     /** List External Workflows */
     get: operations["list_external_workflows_api_v1_external_workflows_get"];
@@ -146,6 +150,10 @@ export interface paths {
     /** List Research Cases */
     get: operations["list_research_cases_api_v1_research_cases_get"];
   };
+  "/api/v1/research-cases/from-external-observations/{observation_id}": {
+    /** Create Case From Observation */
+    post: operations["create_case_from_observation_api_v1_research_cases_from_external_observations__observation_id__post"];
+  };
   "/api/v1/research-cases/{case_id}": {
     /** Get Research Case */
     get: operations["get_research_case_api_v1_research_cases__case_id__get"];
@@ -153,6 +161,10 @@ export interface paths {
   "/api/v1/research-cases/{case_id}/evidence": {
     /** Get Research Case Evidence */
     get: operations["get_research_case_evidence_api_v1_research_cases__case_id__evidence_get"];
+  };
+  "/api/v1/research-cases/{case_id}/external-observations/{observation_id}/evidence": {
+    /** Link External Observation */
+    post: operations["link_external_observation_api_v1_research_cases__case_id__external_observations__observation_id__evidence_post"];
   };
   "/api/v1/research-cases/{case_id}/workspace": {
     /**
@@ -229,6 +241,50 @@ export type webhooks = Record<string, never>;
 
 export interface components {
   schemas: {
+    /** AdmissionDecisionRequest */
+    AdmissionDecisionRequest: {
+      /**
+       * Conflict Detected
+       * @default false
+       */
+      conflict_detected?: boolean;
+      /**
+       * Decided By
+       * @default api
+       */
+      decided_by?: string;
+      /** Freshness Ok */
+      freshness_ok: boolean;
+      /** Idempotency Key */
+      idempotency_key: string;
+      /** Identity Ok */
+      identity_ok: boolean;
+      /** Internal Cross Check Ok */
+      internal_cross_check_ok?: boolean | null;
+      /** Reason */
+      reason?: string | null;
+      /**
+       * Rules Version
+       * @default observation-admission/1.0
+       */
+      rules_version?: string;
+      /** Unit Ok */
+      unit_ok: boolean;
+    };
+    /** AdmissionDecisionResponse */
+    AdmissionDecisionResponse: {
+      /** Admission Status */
+      admission_status: string;
+      /** Idempotent */
+      idempotent: boolean;
+      /**
+       * Observation Id
+       * Format: uuid
+       */
+      observation_id: string;
+      /** Reason */
+      reason: string;
+    };
     /** ArtifactPreviewResponse */
     ArtifactPreviewResponse: {
       /**
@@ -962,6 +1018,27 @@ export interface components {
       /** Trigger Type */
       trigger_type: string;
     };
+    /** ResearchCaseFromObservationRequest */
+    ResearchCaseFromObservationRequest: {
+      /**
+       * Horizon
+       * @default 20-60d
+       */
+      horizon?: string;
+      /** Question */
+      question: string;
+    };
+    /** ResearchCaseFromObservationResponse */
+    ResearchCaseFromObservationResponse: {
+      /**
+       * Case Id
+       * Format: uuid
+       */
+      case_id: string;
+      /** Created Case */
+      created_case: boolean;
+      evidence: components["schemas"]["ResearchExternalEvidenceResponse"];
+    };
     /** ResearchCaseListResponse */
     ResearchCaseListResponse: {
       /** Items */
@@ -1189,6 +1266,49 @@ export interface components {
       research_summary: components["schemas"]["ResearchDashboardResearchSummary"];
       /** Schema Version */
       schema_version: string;
+    };
+    /** ResearchExternalEvidenceResponse */
+    ResearchExternalEvidenceResponse: {
+      /** Admission */
+      admission: {
+        [key: string]: unknown;
+      };
+      /** Artifact Content Hash */
+      artifact_content_hash: string | null;
+      /** Artifact Id */
+      artifact_id: string | null;
+      /**
+       * As Of
+       * Format: date
+       */
+      as_of: string;
+      /** Content Hash */
+      content_hash: string;
+      /** Evidence Id */
+      evidence_id: string;
+      /**
+       * Observation Id
+       * Format: uuid
+       */
+      observation_id: string;
+      /**
+       * Observed At
+       * Format: date-time
+       */
+      observed_at: string;
+      /** Payload */
+      payload: {
+        [key: string]: unknown;
+      };
+      /** Producer */
+      producer: string;
+      /**
+       * Run Id
+       * Format: uuid
+       */
+      run_id: string;
+      /** Source Uri */
+      source_uri: string;
     };
     /** ResearchResultResponse */
     ResearchResultResponse: {
@@ -1454,6 +1574,36 @@ export interface operations {
       200: {
         content: {
           "application/json": components["schemas"]["InstrumentListResponse"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  /** Decide Admission */
+  decide_admission_api_v1_external_observations__observation_id__admission_decisions_post: {
+    parameters: {
+      header?: {
+        "Idempotency-Key"?: string | null;
+      };
+      path: {
+        observation_id: string;
+      };
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["AdmissionDecisionRequest"];
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      200: {
+        content: {
+          "application/json": components["schemas"]["AdmissionDecisionResponse"];
         };
       };
       /** @description Validation Error */
@@ -1765,6 +1915,33 @@ export interface operations {
       };
     };
   };
+  /** Create Case From Observation */
+  create_case_from_observation_api_v1_research_cases_from_external_observations__observation_id__post: {
+    parameters: {
+      path: {
+        observation_id: string;
+      };
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["ResearchCaseFromObservationRequest"];
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      201: {
+        content: {
+          "application/json": components["schemas"]["ResearchCaseFromObservationResponse"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
   /** Get Research Case */
   get_research_case_api_v1_research_cases__case_id__get: {
     parameters: {
@@ -1799,6 +1976,29 @@ export interface operations {
       200: {
         content: {
           "application/json": components["schemas"]["EvidencePackResponse"][];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  /** Link External Observation */
+  link_external_observation_api_v1_research_cases__case_id__external_observations__observation_id__evidence_post: {
+    parameters: {
+      path: {
+        case_id: string;
+        observation_id: string;
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      201: {
+        content: {
+          "application/json": components["schemas"]["ResearchExternalEvidenceResponse"];
         };
       };
       /** @description Validation Error */

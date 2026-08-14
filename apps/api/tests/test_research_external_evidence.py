@@ -79,3 +79,46 @@ def test_link_rejects_instrument_mismatch() -> None:
     service = ResearchExternalEvidenceService(Cases(), Observations(), Artifacts(), Writer())
     with pytest.raises(ExternalEvidenceLinkError, match="instrument"):
         service.link(case_id=case.case_id, observation_id=observation.observation_id)
+
+
+def test_create_case_from_admitted_observation_is_idempotent() -> None:
+    instrument_id = InstrumentId(uuid4())
+    observation = ExternalObservation(
+        uuid4(), uuid4(), NOW, date(2026, 8, 14), "archive://run/a.json", "workbuddy", {},
+        instrument_id=instrument_id.value,
+    )
+    observation = observation.apply_admission(
+        evaluate_admission(observation, AdmissionVerification(True, True, True, True))
+    )
+    cases = {}
+    evidence = {}
+
+    class Cases:
+        def get(self, case_id):
+            return cases.get(case_id)
+        def add(self, case):
+            cases[case.case_id] = case
+            return case
+    class Observations:
+        def get_by_id(self, _observation_id):
+            return observation
+    class Artifacts:
+        def get_by_id(self, _artifact_id):
+            return None
+    class Writer:
+        def get_by_observation(self, observation_id):
+            return evidence.get(observation_id)
+        def add(self, case_id, item):
+            evidence[item.observation_id] = (case_id, item)
+            return item
+
+    service = ResearchExternalEvidenceService(Cases(), Observations(), Artifacts(), Writer())
+    first = service.create_case_and_link(
+        observation_id=observation.observation_id, question="test"
+    )
+    second = service.create_case_and_link(
+        observation_id=observation.observation_id, question="changed"
+    )
+    assert first.created_case is True
+    assert second.created_case is False
+    assert first.case.case_id == second.case.case_id

@@ -5466,6 +5466,18 @@ class SqlAlchemyResearchExternalEvidenceRepository:
         ).all()
         return [_row_to_external_evidence(row) for row in rows]
 
+    def get_by_observation(
+        self, observation_id: UUID
+    ) -> tuple[UUID, ExternalEvidenceItem] | None:
+        row = self._session.scalars(
+            select(ResearchExternalEvidenceRow)
+            .where(ResearchExternalEvidenceRow.observation_id == observation_id)
+            .limit(1)
+        ).first()
+        if row is None:
+            return None
+        return row.research_case_id, _row_to_external_evidence(row)
+
 
 def _row_to_external_workflow_run(row: ExternalWorkflowRunRow) -> ExternalWorkflowRun:
     return ExternalWorkflowRun(

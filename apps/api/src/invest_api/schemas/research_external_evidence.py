@@ -7,6 +7,11 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict
 
 
+class ResearchCaseFromObservationRequest(BaseModel):
+    question: str
+    horizon: str = "20-60d"
+
+
 class ResearchExternalEvidenceResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -39,3 +44,9 @@ class ResearchExternalEvidenceResponse(BaseModel):
             admission=dict(item.admission),
             content_hash=item.content_hash,
         )
+
+
+class ResearchCaseFromObservationResponse(BaseModel):
+    case_id: UUID
+    evidence: ResearchExternalEvidenceResponse
+    created_case: bool

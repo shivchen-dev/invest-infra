@@ -1951,6 +1951,47 @@
         "title": "PipelineRunResponse",
         "type": "object"
       },
+      "ResearchCaseFromObservationRequest": {
+        "properties": {
+          "horizon": {
+            "default": "20-60d",
+            "title": "Horizon",
+            "type": "string"
+          },
+          "question": {
+            "title": "Question",
+            "type": "string"
+          }
+        },
+        "required": [
+          "question"
+        ],
+        "title": "ResearchCaseFromObservationRequest",
+        "type": "object"
+      },
+      "ResearchCaseFromObservationResponse": {
+        "properties": {
+          "case_id": {
+            "format": "uuid",
+            "title": "Case Id",
+            "type": "string"
+          },
+          "created_case": {
+            "title": "Created Case",
+            "type": "boolean"
+          },
+          "evidence": {
+            "$ref": "#/components/schemas/ResearchExternalEvidenceResponse"
+          }
+        },
+        "required": [
+          "case_id",
+          "evidence",
+          "created_case"
+        ],
+        "title": "ResearchCaseFromObservationResponse",
+        "type": "object"
+      },
       "ResearchCaseListResponse": {
         "properties": {
           "items": {
@@ -3731,6 +3772,59 @@
           }
         },
         "summary": "List Research Cases",
+        "tags": [
+          "research"
+        ]
+      }
+    },
+    "/api/v1/research-cases/from-external-observations/{observation_id}": {
+      "post": {
+        "operationId": "create_case_from_observation_api_v1_research_cases_from_external_observations__observation_id__post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "observation_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Observation Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ResearchCaseFromObservationRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResearchCaseFromObservationResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Create Case From Observation",
         "tags": [
           "research"
         ]

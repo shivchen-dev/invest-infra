@@ -2,7 +2,7 @@
 
 > 计划：`docs/plan/invest-infra-stage4d-mvp-phased-execution-plan-v1.0.md`
 > 状态规则：`[ ]` 未开始，`[~]` 进行中，`[x]` 完成，`[!]` 阻塞。
-> 当前状态：Stage 3.4 Research Case 外部 Evidence 关联已完成；Research Case 自动创建和 JiuwenSwarm 联动尚未开始。
+> 当前状态：Stage 3.4 Research Case 创建/关联已完成；JiuwenSwarm 联动尚未开始。
 
 ## 阶段 0：合同与现场前置验证
 
@@ -61,7 +61,7 @@
 - [x] 3.1 Observation Admission Domain/Application Service（验证规则、状态决策、审计元数据和持久化转换已完成）
 - [x] 3.2 Admission Command API 与审计（默认关闭 feature flag、幂等键、服务端校验、状态审计已完成）
 - [x] 3.3 admitted Observation → Evidence Item（新增不可变 provenance-bound EvidenceItem；仅 admitted 可转换，保留 artifact hash、准入审计和原始 payload）
-- [~] 3.4 Research Case 创建/关联（外部 Evidence 关联、Case/Observation/Artifact 校验、幂等持久化和 Command API 已完成；自动创建仍待后续切片）
+- [x] 3.4 Research Case 创建/关联（支持指定 Case 关联和从 admitted Observation 自动创建 Case；包含 Case/Observation/Artifact 校验、幂等持久化和事务提交）
 - [ ] 3.5 复用 JiuwenSwarm Research 路径
 - [ ] 3.6 Research Workspace External Discovery/Admission Widgets
 - [ ] 3.7 Integration Timeline 与 Artifact Viewer
