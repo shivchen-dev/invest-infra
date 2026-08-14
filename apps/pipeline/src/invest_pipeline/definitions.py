@@ -19,6 +19,10 @@ from invest_pipeline.assets import (
 )
 from invest_pipeline.real_exposure_asset import real_exposure
 from invest_pipeline.schedules import personal_etf_daily_schedule
+from invest_pipeline.workbuddy_dagster import (
+    workbuddy_result_import_job,
+    workbuddy_result_import_schedule,
+)
 
 personal_etf_daily_job = dg.define_asset_job(
     name="personal_etf_daily_job",
@@ -66,6 +70,11 @@ defs = dg.Definitions(
         stock_input_snapshot,
         market_breadth_snapshot,
     ],
-    jobs=[personal_etf_daily_job, real_exposure_job, stock_market_data_job],
-    schedules=[personal_etf_daily_schedule],
+    jobs=[
+        personal_etf_daily_job,
+        real_exposure_job,
+        stock_market_data_job,
+        workbuddy_result_import_job,
+    ],
+    schedules=[personal_etf_daily_schedule, workbuddy_result_import_schedule],
 )
