@@ -5,9 +5,17 @@ from typing import Annotated
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+from invest_domain.research import ResearchPlaybook
 
 from invest_api.application.research import ResearchQueryError, ResearchQueryService
-from invest_api.dependencies import get_research_query_service
+from invest_api.application.research_run_command import (
+    ResearchRunCommandError,
+    ResearchRunCommandService,
+)
+from invest_api.dependencies import (
+    get_research_query_service,
+    get_research_run_command_service,
+)
 from invest_api.schemas.research import (
     EvidencePackResponse,
     ResearchCaseListResponse,
@@ -21,8 +29,45 @@ from invest_api.schemas.research import (
     ResearchRunListResponse,
     ResearchRunResponse,
 )
+from invest_api.schemas.research_run_command import (
+    ResearchRunCommandRequest,
+    ResearchRunCommandResponse,
+)
 
 router = APIRouter(prefix="/api/v1", tags=["research"])
+
+
+@router.post(
+    "/research-cases/{case_id}/runs",
+    response_model=ResearchRunCommandResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+def queue_research_run(
+    case_id: UUID,
+    request: ResearchRunCommandRequest,
+    service: Annotated[
+        ResearchRunCommandService,
+        Depends(get_research_run_command_service),
+    ],
+) -> ResearchRunCommandResponse:
+    try:
+        run, idempotent = service.queue(
+            case_id=case_id,
+            evidence_pack_id=request.evidence_pack_id,
+            playbook=ResearchPlaybook(
+                playbook_key=request.playbook_key,
+                playbook_version=request.playbook_version,
+            ),
+        )
+    except ResearchRunCommandError as exc:
+        detail = str(exc)
+        code = (
+            status.HTTP_404_NOT_FOUND if detail.endswith("not found") else status.HTTP_409_CONFLICT
+        )
+        raise HTTPException(status_code=code, detail=detail) from exc
+    return ResearchRunCommandResponse(
+        run=ResearchRunResponse.from_domain(run), idempotent=idempotent
+    )
 
 
 def _query_failed(exc: ResearchQueryError) -> HTTPException:
@@ -114,14 +159,10 @@ def get_research_case_workspace(
     except ResearchQueryError as exc:
         raise _query_failed(exc) from exc
     if view is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail="Research case not found"
-        )
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Research case not found")
     return ResearchCaseWorkspaceResponse(
         case=ResearchCaseResponse.from_domain(view.case),
-        evidence_packs=[
-            EvidencePackResponse.from_domain(pack) for pack in view.evidence_packs
-        ],
+        evidence_packs=[EvidencePackResponse.from_domain(pack) for pack in view.evidence_packs],
         runs=[ResearchRunResponse.from_domain(run) for run in view.runs],
         results=[
             ResearchResultResponse.from_domain(result) if result is not None else None

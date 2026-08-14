@@ -166,6 +166,10 @@ export interface paths {
     /** Link External Observation */
     post: operations["link_external_observation_api_v1_research_cases__case_id__external_observations__observation_id__evidence_post"];
   };
+  "/api/v1/research-cases/{case_id}/runs": {
+    /** Queue Research Run */
+    post: operations["queue_research_run_api_v1_research_cases__case_id__runs_post"];
+  };
   "/api/v1/research-cases/{case_id}/workspace": {
     /**
      * Get Research Case Workspace
@@ -1349,6 +1353,24 @@ export interface components {
        */
       run_id: string;
     };
+    /** ResearchRunCommandRequest */
+    ResearchRunCommandRequest: {
+      /**
+       * Evidence Pack Id
+       * Format: uuid
+       */
+      evidence_pack_id: string;
+      /** Playbook Key */
+      playbook_key: string;
+      /** Playbook Version */
+      playbook_version: string;
+    };
+    /** ResearchRunCommandResponse */
+    ResearchRunCommandResponse: {
+      /** Idempotent */
+      idempotent: boolean;
+      run: components["schemas"]["ResearchRunResponse"];
+    };
     /** ResearchRunListResponse */
     ResearchRunListResponse: {
       /** Items */
@@ -1999,6 +2021,33 @@ export interface operations {
       201: {
         content: {
           "application/json": components["schemas"]["ResearchExternalEvidenceResponse"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  /** Queue Research Run */
+  queue_research_run_api_v1_research_cases__case_id__runs_post: {
+    parameters: {
+      path: {
+        case_id: string;
+      };
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["ResearchRunCommandRequest"];
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      201: {
+        content: {
+          "application/json": components["schemas"]["ResearchRunCommandResponse"];
         };
       };
       /** @description Validation Error */

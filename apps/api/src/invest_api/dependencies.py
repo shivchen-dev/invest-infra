@@ -37,6 +37,7 @@ from invest_api.application.market_temperature import MarketTemperatureQueryServ
 from invest_api.application.pipeline_runs import PipelineRunQueryService
 from invest_api.application.research import ResearchQueryService
 from invest_api.application.research_external_evidence import ResearchExternalEvidenceService
+from invest_api.application.research_run_command import ResearchRunCommandService
 from invest_api.config import get_settings
 
 
@@ -101,6 +102,17 @@ def get_research_external_evidence_service(
         observation_reader=SqlAlchemyExternalObservationRepository(session),
         artifact_reader=SqlAlchemyExternalArtifactRepository(session),
         evidence_writer=SqlAlchemyResearchExternalEvidenceRepository(session),
+    )
+
+
+def get_research_run_command_service(
+    session: Annotated[Session, Depends(get_db_session)],
+) -> ResearchRunCommandService:
+    return ResearchRunCommandService(
+        case_repository=SqlAlchemyResearchCaseRepository(session),
+        evidence_pack_repository=SqlAlchemyEvidencePackRepository(session),
+        external_evidence_repository=SqlAlchemyResearchExternalEvidenceRepository(session),
+        run_repository=SqlAlchemyResearchRunRepository(session),
     )
 
 
@@ -174,9 +186,7 @@ def get_research_query_service(
 def get_market_temperature_query_service(
     session: Annotated[Session, Depends(get_db_session)],
 ) -> MarketTemperatureQueryService:
-    return MarketTemperatureQueryService(
-        SqlAlchemyMarketObservationSnapshotRepository(session)
-    )
+    return MarketTemperatureQueryService(SqlAlchemyMarketObservationSnapshotRepository(session))
 
 
 def get_market_breadth_query_service(
@@ -191,9 +201,7 @@ def get_market_breadth_query_service(
     to inject a mock service without touching the storage layer.
     """
 
-    return MarketBreadthQueryService(
-        SqlAlchemyMarketObservationSnapshotRepository(session)
-    )
+    return MarketBreadthQueryService(SqlAlchemyMarketObservationSnapshotRepository(session))
 
 
 __all__ = [

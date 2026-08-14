@@ -2526,6 +2526,51 @@
         "title": "ResearchResultResponse",
         "type": "object"
       },
+      "ResearchRunCommandRequest": {
+        "properties": {
+          "evidence_pack_id": {
+            "format": "uuid",
+            "title": "Evidence Pack Id",
+            "type": "string"
+          },
+          "playbook_key": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Playbook Key",
+            "type": "string"
+          },
+          "playbook_version": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Playbook Version",
+            "type": "string"
+          }
+        },
+        "required": [
+          "evidence_pack_id",
+          "playbook_key",
+          "playbook_version"
+        ],
+        "title": "ResearchRunCommandRequest",
+        "type": "object"
+      },
+      "ResearchRunCommandResponse": {
+        "properties": {
+          "idempotent": {
+            "title": "Idempotent",
+            "type": "boolean"
+          },
+          "run": {
+            "$ref": "#/components/schemas/ResearchRunResponse"
+          }
+        },
+        "required": [
+          "run",
+          "idempotent"
+        ],
+        "title": "ResearchRunCommandResponse",
+        "type": "object"
+      },
       "ResearchRunListResponse": {
         "properties": {
           "items": {
@@ -3968,6 +4013,59 @@
           }
         },
         "summary": "Link External Observation",
+        "tags": [
+          "research"
+        ]
+      }
+    },
+    "/api/v1/research-cases/{case_id}/runs": {
+      "post": {
+        "operationId": "queue_research_run_api_v1_research_cases__case_id__runs_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "case_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Case Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ResearchRunCommandRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResearchRunCommandResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Queue Research Run",
         "tags": [
           "research"
         ]
