@@ -13,23 +13,30 @@ from invest_storage.repositories import (
     SqlAlchemyDailyBarRepository,
     SqlAlchemyDataFreshnessReader,
     SqlAlchemyEvidencePackRepository,
+    SqlAlchemyExternalArtifactRepository,
+    SqlAlchemyExternalObservationRepository,
+    SqlAlchemyExternalWorkflowRunRepository,
     SqlAlchemyInstrumentRepository,
     SqlAlchemyMarketObservationSnapshotRepository,
     SqlAlchemyPipelineRunRepository,
     SqlAlchemyResearchCaseRepository,
+    SqlAlchemyResearchExternalEvidenceRepository,
     SqlAlchemyResearchResultRepository,
     SqlAlchemyResearchRunRepository,
 )
 from sqlalchemy import Engine
 from sqlalchemy.orm import Session, sessionmaker
 
+from invest_api.application.admission import ObservationAdmissionCommandService
 from invest_api.application.candidate_pool import CandidatePoolQueryService
 from invest_api.application.data_freshness import DataFreshnessQueryService
 from invest_api.application.etf import EtfQueryService
+from invest_api.application.external_workflows import ExternalWorkflowQueryService
 from invest_api.application.market_breadth import MarketBreadthQueryService
 from invest_api.application.market_temperature import MarketTemperatureQueryService
 from invest_api.application.pipeline_runs import PipelineRunQueryService
 from invest_api.application.research import ResearchQueryService
+from invest_api.application.research_external_evidence import ResearchExternalEvidenceService
 from invest_api.config import get_settings
 
 
@@ -64,6 +71,33 @@ def get_pipeline_run_query_service(
     """
 
     return PipelineRunQueryService(SqlAlchemyPipelineRunRepository(session))
+
+
+def get_external_workflow_query_service(
+    session: Annotated[Session, Depends(get_db_session)],
+) -> ExternalWorkflowQueryService:
+    return ExternalWorkflowQueryService(
+        run_repository=SqlAlchemyExternalWorkflowRunRepository(session),
+        artifact_repository=SqlAlchemyExternalArtifactRepository(session),
+        observation_repository=SqlAlchemyExternalObservationRepository(session),
+    )
+
+
+def get_observation_admission_command_service(
+    session: Annotated[Session, Depends(get_db_session)],
+) -> ObservationAdmissionCommandService:
+    return ObservationAdmissionCommandService(SqlAlchemyExternalObservationRepository(session))
+
+
+def get_research_external_evidence_service(
+    session: Annotated[Session, Depends(get_db_session)],
+) -> ResearchExternalEvidenceService:
+    return ResearchExternalEvidenceService(
+        case_reader=SqlAlchemyResearchCaseRepository(session),
+        observation_reader=SqlAlchemyExternalObservationRepository(session),
+        artifact_reader=SqlAlchemyExternalArtifactRepository(session),
+        evidence_writer=SqlAlchemyResearchExternalEvidenceRepository(session),
+    )
 
 
 def get_candidate_pool_query_service(
@@ -164,6 +198,8 @@ __all__ = [
     "get_db_session",
     "get_etf_query_service",
     "get_engine",
+    "get_external_workflow_query_service",
+    "get_observation_admission_command_service",
     "get_market_breadth_query_service",
     "get_pipeline_run_query_service",
     "get_research_query_service",

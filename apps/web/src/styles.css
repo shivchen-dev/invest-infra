@@ -243,6 +243,125 @@ code.inlineCode {
 .metricCardWarning { border-color: var(--color-warning-border); background: #fdf6e7; }
 .metricCardDanger { border-color: var(--color-danger-border); background: #fdf2f0; }
 
+.integrationHealthPanel {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+.integrationHealthHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+.integrationHealthStatus {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 700;
+}
+.integrationHealthHint {
+  margin: 3px 0 0;
+  color: var(--color-text-muted);
+  font-size: 12px;
+}
+.integrationHealthMetrics { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+
+.radarFilterLabel {
+  display: block;
+  margin-bottom: 6px;
+  color: var(--color-text-muted);
+  font-size: 12px;
+  font-weight: 600;
+}
+.radarFilter {
+  min-width: 160px;
+  padding: 8px 10px;
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-control);
+  color: var(--color-text);
+  background: var(--color-content);
+}
+.radarTableWrap { overflow-x: auto; }
+.radarTable {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+.radarTable th,
+.radarTable td {
+  padding: 12px 10px;
+  border-bottom: 1px solid var(--color-border);
+  text-align: left;
+  white-space: nowrap;
+}
+.radarTable th {
+  color: var(--color-text-muted);
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  font-weight: 600;
+}
+.radarSource { color: var(--color-text-muted); }
+
+.automationRunList {
+  display: grid;
+  gap: 12px;
+}
+.automationRunCard {
+  border: 1px solid var(--color-border);
+  border-radius: 12px;
+  padding: 16px;
+  background: var(--color-surface-soft);
+}
+.automationRunHeader {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+.automationRunTitle {
+  margin: 0 0 4px;
+  font-size: 15px;
+}
+.automationRunId {
+  color: var(--color-text-muted);
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}
+.automationRunDetails {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+  margin: 16px 0 0;
+}
+.automationRunDetails dt {
+  color: var(--color-text-muted);
+  font-size: 11px;
+}
+.automationRunDetails dd {
+  margin: 3px 0 0;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+@media (max-width: 600px) {
+  .radarTable {
+    table-layout: fixed;
+    font-size: 11px;
+  }
+  .radarTable th,
+  .radarTable td {
+    padding: 10px 5px;
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+  .radarTable th:nth-child(1) { width: 18%; }
+  .radarTable th:nth-child(2) { width: 20%; }
+  .radarTable th:nth-child(3) { width: 18%; }
+  .radarTable th:nth-child(4) { width: 16%; }
+  .radarTable th:nth-child(5) { width: 28%; }
+  .automationRunDetails { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
 .statusBanner {
   border-radius: 12px;
   padding: 18px 20px;

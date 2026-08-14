@@ -5,6 +5,7 @@ import {
   fetchCandidatePoolLatestDiff,
 } from "../api/candidatePool";
 import { fetchLatestPipelineRun } from "../api/pipelineRuns";
+import { fetchIntegrationHealth } from "../api/integrationHealth";
 import { useResearchDashboard } from "../api/researchDashboard";
 import type {
   CandidatePoolDiffResponse,
@@ -20,6 +21,7 @@ import { LatestRunPanel } from "../features/dashboard/LatestRunPanel";
 import { ResearchCockpitSection } from "../features/research/dashboard/ResearchCockpitSection";
 import { LoadingState } from "../components/LoadingState";
 import { formatCount, formatDate } from "../utils/format";
+import { IntegrationHealthPanel } from "../features/dashboard/IntegrationHealthPanel";
 
 const TOP_N = 10;
 
@@ -27,6 +29,7 @@ const REFETCH_INTERVAL = {
   freshness: 60_000,
   candidatePool: 5 * 60_000,
   pipelineRun: 60_000,
+  integrationHealth: 60_000,
 } as const;
 
 export function DashboardPage() {
@@ -54,13 +57,20 @@ export function DashboardPage() {
     refetchInterval: REFETCH_INTERVAL.pipelineRun,
   });
 
+  const integrationHealth = useQuery({
+    queryKey: ["integration", "health"],
+    queryFn: ({ signal }) => fetchIntegrationHealth(signal),
+    refetchInterval: REFETCH_INTERVAL.integrationHealth,
+  });
+
   const researchDashboard = useResearchDashboard();
 
   const initialLoading =
     freshness.isPending &&
     latestPool.isPending &&
     latestDiff.isPending &&
-    latestRun.isPending;
+    latestRun.isPending &&
+    integrationHealth.isPending;
 
   if (initialLoading) {
     return <LoadingState label="正在加载 Dashboard 数据" />;
@@ -114,6 +124,14 @@ export function DashboardPage() {
       <section className="pageSection" aria-label="最新运行">
         <h3 className="sectionTitle">最新运行</h3>
         <LatestRunPanel query={latestRun} />
+      </section>
+
+      <section className="pageSection" aria-label="外部集成状态">
+        <header className="sectionHeader">
+          <h3 className="sectionTitle">外部集成状态</h3>
+          <span className="sectionMeta">WorkBuddy / Artifact Bridge</span>
+        </header>
+        <IntegrationHealthPanel query={integrationHealth} />
       </section>
 
       <section className="pageSection researchCockpitSection" aria-label="Research Cockpit">

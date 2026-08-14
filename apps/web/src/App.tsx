@@ -3,6 +3,8 @@ import { CandidatePoolPage } from "./pages/CandidatePoolPage";
 import { DashboardPage } from "./pages/DashboardPage";
 import { EtfDetailPage } from "./pages/EtfDetailPage";
 import { OperationsPage } from "./pages/OperationsPage";
+import { OpportunityRadarPage } from "./pages/OpportunityRadarPage";
+import { AutomationCenterPage } from "./pages/AutomationCenterPage";
 import { PlaceholderPage } from "./pages/PlaceholderPage";
 import { ResearchCasePage } from "./pages/ResearchCasePage";
 import { ResearchHistoryPage } from "./pages/ResearchHistoryPage";
@@ -21,6 +23,14 @@ const ROUTES = [
   {
     path: "/operations",
     element: <OperationsPage />,
+  },
+  {
+    path: "/opportunity-radar",
+    element: <OpportunityRadarPage />,
+  },
+  {
+    path: "/automation",
+    element: <AutomationCenterPage />,
   },
   {
     path: "/research/history",

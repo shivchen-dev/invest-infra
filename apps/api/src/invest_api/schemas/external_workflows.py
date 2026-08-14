@@ -1,0 +1,60 @@
+"""Public read-only schemas for external workflow integration data."""
+
+from __future__ import annotations
+
+from datetime import date, datetime
+from typing import Any
+from uuid import UUID
+
+from pydantic import BaseModel, Field
+
+
+class ExternalWorkflowRunResponse(BaseModel):
+    run_id: UUID
+    producer: str
+    schema_version: str
+    producer_status: str
+    intake_status: str
+    started_at: datetime
+    finished_at: datetime | None = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class ExternalArtifactResponse(BaseModel):
+    artifact_id: UUID
+    run_id: UUID
+    logical_uri: str
+    content_hash: str
+    media_type: str
+    size_bytes: int = Field(ge=0)
+    created_at: datetime
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class ExternalObservationResponse(BaseModel):
+    observation_id: UUID
+    run_id: UUID
+    artifact_id: UUID | None = None
+    observed_at: datetime
+    as_of: date
+    source_uri: str
+    producer: str
+    payload: dict[str, Any]
+    symbol: str | None = None
+    instrument_id: UUID | None = None
+    admission_status: str
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class ExternalWorkflowRunListResponse(BaseModel):
+    items: list[ExternalWorkflowRunResponse]
+    limit: int = Field(ge=1, le=100)
+    offset: int = Field(ge=0)
+
+
+__all__ = [
+    "ExternalArtifactResponse",
+    "ExternalObservationResponse",
+    "ExternalWorkflowRunListResponse",
+    "ExternalWorkflowRunResponse",
+]

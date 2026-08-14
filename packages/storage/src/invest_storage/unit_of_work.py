@@ -41,6 +41,9 @@ from invest_storage.repositories import (
     SqlAlchemyEtfProfileFieldRepository,
     SqlAlchemyEtfProfileRepository,
     SqlAlchemyEvidencePackRepository,
+    SqlAlchemyExternalArtifactRepository,
+    SqlAlchemyExternalObservationRepository,
+    SqlAlchemyExternalWorkflowRunRepository,
     SqlAlchemyIndexConstituentSnapshotRepository,
     SqlAlchemyIndexIdentityRepository,
     SqlAlchemyIndexProfileRepository,
@@ -53,6 +56,7 @@ from invest_storage.repositories import (
     SqlAlchemyResearchCaseRepository,
     SqlAlchemyResearchContextPackRepository,
     SqlAlchemyResearchEvidenceBundleRepository,
+    SqlAlchemyResearchExternalEvidenceRepository,
     SqlAlchemyResearchResultRepository,
     SqlAlchemyResearchRunRepository,
     SqlAlchemyStockPriceLimitRepository,
@@ -322,6 +326,36 @@ class MarketObservationSnapshotRepositoryPort(Protocol):
 
 
 @runtime_checkable
+class ExternalWorkflowRunRepositoryPort(Protocol):
+    def add(self, run): ...
+    def get_by_id(self, run_id): ...
+    def list_recent(self, *, limit: int = 50, offset: int = 0): ...
+
+
+@runtime_checkable
+class ExternalArtifactRepositoryPort(Protocol):
+    def add(self, artifact): ...
+    def get_by_id(self, artifact_id): ...
+    def list_by_run(self, run_id, *, limit: int = 100, offset: int = 0): ...
+
+
+@runtime_checkable
+class ExternalObservationRepositoryPort(Protocol):
+    def add(self, observation): ...
+    def get_by_id(self, observation_id): ...
+    def list_by_run(self, run_id, *, limit: int = 100, offset: int = 0): ...
+    def list_by_admission_status(self, status, *, limit: int = 100, offset: int = 0): ...
+    def list_recent(self, *, status=None, limit: int = 100, offset: int = 0): ...
+    def save_admission(self, observation): ...
+
+
+@runtime_checkable
+class ResearchExternalEvidenceRepositoryPort(Protocol):
+    def add(self, research_case_id, item): ...
+    def list_by_case(self, research_case_id): ...
+
+
+@runtime_checkable
 class ResearchCaseRepositoryPort(Protocol):
     """Subset of the ResearchCase repository surface the UoW exposes."""
 
@@ -566,6 +600,10 @@ class UnitOfWork(Protocol):
     index_constituent_snapshots: IndexConstituentSnapshotRepositoryPort
     etf_index_mappings: EtfIndexMappingRepositoryPort
     etf_holding_snapshots: EtfHoldingSnapshotRepositoryPort
+    external_workflow_runs: ExternalWorkflowRunRepositoryPort
+    external_artifacts: ExternalArtifactRepositoryPort
+    external_observations: ExternalObservationRepositoryPort
+    research_external_evidence: ResearchExternalEvidenceRepositoryPort
 
     def commit(self) -> None:
         """Persist the current transaction to the database."""
@@ -629,6 +667,10 @@ class SqlAlchemyUnitOfWork:
         self._etf_holding_snapshots: SqlAlchemyEtfHoldingSnapshotRepository | None = (
             None
         )
+        self._external_workflow_runs: SqlAlchemyExternalWorkflowRunRepository | None = None
+        self._external_artifacts: SqlAlchemyExternalArtifactRepository | None = None
+        self._external_observations: SqlAlchemyExternalObservationRepository | None = None
+        self._research_external_evidence: SqlAlchemyResearchExternalEvidenceRepository | None = None
         self._closed = True
         self._user_committed = False
 
@@ -801,6 +843,32 @@ class SqlAlchemyUnitOfWork:
             )
         return self._etf_holding_snapshots
 
+    @property
+    def external_workflow_runs(self) -> SqlAlchemyExternalWorkflowRunRepository:
+        if self._external_workflow_runs is None:
+            self._external_workflow_runs = SqlAlchemyExternalWorkflowRunRepository(self.session)
+        return self._external_workflow_runs
+
+    @property
+    def external_artifacts(self) -> SqlAlchemyExternalArtifactRepository:
+        if self._external_artifacts is None:
+            self._external_artifacts = SqlAlchemyExternalArtifactRepository(self.session)
+        return self._external_artifacts
+
+    @property
+    def external_observations(self) -> SqlAlchemyExternalObservationRepository:
+        if self._external_observations is None:
+            self._external_observations = SqlAlchemyExternalObservationRepository(self.session)
+        return self._external_observations
+
+    @property
+    def research_external_evidence(self) -> SqlAlchemyResearchExternalEvidenceRepository:
+        if self._research_external_evidence is None:
+            self._research_external_evidence = SqlAlchemyResearchExternalEvidenceRepository(
+                self.session
+            )
+        return self._research_external_evidence
+
     def commit(self) -> None:
         self.session.commit()
         self._user_committed = True
@@ -858,6 +926,10 @@ class SqlAlchemyUnitOfWork:
             self._index_constituent_snapshots = None
             self._etf_index_mappings = None
             self._etf_holding_snapshots = None
+            self._external_workflow_runs = None
+            self._external_artifacts = None
+            self._external_observations = None
+            self._research_external_evidence = None
             self._user_committed = False
             self._closed = True
 
@@ -871,6 +943,9 @@ __all__ = [
     "CandidatePoolRunRepositoryPort",
     "DailyBarRepositoryPort",
     "EtfHoldingSnapshotRepositoryPort",
+    "ExternalArtifactRepositoryPort",
+    "ExternalObservationRepositoryPort",
+    "ExternalWorkflowRunRepositoryPort",
     "EtfIndexMappingRepositoryPort",
     "EtfProfileFieldRepositoryPort",
     "EtfProfileRepositoryPort",

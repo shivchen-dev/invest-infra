@@ -59,6 +59,52 @@ export interface paths {
      */
     get: operations["list_etf_instruments_api_v1_etf_instruments_get"];
   };
+  "/api/v1/external-workflows": {
+    /** List External Workflows */
+    get: operations["list_external_workflows_api_v1_external_workflows_get"];
+  };
+  "/api/v1/external-workflows/{run_id}": {
+    /** Get External Workflow */
+    get: operations["get_external_workflow_api_v1_external_workflows__run_id__get"];
+  };
+  "/api/v1/external-workflows/{run_id}/artifacts": {
+    /** List External Artifacts */
+    get: operations["list_external_artifacts_api_v1_external_workflows__run_id__artifacts_get"];
+  };
+  "/api/v1/external-workflows/{run_id}/observations": {
+    /** List External Observations */
+    get: operations["list_external_observations_api_v1_external_workflows__run_id__observations_get"];
+  };
+  "/api/v1/integration/artifacts/{artifact_id}": {
+    /** Preview Artifact */
+    get: operations["preview_artifact_api_v1_integration_artifacts__artifact_id__get"];
+  };
+  "/api/v1/integration/health": {
+    /** Get Integration Health */
+    get: operations["get_integration_health_api_v1_integration_health_get"];
+  };
+  "/api/v1/market-breadth/latest": {
+    /**
+     * Get Latest Market Breadth
+     * @description Return the latest Market Breadth snapshot for ``as_of_date``.
+     *
+     * ``as_of_date`` is optional: omitting it asks the service for the
+     * newest snapshot regardless of trade date; supplying a value
+     * narrows the lookup to that exact date. The application service
+     * pins ``scope_type`` / ``scope_key`` so the route never reads a
+     * sibling ``scope_type`` family (e.g. ``market_temperature``)
+     * through the breadth surface.
+     */
+    get: operations["get_latest_market_breadth_api_v1_market_breadth_latest_get"];
+  };
+  "/api/v1/market-temperature/latest": {
+    /** Get Latest Market Temperature */
+    get: operations["get_latest_market_temperature_api_v1_market_temperature_latest_get"];
+  };
+  "/api/v1/opportunity-radar": {
+    /** List Opportunity Radar */
+    get: operations["list_opportunity_radar_api_v1_opportunity_radar_get"];
+  };
   "/api/v1/pipeline-runs": {
     /**
      * List Pipeline Runs
@@ -183,6 +229,36 @@ export type webhooks = Record<string, never>;
 
 export interface components {
   schemas: {
+    /** ArtifactPreviewResponse */
+    ArtifactPreviewResponse: {
+      /**
+       * Artifact Id
+       * Format: uuid
+       */
+      artifact_id: string;
+      /** Content Hash */
+      content_hash: string;
+      /**
+       * Created At
+       * Format: date-time
+       */
+      created_at: string;
+      /** Logical Uri */
+      logical_uri: string;
+      /** Media Type */
+      media_type: string;
+      /** Metadata */
+      metadata?: {
+        [key: string]: unknown;
+      };
+      /**
+       * Run Id
+       * Format: uuid
+       */
+      run_id: string;
+      /** Size Bytes */
+      size_bytes: number;
+    };
     /**
      * CandidatePoolDiffEntry
      * @description One instrument entry in a candidate-pool diff bucket.
@@ -553,6 +629,115 @@ export interface components {
       /** Message */
       message: string;
     };
+    /** ExternalArtifactResponse */
+    ExternalArtifactResponse: {
+      /**
+       * Artifact Id
+       * Format: uuid
+       */
+      artifact_id: string;
+      /** Content Hash */
+      content_hash: string;
+      /**
+       * Created At
+       * Format: date-time
+       */
+      created_at: string;
+      /** Logical Uri */
+      logical_uri: string;
+      /** Media Type */
+      media_type: string;
+      /** Metadata */
+      metadata?: {
+        [key: string]: unknown;
+      };
+      /**
+       * Run Id
+       * Format: uuid
+       */
+      run_id: string;
+      /** Size Bytes */
+      size_bytes: number;
+    };
+    /** ExternalObservationResponse */
+    ExternalObservationResponse: {
+      /** Admission Status */
+      admission_status: string;
+      /** Artifact Id */
+      artifact_id?: string | null;
+      /**
+       * As Of
+       * Format: date
+       */
+      as_of: string;
+      /** Instrument Id */
+      instrument_id?: string | null;
+      /** Metadata */
+      metadata?: {
+        [key: string]: unknown;
+      };
+      /**
+       * Observation Id
+       * Format: uuid
+       */
+      observation_id: string;
+      /**
+       * Observed At
+       * Format: date-time
+       */
+      observed_at: string;
+      /** Payload */
+      payload: {
+        [key: string]: unknown;
+      };
+      /** Producer */
+      producer: string;
+      /**
+       * Run Id
+       * Format: uuid
+       */
+      run_id: string;
+      /** Source Uri */
+      source_uri: string;
+      /** Symbol */
+      symbol?: string | null;
+    };
+    /** ExternalWorkflowRunListResponse */
+    ExternalWorkflowRunListResponse: {
+      /** Items */
+      items: components["schemas"]["ExternalWorkflowRunResponse"][];
+      /** Limit */
+      limit: number;
+      /** Offset */
+      offset: number;
+    };
+    /** ExternalWorkflowRunResponse */
+    ExternalWorkflowRunResponse: {
+      /** Finished At */
+      finished_at?: string | null;
+      /** Intake Status */
+      intake_status: string;
+      /** Metadata */
+      metadata?: {
+        [key: string]: unknown;
+      };
+      /** Producer */
+      producer: string;
+      /** Producer Status */
+      producer_status: string;
+      /**
+       * Run Id
+       * Format: uuid
+       */
+      run_id: string;
+      /** Schema Version */
+      schema_version: string;
+      /**
+       * Started At
+       * Format: date-time
+       */
+      started_at: string;
+    };
     /** HTTPValidationError */
     HTTPValidationError: {
       /** Detail */
@@ -611,6 +796,119 @@ export interface components {
       symbol: string;
       /** Underlying Index */
       underlying_index?: string | null;
+    };
+    /** IntegrationHealthResponse */
+    IntegrationHealthResponse: {
+      /** Intake Statuses */
+      intake_statuses: {
+        [key: string]: number;
+      };
+      /** Latest Run Id */
+      latest_run_id?: string | null;
+      /** Producer Statuses */
+      producer_statuses: {
+        [key: string]: number;
+      };
+      /** Sample Size */
+      sample_size: number;
+      /** Status */
+      status: string;
+    };
+    /** MarketBreadthObservationResponse */
+    MarketBreadthObservationResponse: {
+      /** Item Hash */
+      item_hash: string;
+      /** Observation Key */
+      observation_key: string;
+      /**
+       * Observed Date
+       * Format: date
+       */
+      observed_date: string;
+      /** Quality Status */
+      quality_status: string;
+      /** Source Kind */
+      source_kind: string;
+      /** Source Ref */
+      source_ref: string;
+      /** Unit */
+      unit: string;
+      /** Value */
+      value: string | null;
+    };
+    /** MarketBreadthResponse */
+    MarketBreadthResponse: {
+      /** Algorithm Version */
+      algorithm_version: string;
+      /**
+       * As Of Date
+       * Format: date
+       */
+      as_of_date: string;
+      /** Content Hash */
+      content_hash: string;
+      /** Freshness Status */
+      freshness_status: string;
+      /** Input Snapshot Id */
+      input_snapshot_id: string;
+      /** Observations */
+      observations: components["schemas"]["MarketBreadthObservationResponse"][];
+      /** Quality Status */
+      quality_status: string;
+      /** Scope Key */
+      scope_key: string;
+      /** Scope Type */
+      scope_type: string;
+      /** Snapshot Id */
+      snapshot_id: string;
+    };
+    /** MarketTemperatureObservationResponse */
+    MarketTemperatureObservationResponse: {
+      /** Item Hash */
+      item_hash: string;
+      /** Observation Key */
+      observation_key: string;
+      /**
+       * Observed Date
+       * Format: date
+       */
+      observed_date: string;
+      /** Quality Status */
+      quality_status: string;
+      /** Source Kind */
+      source_kind: string;
+      /** Source Ref */
+      source_ref: string;
+      /** Unit */
+      unit: string;
+      /** Value */
+      value: string | null;
+    };
+    /** MarketTemperatureResponse */
+    MarketTemperatureResponse: {
+      /** Algorithm Version */
+      algorithm_version: string;
+      /**
+       * As Of Date
+       * Format: date
+       */
+      as_of_date: string;
+      /** Content Hash */
+      content_hash: string;
+      /** Freshness Status */
+      freshness_status: string;
+      /** Input Snapshot Id */
+      input_snapshot_id: string;
+      /** Observations */
+      observations: components["schemas"]["MarketTemperatureObservationResponse"][];
+      /** Quality Status */
+      quality_status: string;
+      /** Scope Key */
+      scope_key: string;
+      /** Scope Type */
+      scope_type: string;
+      /** Snapshot Id */
+      snapshot_id: string;
     };
     /**
      * PipelineRunListResponse
@@ -1156,6 +1454,203 @@ export interface operations {
       200: {
         content: {
           "application/json": components["schemas"]["InstrumentListResponse"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  /** List External Workflows */
+  list_external_workflows_api_v1_external_workflows_get: {
+    parameters: {
+      query?: {
+        limit?: number;
+        offset?: number;
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      200: {
+        content: {
+          "application/json": components["schemas"]["ExternalWorkflowRunListResponse"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  /** Get External Workflow */
+  get_external_workflow_api_v1_external_workflows__run_id__get: {
+    parameters: {
+      path: {
+        run_id: string;
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      200: {
+        content: {
+          "application/json": components["schemas"]["ExternalWorkflowRunResponse"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  /** List External Artifacts */
+  list_external_artifacts_api_v1_external_workflows__run_id__artifacts_get: {
+    parameters: {
+      query?: {
+        limit?: number;
+        offset?: number;
+      };
+      path: {
+        run_id: string;
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      200: {
+        content: {
+          "application/json": components["schemas"]["ExternalArtifactResponse"][];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  /** List External Observations */
+  list_external_observations_api_v1_external_workflows__run_id__observations_get: {
+    parameters: {
+      query?: {
+        limit?: number;
+        offset?: number;
+      };
+      path: {
+        run_id: string;
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      200: {
+        content: {
+          "application/json": components["schemas"]["ExternalObservationResponse"][];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  /** Preview Artifact */
+  preview_artifact_api_v1_integration_artifacts__artifact_id__get: {
+    parameters: {
+      path: {
+        artifact_id: string;
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      200: {
+        content: {
+          "application/json": components["schemas"]["ArtifactPreviewResponse"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  /** Get Integration Health */
+  get_integration_health_api_v1_integration_health_get: {
+    responses: {
+      /** @description Successful Response */
+      200: {
+        content: {
+          "application/json": components["schemas"]["IntegrationHealthResponse"];
+        };
+      };
+    };
+  };
+  /**
+   * Get Latest Market Breadth
+   * @description Return the latest Market Breadth snapshot for ``as_of_date``.
+   *
+   * ``as_of_date`` is optional: omitting it asks the service for the
+   * newest snapshot regardless of trade date; supplying a value
+   * narrows the lookup to that exact date. The application service
+   * pins ``scope_type`` / ``scope_key`` so the route never reads a
+   * sibling ``scope_type`` family (e.g. ``market_temperature``)
+   * through the breadth surface.
+   */
+  get_latest_market_breadth_api_v1_market_breadth_latest_get: {
+    parameters: {
+      query?: {
+        as_of_date?: string | null;
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      200: {
+        content: {
+          "application/json": components["schemas"]["MarketBreadthResponse"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  /** Get Latest Market Temperature */
+  get_latest_market_temperature_api_v1_market_temperature_latest_get: {
+    responses: {
+      /** @description Successful Response */
+      200: {
+        content: {
+          "application/json": components["schemas"]["MarketTemperatureResponse"];
+        };
+      };
+    };
+  };
+  /** List Opportunity Radar */
+  list_opportunity_radar_api_v1_opportunity_radar_get: {
+    parameters: {
+      query?: {
+        admission_status?: ("pending" | "corroborated" | "admitted" | "rejected" | "conflict") | null;
+        limit?: number;
+        offset?: number;
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      200: {
+        content: {
+          "application/json": components["schemas"]["ExternalObservationResponse"][];
         };
       };
       /** @description Validation Error */

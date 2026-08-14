@@ -62,6 +62,11 @@ export const queryKeys = {
   latestCandidatePool: ["candidate-pool", "latest"] as const,
   latestCandidateDiff: ["candidate-pool", "latest", "diff"] as const,
   latestPipelineRun: ["pipeline-runs", "latest"] as const,
+  integrationHealth: ["integration", "health"] as const,
+  opportunityRadar: (filters: { admissionStatus?: string; limit: number; offset: number }) =>
+    ["opportunity-radar", filters] as const,
+  externalWorkflows: (filters: { limit: number; offset: number }) =>
+    ["external-workflows", filters] as const,
   pipelineRuns: (filters: { limit: number; offset: number }) =>
     ["pipeline-runs", filters] as const,
   researchDashboard: ["research-dashboard"] as const,

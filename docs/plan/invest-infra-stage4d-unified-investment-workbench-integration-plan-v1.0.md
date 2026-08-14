@@ -1,4 +1,4 @@
-# invest-infra：WorkBuddy + JiuwenSwarm 统一投资驾驶舱与 ETF 投资闭环实施计划
+# invest-infra：WorkBuddy + JiuwenSwarm 统一投资驾驶舱与 ETF 投资闭环总蓝图
 
 > 文档版本：v1.2
 > 文档状态：Draft for Review
@@ -9,6 +9,12 @@
 > 主要平台：`invest-infra`、WorkBuddy、JiuwenSwarm
 > 主要资产类别：A 股 ETF，A 股个股数据主要作为市场、板块和 ETF 穿透研究上下文
 > 建设原则：统一入口、平台分工、证据分层、结构化集成、可追溯、人工最终控制、逐阶段收敛
+
+> 文档职责：本文件保留 Stage 4D–4G 的产品、架构和长期路线边界，不再作为 Stage 4D 的日常派工清单。
+> Stage 4D 当前执行权威：`docs/plan/invest-infra-stage4d-mvp-phased-execution-plan-v1.0.md`。
+> Stage 4D 当前任务清单：`tasks/stage4d-mvp-phased-execution-todo.md`。
+
+> 拆分说明：本文件第 25、33–37 节保留为原始设计基线；若其任务顺序、阶段边界或验收口径与 Stage 4D 当前执行权威冲突，以分阶段执行计划为准。
 
 ---
 

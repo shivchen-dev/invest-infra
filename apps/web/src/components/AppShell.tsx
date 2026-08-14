@@ -23,6 +23,16 @@ const NAV_ITEMS: NavItem[] = [
     label: "Operations",
     description: "Pipeline Run 历史",
   },
+  {
+    to: "/opportunity-radar",
+    label: "机会雷达",
+    description: "外部候选与准入状态",
+  },
+  {
+    to: "/automation",
+    label: "Automation Center",
+    description: "外部工作流观测",
+  },
 ];
 
 interface AppShellProps {

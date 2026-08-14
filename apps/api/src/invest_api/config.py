@@ -11,6 +11,7 @@ class Settings(BaseSettings):
     app_name: str = "invest-infra-v2"
     database_url: str = "postgresql+psycopg://invest:invest_dev_password@localhost:5432/invest"
     api_cors_origins: str = "http://localhost:5173"
+    stage4d_admission_commands_enabled: bool = False
 
     @property
     def cors_origins(self) -> list[str]:

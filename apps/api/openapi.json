@@ -1,6 +1,159 @@
 {
   "components": {
     "schemas": {
+      "AdmissionDecisionRequest": {
+        "properties": {
+          "conflict_detected": {
+            "default": false,
+            "title": "Conflict Detected",
+            "type": "boolean"
+          },
+          "decided_by": {
+            "default": "api",
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Decided By",
+            "type": "string"
+          },
+          "freshness_ok": {
+            "title": "Freshness Ok",
+            "type": "boolean"
+          },
+          "idempotency_key": {
+            "maxLength": 128,
+            "minLength": 8,
+            "title": "Idempotency Key",
+            "type": "string"
+          },
+          "identity_ok": {
+            "title": "Identity Ok",
+            "type": "boolean"
+          },
+          "internal_cross_check_ok": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Internal Cross Check Ok"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "maxLength": 512,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          },
+          "rules_version": {
+            "default": "observation-admission/1.0",
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Rules Version",
+            "type": "string"
+          },
+          "unit_ok": {
+            "title": "Unit Ok",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "idempotency_key",
+          "identity_ok",
+          "freshness_ok",
+          "unit_ok"
+        ],
+        "title": "AdmissionDecisionRequest",
+        "type": "object"
+      },
+      "AdmissionDecisionResponse": {
+        "properties": {
+          "admission_status": {
+            "title": "Admission Status",
+            "type": "string"
+          },
+          "idempotent": {
+            "title": "Idempotent",
+            "type": "boolean"
+          },
+          "observation_id": {
+            "format": "uuid",
+            "title": "Observation Id",
+            "type": "string"
+          },
+          "reason": {
+            "title": "Reason",
+            "type": "string"
+          }
+        },
+        "required": [
+          "observation_id",
+          "admission_status",
+          "reason",
+          "idempotent"
+        ],
+        "title": "AdmissionDecisionResponse",
+        "type": "object"
+      },
+      "ArtifactPreviewResponse": {
+        "properties": {
+          "artifact_id": {
+            "format": "uuid",
+            "title": "Artifact Id",
+            "type": "string"
+          },
+          "content_hash": {
+            "title": "Content Hash",
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "logical_uri": {
+            "title": "Logical Uri",
+            "type": "string"
+          },
+          "media_type": {
+            "title": "Media Type",
+            "type": "string"
+          },
+          "metadata": {
+            "additionalProperties": true,
+            "title": "Metadata",
+            "type": "object"
+          },
+          "run_id": {
+            "format": "uuid",
+            "title": "Run Id",
+            "type": "string"
+          },
+          "size_bytes": {
+            "minimum": 0.0,
+            "title": "Size Bytes",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "artifact_id",
+          "run_id",
+          "logical_uri",
+          "content_hash",
+          "media_type",
+          "size_bytes",
+          "created_at"
+        ],
+        "title": "ArtifactPreviewResponse",
+        "type": "object"
+      },
       "CandidatePoolDiffEntry": {
         "description": "One instrument entry in a candidate-pool diff bucket.\n\nCarries the raw ``instrument_id`` plus the resolved display fields\nso the Web can render the diff without making a follow-up Instrument\nlookup. ``symbol`` / ``name`` / ``exchange`` are ``None`` when the\ninstrument row is missing; ordering is deterministic - ``symbol``\nascending with ``instrument_id`` as the tiebreaker.",
         "properties": {
@@ -974,6 +1127,237 @@
         "title": "ExclusionReasonResponse",
         "type": "object"
       },
+      "ExternalArtifactResponse": {
+        "properties": {
+          "artifact_id": {
+            "format": "uuid",
+            "title": "Artifact Id",
+            "type": "string"
+          },
+          "content_hash": {
+            "title": "Content Hash",
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "logical_uri": {
+            "title": "Logical Uri",
+            "type": "string"
+          },
+          "media_type": {
+            "title": "Media Type",
+            "type": "string"
+          },
+          "metadata": {
+            "additionalProperties": true,
+            "title": "Metadata",
+            "type": "object"
+          },
+          "run_id": {
+            "format": "uuid",
+            "title": "Run Id",
+            "type": "string"
+          },
+          "size_bytes": {
+            "minimum": 0.0,
+            "title": "Size Bytes",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "artifact_id",
+          "run_id",
+          "logical_uri",
+          "content_hash",
+          "media_type",
+          "size_bytes",
+          "created_at"
+        ],
+        "title": "ExternalArtifactResponse",
+        "type": "object"
+      },
+      "ExternalObservationResponse": {
+        "properties": {
+          "admission_status": {
+            "title": "Admission Status",
+            "type": "string"
+          },
+          "artifact_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Artifact Id"
+          },
+          "as_of": {
+            "format": "date",
+            "title": "As Of",
+            "type": "string"
+          },
+          "instrument_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Instrument Id"
+          },
+          "metadata": {
+            "additionalProperties": true,
+            "title": "Metadata",
+            "type": "object"
+          },
+          "observation_id": {
+            "format": "uuid",
+            "title": "Observation Id",
+            "type": "string"
+          },
+          "observed_at": {
+            "format": "date-time",
+            "title": "Observed At",
+            "type": "string"
+          },
+          "payload": {
+            "additionalProperties": true,
+            "title": "Payload",
+            "type": "object"
+          },
+          "producer": {
+            "title": "Producer",
+            "type": "string"
+          },
+          "run_id": {
+            "format": "uuid",
+            "title": "Run Id",
+            "type": "string"
+          },
+          "source_uri": {
+            "title": "Source Uri",
+            "type": "string"
+          },
+          "symbol": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Symbol"
+          }
+        },
+        "required": [
+          "observation_id",
+          "run_id",
+          "observed_at",
+          "as_of",
+          "source_uri",
+          "producer",
+          "payload",
+          "admission_status"
+        ],
+        "title": "ExternalObservationResponse",
+        "type": "object"
+      },
+      "ExternalWorkflowRunListResponse": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/ExternalWorkflowRunResponse"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "limit": {
+            "maximum": 100.0,
+            "minimum": 1.0,
+            "title": "Limit",
+            "type": "integer"
+          },
+          "offset": {
+            "minimum": 0.0,
+            "title": "Offset",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "items",
+          "limit",
+          "offset"
+        ],
+        "title": "ExternalWorkflowRunListResponse",
+        "type": "object"
+      },
+      "ExternalWorkflowRunResponse": {
+        "properties": {
+          "finished_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Finished At"
+          },
+          "intake_status": {
+            "title": "Intake Status",
+            "type": "string"
+          },
+          "metadata": {
+            "additionalProperties": true,
+            "title": "Metadata",
+            "type": "object"
+          },
+          "producer": {
+            "title": "Producer",
+            "type": "string"
+          },
+          "producer_status": {
+            "title": "Producer Status",
+            "type": "string"
+          },
+          "run_id": {
+            "format": "uuid",
+            "title": "Run Id",
+            "type": "string"
+          },
+          "schema_version": {
+            "title": "Schema Version",
+            "type": "string"
+          },
+          "started_at": {
+            "format": "date-time",
+            "title": "Started At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "run_id",
+          "producer",
+          "schema_version",
+          "producer_status",
+          "intake_status",
+          "started_at"
+        ],
+        "title": "ExternalWorkflowRunResponse",
+        "type": "object"
+      },
       "HTTPValidationError": {
         "properties": {
           "detail": {
@@ -1135,6 +1519,183 @@
           "is_active"
         ],
         "title": "InstrumentResponse",
+        "type": "object"
+      },
+      "IntegrationHealthResponse": {
+        "properties": {
+          "intake_statuses": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "title": "Intake Statuses",
+            "type": "object"
+          },
+          "latest_run_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Latest Run Id"
+          },
+          "producer_statuses": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "title": "Producer Statuses",
+            "type": "object"
+          },
+          "sample_size": {
+            "minimum": 0.0,
+            "title": "Sample Size",
+            "type": "integer"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "status",
+          "sample_size",
+          "producer_statuses",
+          "intake_statuses"
+        ],
+        "title": "IntegrationHealthResponse",
+        "type": "object"
+      },
+      "MarketBreadthObservationResponse": {
+        "properties": {
+          "item_hash": {
+            "title": "Item Hash",
+            "type": "string"
+          },
+          "observation_key": {
+            "title": "Observation Key",
+            "type": "string"
+          },
+          "observed_date": {
+            "format": "date",
+            "title": "Observed Date",
+            "type": "string"
+          },
+          "quality_status": {
+            "title": "Quality Status",
+            "type": "string"
+          },
+          "source_kind": {
+            "title": "Source Kind",
+            "type": "string"
+          },
+          "source_ref": {
+            "title": "Source Ref",
+            "type": "string"
+          },
+          "unit": {
+            "title": "Unit",
+            "type": "string"
+          },
+          "value": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Value"
+          }
+        },
+        "required": [
+          "observation_key",
+          "value",
+          "unit",
+          "observed_date",
+          "source_kind",
+          "source_ref",
+          "quality_status",
+          "item_hash"
+        ],
+        "title": "MarketBreadthObservationResponse",
+        "type": "object"
+      },
+      "MarketBreadthResponse": {
+        "properties": {
+          "algorithm_version": {
+            "title": "Algorithm Version",
+            "type": "string"
+          },
+          "as_of_date": {
+            "format": "date",
+            "title": "As Of Date",
+            "type": "string"
+          },
+          "content_hash": {
+            "title": "Content Hash",
+            "type": "string"
+          },
+          "freshness_status": {
+            "title": "Freshness Status",
+            "type": "string"
+          },
+          "input_snapshot_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "string"
+              }
+            ],
+            "title": "Input Snapshot Id"
+          },
+          "observations": {
+            "items": {
+              "$ref": "#/components/schemas/MarketBreadthObservationResponse"
+            },
+            "title": "Observations",
+            "type": "array"
+          },
+          "quality_status": {
+            "title": "Quality Status",
+            "type": "string"
+          },
+          "scope_key": {
+            "title": "Scope Key",
+            "type": "string"
+          },
+          "scope_type": {
+            "title": "Scope Type",
+            "type": "string"
+          },
+          "snapshot_id": {
+            "title": "Snapshot Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "snapshot_id",
+          "as_of_date",
+          "input_snapshot_id",
+          "algorithm_version",
+          "scope_type",
+          "scope_key",
+          "quality_status",
+          "freshness_status",
+          "content_hash",
+          "observations"
+        ],
+        "title": "MarketBreadthResponse",
         "type": "object"
       },
       "MarketTemperatureObservationResponse": {
@@ -1755,6 +2316,95 @@
           "evidence_status"
         ],
         "title": "ResearchDashboardResponse",
+        "type": "object"
+      },
+      "ResearchExternalEvidenceResponse": {
+        "properties": {
+          "admission": {
+            "additionalProperties": true,
+            "title": "Admission",
+            "type": "object"
+          },
+          "artifact_content_hash": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Artifact Content Hash"
+          },
+          "artifact_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Artifact Id"
+          },
+          "as_of": {
+            "format": "date",
+            "title": "As Of",
+            "type": "string"
+          },
+          "content_hash": {
+            "title": "Content Hash",
+            "type": "string"
+          },
+          "evidence_id": {
+            "title": "Evidence Id",
+            "type": "string"
+          },
+          "observation_id": {
+            "format": "uuid",
+            "title": "Observation Id",
+            "type": "string"
+          },
+          "observed_at": {
+            "format": "date-time",
+            "title": "Observed At",
+            "type": "string"
+          },
+          "payload": {
+            "additionalProperties": true,
+            "title": "Payload",
+            "type": "object"
+          },
+          "producer": {
+            "title": "Producer",
+            "type": "string"
+          },
+          "run_id": {
+            "format": "uuid",
+            "title": "Run Id",
+            "type": "string"
+          },
+          "source_uri": {
+            "title": "Source Uri",
+            "type": "string"
+          }
+        },
+        "required": [
+          "evidence_id",
+          "observation_id",
+          "run_id",
+          "artifact_id",
+          "artifact_content_hash",
+          "observed_at",
+          "as_of",
+          "source_uri",
+          "producer",
+          "payload",
+          "admission",
+          "content_hash"
+        ],
+        "title": "ResearchExternalEvidenceResponse",
         "type": "object"
       },
       "ResearchResultResponse": {
@@ -2380,6 +3030,429 @@
         ]
       }
     },
+    "/api/v1/external-observations/{observation_id}/admission-decisions": {
+      "post": {
+        "operationId": "decide_admission_api_v1_external_observations__observation_id__admission_decisions_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "observation_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Observation Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AdmissionDecisionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdmissionDecisionResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Decide Admission",
+        "tags": [
+          "external-observations"
+        ]
+      }
+    },
+    "/api/v1/external-workflows": {
+      "get": {
+        "operationId": "list_external_workflows_api_v1_external_workflows_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 20,
+              "maximum": 100,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "minimum": 0,
+              "title": "Offset",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExternalWorkflowRunListResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List External Workflows",
+        "tags": [
+          "external-workflows"
+        ]
+      }
+    },
+    "/api/v1/external-workflows/{run_id}": {
+      "get": {
+        "operationId": "get_external_workflow_api_v1_external_workflows__run_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Run Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExternalWorkflowRunResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get External Workflow",
+        "tags": [
+          "external-workflows"
+        ]
+      }
+    },
+    "/api/v1/external-workflows/{run_id}/artifacts": {
+      "get": {
+        "operationId": "list_external_artifacts_api_v1_external_workflows__run_id__artifacts_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Run Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 100,
+              "maximum": 100,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "minimum": 0,
+              "title": "Offset",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/ExternalArtifactResponse"
+                  },
+                  "title": "Response List External Artifacts Api V1 External Workflows  Run Id  Artifacts Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List External Artifacts",
+        "tags": [
+          "external-workflows"
+        ]
+      }
+    },
+    "/api/v1/external-workflows/{run_id}/observations": {
+      "get": {
+        "operationId": "list_external_observations_api_v1_external_workflows__run_id__observations_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Run Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 100,
+              "maximum": 100,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "minimum": 0,
+              "title": "Offset",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/ExternalObservationResponse"
+                  },
+                  "title": "Response List External Observations Api V1 External Workflows  Run Id  Observations Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List External Observations",
+        "tags": [
+          "external-workflows"
+        ]
+      }
+    },
+    "/api/v1/integration/artifacts/{artifact_id}": {
+      "get": {
+        "operationId": "preview_artifact_api_v1_integration_artifacts__artifact_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "artifact_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Artifact Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ArtifactPreviewResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Preview Artifact",
+        "tags": [
+          "integration"
+        ]
+      }
+    },
+    "/api/v1/integration/health": {
+      "get": {
+        "operationId": "get_integration_health_api_v1_integration_health_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IntegrationHealthResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Get Integration Health",
+        "tags": [
+          "integration"
+        ]
+      }
+    },
+    "/api/v1/market-breadth/latest": {
+      "get": {
+        "description": "Return the latest Market Breadth snapshot for ``as_of_date``.\n\n``as_of_date`` is optional: omitting it asks the service for the\nnewest snapshot regardless of trade date; supplying a value\nnarrows the lookup to that exact date. The application service\npins ``scope_type`` / ``scope_key`` so the route never reads a\nsibling ``scope_type`` family (e.g. ``market_temperature``)\nthrough the breadth surface.",
+        "operationId": "get_latest_market_breadth_api_v1_market_breadth_latest_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "as_of_date",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "date",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "As Of Date"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MarketBreadthResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Latest Market Breadth",
+        "tags": [
+          "market-breadth"
+        ]
+      }
+    },
     "/api/v1/market-temperature/latest": {
       "get": {
         "operationId": "get_latest_market_temperature_api_v1_market_temperature_latest_get",
@@ -2398,6 +3471,89 @@
         "summary": "Get Latest Market Temperature",
         "tags": [
           "market-temperature"
+        ]
+      }
+    },
+    "/api/v1/opportunity-radar": {
+      "get": {
+        "operationId": "list_opportunity_radar_api_v1_opportunity_radar_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "admission_status",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "pending",
+                    "corroborated",
+                    "admitted",
+                    "rejected",
+                    "conflict"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Admission Status"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 100,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "minimum": 0,
+              "title": "Offset",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/ExternalObservationResponse"
+                  },
+                  "title": "Response List Opportunity Radar Api V1 Opportunity Radar Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Opportunity Radar",
+        "tags": [
+          "opportunity-radar"
         ]
       }
     },
@@ -2665,6 +3821,59 @@
           }
         },
         "summary": "Get Research Case Evidence",
+        "tags": [
+          "research"
+        ]
+      }
+    },
+    "/api/v1/research-cases/{case_id}/external-observations/{observation_id}/evidence": {
+      "post": {
+        "operationId": "link_external_observation_api_v1_research_cases__case_id__external_observations__observation_id__evidence_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "case_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Case Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "observation_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Observation Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResearchExternalEvidenceResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Link External Observation",
         "tags": [
           "research"
         ]

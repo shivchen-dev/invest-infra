@@ -33,6 +33,14 @@ export type CandidatePoolDiffResponse = Omit<
   removed: CandidatePoolDiffEntry[];
 };
 export type PipelineRunResponse = RequiredDefined<components["schemas"]["PipelineRunResponse"]>;
+export type IntegrationHealthResponse = RequiredDefined<components["schemas"]["IntegrationHealthResponse"]>;
+export type ExternalObservationResponse = RequiredDefined<components["schemas"]["ExternalObservationResponse"]>;
+export type ExternalWorkflowRunResponse = RequiredDefined<components["schemas"]["ExternalWorkflowRunResponse"]>;
+export type ExternalArtifactResponse = RequiredDefined<components["schemas"]["ExternalArtifactResponse"]>;
+export type ExternalWorkflowRunListResponse = Omit<
+  RequiredDefined<components["schemas"]["ExternalWorkflowRunListResponse"]>,
+  "items"
+> & { items: ExternalWorkflowRunResponse[] };
 export type PipelineRunListResponse = Omit<
   RequiredDefined<components["schemas"]["PipelineRunListResponse"]>,
   "items"

@@ -1078,12 +1078,8 @@ class IndexIdentityRow(Base):
     index_code: Mapped[str] = mapped_column(String(64), nullable=False)
     index_name: Mapped[str] = mapped_column(String(160), nullable=False)
     category: Mapped[str | None] = mapped_column(String(80), nullable=True)
-    first_observed_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False
-    )
-    last_observed_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False
-    )
+    first_observed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    last_observed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
@@ -1177,9 +1173,7 @@ class IndexProfileRow(Base):
             "confidence >= 0 AND confidence <= 1",
             name="ck_index_profiles_confidence_range",
         ),
-        UniqueConstraint(
-            "index_id", "revision", name="uq_index_profiles_index_id_revision"
-        ),
+        UniqueConstraint("index_id", "revision", name="uq_index_profiles_index_id_revision"),
         Index("uq_index_profiles_content_hash", "content_hash", unique=True),
         Index("ix_index_profiles_index_id", "index_id"),
         Index("ix_index_profiles_source_provider", "source_provider"),
@@ -1266,7 +1260,9 @@ class IndexConstituentSnapshotRow(Base):
             name="ck_index_constituent_snapshots_confidence_range",
         ),
         UniqueConstraint(
-            "index_id", "as_of_date", "revision",
+            "index_id",
+            "as_of_date",
+            "revision",
             name="uq_index_constituent_snapshots_natural_key",
         ),
         Index(
@@ -1302,9 +1298,7 @@ class IndexConstituentSnapshotRow(Base):
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
 
-    index_identity: Mapped[IndexIdentityRow] = relationship(
-        back_populates="constituent_snapshots"
-    )
+    index_identity: Mapped[IndexIdentityRow] = relationship(back_populates="constituent_snapshots")
     constituents: Mapped[list[IndexConstituentRow]] = relationship(
         back_populates="snapshot",
         cascade="all, delete-orphan",
@@ -1367,9 +1361,7 @@ class IndexConstituentRow(Base):
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
 
-    snapshot: Mapped[IndexConstituentSnapshotRow] = relationship(
-        back_populates="constituents"
-    )
+    snapshot: Mapped[IndexConstituentSnapshotRow] = relationship(back_populates="constituents")
 
 
 class EtfIndexMappingRow(Base):
@@ -1446,7 +1438,10 @@ class EtfIndexMappingRow(Base):
             name="ck_etf_index_mappings_effective_to_after_from",
         ),
         UniqueConstraint(
-            "etf_id", "index_id", "effective_from", "revision",
+            "etf_id",
+            "index_id",
+            "effective_from",
+            "revision",
             name="uq_etf_index_mappings_natural_key",
         ),
         Index(
@@ -1482,9 +1477,7 @@ class EtfIndexMappingRow(Base):
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
 
-    index_identity: Mapped[IndexIdentityRow] = relationship(
-        back_populates="mappings"
-    )
+    index_identity: Mapped[IndexIdentityRow] = relationship(back_populates="mappings")
 
 
 class EtfHoldingSnapshotRow(Base):
@@ -1545,7 +1538,9 @@ class EtfHoldingSnapshotRow(Base):
             name="ck_etf_holding_snapshots_confidence_range",
         ),
         UniqueConstraint(
-            "etf_id", "as_of_date", "revision",
+            "etf_id",
+            "as_of_date",
+            "revision",
             name="uq_etf_holding_snapshots_natural_key",
         ),
         Index(
@@ -1745,15 +1740,10 @@ class ResearchRunRow(Base):
         ForeignKeyConstraint(
             ["evidence_bundle_id"],
             ["analytics.research_evidence_bundles.bundle_id"],
-            name=(
-                "fk_research_runs_evidence_bundle_id_research_evidence_bundles"
-            ),
+            name=("fk_research_runs_evidence_bundle_id_research_evidence_bundles"),
         ),
         CheckConstraint(
-            (
-                "status IN ('queued', 'running', 'succeeded', 'failed', "
-                "'cancelled')"
-            ),
+            ("status IN ('queued', 'running', 'succeeded', 'failed', 'cancelled')"),
             name="status_valid",
         ),
         CheckConstraint(
@@ -1777,10 +1767,7 @@ class ResearchRunRow(Base):
             name="external_session_id_nonempty",
         ),
         CheckConstraint(
-            (
-                "started_at IS NULL OR finished_at IS NULL "
-                "OR finished_at >= started_at"
-            ),
+            ("started_at IS NULL OR finished_at IS NULL OR finished_at >= started_at"),
             name="finished_after_started",
         ),
         Index("ix_research_runs_status", "status"),
@@ -1806,29 +1793,17 @@ class ResearchRunRow(Base):
         UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
     )
     case_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
-    evidence_pack_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), nullable=False
-    )
+    evidence_pack_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
     runner_key: Mapped[str] = mapped_column(String(120), nullable=False)
     playbook_key: Mapped[str] = mapped_column(String(120), nullable=False)
     status: Mapped[str] = mapped_column(String(24), nullable=False)
     attempt: Mapped[int] = mapped_column(Integer, nullable=False)
-    started_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), nullable=True
-    )
-    finished_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), nullable=True
-    )
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     error_summary: Mapped[str | None] = mapped_column(Text, nullable=True)
-    external_request_id: Mapped[str | None] = mapped_column(
-        String(160), nullable=True
-    )
-    external_session_id: Mapped[str | None] = mapped_column(
-        String(160), nullable=True
-    )
-    evidence_bundle_id: Mapped[uuid.UUID | None] = mapped_column(
-        UUID(as_uuid=True), nullable=True
-    )
+    external_request_id: Mapped[str | None] = mapped_column(String(160), nullable=True)
+    external_session_id: Mapped[str | None] = mapped_column(String(160), nullable=True)
+    evidence_bundle_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
@@ -1872,16 +1847,12 @@ class ResearchResultRow(Base):
         ForeignKeyConstraint(
             ["evidence_pack_id"],
             ["analytics.research_evidence_packs.id"],
-            name=(
-                "fk_research_results_evidence_pack_id_research_evidence_packs"
-            ),
+            name=("fk_research_results_evidence_pack_id_research_evidence_packs"),
         ),
         ForeignKeyConstraint(
             ["evidence_bundle_id"],
             ["analytics.research_evidence_bundles.bundle_id"],
-            name=(
-                "fk_research_results_evidence_bundle_id_bundles"
-            ),
+            name=("fk_research_results_evidence_bundle_id_bundles"),
         ),
         CheckConstraint(
             "btrim(conclusion) <> ''",
@@ -1935,12 +1906,8 @@ class ResearchResultRow(Base):
         UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
     )
     run_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
-    evidence_pack_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), nullable=False
-    )
-    evidence_bundle_id: Mapped[uuid.UUID | None] = mapped_column(
-        UUID(as_uuid=True), nullable=True
-    )
+    evidence_pack_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    evidence_bundle_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
     conclusion: Mapped[str] = mapped_column(Text, nullable=False)
     risks: Mapped[list[Any]] = mapped_column(
         JSONB,
@@ -2113,9 +2080,7 @@ class MarketObservationRow(Base):
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
 
-    snapshot: Mapped[MarketObservationSnapshotRow] = relationship(
-        back_populates="observations"
-    )
+    snapshot: Mapped[MarketObservationSnapshotRow] = relationship(back_populates="observations")
 
 
 class ResearchEvidenceBundleRow(Base):
@@ -2156,17 +2121,12 @@ class ResearchEvidenceBundleRow(Base):
         ForeignKeyConstraint(
             ["research_case_id"],
             ["analytics.research_cases.case_id"],
-            name=(
-                "fk_research_evidence_bundles_research_case_id_research_cases"
-            ),
+            name=("fk_research_evidence_bundles_research_case_id_research_cases"),
         ),
         ForeignKeyConstraint(
             ["evidence_pack_id"],
             ["analytics.research_evidence_packs.id"],
-            name=(
-                "fk_research_evidence_bundles_evidence_pack_id_"
-                "research_packs"
-            ),
+            name=("fk_research_evidence_bundles_evidence_pack_id_research_packs"),
         ),
         UniqueConstraint(
             "bundle_hash",
@@ -2193,8 +2153,7 @@ class ResearchEvidenceBundleRow(Base):
             name="snapshot_hashes_array",
         ),
         CheckConstraint(
-            "jsonb_array_length(market_snapshot_ids) = "
-            "jsonb_array_length(market_snapshot_hashes)",
+            "jsonb_array_length(market_snapshot_ids) = jsonb_array_length(market_snapshot_hashes)",
             name="snapshot_ids_hashes_same_length",
         ),
         CheckConstraint(
@@ -2202,8 +2161,7 @@ class ResearchEvidenceBundleRow(Base):
             name="snapshot_dates_array",
         ),
         CheckConstraint(
-            "jsonb_array_length(market_snapshot_ids) = "
-            "jsonb_array_length(market_snapshot_dates)",
+            "jsonb_array_length(market_snapshot_ids) = jsonb_array_length(market_snapshot_dates)",
             name="snapshot_ids_dates_same_length",
         ),
         Index(
@@ -2220,31 +2178,15 @@ class ResearchEvidenceBundleRow(Base):
     bundle_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
     )
-    research_case_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), nullable=False
-    )
-    evidence_pack_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), nullable=False
-    )
-    evidence_pack_hash: Mapped[str] = mapped_column(
-        String(64), nullable=False
-    )
+    research_case_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    evidence_pack_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    evidence_pack_hash: Mapped[str] = mapped_column(String(64), nullable=False)
     as_of_date: Mapped[date] = mapped_column(Date, nullable=False)
-    market_snapshot_ids: Mapped[list[str]] = mapped_column(
-        JSONB, nullable=False, default=list
-    )
-    market_snapshot_hashes: Mapped[list[str]] = mapped_column(
-        JSONB, nullable=False, default=list
-    )
-    market_snapshot_dates: Mapped[list[str]] = mapped_column(
-        JSONB, nullable=False, default=list
-    )
-    schema_version: Mapped[str] = mapped_column(
-        String(32), nullable=False
-    )
-    bundle_hash: Mapped[str] = mapped_column(
-        String(64), nullable=False
-    )
+    market_snapshot_ids: Mapped[list[str]] = mapped_column(JSONB, nullable=False, default=list)
+    market_snapshot_hashes: Mapped[list[str]] = mapped_column(JSONB, nullable=False, default=list)
+    market_snapshot_dates: Mapped[list[str]] = mapped_column(JSONB, nullable=False, default=list)
+    schema_version: Mapped[str] = mapped_column(String(32), nullable=False)
+    bundle_hash: Mapped[str] = mapped_column(String(64), nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
@@ -2254,15 +2196,20 @@ class StockPriceLimitRow(Base):
     __tablename__ = "stock_price_limits"
     __table_args__ = (
         ForeignKeyConstraint(
-            ["instrument_id"], ["core.instruments.id"],
+            ["instrument_id"],
+            ["core.instruments.id"],
             name="fk_stock_price_limits_instrument_id_core_instruments",
         ),
         ForeignKeyConstraint(
-            ["source_batch_id"], ["raw.provider_batches.id"],
+            ["source_batch_id"],
+            ["raw.provider_batches.id"],
             name="fk_stock_price_limits_source_batch_id_raw_provider_batches",
         ),
         UniqueConstraint(
-            "instrument_id", "trade_date", "revision", "row_hash",
+            "instrument_id",
+            "trade_date",
+            "revision",
+            "row_hash",
             name="uq_stock_price_limits_instrument_trade_date_revision_row_hash",
         ),
         CheckConstraint("revision >= 1", name="revision_positive"),
@@ -2291,6 +2238,160 @@ class StockPriceLimitRow(Base):
     observed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     revision: Mapped[int] = mapped_column(Integer, nullable=False)
     row_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
+class ExternalWorkflowRunRow(Base):
+    __tablename__ = "external_workflow_runs"
+    __table_args__ = (
+        CheckConstraint("length(producer) > 0", name="producer_nonempty"),
+        CheckConstraint("length(schema_version) > 0", name="schema_version_nonempty"),
+        CheckConstraint("length(producer_status) > 0", name="producer_status_nonempty"),
+        CheckConstraint("length(intake_status) > 0", name="intake_status_nonempty"),
+        CheckConstraint("jsonb_typeof(metadata) = 'object'", name="metadata_object"),
+        Index("ix_external_workflow_runs_producer_status", "producer_status"),
+        Index("ix_external_workflow_runs_intake_status", "intake_status"),
+        Index("ix_external_workflow_runs_started_at", "started_at"),
+        {"schema": "integration"},
+    )
+
+    run_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True)
+    producer: Mapped[str] = mapped_column(String(64), nullable=False)
+    schema_version: Mapped[str] = mapped_column(String(32), nullable=False)
+    producer_status: Mapped[str] = mapped_column(String(24), nullable=False)
+    intake_status: Mapped[str] = mapped_column(String(24), nullable=False)
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    metadata_json: Mapped[dict[str, Any]] = mapped_column(
+        "metadata", JSONB, nullable=False, server_default=text("'{}'::jsonb"), default=dict
+    )
+
+
+class ExternalArtifactRow(Base):
+    __tablename__ = "external_artifacts"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["run_id"],
+            ["integration.external_workflow_runs.run_id"],
+            name="fk_external_artifacts_run_id_external_workflow_runs",
+        ),
+        CheckConstraint("length(logical_uri) > 0", name="logical_uri_nonempty"),
+        CheckConstraint("length(content_hash) = 64", name="content_hash_len64"),
+        CheckConstraint("length(media_type) > 0", name="media_type_nonempty"),
+        CheckConstraint("size_bytes >= 0", name="size_bytes_nonnegative"),
+        CheckConstraint("jsonb_typeof(metadata) = 'object'", name="metadata_object"),
+        UniqueConstraint("run_id", "logical_uri", name="uq_external_artifacts_run_uri"),
+        Index("ix_external_artifacts_run_id", "run_id"),
+        Index("ix_external_artifacts_content_hash", "content_hash"),
+        {"schema": "integration"},
+    )
+
+    artifact_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True)
+    run_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    logical_uri: Mapped[str] = mapped_column(String(512), nullable=False)
+    content_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    media_type: Mapped[str] = mapped_column(String(128), nullable=False)
+    size_bytes: Mapped[int] = mapped_column(Integer, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    metadata_json: Mapped[dict[str, Any]] = mapped_column(
+        "metadata", JSONB, nullable=False, server_default=text("'{}'::jsonb"), default=dict
+    )
+
+
+class ExternalObservationRow(Base):
+    __tablename__ = "external_observations"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["run_id"],
+            ["integration.external_workflow_runs.run_id"],
+            name="fk_external_observations_run_id_external_workflow_runs",
+        ),
+        ForeignKeyConstraint(
+            ["artifact_id"],
+            ["integration.external_artifacts.artifact_id"],
+            name="fk_external_observations_artifact_id_external_artifacts",
+        ),
+        ForeignKeyConstraint(
+            ["instrument_id"],
+            ["core.instruments.id"],
+            name="fk_external_observations_instrument_id_core_instruments",
+        ),
+        CheckConstraint("length(source_uri) > 0", name="source_uri_nonempty"),
+        CheckConstraint("length(producer) > 0", name="producer_nonempty"),
+        CheckConstraint("length(admission_status) > 0", name="admission_status_nonempty"),
+        CheckConstraint("jsonb_typeof(payload) = 'object'", name="payload_object"),
+        CheckConstraint("jsonb_typeof(metadata) = 'object'", name="metadata_object"),
+        Index("ix_external_observations_run_id", "run_id"),
+        Index("ix_external_observations_admission_status", "admission_status"),
+        Index("ix_external_observations_as_of", "as_of"),
+        {"schema": "integration"},
+    )
+
+    observation_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True)
+    run_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    artifact_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
+    observed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    as_of: Mapped[date] = mapped_column(Date, nullable=False)
+    source_uri: Mapped[str] = mapped_column(String(512), nullable=False)
+    producer: Mapped[str] = mapped_column(String(64), nullable=False)
+    payload: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    symbol: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    instrument_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
+    admission_status: Mapped[str] = mapped_column(
+        String(24), nullable=False, server_default="pending"
+    )
+    metadata_json: Mapped[dict[str, Any]] = mapped_column(
+        "metadata", JSONB, nullable=False, server_default=text("'{}'::jsonb"), default=dict
+    )
+
+
+class ResearchExternalEvidenceRow(Base):
+    """Immutable admitted external evidence bound to a Research Case."""
+
+    __tablename__ = "research_external_evidence"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["research_case_id"], ["analytics.research_cases.case_id"],
+            name="fk_research_external_evidence_case",
+        ),
+        ForeignKeyConstraint(
+            ["observation_id"], ["integration.external_observations.observation_id"],
+            name="fk_research_external_evidence_observation",
+        ),
+        ForeignKeyConstraint(
+            ["artifact_id"], ["integration.external_artifacts.artifact_id"],
+            name="fk_research_external_evidence_artifact",
+        ),
+        UniqueConstraint(
+            "research_case_id", "observation_id",
+            name="uq_research_external_evidence_case_observation",
+        ),
+        UniqueConstraint("evidence_id", name="uq_research_external_evidence_evidence_id"),
+        CheckConstraint("length(evidence_id) > 0", name="evidence_id_nonempty"),
+        CheckConstraint("length(content_hash) = 64", name="content_hash_len64"),
+        CheckConstraint("jsonb_typeof(payload) = 'object'", name="payload_object"),
+        CheckConstraint("jsonb_typeof(admission) = 'object'", name="admission_object"),
+        {"schema": "analytics"},
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    research_case_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    observation_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    run_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    artifact_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
+    artifact_content_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    evidence_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    content_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    observed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    as_of: Mapped[date] = mapped_column(Date, nullable=False)
+    source_uri: Mapped[str] = mapped_column(String(512), nullable=False)
+    producer: Mapped[str] = mapped_column(String(64), nullable=False)
+    payload: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    admission: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )

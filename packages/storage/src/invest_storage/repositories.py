@@ -92,6 +92,15 @@ from invest_domain.instruments import (
     InstrumentStatus,
     InstrumentType,
 )
+from invest_domain.integration import (
+    AdmissionStatus,
+    ExternalArtifact,
+    ExternalEvidenceItem,
+    ExternalObservation,
+    ExternalWorkflowRun,
+    IntakeStatus,
+    ProducerStatus,
+)
 from invest_domain.market_data.models import DailyBar
 from invest_domain.market_data.values import Adjust, TradingStatus
 from invest_domain.pipeline import PipelineRun, PipelineRunStatus
@@ -134,6 +143,9 @@ from invest_storage.models import (
     EtfIndexMappingRow,
     EtfProfileFieldRow,
     EtfProfileRow,
+    ExternalArtifactRow,
+    ExternalObservationRow,
+    ExternalWorkflowRunRow,
     IndexConstituentRow,
     IndexConstituentSnapshotRow,
     IndexIdentityRow,
@@ -151,6 +163,7 @@ from invest_storage.models import (
     ResearchContextPackRow,
     ResearchEvidenceBundleRow,
     ResearchEvidencePackRow,
+    ResearchExternalEvidenceRow,
     ResearchResultRow,
     ResearchRunRow,
     StockPriceLimitRow,
@@ -5247,3 +5260,268 @@ def _row_to_research_evidence_bundle(
 
 class ResearchEvidenceBundleTransitionError(RuntimeError):
     """Raised when ``add`` cannot honour the bundle uniqueness contract."""
+
+
+class SqlAlchemyExternalWorkflowRunRepository:
+    """Persistence adapter for immutable external producer run metadata."""
+
+    def __init__(self, session: Session) -> None:
+        self._session = session
+
+    def add(self, run: ExternalWorkflowRun) -> ExternalWorkflowRun:
+        row = ExternalWorkflowRunRow(
+            run_id=run.run_id,
+            producer=run.producer,
+            schema_version=run.schema_version,
+            producer_status=run.producer_status.value,
+            intake_status=run.intake_status.value,
+            started_at=run.started_at,
+            finished_at=run.finished_at,
+            metadata_json=dict(run.metadata),
+        )
+        self._session.add(row)
+        self._session.flush()
+        return _row_to_external_workflow_run(row)
+
+    def get_by_id(self, run_id: UUID) -> ExternalWorkflowRun | None:
+        row = self._session.get(ExternalWorkflowRunRow, run_id)
+        return _row_to_external_workflow_run(row) if row is not None else None
+
+    def list_recent(self, *, limit: int = 50, offset: int = 0) -> list[ExternalWorkflowRun]:
+        rows = self._session.scalars(
+            select(ExternalWorkflowRunRow)
+            .order_by(ExternalWorkflowRunRow.started_at.desc(), ExternalWorkflowRunRow.run_id)
+            .offset(offset)
+            .limit(limit)
+        ).all()
+        return [_row_to_external_workflow_run(row) for row in rows]
+
+
+class SqlAlchemyExternalArtifactRepository:
+    """Persistence adapter for immutable external artifacts."""
+
+    def __init__(self, session: Session) -> None:
+        self._session = session
+
+    def add(self, artifact: ExternalArtifact) -> ExternalArtifact:
+        row = ExternalArtifactRow(
+            artifact_id=artifact.artifact_id,
+            run_id=artifact.run_id,
+            logical_uri=artifact.logical_uri,
+            content_hash=artifact.content_hash,
+            media_type=artifact.media_type,
+            size_bytes=artifact.size_bytes,
+            created_at=artifact.created_at,
+            metadata_json=dict(artifact.metadata),
+        )
+        self._session.add(row)
+        self._session.flush()
+        return _row_to_external_artifact(row)
+
+    def get_by_id(self, artifact_id: UUID) -> ExternalArtifact | None:
+        row = self._session.get(ExternalArtifactRow, artifact_id)
+        return _row_to_external_artifact(row) if row is not None else None
+
+    def list_by_run(
+        self, run_id: UUID, *, limit: int = 100, offset: int = 0
+    ) -> list[ExternalArtifact]:
+        rows = self._session.scalars(
+            select(ExternalArtifactRow)
+            .where(ExternalArtifactRow.run_id == run_id)
+            .order_by(ExternalArtifactRow.created_at, ExternalArtifactRow.artifact_id)
+            .offset(offset)
+            .limit(limit)
+        ).all()
+        return [_row_to_external_artifact(row) for row in rows]
+
+
+class SqlAlchemyExternalObservationRepository:
+    """Persistence adapter for external facts before formal admission."""
+
+    def __init__(self, session: Session) -> None:
+        self._session = session
+
+    def add(self, observation: ExternalObservation) -> ExternalObservation:
+        row = ExternalObservationRow(
+            observation_id=observation.observation_id,
+            run_id=observation.run_id,
+            artifact_id=observation.artifact_id,
+            observed_at=observation.observed_at,
+            as_of=observation.as_of,
+            source_uri=observation.source_uri,
+            producer=observation.producer,
+            payload=dict(observation.payload),
+            symbol=observation.symbol,
+            instrument_id=observation.instrument_id,
+            admission_status=observation.admission_status.value,
+            metadata_json=dict(observation.metadata),
+        )
+        self._session.add(row)
+        self._session.flush()
+        return _row_to_external_observation(row)
+
+
+    def get_by_id(self, observation_id: UUID) -> ExternalObservation | None:
+        row = self._session.get(ExternalObservationRow, observation_id)
+        return _row_to_external_observation(row) if row is not None else None
+
+    def list_by_run(
+        self, run_id: UUID, *, limit: int = 100, offset: int = 0
+    ) -> list[ExternalObservation]:
+        rows = self._session.scalars(
+            select(ExternalObservationRow)
+            .where(ExternalObservationRow.run_id == run_id)
+            .order_by(ExternalObservationRow.observed_at, ExternalObservationRow.observation_id)
+            .offset(offset)
+            .limit(limit)
+        ).all()
+        return [_row_to_external_observation(row) for row in rows]
+
+    def list_by_admission_status(
+        self, status: AdmissionStatus, *, limit: int = 100, offset: int = 0
+    ) -> list[ExternalObservation]:
+        rows = self._session.scalars(
+            select(ExternalObservationRow)
+            .where(ExternalObservationRow.admission_status == status.value)
+            .order_by(ExternalObservationRow.observed_at, ExternalObservationRow.observation_id)
+            .offset(offset)
+            .limit(limit)
+        ).all()
+        return [_row_to_external_observation(row) for row in rows]
+
+    def list_recent(
+        self,
+        *,
+        status: AdmissionStatus | None = None,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> list[ExternalObservation]:
+        """Return radar candidates newest first with an optional status filter."""
+        statement = select(ExternalObservationRow)
+        if status is not None:
+            statement = statement.where(ExternalObservationRow.admission_status == status.value)
+        rows = self._session.scalars(
+            statement
+            .order_by(
+                ExternalObservationRow.observed_at.desc(),
+                ExternalObservationRow.observation_id,
+            )
+            .offset(offset)
+            .limit(limit)
+        ).all()
+        return [_row_to_external_observation(row) for row in rows]
+
+    def save_admission(self, observation: ExternalObservation) -> ExternalObservation:
+        """Persist only an admission state/metadata transition."""
+        row = self._session.get(ExternalObservationRow, observation.observation_id)
+        if row is None:
+            raise LookupError(f"ExternalObservation {observation.observation_id!s} not found")
+        row.admission_status = observation.admission_status.value
+        row.metadata_json = dict(observation.metadata)
+        self._session.flush()
+        return _row_to_external_observation(row)
+
+
+class SqlAlchemyResearchExternalEvidenceRepository:
+    """Idempotent persistence for admitted evidence bound to a Research Case."""
+
+    def __init__(self, session: Session) -> None:
+        self._session = session
+
+    def add(self, research_case_id: UUID, item: ExternalEvidenceItem) -> ExternalEvidenceItem:
+        row = ResearchExternalEvidenceRow(
+            research_case_id=research_case_id,
+            observation_id=item.observation_id,
+            run_id=item.run_id,
+            artifact_id=item.artifact_id,
+            artifact_content_hash=item.artifact_content_hash,
+            evidence_id=item.evidence_id,
+            content_hash=item.content_hash,
+            observed_at=item.observed_at,
+            as_of=item.as_of,
+            source_uri=item.source_uri,
+            producer=item.producer,
+            payload=dict(item.payload),
+            admission=dict(item.admission),
+        )
+        existing = self._session.scalars(
+            select(ResearchExternalEvidenceRow).where(
+                ResearchExternalEvidenceRow.research_case_id == research_case_id,
+                ResearchExternalEvidenceRow.observation_id == item.observation_id,
+            )
+        ).first()
+        if existing is not None:
+            if existing.content_hash != item.content_hash:
+                raise ValueError("existing Research Case evidence content differs")
+            return _row_to_external_evidence(existing)
+        self._session.add(row)
+        self._session.flush()
+        return _row_to_external_evidence(row)
+
+    def list_by_case(self, research_case_id: UUID) -> list[ExternalEvidenceItem]:
+        rows = self._session.scalars(
+            select(ResearchExternalEvidenceRow)
+            .where(ResearchExternalEvidenceRow.research_case_id == research_case_id)
+            .order_by(ResearchExternalEvidenceRow.created_at, ResearchExternalEvidenceRow.id)
+        ).all()
+        return [_row_to_external_evidence(row) for row in rows]
+
+
+def _row_to_external_workflow_run(row: ExternalWorkflowRunRow) -> ExternalWorkflowRun:
+    return ExternalWorkflowRun(
+        run_id=row.run_id,
+        producer=row.producer,
+        schema_version=row.schema_version,
+        producer_status=ProducerStatus(row.producer_status),
+        intake_status=IntakeStatus(row.intake_status),
+        started_at=row.started_at,
+        finished_at=row.finished_at,
+        metadata=dict(row.metadata_json or {}),
+    )
+
+
+def _row_to_external_artifact(row: ExternalArtifactRow) -> ExternalArtifact:
+    return ExternalArtifact(
+        artifact_id=row.artifact_id,
+        run_id=row.run_id,
+        logical_uri=row.logical_uri,
+        content_hash=row.content_hash,
+        media_type=row.media_type,
+        size_bytes=row.size_bytes,
+        created_at=row.created_at,
+        metadata=dict(row.metadata_json or {}),
+    )
+
+
+def _row_to_external_observation(row: ExternalObservationRow) -> ExternalObservation:
+    return ExternalObservation(
+        observation_id=row.observation_id,
+        run_id=row.run_id,
+        artifact_id=row.artifact_id,
+        observed_at=row.observed_at,
+        as_of=row.as_of,
+        source_uri=row.source_uri,
+        producer=row.producer,
+        payload=dict(row.payload or {}),
+        symbol=row.symbol,
+        instrument_id=row.instrument_id,
+        admission_status=AdmissionStatus(row.admission_status),
+        metadata=dict(row.metadata_json or {}),
+    )
+
+
+def _row_to_external_evidence(row: ResearchExternalEvidenceRow) -> ExternalEvidenceItem:
+    return ExternalEvidenceItem(
+        evidence_id=row.evidence_id,
+        observation_id=row.observation_id,
+        run_id=row.run_id,
+        artifact_id=row.artifact_id,
+        artifact_content_hash=row.artifact_content_hash,
+        observed_at=row.observed_at,
+        as_of=row.as_of,
+        source_uri=row.source_uri,
+        producer=row.producer,
+        payload=dict(row.payload or {}),
+        admission=dict(row.admission or {}),
+        content_hash=row.content_hash,
+    )
