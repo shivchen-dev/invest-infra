@@ -64,24 +64,24 @@ WorkBuddy candidate artifact
 
 ### M1：候选适配与轻量校验
 
-- [ ] 实现 2.0.0 candidates JSON parser；
-- [ ] 实现 1.1.1 / 1.1.2 历史三件套 candidate extractor；
-- [ ] 实现 run-level 和 item-level 轻量校验；
-- [ ] 输出标准化 candidate intake result。
+- [x] 实现 2.0.0 candidates JSON parser；
+- [x] 实现 1.1.1 / 1.1.2 历史三件套 candidate extractor；
+- [x] 实现 run-level 和 item-level 轻量校验；
+- [x] 输出标准化 candidate intake result。
 
 ### M2：归档、去重与候选池接入
 
-- [ ] 原始产物不可变归档；
-- [ ] 实现运行幂等与内容冲突保护；
-- [ ] 实现 symbol resolution 和业务去重；
-- [ ] 投影至投研系统候选池。
+- [x] 原始产物不可变归档；
+- [x] 实现运行幂等与内容冲突保护；
+- [x] 实现 symbol resolution 和业务去重；
+- [x] 投影至投研系统候选池（纯函数切片，数据库投影待 Stage 4D）。
 
 ### M3：真实样本验收
 
 - [ ] 现有 1.1.1 真实样本能提取候选；
-- [ ] 评分不可复算、ranking 缺失、source refs 不完整不阻断入池；
-- [ ] 验证单项拒绝、去重、幂等和原始归档；
-- [ ] Pipeline 回归通过。
+- [x] 评分不可复算、ranking 缺失、source refs 不完整不阻断入池；
+- [x] 验证单项拒绝、去重、幂等和原始归档；
+- [x] Pipeline 回归通过。
 
 ## 6. Definition of Done
 
