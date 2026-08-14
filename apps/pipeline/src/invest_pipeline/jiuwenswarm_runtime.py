@@ -26,8 +26,12 @@ from invest_pipeline.adapters.jiuwenswarm import (
 from invest_pipeline.research_orchestration_service import (
     ResearchOrchestrationService,
 )
+from invest_pipeline.research_run_worker import ResearchRunWorker
 
-__all__ = ["build_jiuwenswarm_orchestration_service"]
+__all__ = [
+    "build_jiuwenswarm_orchestration_service",
+    "build_jiuwenswarm_worker",
+]
 
 
 def build_jiuwenswarm_orchestration_service(
@@ -52,30 +56,62 @@ def build_jiuwenswarm_orchestration_service(
     component allowed to invoke the external helper.
     """
 
+    orchestration, _uow_factory = _build_components(
+        database_url=database_url,
+        helper_path=helper_path,
+        workspace=workspace,
+        artifact_root=artifact_root,
+        playbook=playbook,
+        python_executable=python_executable,
+        mode=mode,
+        timeout_seconds=timeout_seconds,
+        idle_timeout_seconds=idle_timeout_seconds,
+        adapter_version=adapter_version,
+        transport=transport,
+        clock=clock,
+    )
+    return orchestration
+
+
+def build_jiuwenswarm_worker(
+    **kwargs,
+) -> ResearchRunWorker:
+    """Build the production worker that consumes queued ResearchRun rows."""
+
+    orchestration, uow_factory = _build_components(**kwargs)
+    return ResearchRunWorker(uow_factory=uow_factory, orchestration=orchestration)
+
+
+def _build_components(**kwargs):
+    playbook = kwargs["playbook"]
     if not isinstance(playbook, ResearchPlaybook):
         raise TypeError("playbook must be a ResearchPlaybook")
+    transport = kwargs.get("transport")
     if transport is None:
         transport = JiuwenSwarmCliGatewayTransport(
             settings=JiuwenSwarmCliSettings(
-                helper_path=helper_path,
-                workspace=workspace,
-                artifact_root=artifact_root,
-                python_executable=python_executable or default_python_executable(),
-                mode=mode,
-                timeout_seconds=timeout_seconds,
-                idle_timeout_seconds=idle_timeout_seconds,
+                helper_path=kwargs["helper_path"],
+                workspace=kwargs["workspace"],
+                artifact_root=kwargs["artifact_root"],
+                python_executable=kwargs.get("python_executable") or default_python_executable(),
+                mode=kwargs.get("mode", "default"),
+                timeout_seconds=kwargs.get("timeout_seconds", 900.0),
+                idle_timeout_seconds=kwargs.get("idle_timeout_seconds", 120.0),
             )
         )
-
-    engine = build_engine(database_url)
+    engine = build_engine(kwargs["database_url"])
     database_sessions = session_factory(engine)
-    runner = JiuwenSwarmResearchRunner(
-        transport=transport,
-        adapter_version=adapter_version,
-    )
-    return ResearchOrchestrationService(
-        runner=runner,
+
+    def uow_factory():
+        return SqlAlchemyUnitOfWork(database_sessions)
+
+    orchestration = ResearchOrchestrationService(
+        runner=JiuwenSwarmResearchRunner(
+            transport=transport,
+            adapter_version=kwargs.get("adapter_version", "jiuwenswarm-adapter-v1"),
+        ),
         playbook=playbook,
-        uow_factory=lambda: SqlAlchemyUnitOfWork(database_sessions),
-        clock=clock or (lambda: datetime.now(UTC)),
+        uow_factory=uow_factory,
+        clock=kwargs.get("clock") or (lambda: datetime.now(UTC)),
     )
+    return orchestration, uow_factory
