@@ -62,7 +62,11 @@
 - [x] 3.2 Admission Command API 与审计（默认关闭 feature flag、幂等键、服务端校验、状态审计已完成）
 - [x] 3.3 admitted Observation → Evidence Item（新增不可变 provenance-bound EvidenceItem；仅 admitted 可转换，保留 artifact hash、准入审计和原始 payload）
 - [x] 3.4 Research Case 创建/关联（支持指定 Case 关联和从 admitted Observation 自动创建 Case；包含 Case/Observation/Artifact 校验、幂等持久化和事务提交）
-- [ ] 3.5 复用 JiuwenSwarm Research 路径
+- [ ] 3.5 复用 JiuwenSwarm Research 路径（首个受控交接切片已完成：
+  `ExternalResearchHandoffService` 仅允许“已准入外部证据 + 已持久化完整
+  `EvidencePack`”创建 `jiuwenswarm-runner-v1` 的 queued `ResearchRun`，并复用
+  现有 `ResearchOrchestrationService` 执行；真实 runner 组合根与 Fake E2E
+  仍待完成）
 - [ ] 3.6 Research Workspace External Discovery/Admission Widgets
 - [ ] 3.7 Integration Timeline 与 Artifact Viewer
 - [ ] 3.8 Fake Jiuwen E2E
