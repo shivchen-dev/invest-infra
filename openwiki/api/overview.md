@@ -1,9 +1,9 @@
 ---
 type: Concept
 title: API overview
-description: FastAPI routers, Pydantic response shapes and the read-only endpoint surface for ETF data, candidate-pool results and diffs, personal pipeline-run status and paginated history, data freshness, the PR-7 research-case / evidence / run / result lifecycle queries, the PR-W03 research dashboard aggregate and PR-W05 case workspace read models, the Stage 4B market-temperature and market-breadth latest endpoints, and the PR-MCP-MINIMAL Model Context Protocol server, including the legacy /v1/instruments endpoint and the architecture-governance application-service split.
+description: FastAPI routers, Pydantic response shapes and the endpoint surface for ETF data, candidate-pool results and diffs, personal pipeline-run status and paginated history, data freshness, the PR-7 research-case / evidence / run / result lifecycle queries, the PR-W03 research dashboard aggregate and PR-W05 case workspace read models, the Stage 4B market-temperature and market-breadth latest endpoints, the Stage 4D External Integration Workbench (external-workflow / artifact / observation read routes, integration health, opportunity radar, the gated admission-decision command, and the Research-Case ↔ External-Observation evidence-link command), and the PR-MCP-MINIMAL Model Context Protocol server, including the legacy /v1/instruments endpoint and the architecture-governance application-service split. The Stage 4C Core Data Layer Integration and the ADR-0013 Provider–Engine–Event seam change the pipeline and storage surfaces without changing the API surface in this slice.
 resource: /openwiki/api/overview.md
-tags: [api, fastapi, routers, pydantic, etf, candidate-pool, research, research-dashboard, research-workspace, mcp, application-service, governance, stage4b, market-breadth, market-temperature]
+tags: [api, fastapi, routers, pydantic, etf, candidate-pool, research, research-dashboard, research-workspace, mcp, application-service, governance, stage4b, market-breadth, market-temperature, stage4d, external-workflows, opportunity-radar, integration-health, observation-admission]
 ---
 
 # API overview
@@ -36,7 +36,12 @@ apps/api/src/invest_api/
 │   ├── data_freshness.py  # personal daily data-freshness summary
 │   ├── research.py        # PR-7 read-only research lifecycle queries
 │   ├── market_temperature.py  # Stage 4B market-temperature latest snapshot
-│   └── market_breadth.py  # Stage 4B market-breadth latest snapshot
+│   ├── market_breadth.py  # Stage 4B market-breadth latest snapshot
+│   ├── external_workflows.py  # Stage 4D external-workflow / artifact / observation list endpoints
+│   ├── integration_health.py  # Stage 4D /api/v1/integration/health + safe artifact preview
+│   ├── opportunity_radar.py   # Stage 4D /api/v1/opportunity-radar read surface
+│   ├── admission.py            # Stage 4D gated POST admission-decision command
+│   └── research_external_evidence.py  # Stage 4D Research-Case ↔ External-Observation evidence link
 ├── application/
 │   ├── etf.py             # EtfQueryService
 │   ├── candidate_pool.py  # CandidatePoolQueryService
@@ -44,7 +49,10 @@ apps/api/src/invest_api/
 │   ├── data_freshness.py  # DataFreshnessQueryService
 │   ├── research.py        # ResearchQueryService (PR-7)
 │   ├── market_temperature.py  # MarketTemperatureQueryService (Stage 4B)
-│   └── market_breadth.py  # MarketBreadthQueryService (Stage 4B)
+│   ├── market_breadth.py  # MarketBreadthQueryService (Stage 4B)
+│   ├── external_workflows.py  # Stage 4D ExternalWorkflowQueryService
+│   ├── admission.py            # Stage 4D ObservationAdmissionCommandService
+│   └── research_external_evidence.py  # Stage 4D ResearchExternalEvidenceService
 ├── mcp_server.py          # PR-MCP-MINIMAL read-only MCP server
 └── schemas/
     ├── __init__.py        # re-exports all public response shapes
@@ -55,7 +63,11 @@ apps/api/src/invest_api/
     ├── data_freshness.py  # DataFreshnessResponse + status vocabulary
     ├── research.py        # ResearchCase / EvidencePack / Run / Result + lists
     ├── market_temperature.py  # MarketTemperatureResponse (Stage 4B)
-    └── market_breadth.py  # MarketBreadthResponse (Stage 4B)
+    ├── market_breadth.py  # MarketBreadthResponse (Stage 4B)
+    ├── external_workflows.py  # Stage 4D run / artifact / observation shapes
+    ├── integration_health.py  # Stage 4D IntegrationHealthResponse + ArtifactPreviewResponse
+    ├── admission.py            # Stage 4D AdmissionDecisionRequest / Response
+    └── research_external_evidence.py  # Stage 4D ResearchExternalEvidenceResponse
 ```
 
 The routers stayed thin per the
@@ -91,6 +103,15 @@ and application service
 | `GET /api/v1/research-dashboard` | `routers/research.py` | PR-W03 read-only cockpit dashboard aggregate (counts, latest-case, evidence slot, market-status unavailable placeholder, bounded recent-runs page). |
 | `GET /api/v1/market-temperature/latest` | `routers/market_temperature.py` | Stage 4B Market Temperature snapshot lookup; the application service narrows the snapshot family to the fixed `market_temperature` scope and returns the latest `MarketObservationSnapshot`. Missing snapshots return 404. |
 | `GET /api/v1/market-breadth/latest` | `routers/market_breadth.py` | Stage 4B Market Breadth snapshot lookup scoped to `(scope_type='ashare_universe', scope_key='ashare_active_universe_v1')`; accepts an optional `as_of_date` query parameter for historical lookups and serialises the matching `MarketObservationSnapshot` (carrying `advancing_ratio` / `above_ma20_ratio` / `breadth_participation`). Missing snapshots return 404. |
+| `GET /api/v1/external-workflows` | `routers/external_workflows.py` | Stage 4D paginated recent external-workflow runs (`limit` 1..100, `offset` ≥0; default `limit=20`). Items ordered by `started_at` descending and `run_id` for stable pagination. |
+| `GET /api/v1/external-workflows/{run_id}` | `routers/external_workflows.py` | Stage 4D single external-workflow run by UUID; missing runs return 404, malformed UUIDs return 422. |
+| `GET /api/v1/external-workflows/{run_id}/artifacts` | `routers/external_workflows.py` | Stage 4D paginated artifact list for a run (`limit` 1..100, `offset` ≥0; default `limit=100`). 404 when the run is missing. |
+| `GET /api/v1/external-workflows/{run_id}/observations` | `routers/external_workflows.py` | Stage 4D paginated observation list for a run (`limit` 1..100, `offset` ≥0; default `limit=100`). 404 when the run is missing. |
+| `GET /api/v1/opportunity-radar` | `routers/opportunity_radar.py` | Stage 4D cross-run opportunity radar. Optional `admission_status` query filter (`pending` / `corroborated` / `admitted` / `rejected` / `conflict`). `limit` 1..100 (default 50), `offset` ≥0; results ordered by `observed_at` descending. |
+| `GET /api/v1/integration/health` | `routers/integration_health.py` | Stage 4D integration health banner. Reads the 100 most recent external-workflow runs, counts `producer_status` / `intake_status` buckets, derives `status` (`healthy` unless any `failed` runs are visible), and echoes `latest_run_id` if any. |
+| `GET /api/v1/integration/artifacts/{artifact_id}` | `routers/integration_health.py` | Stage 4D safe artifact preview. Returns `ArtifactPreviewResponse` (logical URI + `content_hash` / `media_type` / `size_bytes` / metadata). 404 when the artifact is missing — no byte payload is exposed. |
+| `POST /api/v1/external-observations/{observation_id}/admission-decisions` | `routers/admission.py` | Stage 4D **gated** admission-decision command. Disabled by default; the router returns 404 unless `Settings.stage4d_admission_commands_enabled=True`. Carries an `Idempotency-Key` header that must match the body's `idempotency_key` (409 otherwise) and an `AdmissionDecisionRequest` payload mapping 1-1 to `invest_domain.integration.AdmissionVerification`. Repeated idempotency keys short-circuit with `idempotent=True`; non-pending observations raise 409, missing observations raise 404. |
+| `POST /api/v1/research-cases/{case_id}/external-observations/{observation_id}/evidence` | `routers/research_external_evidence.py` | Stage 4D Research-Case ↔ External-Observation evidence link. Returns 201 with `ResearchExternalEvidenceResponse`. Rejects with 404 if the case or observation is missing, with 409 if the observation's `instrument_id` does not match the case's `instrument_id`, with 409 if the observation's `artifact_id` is set but the artifact row is missing, and with 409 if the observation is not in `AdmissionStatus.ADMITTED`. Idempotent on `(case_id, observation_id)` — re-linking the same pair returns the existing `evidence_id` unless the content hash diverges (which raises 409). |
 
 All endpoints accept the `get_db_session` FastAPI dependency; tests
 override it with a `MagicMock` `Session` and patch the relevant
@@ -259,6 +280,58 @@ surface; the orchestrator writes new case / run / result rows
 through [`ResearchOrchestrationService`](../../apps/pipeline/src/invest_pipeline/research_orchestration_service.py)
 on the pipeline side, so the API never accepts write traffic for
 research state.
+
+### `schemas/external_workflows.py` (Stage 4D External Workflow read surface)
+
+- `ExternalWorkflowRunResponse` — single `ExternalWorkflowRun` row
+  (`run_id`, `producer`, `schema_version`, `producer_status`,
+  `intake_status`, `started_at`, optional `finished_at`,
+  `metadata`); serialised by `_run(...)` inside
+  `routers/external_workflows.py`.
+- `ExternalWorkflowRunListResponse` — paginated envelope
+  (`items`, `limit`, `offset`) for `/api/v1/external-workflows`.
+- `ExternalArtifactResponse` — single `ExternalArtifact` row
+  (`artifact_id`, `run_id`, `logical_uri`, `content_hash`,
+  `media_type`, `size_bytes`, `created_at`, `metadata`) — used by
+  `/api/v1/external-workflows/{run_id}/artifacts` and the safe
+  preview endpoint.
+- `ExternalObservationResponse` — single `ExternalObservation` row
+  (`observation_id`, `run_id`, `artifact_id`, `observed_at`,
+  `as_of`, `source_uri`, `producer`, `payload`, `symbol`,
+  `instrument_id`, `admission_status`, `metadata`) — used by both
+  the run's `/observations` endpoint and the
+  `/api/v1/opportunity-radar` filterable list.
+
+### `schemas/integration_health.py` (Stage 4D)
+
+- `IntegrationHealthResponse` — the `/api/v1/integration/health`
+  envelope (`status`, `sample_size`, `producer_statuses`,
+  `intake_statuses`, `latest_run_id`).
+- `ArtifactPreviewResponse` — the safe preview envelope for
+  `/api/v1/integration/artifacts/{artifact_id}` (no payload bytes,
+  only the logical URI / hash / metadata).
+
+### `schemas/admission.py` (Stage 4D gated command)
+
+- `AdmissionDecisionRequest` — the
+  `invest_domain.integration.AdmissionVerification` 1-1 projection
+  (`identity_ok`, `freshness_ok`, `unit_ok`,
+  `internal_cross_check_ok`, `conflict_detected`,
+  `rules_version="observation-admission/1.0"` default,
+  `decided_by="api"` default, optional `reason` plus an
+  `idempotency_key` of `8..128` chars).
+- `AdmissionDecisionResponse` — the bounded result
+  (`observation_id`, `admission_status`, `reason`, `idempotent`).
+
+### `schemas/research_external_evidence.py` (Stage 4D)
+
+- `ResearchExternalEvidenceResponse` — the
+  `invest_domain.integration.ExternalEvidenceItem` projection
+  (`evidence_id`, `observation_id`, `run_id`, `artifact_id`,
+  `artifact_content_hash`, `observed_at`, `as_of`, `source_uri`,
+  `producer`, `payload`, `admission`, `content_hash`); built via
+  `from_domain(item)` and serialised by
+  `routers/research_external_evidence.py`.
 
 ## 4. Endpoint contracts
 
@@ -445,6 +518,73 @@ Every storage exception is re-raised as `ResearchQueryError` and
 turned into a sanitized 500 with detail `Research query failed`;
 database / driver details are never exposed.
 
+### Stage 4D external-workflow / opportunity-radar / admission / evidence-link endpoints
+
+The Stage 4D endpoints remain thin wrappers around dedicated
+application services and reuse the same sanitized 500-detail pattern.
+
+- `GET /api/v1/external-workflows` — paginated recent runs
+  (`limit` 1..100, default 20; `offset` ≥0). Delegates to
+  [`ExternalWorkflowQueryService.list_runs`](../storage/overview.md#3-repositories-repositoriespy),
+  which composes `SqlAlchemyExternalWorkflowRunRepository.list_recent`.
+  Returns `ExternalWorkflowRunListResponse`.
+- `GET /api/v1/external-workflows/{run_id}` — single run. Missing
+  UUIDs return 404, malformed UUIDs 422.
+- `GET /api/v1/external-workflows/{run_id}/artifacts` — paginated
+  artifacts (`limit` 1..100, default 100; `offset` ≥0). The router
+  resolves the run first; missing runs return 404 before the
+  artifacts query runs, so an attacker cannot probe artifact
+  ownership by `run_id`.
+- `GET /api/v1/external-workflows/{run_id}/observations` —
+  paginated observations (same bounds). Same 404-before-read order.
+- `GET /api/v1/opportunity-radar` — cross-run observation radar.
+  Optional `admission_status` query filter maps to the
+  `AdmissionStatus` StrEnum (`pending` / `corroborated` / `admitted`
+  / `rejected` / `conflict`). `limit` 1..100 (default 50),
+  `offset` ≥0; results ordered by `observed_at` descending so the
+  freshest external candidate observation surfaces first. Delegates
+  to `ExternalWorkflowQueryService.list_radar(status, limit,
+  offset)` which composes
+  `SqlAlchemyExternalObservationRepository.list_recent`.
+- `GET /api/v1/integration/health` — read-side health banner.
+  Reads the 100 most recent runs through
+  `ExternalWorkflowQueryService.health()`, returns 200 with
+  `IntegrationHealthResponse(status, sample_size,
+  producer_statuses, intake_statuses, latest_run_id)`.
+  `status` is `"degraded"` when any run is `failed`, else
+  `"healthy"`; the surface never invents a third state.
+- `GET /api/v1/integration/artifacts/{artifact_id}` — safe artifact
+  preview. Returns `ArtifactPreviewResponse` (logical URI +
+  `content_hash` / `media_type` / `size_bytes` / metadata). 404 when
+  the artifact row is missing — **no** payload bytes are exposed
+  through this route.
+- `POST /api/v1/external-observations/{observation_id}/admission-decisions`
+  — one of two Stage 4D write endpoints. Disabled by default
+  (returns 404 unless `Settings.stage4d_admission_commands_enabled`
+  is `True`); `Idempotency-Key` header must match the body's
+  `idempotency_key` (409 otherwise). `ObservationAdmissionCommandService.decide(...)`
+  short-circuits with `idempotent=True` when the same key has been
+  seen, refuses to overwrite a non-`pending` observation (raises
+  `ValueError` → 409), and otherwise runs the domain
+  `evaluate_admission` against the `AdmissionVerification` request
+  body and persists the transition through
+  `SqlAlchemyExternalObservationRepository.save_admission`.
+- `POST /api/v1/research-cases/{case_id}/external-observations/{observation_id}/evidence`
+  — Research ↔ External Observation evidence link. `ResearchExternalEvidenceService.link(...)`
+  resolves the case + observation, refuses cross-instrument
+  binding (observation `instrument_id` must equal case
+  `instrument_id`), ensures the artifact row exists when set,
+  delegates the admitted-only conversion to
+  `invest_domain.integration.observation_to_evidence_item`, and
+  idempotently persists the resulting `ExternalEvidenceItem` via
+  `SqlAlchemyResearchExternalEvidenceRepository.add(...)`. Returns
+  201 with `ResearchExternalEvidenceResponse`; 404 on missing
+  case / observation / artifact; 409 on cross-instrument binding
+  or admission-not-`ADMITTED` or content-hash divergence. The
+  `(case_id, observation_id)` unique index plus the
+  `evidence_id` unique index are the database-level idempotency
+  guarantees.
+
 ### Application services (architecture governance §6 convergence)
 
 Per the GOV-05..GOV-07 convergence landed by the architecture
@@ -502,6 +642,28 @@ tests override those service dependencies.
   cannot accidentally read a Market Temperature snapshot, and
   forwards optional `as_of_date` filtering to the same storage
   repository.
+- [`application/external_workflows.py`](../../apps/api/src/invest_api/application/external_workflows.py) —
+  `ExternalWorkflowQueryService` (Stage 4D) wires three storage
+  Protocol ports (`ExternalWorkflowRunReader`,
+  `ExternalArtifactReader`, `ExternalObservationReader`) into one
+  facade. `list_runs` / `get_run` / `list_artifacts` /
+  `list_observations` / `list_radar` satisfy the read routers; the
+  `health()` derivation walks the most recent 100 runs and rolls up
+  `producer_status` / `intake_status` buckets into the integration
+  health banner. All exceptions become a sanitized 500 detail.
+- [`application/admission.py`](../../apps/api/src/invest_api/application/admission.py) —
+  `ObservationAdmissionCommandService` (Stage 4D) is the command
+  side behind the gated `POST /api/v1/external-observations/
+  {observation_id}/admission-decisions` endpoint. `decide(...)`
+  fetches the observation, returns `AdmissionCommandResult(
+  observation, idempotent=True)` if the supplied `idempotency_key`
+  matches a previously-persisted decision, refuses to overwrite a
+  non-`pending` observation (raises `ValueError` → 409), runs the
+  domain `evaluate_admission` against the supplied
+  `AdmissionVerification`, and persists the new admission metadata
+  through `ObservationRepository.save_admission`. The router adds
+  the `stage4d_admission_commands_enabled` gate on top.
+- [`application/res...(argument truncated)
 
 The application services live under `apps/api/src/invest_api/application/`
 so the API depends only on `domain` + `storage`, but the storage calls
@@ -519,6 +681,14 @@ split.
 - `database_url` (default points at `postgres:5432/invest`).
 - `api_cors_origins` (default `"http://localhost:5173"`), parsed into
   `Settings.cors_origins: list[str]`.
+- `stage4d_admission_commands_enabled` (default `False`) — the
+  hard kill-switch for the
+  `POST /api/v1/external-observations/{observation_id}/admission-decisions`
+  endpoint. The router returns 404 unless this flag is `True`, so a
+  default deployment has **no** HTTP admission write surface even
+  though the service is wired in `dependencies.py`. Operators flip
+  it via `INVEST_API_STAGE4D_ADMISSION_COMMANDS_ENABLED=1` once
+  their WorkflowRun-side caller is ready.
 
 The CORS middleware allows every standard verb plus OPTIONS, with
 credentials enabled and `*` headers.

@@ -1,9 +1,9 @@
 ---
 type: Concept
 title: Architecture overview
-description: Modular-monolith topology, layered rules, four PostgreSQL schemas and ADR index for invest-infra (including ADR-0011 CifangQuant Phase 1 first + second increments, the DC-2 ETF profile framework, the Stage 4A evidence / context separation, the architecture-governance convergence that moved ETF / candidate-pool / data-freshness / pipeline-runs / research queries behind application services, ADR-0012 that freezes the evidence-driven Research lifecycle boundary between Domain / Pipeline / Storage, and the Stage 4B Market Intelligence foundation that adds the Stock Daily Bars pipeline, the Market Observation / Temperature / Breadth read surface, and the Research Evidence Bundle binding). Explains why the codebase stays inside independent Python packages and how the layers interact.
+description: "Modular-monolith topology, layered rules, five PostgreSQL schemas (`raw` / `core` / `analytics` / `ops` / `integration`) and ADR index for invest-infra (including ADR-0011 CifangQuant Phase 1 first + second increments, the DC-2 ETF profile framework, the Stage 4A evidence / context separation, the architecture-governance convergence that moved ETF / candidate-pool / data-freshness / pipeline-runs / research queries behind application services, ADR-0012 that freezes the evidence-driven Research lifecycle boundary between Domain / Pipeline / Storage, the Stage 4B Market Intelligence foundation that adds the Stock Daily Bars pipeline, the Market Observation / Temperature / Breadth read surface, and the Research Evidence Bundle binding, the Stage 4C Core Data Layer Integration that adds the versioned price-limit policy, the stock price-limit persistence, Market Breadth v2 + Limit Sentiment publish services, and the four new Stage 4C dataset / capability identifiers, the Stage 4D External Integration Workbench (the new `integration` schema, the bridge ingest + shared-directory gateway under `apps/pipeline/integrations/`, the ExternalWorkflow / ExternalArtifact / ExternalObservation / ResearchExternalEvidence repositories, the gated observation-admission command, the read-only External Workflow / Opportunity Radar / Integration Health routers, and the Research-Case ↔ External-Observation evidence link), ADR-0013 that freezes the Provider–Engine–Event Phase 0 boundary — catalog is the Provider-declaration authority, factory/Registry is the only runtime entry point, Engine is a thin stock-daily-bars lifecycle orchestrator, Event Dispatcher is gated on two approved consumers — and the WorkBuddy governance split between the legacy M0/M1/M2 strict-report-audit (`workbuddy_reports`) and the M0 contract-aligned candidate-intake surface (`workbuddy_candidates`)). Explains why the codebase stays inside independent Python packages and how the layers interact."
 resource: /openwiki/architecture/overview.md
-tags: [architecture, layering, schemas, adr, cifang, tushare, etf-profile, research-context, research-lifecycle, governance, mcp, exposure, stage4b, market-breadth, market-temperature, market-observations, evidence-bundle, hithink]
+tags: [architecture, layering, schemas, adr, cifang, tushare, etf-profile, research-context, research-lifecycle, governance, mcp, exposure, stage4b, stage4c, market-breadth, market-temperature, market-observations, evidence-bundle, hithink, provider-engine-event, price-limits, limit-sentiment, workbuddy, workbuddy-reports, workbuddy-candidates, stage4d, external-integration, integration-schema, observation-admission, opportunity-radar, bridge-ingestor]
 ---
 
 # Architecture overview
@@ -81,7 +81,7 @@ SQLAlchemy `UnitOfWork` mediates every transaction.
 - `apps/migrations/migrations/versions/*.py` — Alembic migrations. See
   [Migrations overview](../migrations/overview.md).
 
-## 3. The four PostgreSQL schemas
+## 3. The five PostgreSQL schemas
 
 | Schema | Owner | Purpose |
 |--------|-------|---------|
@@ -89,6 +89,7 @@ SQLAlchemy `UnitOfWork` mediates every transaction.
 | `core` | Pipeline + API | Normalised business objects — `core.instruments`, `core.daily_bars`, `core.latest_daily_bars` view. |
 | `analytics` | Pipeline + API | Reusable inputs and computed results — `analytics.input_snapshots`, `analytics.candidate_pool_runs`, `analytics.candidate_pool_items`. |
 | `ops` | Pipeline | Pipeline-level audit — `ops.pipeline_runs` (replaces the retired `app.pipeline_runs`). |
+| `integration` | Pipeline + API (Stage 4D) | External workflow data — `integration.external_workflow_runs`, `integration.external_artifacts`, `integration.external_observations`. Read by the new External Workflow / Opportunity Radar / Integration Health routers; written only by `apps/pipeline/integrations/{bridge_ingestor,workbuddy_shared_directory}.py` and the gated observation-admission command. |
 
 The legacy `app` schema is forbidden in production paths; the
 checker rejects `schema="app"` literals.
@@ -129,13 +130,54 @@ adapter:
   catalog pins `has_runtime_factory_adapter=False` so the runtime
   factory's `KNOWN_PROVIDER_KEYS` helper excludes it).
 
+The ADR-0013 Provider–Engine–Event Phase 0 seam (see
+[Pipeline overview — Provider–Engine–Event seam](../pipeline/provider-engine-event.md))
+sits **on top of** the catalog + factory + routing boundary: the
+`ProviderRuntimeRegistry.resolve_etf` /
+`ProviderRuntimeRegistry.resolve_stock` helpers are stateless
+adapters that delegate to `provider_factory.build_provider` /
+`build_stock_provider`, so they preserve every fail-closed branch
+the factory already implements (`UnknownProviderError` for
+catalog-only entries `tdx_offline` / `hithink` / `rsscast` /
+`quicktiny_mcp`, `RealProviderRequiresExplicitEnablementError`
+when a real provider is disabled, `ProviderAuthenticationError`
+when its credential is missing). The Engine wraps a provider
+resolved through the registry and calls into the existing
+`stock_daily_bars.py` ETL service; the Event Dispatcher is
+**not** implemented yet (ADR-0013 §3 only opens it once two
+approved, testable consumers exist).
+
 The boundary is enforced two ways: the
 [`scripts/check_architecture.py`](../../scripts/check_architecture.py)
 import-graph scan and a Testcontainers-backed integration suite.
 
+The WorkBuddy governance split is implemented as two independent
+pipeline packages —
+[`apps/pipeline/src/invest_pipeline/workbuddy_reports/`](../../apps/pipeline/src/invest_pipeline/workbuddy_reports/)
+and
+[`apps/pipeline/src/invest_pipeline/workbuddy_candidates/`](../../apps/pipeline/src/invest_pipeline/workbuddy_candidates/).
+Both packages stay below the Provider / Domain / Storage boundary:
+neither imports `packages/storage`, neither writes to PostgreSQL,
+neither participates in the asset graph. The contract re-scoping
+([`docs/implementation/WORKBUDDY-CANDIDATE-INTAKE-M0-CONTRACT.md`](../../docs/implementation/WORKBUDDY-CANDIDATE-INTAKE-M0-CONTRACT.md))
+explicitly separates the **legacy strict-report-audit**
+(`workbuddy_reports` — `validate_triplet` + immutable archive +
+`latest-accepted.json` pointer) from the **candidate-intake**
+surface (`workbuddy_candidates` — `parse_candidates_payload` /
+`extract_legacy_candidates` / `archive_candidates` /
+`project_candidates`) so a candidate intake never blocks on a
+report-audit verdict. The two packages share the same path-safety
+contract — strict `YYYY-MM-DD` `trade_date` plus
+`^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$` `workflow_run_id` — so a
+downstream ingest step can compose both archives without
+inventing a new identity format. See
+[Pipeline overview §5m](../pipeline/overview.md#5m-workbuddy-daily-report-governance-m0--m1--m2-atomic-slices) /
+[§5n](../pipeline/overview.md#5n-workbuddy-candidate-intake-m0-contract-aligned-slice)
+for the slice-by-slice contract and the focused test layout.
+
 ## 5. Architecture decision records
 
-All twelve ADRs are in [`/docs/adr/`](../../docs/adr/):
+All thirteen ADRs are in [`/docs/adr/`](../../docs/adr/):
 
 - [ADR-0001 — Greenfield modular monolith](../../docs/adr/0001-greenfield-modular-monolith.md)
 - [ADR-0002 — Postgres-first](../../docs/adr/0002-postgres-first.md)
@@ -149,6 +191,7 @@ All twelve ADRs are in [`/docs/adr/`](../../docs/adr/):
 - [ADR-0010 — Production deployment / secrets / backup recovery](../../docs/adr/0010-production-deployment-secrets-backup-recovery.md)
 - [ADR-0011 — CifangQuant primary ETF provider (Phase 1 first + second increments)](../../docs/adr/0011-cifangquant-primary-etf-provider.md) (Status: Proposed; the adapter is wired but disabled by default and remains gated on O-1 / O-3 / O-4 for production use)
 - [ADR-0012 — Research lifecycle and AI execution boundary](../../docs/adr/0012-research-lifecycle-boundary.md) (Accepted 2026-08-07; freezes the `ResearchCase → EvidencePack → ResearchRun → ResearchResult` chain, the immutable evidence-vs-Result separation, and the versioned `ResearchRunner` / playbook boundary implemented by the JiuwenSwarm adapter)
+- [ADR-0013 — Provider–Engine–Event architecture enhancement](../../docs/adr/0013-provider-engine-event-architecture.md) (Accepted for Phase 0 / implementation gated by checkpoints; freezes the authority chain — catalog is the Provider declaration authority, `provider_routing` is the dataset × Provider selection authority, factory + `ProviderRuntimeRegistry` is the only runtime entry point, Dagster remains the job-graph / scheduling authority, the Engine is a thin stock-daily-bars lifecycle orchestrator that does not own long-lived sessions or replace Dagster, and the Event Dispatcher is gated on having at least two approved consumers)
 
 The underlying planning documents live under
 [`/docs/plan/`](../../docs/plan/) — the current
@@ -172,10 +215,13 @@ that complements ADR-0001. As of the convergence PR series
   `apps/api/src/invest_api/application/*.py` service
   (`EtfQueryService`, `CandidatePoolQueryService`,
   `PipelineRunQueryService`, `DataFreshnessQueryService`,
-  `ResearchQueryService`). Routers are thin wrappers that wire the
-  request through the FastAPI dependency, call the service, and
-  translate exceptions — they no longer construct repositories or
-  issue SQL.
+  `ResearchQueryService`, plus the Stage 4D
+  `ExternalWorkflowQueryService` /
+  `ObservationAdmissionCommandService` /
+  `ResearchExternalEvidenceService`). Routers are thin wrappers
+  that wire the request through the FastAPI dependency, call the
+  service, and translate exceptions — they no longer construct
+  repositories or issue SQL.
 - The `apps/api/src/invest_api/dependencies.py` builders wire the
   service-layer factories to the storage repositories; tests patch
   `get_*_query_service` per-router and reuse the same

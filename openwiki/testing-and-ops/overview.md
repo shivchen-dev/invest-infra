@@ -1,9 +1,9 @@
 ---
 type: Concept
 title: Testing & operations
-description: CI jobs (architecture, domain, storage unit/integration, migrations, pipeline, API, personal-daily PostgreSQL e2e, web vitest + Playwright e2e), the AST-based architecture and migration-chain gates, mock vs integration tests, the DC-2 / Stage 4A evidence + context unit suites, the PR-6 JiuwenSwarm adapter and research orchestration unit suites, the PR-7 research API / MCP server unit suites, the PR-W03 research dashboard / PR-W05 case workspace unit suites, the DC-3 exposure collection unit suites, compose runtime, and the Cifang/replay/shadow-run operating procedures.
+description: "CI jobs (architecture, domain, storage unit/integration, migrations, pipeline, API, personal-daily PostgreSQL e2e, web vitest + Playwright e2e), the AST-based architecture and migration-chain gates, mock vs integration tests, the DC-2 / Stage 4A evidence + context unit suites, the PR-6 JiuwenSwarm adapter and research orchestration unit suites, the PR-7 research API / MCP server unit suites, the PR-W03 research dashboard / PR-W05 case workspace unit suites, the DC-3 exposure collection unit suites, the Stage 4C stock price-limit + Limit Sentiment + Market Breadth v2 unit suites, the ADR-0013 Provider–Engine–Event Phase 0 unit suites (provider runtime registry + stock daily bars engine / application + provider health + provider publishability gate), the WorkBuddy daily-report governance unit suites (validator + archive + latest-accepted pointer), the WorkBuddy candidate intake unit suites (parser + archive + projection), the Stage 4D External Integration Workbench unit suites (bridge ingest path-safety + manifest verification + idempotent re-import, shared-directory gateway atomic moves + failure path, observation-admission API + service), the Stage 4C seeded replay + Tushare/TDX consistency golden suite, compose runtime, and the Cifang/replay/shadow-run operating procedures."
 resource: /openwiki/testing-and-ops/overview.md
-tags: [ci, testing, alembic, compose, openwiki, etf-profile, research-context, research-lifecycle, research-cockpit, jiuwenswarm, mcp, exposure]
+tags: [ci, testing, alembic, compose, openwiki, etf-profile, research-context, research-lifecycle, research-cockpit, jiuwenswarm, mcp, exposure, stage4c, stock-price-limits, limit-sentiment, market-breadth-v2, provider-engine-event, workbuddy, workbuddy-reports, workbuddy-candidates, stage4d, bridge-ingestor, shared-directory, observation-admission]
 ---
 
 # Testing & operations
@@ -32,7 +32,7 @@ The CI workflow is fan-out by domain so failures are easy to triage:
 | `personal-daily-e2e` | Runs `tests/e2e/test_personal_daily_pipeline_postgres.py -q` against a PostgreSQL 16 service after syncing migrations, pipeline and API environments. |
 | `openapi-contract` | Re-runs `apps/api/src/invest_api/export_openapi.py` to refresh `apps/api/openapi.json`, then `pnpm api:generate` to refresh `apps/web/src/api/generated.ts`, and finally `git diff --exit-code` on the generated TypeScript file. The job fails when the Web workbench's generated client drifts from the live FastAPI OpenAPI surface. |
 | `web-check` | `pnpm install --frozen-lockfile` + `pnpm typecheck` + `pnpm test:run` + `pnpm build` in `apps/web`; the test step drives the vitest + jsdom suite (router, API client, page compositions, components, utils). |
-| `web-e2e` (local only) | `pnpm test:e2e` runs the Playwright cockpit end-to-end suite under [`apps/web/e2e/`](../../apps/web/e2e) via [`apps/web/playwright.config.ts`](../../apps/web/playwright.config.ts) (Chromium project, `webServer` boots Vite at `127.0.0.1:5174`). The local script is the canonical way to exercise the Research Cockpit smoke path; the Playwright suite is not yet wired into the GitHub Actions workflow. |
+| `web-e2e` (local only) | `pnpm test:e2e` runs the Playwright cockpit end-to-end suite under [`apps/web/e2e/research-cockpit.e2e.ts`](../../apps/web/e2e/research-cockpit.e2e.ts) via [`apps/web/playwright.config.ts`](../../apps/web/playwright.config.ts) (Chromium project, `webServer` boots Vite at `127.0.0.1:5174`). The local script is the canonical way to exercise the Research Cockpit smoke path; the Playwright suite is not yet wired into the GitHub Actions workflow. |
 
 The job name overrides in the `Makefile` (`make test` etc.) cover the
 main test slices, but the workflow also has separate import-smoke,
@@ -51,13 +51,22 @@ parses every revision file under
 `apps/migrations/migrations/versions/`, extracts the `revision` /
 `down_revision` module-level literals, and asserts:
 
-- Exactly **one** current head is reachable.
+- Exactly **one** current head is reachable (`20260814_0020`).
 - The initial revision is `20260731_0001` and declares
   `down_revision = None`.
-- `upgrade()` calls `op.execute(...)` for each of the four schemas
-  (`raw`, `core`, `analytics`, `ops`).
+- `upgrade()` calls `op.execute(...)` for each of the five schemas
+  (`raw`, `core`, `analytics`, `ops`, `integration`).
 - `upgrade()` creates the canonical `instruments`, `provider_batches`
   and `pipeline_runs` tables.
+- `upgrade()` of `20260812_0018` creates `core.stock_price_limits`
+  with the `(instrument_id, trade_date, revision, row_hash)`
+  UNIQUE constraint, the `length(row_hash) = 64` CHECK, the
+  `revision >= 1` CHECK, and the FK chain to
+  `core.instruments.id` / `raw.provider_batches.id`.
+- `upgrade()` of `20260814_0019_external_integration` creates the
+  `integration` schema, the three external workflow tables, and
+  the `(run_id, logical_uri)` UNIQUE + the
+  `(source_uri/producer)` non-empty CHECK constraints.
 
 A helper (`_try_literal_eval`) swallows non-literal expressions so the
 AST walk is robust to revision files that import helpers or build
@@ -114,6 +123,20 @@ fixtures in [`conftest.py`](../../apps/api/tests/conftest.py) provide:
 `test_etf_endpoints.py`, `test_candidate_pool_endpoints.py`,
 `test_pipeline_run_endpoints.py`, and `test_data_freshness_endpoints.py`
 cover:
+- The Stage 4D router tests
+  (`test_admission_endpoints.py`,
+  `test_external_workflow_service.py`,
+  `test_research_external_evidence.py`) — the first one pins the
+  `stage4d_admission_commands_enabled` kill-switch (404 when
+  disabled, 200 when enabled), the body ↔ `Idempotency-Key`
+  alignment (409 on mismatch), the idempotent short-circuit,
+  the non-pending refusal (409), and the missing-observation
+  404; the second one pins the read-side
+  `ExternalWorkflowQueryService.health()` roll-up and the
+  three list-method contracts; the third one pins the
+  `ResearchExternalEvidenceService.link` 404 / 409 contract
+  (cross-instrument, missing artifact, non-admitted observation,
+  divergent content-hash) plus the idempotent re-link path.
 
 - happy paths and candidate-pool added/retained/removed diffs;
 - `test_pipeline_run_endpoints.py` covers the paginated history contract,
@@ -227,6 +250,28 @@ the asset-level integration paths against fixture data:
   `test_real_exposure_cli.py`, `test_real_exposure_asset.py`, and
   `test_real_exposure_job.py`; the fixture exposure CLI pairs with
   the matching DAG-asset tests and integration tests.
+- The Stage 4D External Integration Workbench adds two pipeline-side
+  suites and one domain-side suite:
+  `tests/pipeline/test_bridge_ingestor.py` (path-safety rejection,
+  manifest hash mismatch, idempotent re-import, the
+  `pending_validation` / `needs_symbol_resolution` tagging, the
+  producer-status mapping from `parsed.status` × `parsed.rejected`),
+  `tests/pipeline/test_workbuddy_shared_directory.py` (the
+  claim-then-move atomicity, success → archive path, failure →
+  failed path, the legacy-fallback when `candidates.json` is
+  absent, the 16 MiB size cap, the package-path-escape rejection),
+  and `packages/domain/tests/test_integration.py`
+  (`evaluate_admission` against the five status outcomes,
+  `observation_to_evidence_item` admitted-only conversion,
+  content-hash / evidence-id canonical derivation, terminal-status
+  immutability). The matching API unit tests
+  (`apps/api/tests/test_admission_endpoints.py`,
+  `apps/api/tests/test_external_workflow_service.py`,
+  `apps/api/tests/test_research_external_evidence.py`) cover the
+  gated admission command's `stage4d_admission_commands_enabled`
+  kill-switch, the External Workflow query service's
+  health() roll-up, and the Research ↔ External Observation
+  evidence link service's 404 / 409 contract.
 - `test_daily_preflight.py` covers the ordered run/skip/fail guard
   decisions and the default-off schedule flag; the schedule remains
   manually exercised rather than reaching a real provider in CI.
@@ -288,6 +333,108 @@ the asset-level integration paths against fixture data:
   `test_exposure_adapters.py` / `test_exposure_mapping.py` /
   `test_exposure_adapter.py` coverage of the gated
   `apps/pipeline/src/invest_pipeline/adapters/exposure/` surface.
+- The Stage 4C Core Data Layer Integration adds
+  `apps/pipeline/tests/unit/test_fixture_dev_price_limits.py`
+  (the deterministic `fixture_dev` price-limit provider
+  contract), `apps/pipeline/tests/unit/test_stock_price_limits_service.py`
+  (the `write_stock_price_limits_raw` /
+  `upsert_stock_price_limits` ETL service, the unknown-status
+  fail-closed gate, and the revision-aware upsert path),
+  `apps/pipeline/tests/unit/test_limit_sentiment_service.py`
+  (the `calculate_and_publish_limit_sentiment` publish
+  service — universe / as-of / duplicate-id validation,
+  publish result, fail-closed), the
+  `packages/domain/tests/test_price_limits.py` suite (the
+  `PriceLimitPolicy.evaluate` board / regime / listing-status /
+  IPO unlimited-session branches, `UnknownPriceLimit` matrix),
+  `packages/domain/tests/test_limit_sentiment.py` (the
+  `build_limit_sentiment` v1.0.0 contract, the participants /
+  tradable denominator split, the unknown / missing-price
+  downgrade to `PARTIAL / FRESH`, the seeded
+  `stage4c_limit_sentiment:1.0.0` source-ref default),
+  `tests/storage/test_stock_price_limits_model.py` ORM round-trip
+  (the 64-char `row_hash` CHECK, the `(instrument_id,
+  trade_date, revision, row_hash)` UNIQUE constraint),
+  `tests/storage/integration/test_stock_price_limit_repository.py`
+  Testcontainers round-trip (revision advances on content
+  change, re-collects of identical content are no-ops),
+  `tests/storage/integration/test_limit_sentiment_service.py`
+  Testcontainers round-trip (Market Observation snapshot
+  family plus input-snapshot universe binding),
+  `tests/migrations/test_stock_price_limits_migration_roundtrip.py`
+  PostgreSQL round-trip (revision constraint, the FK chain,
+  the index pair),
+  `apps/pipeline/tests/unit/test_tushare_tdx_consistency_golden.py`
+  golden Tushare/TDX consistency check (cross-source close,
+  `prev_close`, and coverage agreement), and
+  `apps/pipeline/tests/unit/test_stage4c_seeded_replay.py`
+  Stage 4C Checkpoint B seeded replay (deterministic
+  `DailyBar.row_hash` and Limit Sentiment `content_hash` /
+  `snapshot_id` across re-runs).
+- The ADR-0013 Provider–Engine–Event Phase 0 slice adds
+  `apps/pipeline/tests/unit/test_provider_runtime_registry.py`
+  (the stateless `ProviderRuntimeRegistry.resolve_etf` /
+  `resolve_stock` / `describe` API surface, every fail-closed
+  factory branch preserved verbatim),
+  `apps/pipeline/tests/unit/test_provider_runtime_registry_characterization.py`
+  (the characterization baseline that pins the registry as an
+  adapter over catalog + factory without maintaining a parallel
+  authority),
+  `apps/pipeline/tests/unit/test_provider_health.py` (the
+  `ProviderHealthSnapshot` priority-ordered status derivation
+  — `DISABLED` / `UNKNOWN` / `STALE` / `DEGRADED` / `HEALTHY` —
+  and the higher-precedence statuses' refusal-to-lower rule),
+  `apps/pipeline/tests/unit/test_stock_daily_bars_engine.py`
+  (the `StockDailyBarsCommand` / `StockDailyBarsOutcome`
+  dataclasses, the canonical pipeline status mapping, the
+  failure-summary secret-marker scrub),
+  `apps/pipeline/tests/unit/test_stock_daily_bars_application.py`
+  (the `StockDailyBarsEngine.execute` preflight → resolver →
+  raw ingestor → core publisher lifecycle, the
+  `provider_health` `HealthPreflight` integration, the
+  fail-closed path on an unhealthy snapshot), and the new
+  fail-closed publishability decision in
+  `test_provider_quality.py` (the `ProviderPublishDecision`
+  gate — `DECISION_REASON_LOW_COVERAGE` /
+  `DECISION_REASON_LOW_COMPLETENESS` /
+  `DECISION_REASON_STALE_OR_FAILED_FRESHNESS` /
+  `DECISION_REASON_FAILED_SYMBOLS`, the strict-freshness
+  requirement that callers cannot lower, the deterministic
+  reason-ordering).
+- The WorkBuddy legacy report-audit slice adds
+  `apps/pipeline/tests/unit/test_workbuddy_reports_validator.py`
+  (the `SUPPORTED_RULES_VERSION` pinning, the `result.status` →
+  `producer_status` alias normalisation, the explicit compat-set
+  rejection of `1.1.3` / `2.0.0`, the cross-file identity drift
+  matrix, the stage-adjacency / applied-rules / scoring /
+  ranking / candidates / markdown hard-validation paths) and
+  `apps/pipeline/tests/unit/test_workbuddy_reports_archive.py`
+  (the atomic `os.replace` rename into
+  `<root>/runs/<trade_date>/<workflow_run_id>/`, the manifest
+  re-hash on disk, the idempotent re-import with `is_idempotent=True`,
+  the conflict-safe `is_conflict=True` non-overwrite path, the
+  M2 `latest-accepted.json` lock + sort-key contract, and the
+  `fcntl.flock` serialization on the `.latest-accepted.lock`
+  sentinel). The WorkBuddy candidate-intake slice adds
+  `apps/pipeline/tests/unit/test_workbuddy_candidates.py`
+  (the `parse_candidates_payload` minimal payload, item-level
+  rejection isolation, unknown-field preservation, batch-level
+  failure on missing identity, `extract_legacy_candidates`
+  `strategy_version` fallback),
+  `apps/pipeline/tests/unit/test_workbuddy_candidates_archive.py`
+  (idempotent re-import, conflict-safe non-overwrite, item-level
+  finding surfacing, unsafe-identity rejection) and
+  `apps/pipeline/tests/unit/test_workbuddy_candidates_projection.py`
+  (the `Resolver` seam success path, the `pending_validation`
+  status tag, the `needs_symbol_resolution` isolation, the
+  in-batch + cross-batch `(trade_date, strategy_id,
+  normalized_symbol)` dedupe, the `rejected_by_intake` finding
+  propagation). Both suites run under
+  `make test-pipeline` and add no new dependencies — the path
+  contract reuses `re` / `os.fspath` / `os.path.join`, the
+  archive reuses `tempfile.mkdtemp` / `os.replace`, and the
+  pointer writer reuses `fcntl.flock` so the unit tests stay
+  deterministic on any POSIX host.
 
 ## 6. Deployment and runtime
 

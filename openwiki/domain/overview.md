@@ -1,9 +1,9 @@
 ---
 type: Concept
 title: Domain overview
-description: Bounded contexts inside packages/domain — instruments, market_data, candidate_pool, input_snapshot, pipeline, etf_profile, research, exposure, analytics, shared — with the canonical hashing scheme, the DC-2 ETF profile evidence framework (FieldEvidence / ProfileResolver), the Stage 4A evidence / context separation (ResearchContextPack / ContextItem), the evidence-driven Research lifecycle (ResearchCase / ResearchRun / ResearchResult / ResearchRunner), the DC-3 exposure bounded context, and the invariants that keep the layer infrastructure-free.
+description: Bounded contexts inside packages/domain — instruments, market_data, candidate_pool, input_snapshot, pipeline, etf_profile, research, exposure, analytics, integration, shared — with the canonical hashing scheme, the DC-2 ETF profile evidence framework (FieldEvidence / ProfileResolver), the Stage 4A evidence / context separation (ResearchContextPack / ContextItem), the evidence-driven Research lifecycle (ResearchCase / ResearchRun / ResearchResult / ResearchRunner), the DC-3 exposure bounded context, the Stage 4B Market Observation / Breadth / Temperature observations, the Stage 4C versioned price-limit policy (Board / ListingStatus / PriceLimitRegime / PriceLimitPolicy) and Limit Sentiment builder, the Stage 4D External Integration Workbench domain contracts (ExternalWorkflowRun / ExternalArtifact / ExternalObservation / ExternalEvidenceItem / AdmissionDecision / evaluate_admission / observation_to_evidence_item), and the invariants that keep the layer infrastructure-free.
 resource: /openwiki/domain/overview.md
-tags: [domain, bounded-contexts, models, layering, etf-profile, research-context, research-lifecycle, exposure, analytics]
+tags: [domain, bounded-contexts, models, layering, etf-profile, research-context, research-lifecycle, exposure, analytics, stage4c, price-limits, limit-sentiment, stage4d, integration, observation-admission, external-evidence]
 ---
 
 # Domain overview
@@ -24,14 +24,15 @@ outside that surface.
 | Context | Module | What it owns |
 |---------|--------|--------------|
 | `instruments` | `invest_domain.instruments.{models,values}` | `Instrument`, `InstrumentId`, `InstrumentType`, `InstrumentStatus`, `Currency`, `Exchange`. |
-| `market_data` | `invest_domain.market_data.{models,values,ports}` | `DailyBar`, `BarSource`, `Adjust`, `TradingStatus`, `ProviderRequest`, `ProviderAttempt`, `ProviderBatch`, the `ProviderFailureStage` vocabulary and the `EtfMarketDataProvider` / `InstrumentProvider` ports. |
+| `market_data` | `invest_domain.market_data.{models,values,ports,price_limits}` | `DailyBar`, `BarSource`, `Adjust`, `TradingStatus`, `ProviderRequest`, `ProviderAttempt`, `ProviderBatch`, the `ProviderFailureStage` vocabulary, the `EtfMarketDataProvider` / `InstrumentProvider` / `StockMarketDataProvider` ports, and the Stage 4C versioned price-limit policy (`Board` / `ListingStatus` / `PriceLimitRegime` / `PriceLimitPolicy` / `PriceLimitInput` / `PriceLimitResult` / `KnownPriceLimit` / `UnlimitedPriceLimit` / `UnknownPriceLimit` / `DEFAULT_PRICE_LIMIT_REGIMES`). |
 | `candidate_pool` | `invest_domain.candidate_pool.{models,calculator,ports,universe,v1_adapter,baseline_channel,institutional_channel,custom_strategy}` | The candidate-pool state machine + calculation contracts, the PR-08 minimum calculator, the pure dynamic ETF universe qualification (`build_etf_universe`), the V1→V2 pure adapter (`adapt_v1_target_selection`), and the three declarative channel strategies (`BaselineFactorChannel` / `InstitutionalRecommendationChannel` / `CustomStrategyChannel`) the routing layer dispatches against. Detailed in [Candidate pool](candidate-pool.md). |
 | `input_snapshot` | `invest_domain.input_snapshot.models` | The hash-pinned `InputSnapshot` membership record. |
 | `pipeline` | `invest_domain.pipeline.models` | `PipelineRun`, `PipelineRunStatus` (six-value vocabulary). |
 | `etf_profile` | `invest_domain.etf_profile.{models,resolver}` | DC-2 ETF profile evidence framework (`PR-ETF-PROFILE-01..03`): the canonical `EtfProfile` record, the `FieldEvidence` / `FieldEvidenceSource` / `FieldKey` / `FieldValueType` value objects, the `compute_field_evidence_hash` helper, the `ProfileResolver` (`ResolvedField` / `ProfileResolution` / `ResolutionStatus` / `ProviderPriorityPolicy`) and the `resolve_etf_profile_evidence` pure function. `AUM`, `MARKET_VALUE` and `TURNOVER_VALUE` stay distinct (plan §6). |
 | `research` | `invest_domain.research.{models,factor_set,quality_gate,canonical,context,research_case,research_run,runner}` | Stage 4A evidence-pipeline foundation plus the **evidence / context separation** (Stage 4A adjusted plan §"evidence / context separation") plus the **evidence-driven research lifecycle** ([ADR-0012](../../docs/adr/0012-research-lifecycle-boundary.md)). `EvidencePack`, `FactorObservation`, `FactorSetMetadata` (v1.0.0 fixed 8-factor set), the `evaluate_quality_gate` rule set, the SHA-256 canonical projection that produces `evi:{pack_hash[:12]}:factor.{key}:{item_hash[:12]}` evidence ids, the `ResearchContextPack` / `ContextItem` / `ContextValueType` vocabulary, the `ResearchCase` (six-value `ResearchCaseStatus`, terminal-status `closed_at` invariant) and `ResearchCaseStatus` lifecycle, the `ResearchRun` / `ResearchRunStatus` aggregate with external identity (`attempt`/`runner_key`/`playbook_key`), the `ResearchResult` bound to a succeeded run, the `ResearchRunner` port plus the `ResearchPlaybook` / `ResearchRunnerDraft` helpers, and the lifecycle orchestrators `start_research_attempt` / `complete_research_attempt` / `fail_research_attempt` / `execute_research_attempt`. The slice is intentionally **probabilistic-result-free** in pure-domain: AI results live on `ResearchResult`, never inside an `EvidencePack`. |
 | `exposure` | `invest_domain.exposure.models` | DC-3 / Stage 4A exposure bounded context: `ExposureProvenance`, `IndexProfile` / `IndexConstituent` / `IndexConstituentSnapshot`, `EtfHolding` / `EtfIndexMapping` / `EtfHoldingSnapshot`. Domain-side only — provider selection and storage persistence live in the pipeline layer. |
-| `analytics` | `invest_domain.analytics.factor_calculators` | The pure factor-calculator module consolidated out of the legacy `research.factor_calculators` ([GOV-03](../../docs/ARCHITECTURE-GOVERNANCE.md)): `FactorCalculationResult`, the `calculate_market_state_factors` pure function, and the `_BarValue` / `_aggregate_by_date` internals. `invest_domain.research.__init__` re-exports these via a `__getattr__` lazy bridge so existing callers keep working without creating an import cycle. |
+| `analytics` | `invest_domain.analytics.{factor_calculators,market_observations,market_temperature,market_breadth,limit_sentiment}` | The pure factor-calculator module consolidated out of the legacy `research.factor_calculators` ([GOV-03](../../docs/ARCHITECTURE-GOVERNANCE.md)): `FactorCalculationResult`, the `calculate_market_state_factors` pure function, and the `_BarValue` / `_aggregate_by_date` internals; the Stage 4B Market Observation snapshot family (`MarketObservationSnapshot` / `Observation` / `QualityStatus` / `FreshnessStatus`) and the `build_market_temperature` pure aggregator; the Stage 4B / 4C Market Breadth v1 + v2 pure builders (`MarketBreadthInput` / `build_market_breadth` / `build_market_breadth_v2`); the Stage 4C Limit Sentiment pure builder (`LimitSentimentInput` / `build_limit_sentiment`). `invest_domain.research.__init__` re-exports the factor-calculator symbols via a `__getattr__` lazy bridge so existing callers keep working without creating an import cycle. |
+| `integration` | `invest_domain.integration.models` | Stage 4D External Integration Workbench pure-domain contracts: `ProducerStatus` / `IntakeStatus` / `AdmissionStatus` (`pending` / `corroborated` / `admitted` / `rejected` / `conflict`) enums; the immutable `ExternalWorkflowRun` / `ExternalArtifact` / `ExternalObservation` aggregates (with the strict UUID / TZ-aware datetime / non-blank string guards that block a write race to insert `admitted` / `rejected` twice); the immutable `ExternalEvidenceItem` derived from an admitted observation (with `canonical_sha256`-validated `content_hash` and the deterministic `ext-evi:{observation_id}:{content_hash[:16]}` `evidence_id` derivation); the `AdmissionVerification` facts and `AdmissionDecision` / `evaluate_admission` pure function that maps the verification tuple to one of the five admission statuses (conflict > rejected > corroborated > admitted); and the `observation_to_evidence_item` adapter that **only** converts an admitted observation into a `Research`-compatible evidence item, preserving the artifact provenance when an artifact is bound. The package never imports SQLAlchemy / FastAPI / Dagster / httpx / any Provider SDK. |
 | `shared` | `invest_domain.shared.{canonical,values}` | `canonical_json`, `canonical_sha256`, `content_hash`, `CANONICAL_HASH_SCHEMA_VERSION`. |
 
 Every context exposes its public surface through a single
@@ -54,7 +55,7 @@ The helper:
   digest in an auditable way instead of silently re-mapping data.
 
 The `InputSnapshot.content_hash` is built on a more restrictive
-algorithm (see [Migrations overview](../migrations/overview.md#2-the-seventeen-revision-chain))
+algorithm (see [Migrations overview](../migrations/overview.md#2-the-twenty-revision-chain))
 because it only depends on the byte-sorted `instrument_ids`.
 
 ## 3. The infrastructure-free invariant
@@ -312,6 +313,120 @@ The pure-domain slice is intentionally narrow; provider selection
 `report_asset_detail`) and persistence
 (`apps/pipeline/src/invest_pipeline/exposure_service.py` /
 `real_exposure_service.py`) live in the pipeline layer.
+
+## 4E. Stage 4C versioned price-limit policy and Limit Sentiment
+
+Stage 4C adds two domain modules:
+
+- `packages/domain/src/invest_domain/market_data/price_limits.py`
+  freezes the **pure, versioned price-limit policy** every
+  ordinary A-share stock obeys. The surface is:
+
+  - `Board` (`MAIN` / `GEM` / `STAR` / `BSE` — closed-set board
+    vocabulary).
+  - `ListingStatus` (`NORMAL` / `RISK_WARNING` /
+    `SPECIAL_TREATMENT` / `UNKNOWN` / `CONFLICT`).
+  - `PriceLimitRegime` — one immutable rule version with
+    `regime_id` / `market` / `board` / `effective_from` /
+    `effective_to` (exclusive) / `normal_ratio` /
+    `risk_warning_ratio` / `ipo_unlimited_sessions` /
+    `tick_size` / `source_refs`. `__post_init__` rejects empty
+    strings, `effective_to <= effective_from`, negative
+    `ipo_unlimited_sessions`, non-positive `tick_size`, and
+    non-finite ratios.
+  - `PriceLimitInput` — one `(instrument_id, market, board,
+    trade_date, listed_trade_session_no, listing_status,
+    reference_price, source_refs)` fact handed to the policy.
+  - `PriceLimitPolicy` — `regimes` tuple (default
+    `DEFAULT_PRICE_LIMIT_REGIMES`) + `evaluate(facts) →
+    PriceLimitResult`. The policy selects exactly one regime
+    via `(market, board, effective_from <= trade_date,
+    effective_to is None or trade_date < effective_to)`;
+    multiple matches fail closed as `UnknownPriceLimit`. Special
+    branches: `effective_to` is exclusive; sessions within
+    `ipo_unlimited_sessions` produce `UnlimitedPriceLimit`;
+    `RISK_WARNING` and `SPECIAL_TREATMENT` switch the ratio;
+    unknown / conflict / non-finite / unknown-market /
+    unknown-board inputs produce `UnknownPriceLimit` so a stale
+    fact cannot silently land as a `KnownPriceLimit`. Limit
+    prices are computed as
+    `reference_price * (1 ± ratio).quantize(tick_size,
+    ROUND_HALF_UP)` — the policy is purely deterministic and
+    uses `Decimal` throughout so the binary-float TDX stores
+    never leaks into the published result.
+  - The three result types are frozen dataclasses:
+    `KnownPriceLimit` (limit_up_price, limit_down_price,
+    regime_id, reference_price, source_refs),
+    `UnlimitedPriceLimit` (regime_id, listed_trade_session_no,
+    source_refs), and `UnknownPriceLimit` (reason + missing
+    field tuple + source_refs).
+
+  The rule-version evidence is
+  [`docs/research/stage4c-price-limit-rules-research-2026-08-11.md`](../../docs/research/stage4c-price-limit-rules-research-2026-08-11.md),
+  which records the per-board ratios, the IPO no-limit window
+  boundaries, and the official exchange / CSRC sources the
+  policy anchors on.
+
+- `packages/domain/src/invest_domain/analytics/limit_sentiment.py`
+  freezes the Stage 4C **Limit Sentiment v1.0.0** pure builder.
+  It publishes three ratios — `limit_up_ratio` /
+  `limit_down_ratio` / `limit_touch_unknown_ratio` — through a
+  single `MarketObservationSnapshot` bound to one input snapshot
+  id, one `as_of_date`, and one `algorithm_version`. The
+  `LimitSentimentInput` dataclass carries `(instrument_id,
+  close, observed_date, trading_status, limit_up_price?,
+  limit_down_price?, source_kind, source_ref)` and validates
+  finite positive prices / valid trading status. The
+  denominator for the up / down ratios is the **participants**
+  set (normal-trading rows with both limit prices supplied);
+  the denominator for `limit_touch_unknown_ratio` is the
+  **tradable** set (every normal-trading row). Suspended rows
+  are excluded from both denominators. Validation is fail-closed
+  at three levels: an empty input produces `INVALID / FAILED`
+  with all ratios `None`; inputs whose `observed_date` does not
+  match the as-of date surface as `INVALID / STALE`; an unknown
+  status or a normal row missing one or both limit prices
+  downgrades the snapshot to `PARTIAL / FRESH` and publishes
+  `limit_touch_unknown_ratio` so the operator can see the share
+  of the universe excluded from the up / down counts.
+
+The persistence half lives in
+`apps/pipeline/src/invest_pipeline/stock_price_limits.py` (raw
+evidence + `core.stock_price_limits` revision-aware upsert via
+`uow.stock_price_limits.upsert_many`) and
+`apps/pipeline/src/invest_pipeline/limit_sentiment_service.py`
+(`calculate_and_publish_limit_sentiment` application service
+that drives the builder through the UoW).
+
+## 4F. Stage 4B / 4C Market Breadth (v1 + v2)
+
+The Stage 4B Market Breadth slice adds the
+`build_market_breadth` v1 builder (three ratios:
+`advancing_ratio` / `declining_ratio` / `above_ma20_ratio`,
+default algorithm version `"1.0.0"`) and the
+`build_market_breadth_v2` v2 builder (adds `above_ma60_ratio` /
+`new_high_ratio` / `new_low_ratio`, default `"2.0.0"`). The
+shared `MarketBreadthInput` dataclass carries the v1 required
+fields (`close` / `prev_close` / `ma20` / `observed_date` /
+`trading_status`) plus the three v2 optional fields
+(`ma60` / `is_new_high` / `is_new_low`); the v2 fields default
+to `None` so existing v1 callers keep working unchanged. The
+v2 builder publishes the affected v2 ratio as `None` and
+downgrades the snapshot to `PARTIAL / FRESH` whenever a
+normal-trading instrument is missing any v2 field; the v1
+ratios keep their existing semantics and any complete v2 ratio
+is still computed normally. Validation is fail-closed for both
+versions (empty input → `INVALID / FAILED`, stale input →
+`INVALID / STALE`, unknown status → `PARTIAL / FRESH`).
+
+The persistence + API + Bundle-registration slices live in
+[`apps/pipeline/src/invest_pipeline/market_breadth_service.py`](../pipeline/overview.md#6-etl-service-modules)
+(`calculate_and_publish_market_breadth` /
+`calculate_and_publish_market_breadth_v2`) and
+[`apps/pipeline/src/invest_pipeline/market_breadth_bundle_service.py`](../pipeline/overview.md#6-etl-service-modules);
+the API surface is the
+`/api/v1/market-breadth/latest` route described in
+[API overview §2](../api/overview.md#2-routing-surface).
 
 ## 5. Where to look first
 

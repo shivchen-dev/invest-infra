@@ -1,9 +1,9 @@
 ---
 type: Concept
 title: Migrations overview
-description: How apps/migrations owns the PostgreSQL schema as an independent Alembic app, the seventeen-revision chain under apps/migrations/migrations/versions (baseline + provider evidence + candidate pool + daily bars + input snapshots + DC-2 etf_profiles + PR-ETF-PROFILE-04 etf_profile_fields + Stage 4A research_context_packs + DC-3 exposure + research_cases + evidence-pack case FK + research_runs/results + Stage 4B market_observation_snapshots + research_evidence_bundles + research_result evidence FK), and the schema-ownership rules across raw/core/analytics/ops.
+description: How apps/migrations owns the PostgreSQL schema as an independent Alembic app, the twenty-revision chain under apps/migrations/migrations/versions (baseline + provider evidence + candidate pool + daily bars + input snapshots + DC-2 etf_profiles + PR-ETF-PROFILE-04 etf_profile_fields + Stage 4A research_context_packs + DC-3 exposure + research_cases + evidence-pack case FK + research_runs/results + Stage 4B market_observation_snapshots + research_evidence_bundles + research_result evidence FK + Stage 4C stock_price_limits + Stage 4D external_integration + research_external_evidence), and the schema-ownership rules across raw/core/analytics/ops/integration.
 resource: /openwiki/migrations/overview.md
-tags: [migrations, alembic, postgres, schemas, etf-profile, research-context, exposure, research-lifecycle, market-observations, evidence-bundle]
+tags: [migrations, alembic, postgres, schemas, etf-profile, research-context, exposure, research-lifecycle, market-observations, evidence-bundle, stage4c, stock-price-limits, stage4d, external-integration, research-external-evidence]
 ---
 
 # Migrations overview
@@ -41,17 +41,20 @@ apps/migrations/
         ├── 20260807_0014_research_runs.py
         ├── 20260810_0015_market_observation_snapshots.py
         ├── 20260811_0016_research_evidence_bundles.py
-        └── 20260812_0017_research_result_evidence_bundle_fk.py
+        ├── 20260812_0017_research_result_evidence_bundle_fk.py
+        ├── 20260812_0018_stock_price_limits.py
+        ├── 20260814_0019_external_integration.py
+        └── 20260814_0020_research_external_evidence.py
 ```
 
 The shell entry-point is `cd apps/migrations && uv run alembic ...`,
 which `make migrate` aliases.
 
-## 2. The seventeen-revision chain
+## 2. The twenty-revision chain
 
 Every revision declares its own `revision`, `down_revision` and a
 single `upgrade()` / `downgrade()` pair. The chain currently ends at
-`20260812_0017_research_result_evidence_bundle_fk.py` and is verified
+`20260814_0020_research_external_evidence.py` and is verified
 by an AST-based gate — see
 [Testing & operations](../testing-and-ops/overview.md#migration-chain-ast-gate).
 
@@ -74,18 +77,31 @@ by an AST-based gate — see
 | `20260810_0015_market_observation_snapshots` | Stage 4B Market Observation snapshot family. | Creates `analytics.market_observation_snapshots` (uuid PK, `scope_type` / `scope_key` discriminator pair, `as_of_date`, `instrument_count`, JSONB `observations` keyed on the deterministic `key` family, length-64 `content_hash`, plus the `freshness_status` / `quality_status` enums and the unique `(scope_type, scope_key, as_of_date)` natural key) — the single header row that carries the **three** Stage 4B first-slice observation snapshots (`market_temperature` / `market_breadth.advancing_ratio` / `market_breadth.above_ma20_ratio` / `market_breadth.breadth_participation`). |
 | `20260811_0016_research_evidence_bundles` | Stage 4B Research Evidence Bundle persistence. | Creates `analytics.research_evidence_bundles` (uuid PK, `research_case_id` FK, JSONB `market_observation_refs`, length-64 `content_hash`, JSONB `payload`, `bundle_version` discriminator, plus the unique `(research_case_id)` constraint and the unique `content_hash` index that gates idempotent re-publication) so a single bundle can be looked up per case. |
 | `20260812_0017_research_result_evidence_bundle_fk` | Stage 4B Research-Result ↔ Evidence-Bundle FK. | Adds nullable `evidence_bundle_id` to `analytics.research_results`, the matching `fk_research_results_evidence_bundle_id` FK to `analytics.research_evidence_bundles.bundle_id`, and a `(evidence_bundle_id)` index so the orchestration service can carry the bundle identity through from run → result. |
+| `20260812_0018_stock_price_limits` | Stage 4C stock price-limit persistence. | Creates `core.stock_price_limits` (uuid PK, FKs to `core.instruments.id` and `raw.provider_batches.id`, plus the per-instrument per-trade-date `regime_id` / `limit_up_price` / `limit_down_price` / `status` / `reference_price` columns, the revision + `row_hash` columns, two CHECK constraints for revision ≥ 1 / non-empty strings / 64-char `row_hash`, and the two lookup indexes on `(instrument_id, trade_date)` and `trade_date`); the matching `uq_stock_price_limits_instrument_trade_date_revision_row_hash` UNIQUE constraint is the concurrency guard for the ADR-0006 §3 revision-allocation algorithm the Stage 4C stock price-limit ETL service relies on. |
+| `20260814_0019_external_integration` | Stage 4D External Integration Workbench persistence. | Creates the new `integration` PostgreSQL schema and three tables: `integration.external_workflow_runs` (uuid PK, `producer` / `schema_version` / `producer_status` / `intake_status` / `started_at` / `finished_at` / jsonb `metadata`, plus four CHECK constraints and three indexes on `producer_status` / `intake_status` / `started_at`), `integration.external_artifacts` (uuid PK, FK to `integration.external_workflow_runs.run_id`, `logical_uri` / `content_hash` / `media_type` / `size_bytes` / `created_at` / `metadata`, plus a `uq_external_artifacts_run_uri` UNIQUE on `(run_id, logical_uri)`, a 64-char `content_hash` CHECK, and two indexes on `run_id` / `content_hash`), and `integration.external_observations` (uuid PK, FKs to `integration.external_workflow_runs.run_id`, `integration.external_artifacts.artifact_id` and `core.instruments.id`, `observed_at` (tz-aware) / `as_of` (date) / `source_uri` / `producer` / jsonb `payload` / `symbol` / `instrument_id` / `admission_status` (default `pending`) / `metadata`, plus the jsonb-object CHECK constraints and three indexes on `run_id` / `admission_status` / `as_of`). The downgrade drops the indexes / tables and finally `DROP SCHEMA IF EXISTS integration` so a downgrade fully reverses the schema addition. |
+| `20260814_0020_research_external_evidence` | Stage 4D Research Case ↔ External Observation evidence link. | Creates `analytics.research_external_evidence` (uuid PK, FKs to `analytics.research_cases.case_id`, `integration.external_observations.observation_id`, and `integration.external_artifacts.artifact_id`, plus `evidence_id` / `content_hash` / `artifact_content_hash` / `observed_at` / `as_of` / `source_uri` / `producer` / jsonb `payload` / jsonb `admission` / `created_at`). The `uq_research_external_evidence_case_observation` UNIQUE constraint is the idempotency guard for `ResearchExternalEvidenceService.link`; the `uq_research_external_evidence_evidence_id` UNIQUE plus a 64-char `content_hash` CHECK plus jsonb-object CHECK constraints are the audit-grade evidence-id / content-hash chain. Two indexes cover `(research_case_id)` and `(observation_id)` for the dashboard link lookups. |
 
 Older `20260730_0001..0004` revisions are no longer in the chain —
 they were retired when the migrations moved to `apps/migrations/`.
+
+The Stage 4C Core Data Layer Integration adds the closing
+revision (`20260812_0018`); the chain gate now expects a single
+head at `20260814_0020` and the test suite still round-trips
+`upgrade head → downgrade base → upgrade head` end-to-end so the
+full twenty-revision chain is exercised.
+[`tests/migrations/test_stock_price_limits_migration_roundtrip.py`](../../tests/migrations/test_stock_price_limits_migration_roundtrip.py)
+pins the Stage 4C revision's CHECK constraints and indexes against a
+disposable PostgreSQL container.
 
 ## 3. Schema ownership
 
 | Schema | Tables owned by | Pipeline writes via | API reads via |
 |--------|----------------|---------------------|---------------|
 | `raw` | Pipeline adapters + application service | `apps/pipeline/src/invest_pipeline/{etf_instruments,etf_daily_bars}.py` through `SqlAlchemyUnitOfWork` | — (read-only by API not currently surfaced). |
-| `core` | Pipeline; normalised row shapes exposed to API | `etf_instruments` / `etf_daily_bars` assets; `etf_profiles` service for the DC-2 static ETF metadata (1-1 with `core.instruments`) | `SqlAlchemyInstrumentRepository`, `SqlAlchemyDailyBarRepository`, `SqlAlchemyEtfProfileRepository`. |
-| `analytics` | Pipeline (input snapshots) + Application (candidate pool) + Research context + Market Intelligence | `etf_input_snapshot` asset; candidate-pool assets; `etf_profile_context` / `etf_profiles` service; `research_orchestration_service.execute` for case / run / result lifecycle; `market_breadth_service.calculate_and_publish_market_breadth` and `market_breadth_bundle_service` for the Stage 4B snapshot family and Evidence Bundle binding | `InputSnapshotRepository`, `SqlAlchemyCandidatePoolRunRepository`, `SqlAlchemyCandidatePoolItemRepository`, `SqlAlchemyEtfProfileFieldRepository`, `SqlAlchemyResearchContextPackRepository`, `SqlAlchemyResearchCaseRepository`, `SqlAlchemyResearchRunRepository`, `SqlAlchemyResearchResultRepository`, `SqlAlchemyResearchEvidenceBundleRepository`, `SqlAlchemyEvidencePackRepository`, `SqlAlchemyMarketObservationSnapshotRepository`. |
+| `core` | Pipeline; normalised row shapes exposed to API | `etf_instruments` / `etf_daily_bars` assets; `etf_profiles` service for the DC-2 static ETF metadata (1-1 with `core.instruments`); `stock_price_limits` service for Stage 4C per-instrument per-trade-date limits | `SqlAlchemyInstrumentRepository`, `SqlAlchemyDailyBarRepository`, `SqlAlchemyEtfProfileRepository`. |
+| `analytics` | Pipeline (input snapshots) + Application (candidate pool) + Research context + Market Intelligence + Research-External Evidence | `etf_input_snapshot` asset; candidate-pool assets; `etf_profile_context` / `etf_profiles` service; `research_orchestration_service.execute` for case / run / result lifecycle; `market_breadth_service.calculate_and_publish_market_breadth` and `market_breadth_bundle_service` for the Stage 4B snapshot family and Evidence Bundle binding; `ResearchExternalEvidenceService.link` for Stage 4D admitted-observation ↔ research-case binding | `InputSnapshotRepository`, `SqlAlchemyCandidatePoolRunRepository`, `SqlAlchemyCandidatePoolItemRepository`, `SqlAlchemyEtfProfileFieldRepository`, `SqlAlchemyResearchContextPackRepository`, `SqlAlchemyResearchCaseRepository`, `SqlAlchemyResearchRunRepository`, `SqlAlchemyResearchResultRepository`, `SqlAlchemyResearchEvidenceBundleRepository`, `SqlAlchemyEvidencePackRepository`, `SqlAlchemyMarketObservationSnapshotRepository`, `SqlAlchemyResearchExternalEvidenceRepository`. |
 | `ops` | Pipeline | `ops.pipeline_runs` writes via `SqlAlchemyPipelineRunRepository` | Personal-job history and latest status via the read-only `/api/v1/pipeline-runs` endpoints. |
+| `integration` | Pipeline (Stage 4D bridge ingest) + API (Stage 4D read side) | `apps/pipeline/src/invest_pipeline/integrations/bridge_ingestor.import_archived_candidate_run` + `apps/pipeline/src/invest_pipeline/integrations/workbuddy_shared_directory.SharedDirectoryWorkBuddyGateway.process_once` for the WorkBuddy shared-directory ingest path; `ObservationAdmissionCommandService.decide` writes the `pending → admitted|rejected|conflict` transition on `external_observations.admission_status` | `SqlAlchemyExternalWorkflowRunRepository`, `SqlAlchemyExternalArtifactRepository`, `SqlAlchemyExternalObservationRepository` (radar / list-by-run / recent / status-filtered reads). |
 
 ## 4. Composability rules
 

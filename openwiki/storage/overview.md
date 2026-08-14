@@ -1,9 +1,9 @@
 ---
 type: Concept
 title: Storage overview
-description: SQLAlchemy 2 ORM models, repositories, the SqlAlchemyUnitOfWork + SessionProvider, Provider evidence, candidate-pool and job-history contracts, ETF profile/context persistence, research lifecycle persistence (case + run + result + evidence bundle), the Stage 4B market observation snapshot persistence, and DC-3 index/ETF exposure repositories under packages/storage/src/invest_storage.
+description: SQLAlchemy 2 ORM models, repositories, the SqlAlchemyUnitOfWork + SessionProvider, Provider evidence, candidate-pool and job-history contracts, ETF profile/context persistence, research lifecycle persistence (case + run + result + evidence bundle + research-external-evidence link), the Stage 4B market observation snapshot persistence, the Stage 4C stock price-limit revision-aware persistence, the Stage 4D External Integration Workbench persistence (integration.external_workflow_runs / external_artifacts / external_observations + analytics.research_external_evidence), and DC-3 index/ETF exposure repositories under packages/storage/src/invest_storage.
 resource: /openwiki/storage/overview.md
-tags: [storage, sqlalchemy, repository, unit-of-work, provider-evidence, etf-profile, research-context, research-lifecycle, exposure, market-observations, evidence-bundle, stage4b]
+tags: [storage, sqlalchemy, repository, unit-of-work, provider-evidence, etf-profile, research-context, research-lifecycle, exposure, market-observations, evidence-bundle, stage4b, stage4c, stock-price-limits, stage4d, external-integration, research-external-evidence]
 ---
 
 # Storage overview
@@ -39,7 +39,20 @@ three buckets:
   `MarketObservationSnapshotRow`, `ExposureObservationRow`,
   `ExposureBundleRow`, `IndexIdentityRow`, `EtfIndexMappingRow`,
   `IndexProfileRow`, `IndexConstituentSnapshotRow`,
-  `EtfHoldingSnapshotRow`.
+  `EtfHoldingSnapshotRow`, **`StockPriceLimitRow`** (Stage 4C —
+  per-instrument per-trade-date upper / lower price-limit row
+  keyed on `(instrument_id, trade_date, revision, row_hash)`, with
+  `regime_id` / `status` / `reference_price` / `source_provider` /
+  `source_batch_id` / `observed_at` audit columns),
+  **`ExternalWorkflowRunRow`** / **`ExternalArtifactRow`** /
+  **`ExternalObservationRow`** (Stage 4D —
+  `integration.external_workflow_runs` / `external_artifacts` /
+  `external_observations` rows that anchor the External Integration
+  Workbench),
+  **`ResearchExternalEvidenceRow`** (Stage 4D —
+  `analytics.research_external_evidence` row that binds an admitted
+  external observation to a Research Case, idempotent on
+  `(research_case_id, observation_id)`).
 - **Repositories and DTOs.** `SqlAlchemy*Repository` classes plus the
   `New*` and `Stored*` dataclasses that shape their inputs and outputs.
   The PR-7 + DC-3 + ADR-0012 persistence slices add
@@ -53,6 +66,15 @@ three buckets:
   `SqlAlchemyIndexConstituentSnapshotRepository`,
   `SqlAlchemyEtfIndexMappingRepository`,
   `SqlAlchemyEtfHoldingSnapshotRepository`.
+  The Stage 4D External Integration Workbench adds
+  `SqlAlchemyExternalWorkflowRunRepository` (`add` /
+  `get_by_id` / `list_recent`),
+  `SqlAlchemyExternalArtifactRepository` (`add` / `get_by_id` /
+  `list_by_run`), `SqlAlchemyExternalObservationRepository` (`add`
+  / `get_by_id` / `list_by_run` / `list_by_admission_status` /
+  `list_recent` / `save_admission`), and
+  `SqlAlchemyResearchExternalEvidenceRepository` (idempotent
+  `add(research_case_id, item)` plus `list_by_case`).
 - **Unit of Work.** `UnitOfWork` (Protocol), `SqlAlchemyUnitOfWork`
   (impl), `SessionProvider` (Protocol), and the per-collection port
   Protocols (`InstrumentRepositoryPort`, `DailyBarRepositoryPort`,
@@ -61,7 +83,11 @@ three buckets:
   `ResearchCaseRepositoryPort`,
   `ResearchRunRepositoryPort`,
   `ResearchResultRepositoryPort`,
-  `IndexIdentityRepositoryPort`, …).
+  `IndexIdentityRepositoryPort`, …,
+  `ExternalWorkflowRunRepositoryPort`,
+  `ExternalArtifactRepositoryPort`,
+  `ExternalObservationRepositoryPort`,
+  `ResearchExternalEvidenceRepositoryPort` — Stage 4D).
 
 ## 2. Three-layer Provider evidence model
 
@@ -171,6 +197,19 @@ Examples:
   pipeline side and the case-id FK added by migration
   `20260807_0013` makes the case-anchored filter a single indexed
   read.
+- `SqlAlchemyStockPriceLimitRepository` (Stage 4C; migration
+  `20260812_0018_stock_price_limits`): revision-aware read/write
+  access to `core.stock_price_limits`. The repository owns the
+  ADR-0006 §3 revision-allocation algorithm: a write only advances
+  `revision` when the incoming business content (`row_hash`) differs
+  from the latest persisted row for `(instrument_id, trade_date)`;
+  re-collects of identical content are no-ops at the core layer.
+  Surface: `upsert_many`, `get_latest`, `get_exact`, and
+  `list_by_instrument_and_range`. The database-level
+  `UNIQUE (instrument_id, trade_date, revision, row_hash)`
+  constraint is the final concurrency guard; the repository reads
+  the latest revision inside the same UoW so the deterministic
+  content comparison runs before the INSERT.
 - `SqlAlchemyExposureObservationRepository`,
   `SqlAlchemyExposureBundleRepository`,
   `SqlAlchemyIndexIdentityRepository` (DC-3 / migration
@@ -186,6 +225,39 @@ Examples:
   metadata, the bounded `IndexConstituentSnapshot` per date, the
   date-bounded `EtfIndexMapping`, and the per-ETF
   `EtfHoldingSnapshot` for the reporting period.
+- `SqlAlchemyExternalWorkflowRunRepository` (Stage 4D / migration
+  `20260814_0019_external_integration`): `add`, `get_by_id`, and
+  `list_recent(limit, offset)` (ordered by `started_at` desc with
+  `run_id` as the deterministic tiebreaker). The repository is the
+  read/write seam for `integration.external_workflow_runs` — every
+  row is immutable producer-side metadata (started / finished /
+  schema version / status / metadata) and never carries a payload.
+- `SqlAlchemyExternalArtifactRepository` (Stage 4D): `add`,
+  `get_by_id`, `list_by_run(run_id, limit, offset)` (ordered by
+  `created_at` and `artifact_id`). Each row is the size / hash
+  / logical URI / media-type ledger for one external artifact;
+  the table carries no payload bytes — only a 64-char `content_hash`.
+- `SqlAlchemyExternalObservationRepository` (Stage 4D):
+  `add`, `get_by_id`, `list_by_run(run_id, limit, offset)`,
+  `list_by_admission_status(status, limit, offset)`,
+  `list_recent(status=None, limit, offset)` (radar ordering
+  by `observed_at` desc, then `observation_id`), and
+  `save_admission(observation)` — the only state-machine
+  transition the table allows (admission metadata update on
+  an existing row). Admission terminal states (`ADMITTED` /
+  `REJECTED`) are immutable in the domain layer; the
+  repository reads the row before flushing so the
+  admission-state audit history is preserved.
+- `SqlAlchemyResearchExternalEvidenceRepository` (Stage 4D /
+  migration `20260814_0020_research_external_evidence`): the
+  write side is idempotent on `(research_case_id, observation_id)`
+  through a `UNIQUE` constraint plus the structural `add(case_id,
+  item)` lookup. A re-link of an existing pair with the same
+  `content_hash` returns the existing row; a divergent
+  `content_hash` raises `ValueError` so an existing evidence
+  row is never overwritten with a different admission audit
+  trail. `list_by_case(case_id)` is the ordered-by-`created_at`
+  reader used by future case-workspace surfaces.
 - `InputSnapshotRepository`: `add`, `get_by_date_and_hash`,
   `list_by_date`.
 
@@ -196,7 +268,7 @@ individual session handles.
 
 `CandidatePoolRunRow.input_snapshot_id` is a non-null foreign key to
 `analytics.input_snapshots.id`, named `fk_cpool_runs_snapshot_id`. The
-Alembic [migration](../migrations/overview.md#2-the-seventeen-revision-chain)
+Alembic [migration](../migrations/overview.md#2-the-twenty-revision-chain)
 adds the same constraint, so a persisted candidate-pool run cannot point
 at a missing input snapshot. This storage invariant backs the
 [Candidate pool input-snapshot binding](../domain/candidate-pool.md#3-input-snapshot-binding)
@@ -231,16 +303,29 @@ CLI and the API rely on:
 
 `SqlAlchemyUnitOfWork`:
 
-- Owns a single SQLAlchemy `Session` plus twenty-one lazily-built repository
+- Owns a single SQLAlchemy `Session` plus twenty-three lazily-built repository
   properties: `instruments`, `input_snapshot_repository`,
   `provider_requests`, `provider_attempts`, `provider_batches`,
   `pipeline_runs`, `candidate_pool_runs`, `candidate_pool_items`,
   `daily_bars`, `etf_profiles`, `etf_profile_fields`,
   `research_context_packs`, `research_cases`, `research_evidence_packs`,
-  `research_runs`, `research_results`, `index_identities`,
+  `research_runs`, `research_results`,
+  `research_evidence_bundles` (Stage 4B Phase 3 case-anchored
+  bundle reader used by `market_breadth_bundle_service`),
+  `market_observation_snapshots` (Stage 4B Phase 2 / 4C observer
+  family — used by `market_breadth_service` /
+  `limit_sentiment_service`),
+  `stock_price_limits` (Stage 4C Phase 1 revision-aware
+  repository), `index_identities`,
   `index_profiles`, `index_constituent_snapshots`, `etf_index_mappings`,
   `etf_holding_snapshots`. These are the complete public repository
   properties; the UoW does not expose separate `exposure_*` aliases.
+  The Stage 4D slice adds four more lazily-built properties —
+  `external_workflow_runs`, `external_artifacts`,
+  `external_observations`, and `research_external_evidence` —
+  alongside the reset hooks on `rollback()` / exit so the
+  external-integration repositories can be reused by the API
+  routers through the same context-managed session.
 - Is a context manager: `with uow:` enters, commits on clean exit,
   rolls back on exception, and always closes the session.
 - Exposes a `commit()` / `rollback()` pair (mirroring `Session`) but
@@ -275,6 +360,11 @@ SQLAlchemy classes above.
 | `core.etf_profiles` | DC-2 `etf_profiles` service (migration `20260804_0008_etf_profiles`). One row per `core.instruments` (instrument_id is both PK and FK), carrying the canonical ETF static metadata (`manager` / `benchmark_index` / `category` / `inception_date` / `fund_type` / `management_fee` / `custody_fee` / `aum` / `shares`). | No API surface yet; the table is the persistence target of `SqlAlchemyEtfProfileRepository.upsert`. |
 | `analytics.etf_profile_fields` | PR-ETF-PROFILE-04 `etf_profile_fields` persistence (migration `20260805_0009_etf_profile_fields`). One row per `FieldEvidence` observation, idempotent on `content_hash`, with discriminated `field_value_text` / `field_value_numeric` / `field_value_date` columns plus source provenance and `(instrument_id, field_key)` index. | No API surface yet; the resolver reads through `SqlAlchemyEtfProfileFieldRepository.get_by_instrument_field`. |
 | `analytics.research_context_packs` + `analytics.research_context_items` | Stage 4A evidence / context separation (migration `20260805_0010_research_context_packs`). One pack per `(instrument_id, context_version)`; child items carry the per-field `ContextItem` rows built by the pure `build_etf_profile_context_pack` builder. | No API surface yet; the tables are the persistence target of `SqlAlchemyResearchContextPackRepository` plus the child `ResearchContextItemRow` cascade. |
+| `core.stock_price_limits` | Stage 4C Phase 1 (migration `20260812_0018_stock_price_limits`). One row per `(instrument_id, trade_date, revision)`; carries the `regime_id` / `limit_up_price` / `limit_down_price` / `status` / `reference_price` plus `source_provider` / `source_batch_id` / `observed_at` audit columns; revision advances only on content-hash change (ADR-0006 §3). FKs to `core.instruments.id` and `raw.provider_batches.id`. | No API surface yet; the table is the persistence target of `SqlAlchemyStockPriceLimitRepository.upsert_many`. |
+| `integration.external_workflow_runs` | Stage 4D (migration `20260814_0019_external_integration`). One row per external producer run; immutable producer metadata (`started_at` / `finished_at` / `schema_version` / `producer_status` / `intake_status` / JSONB metadata). No payload bytes. | `apps/pipeline/src/invest_pipeline/integrations/bridge_ingestor.py` (`import_archived_candidate_run`) | `/api/v1/external-workflows`, `/api/v1/integration/health`. |
+| `integration.external_artifacts` | Stage 4D. One row per external artifact (`logical_uri` / `content_hash` / `media_type` / `size_bytes` / JSONB metadata). FK to `external_workflow_runs.run_id` plus a `(run_id, logical_uri)` UNIQUE constraint. | Same bridge ingest; no payload bytes stored in the table. | `/api/v1/external-workflows/{run_id}/artifacts`, `/api/v1/integration/artifacts/{artifact_id}` (safe preview only). |
+| `integration.external_observations` | Stage 4D. One row per external fact candidate (`payload` JSONB / `symbol` / optional `instrument_id` FK / `admission_status` / `metadata`); FKs to `external_workflow_runs` and `external_artifacts`. No payload bytes outside `payload` JSONB. | Same bridge ingest; admission transitions via the gated `/api/v1/external-observations/{observation_id}/admission-decisions` command. | `/api/v1/external-workflows/{run_id}/observations`, `/api/v1/opportunity-radar`. |
+| `analytics.research_external_evidence` | Stage 4D (migration `20260814_0020_research_external_evidence`). One row per admitted external observation bound to a research case; idempotent on `(research_case_id, observation_id)` and globally on `evidence_id`. Carries the canonical `content_hash` / `artifact_content_hash` / `observed_at` / `as_of` / `source_uri` / `producer` / `payload` / `admission` audit metadata. FKs to `analytics.research_cases`, `integration.external_observations`, `integration.external_artifacts`. | `POST /api/v1/research-cases/{case_id}/external-observations/{observation_id}/evidence` (the only writer today). | No API list endpoint yet; future case-workspace surfaces will read through `SqlAlchemyResearchExternalEvidenceRepository.list_by_case`. |
 | `ops.pipeline_runs` | Pipeline job wrappers via `SqlAlchemyPipelineRunRepository`. | `/api/v1/pipeline-runs` latest, detail, and paginated history endpoints. |
 
 ## 6. Boundary rules enforced from the storage side
@@ -288,10 +378,10 @@ SQLAlchemy classes above.
 
 ## 7. Tests
 
-- **Unit (mock):** [`/tests/storage/test_*_mock.py`](../../tests/storage)
+ - **Unit (mock):** [`tests/storage/test_external_integration_repository_mock.py`](../../tests/storage/test_external_integration_repository_mock.py)
   exercise every repository against a `MagicMock` session.
 - **Integration (Testcontainers):**
-  [`/tests/storage/integration/`](../../tests/storage/integration)
+  [`tests/storage/`](../../tests/storage/INCREMENT3-RESULTS.md)
   spins up a disposable PostgreSQL container, runs migrations, and
   exercises the same repositories end-to-end. CI runs them under the
   `storage-integration` job.

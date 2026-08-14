@@ -1,9 +1,9 @@
 ---
 type: Concept
 title: Pipeline overview
-description: Dagster assets, the guarded personal daily schedule, ETL services, provider adapters, JiuwenSwarm research execution, MCP research transports, research orchestration, DC-3 index/ETF exposure collection, ETF profile/context builders, provider routing, the Stage 4B Stock Daily Bars + Market Intelligence Foundation (dynamic stock universe, Tushare by-date daily batches, tdx_offline adapter, market observation snapshot services, market-breadth bundle binding) and replay/backfill operations.
+description: "Dagster assets, the guarded personal daily schedule, ETL services, provider adapters, JiuwenSwarm research execution, MCP research transports, research orchestration, DC-3 index/ETF exposure collection, ETF profile/context builders, provider routing, the Stage 4B Stock Daily Bars + Market Intelligence Foundation (dynamic stock universe, Tushare by-date daily batches, tdx_offline adapter, market observation snapshot services, market-breadth bundle binding), the Stage 4C Core Data Layer Integration (versioned price-limit domain policy, fixture-dev stock price-limit provider, Stock Price-Limit raw/core persistence, Market Breadth v2 + Limit Sentiment publish services), the Stage 4D External Integration Workbench (bridge ingest of the immutable WorkBuddy candidate archive into integration.external_workflow_runs / external_artifacts / external_observations, shared-directory gateway with inbox/processing/archive/failed atomic directory moves, observation-admission service behind the gated `stage4d_admission_commands_enabled` flag), the Provider–Engine–Event Phase 0 seam (ProviderRuntimeRegistry, StockDailyBarsEngine, StockDailyBarsApplication, ProviderHealthSnapshot, ProviderPublishDecision gate), the WorkBuddy daily-report governance (M0/M1/M2: validator + immutable archive + accepted-only latest-accepted.json pointer, path-safe run identity, validate / import CLI subcommands), the WorkBuddy candidate intake (M0 contract-aligned: parser + immutable archive + symbol/projection dedupe + `needs_symbol_resolution` tagging), and replay/backfill operations."
 resource: /openwiki/pipeline/overview.md
-tags: [pipeline, dagster, adapters, etl, fixture_dev, cifang, akshare, tushare, provider-catalog, provider-routing, coverage, historical-backfill, etf-profile, research-context, jiuwenswarm, research-lifecycle, exposure, stage4b, stock-universe, market-breadth, market-observations, evidence-bundle, tdx-offline, hithink]
+tags: [pipeline, dagster, adapters, etl, fixture_dev, cifang, akshare, tushare, provider-catalog, provider-routing, coverage, historical-backfill, etf-profile, research-context, jiuwenswarm, research-lifecycle, exposure, stage4b, stage4c, stock-universe, market-breadth, market-observations, evidence-bundle, tdx-offline, hithink, provider-engine-event, price-limits, limit-sentiment, provider-runtime-registry, workbuddy, workbuddy-reports, workbuddy-candidates, stage4d, external-integration, bridge-ingestor, observation-admission, shared-directory]
 ---
 
 # Pipeline overview
@@ -118,6 +118,29 @@ apps/pipeline/src/invest_pipeline/
 ├── real_exposure_service.py  # service module behind the DC-3 exposure asset
 ├── research_orchestration_service.py  # PR-7 / ADR-0012 ResearchRunner lifecycle orchestrator
 ├── research_context_projection.py  # load_context_projection (Stage 4B Phase 3 bundle -> ContextProjection)
+├── market_breadth_service.py        # Pipeline application service for Market Breadth v1 + v2
+├── market_breadth_bundle_service.py  # bind Market Breadth snapshot to ResearchEvidenceBundle
+├── limit_sentiment_service.py       # Stage 4C Limit Sentiment publish service
+├── stock_price_limits.py            # Stage 4C Stock Price-Limit raw/core ETL service
+├── stock_daily_bars_engine.py       # Stage 4C / ADR-0013 StockDailyBars command / outcome dataclasses
+├── stock_daily_bars_application.py  # ADR-0013 Phase 0 application Engine wiring
+├── provider_health.py               # Stage 4C / ADR-0013 ProviderHealthSnapshot derivation
+├── provider_runtime_registry.py     # ADR-0013 Phase 0 ProviderRuntimeRegistry seam
+├── provider_quality.py              # DC-1 quality scorer + Stage 4C fail-closed publishability gate
+├── integrations/                   # Stage 4D External Integration Workbench bridge
+│   ├── __init__.py                  # re-exports import_archived_candidate_run + SharedDirectoryWorkBuddyGateway
+│   ├── bridge_ingestor.py           # import_archived_candidate_run (immutable WorkBuddy archive → integration.*)
+│   ├── workbuddy_shared_directory.py # SharedDirectoryWorkBuddyGateway (inbox/processing/archive/failed atomic moves)
+│   └── admission.py                 # ObservationAdmissionService — evaluate + persist admission in one UoW
+├── workbuddy_reports/               # WorkBuddy legacy M0/M1/M2 daily-report governance surface
+│   ├── __init__.py                  # re-exports validate_triplet, archive_run, ImportOutcome
+│   ├── __main__.py                  # `python -m invest_pipeline.workbuddy_reports {validate,import}` CLI
+│   ├── validator.py                 # validate_triplet / ValidationResult / SUPPORTED_RULES_VERSION
+│   └── archive.py                   # archive_run / ImportOutcome / latest-accepted pointer + fcntl.flock
+├── workbuddy_candidates/            # WorkBuddy candidate intake (M0 contract-aligned)
+│   ├── __init__.py                  # parse_candidates_payload / extract_legacy_candidates / CandidateIntakeResult
+│   ├── archive.py                   # archive_candidates / ArchiveOutcome (idempotent, conflict-safe)
+│   └── projection.py                # project_candidates / ProjectionResult (symbol resolution + dedupe)
 └── input_snapshot.py      # create_input_snapshot (PR-07)
 ```
 
@@ -544,7 +567,7 @@ is the single source of truth for provider credentials:
   highest-priority path; the centralized file is the fallback.
 
 The historical V2 three-provider plan
-([`tasks/plan-data-source-three-provider.md`](../../tasks/plan-data-source-three-provider.md))
+([`docs/plan/invest-infra-v2-all-data-sources-integration-plan.md`](../../docs/plan/invest-infra-v2-all-data-sources-integration-plan.md))
 once proposed standalone `eastmoney` / `sina` / `tonghuashun`
 adapters. That plan has been **de-scoped** in this slice: the
 three sources are not selectable runtime providers in V2 and the
@@ -717,6 +740,497 @@ legacy EvidencePack-only payload. The bundle / snapshot repositories
 therefore have a verified downstream research consumer
 (see [Storage overview §3](../storage/overview.md#3-repositories-repositoriespy)).
 
+## 5i. Stage 4C Stock Price-Limits ETL service
+
+[`apps/pipeline/src/invest_pipeline/stock_price_limits.py`](../../apps/pipeline/src/invest_pipeline/stock_price_limits.py)
+hosts the asset-agnostic ETL logic for the
+`stock_price_limits` vertical slice. The slice persists the PR-02
+three-layer evidence bundle and the ADR-0006 §3 revision-model
+core rows behind two transactions:
+
+- `write_stock_price_limits_raw(provider, session_factory, *,
+  unit_of_work_factory=SqlAlchemyUnitOfWork)` calls the Provider,
+  resolves the existing `provider_requests` row through
+  `SqlAlchemyProviderRequestRepository.get_or_create`, allocates a
+  fresh `attempt_no`, persists the attempt and (on success) the
+  batch, and stamps the deterministic JSONB sidecar onto
+  `raw.provider_attempts.response_payload_json`. Failed attempts
+  persist only the request + attempt; no batch row is created
+  per the `ck_provider_attempts_failed_has_error` invariant.
+- `upsert_stock_price_limits(session_factory, *, ...)` re-opens a
+  fresh UoW, locates the latest successful attempt for the
+  `(provider_key, dataset_key, request_key)` triplet, deserialises
+  the records from the sidecar, resolves the active
+  `core.instruments.id` per `(exchange, symbol)`, and upserts the
+  price-limit rows into `core.stock_price_limits` under the
+  revision rules. A sidecar record carrying status `unknown` is
+  rejected with `ValueError` so the application service refuses to
+  write `core` rows for indeterminate policy results — the
+  upstream regime coverage gap cannot silently land in the core
+  table.
+
+`_VALID_STATUSES` freezes the
+`{"known", "unlimited", "unknown"}` vocabulary the
+`PriceLimitRecord.status` sidecar may carry; the `_PRICE_LIMITS_SCHEMA_VERSION`
+constant is part of the sidecar payload so a future format change
+is detected at parse time. The `serialize_stock_price_limits` /
+`deserialize_stock_price_limits` helpers use `sort_keys=True` so
+re-collects of identical content produce byte-identical payloads
+and `raw.provider_attempts.response_payload_sha256` stays stable
+across reruns.
+
+The fixture provider lives at
+[`apps/pipeline/src/invest_pipeline/adapters/fixture_dev/price_limits.py`](../../apps/pipeline/src/invest_pipeline/adapters/fixture_dev/price_limits.py).
+`FixtureDevStockPriceLimitsProvider` returns the PR-02 evidence
+tuple directly (`ProviderRequest` / `ProviderAttempt` /
+`ProviderBatch[PriceLimitRecord]`) with a deterministic payload
+hash for the regimes in `DEFAULT_PRICE_LIMIT_REGIMES` plus the
+risk-warning and IPO unlimited-session branches the domain policy
+distinguishes. It is **not** catalog-routed: the
+`ProviderCapability.STOCK_PRICE_LIMITS` enum member and the
+`Dataset.STOCK_PRICE_LIMITS` dataset key are frozen without a
+matching provider declaration, so
+`select_providers(Dataset.STOCK_PRICE_LIMITS)` keeps raising
+`NoEligibleProviderError`. The provider is callable directly
+(`FixtureDevStockPriceLimitsProvider()`).
+
+Focused tests live in
+[`apps/pipeline/tests/unit/test_stock_price_limits_service.py`](../../apps/pipeline/tests/unit/test_stock_price_limits_service.py)
+and
+[`apps/pipeline/tests/unit/test_fixture_dev_price_limits.py`](../../apps/pipeline/tests/unit/test_fixture_dev_price_limits.py);
+run them with
+`cd apps/pipeline && uv run pytest -q tests/unit/test_stock_price_limits_service.py tests/unit/test_fixture_dev_price_limits.py`.
+
+## 5j. Stage 4C Market Breadth v2 + Limit Sentiment publish services
+
+The Stage 4C observation-snapshot family adds two new pure
+publish services on top of the existing
+`SqlAlchemyMarketObservationSnapshotRepository`:
+
+- [`market_breadth_service.py`](../../apps/pipeline/src/invest_pipeline/market_breadth_service.py)
+  hosts `calculate_and_publish_market_breadth` (v1) and
+  `calculate_and_publish_market_breadth_v2`. The v2 path extends
+  the per-instrument input to carry `ma60` / `is_new_high` /
+  `is_new_low`; the v2 builder publishes the affected ratio as
+  `None` and downgrades the snapshot to `PARTIAL / FRESH` whenever
+  a normal-trading instrument is missing any v2 field. The lookback
+  window widened to `_BREADTH_LOOKBACK_NATURAL_DAYS = 60` (and
+  `_V2_BREADTH_LOOKBACK_NATURAL_DAYS = 400` for v2) so the worst
+  Chinese-market holiday run cannot leave the breadth builder with
+  fewer than 20 trading days. The `StockUniverseEmptyError`
+  fail-closed exception surfaces a missing active `STOCK` universe
+  as a hard error rather than a partial `InputSnapshot`.
+- [`limit_sentiment_service.py`](../../apps/pipeline/src/invest_pipeline/limit_sentiment_service.py)
+  hosts `calculate_and_publish_limit_sentiment(uow_factory, *,
+  input_snapshot, inputs, as_of)`. The service validates the
+  `input_snapshot.snapshot_date` matches `as_of`, refuses
+  duplicate or mismatched `instrument_id`s, delegates the
+  three-ratio aggregate to
+  `invest_domain.analytics.limit_sentiment.build_limit_sentiment`,
+  and persists the resulting `MarketObservationSnapshot` through
+  the existing repository. The default `algorithm_version` is
+  `"1.0.0"`.
+
+Both services are Dagster-free — no asset / schedule / log
+machinery — so they can be unit-tested with a hand-rolled fake
+UoW. The Stage 4C Checkpoint B acceptance
+([`docs/validation/stage4c-mvp-checkpoint-b-acceptance.md`](../../docs/validation/stage4c-mvp-checkpoint-b-acceptance.md))
+signs off on the contract suite (`test_stage4c_seeded_replay.py`
++ `test_tushare_tdx_consistency_golden.py`) end-to-end.
+
+## 5k. Stage 4D External Integration Workbench (bridge ingest + shared-directory gateway)
+
+[`apps/pipeline/src/invest_pipeline/integrations/`](../../apps/pipeline/src/invest_pipeline/integrations/)
+is the Stage 4D bridge between the WorkBuddy candidate archive
+(see [§5n](#5n-workbuddy-candidate-intake-m0-contract-aligned-slice))
+and the new `integration.external_*` tables that the read API
+([§1 / §2 of API overview](../api/overview.md#2-routing-surface))
+surfaces. The bridge stays deliberately minimal — no Provider,
+no HTTP, no Dagster asset, no candidate-pool writer. The package
+lands in three focused slices:
+
+- **Bridge ingest — `bridge_ingestor.import_archived_candidate_run`.**
+  Reads one already-archived WorkBuddy run at
+  `<archive_root>/runs/<trade_date>/<workflow_run_id>/{candidates.json,manifest.json}`
+  (the same `candidate-intake.manifest/1.0` archive the
+  `workbuddy_candidates.archive_candidates` slice writes in
+  [§5n](#5n-workbuddy-candidate-intake-m0-contract-aligned-slice)).
+  The bridge is **safe by construction**:
+
+  - `trade_date` matches `^\d{4}-\d{2}-\d{2}$` and survives
+    `date.fromisoformat()`; `workflow_run_id` matches
+    `^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$`. Both checks run before
+    the resolved path is computed, so `..` / `.hidden` / a
+    non-canonical date cannot smuggle through
+    `os.path.join`. The final `(root / "runs" / trade_date /
+    workflow_run_id).resolve()` is verified to remain under
+    `archive_root` — any escape raises
+    `ValueError("archive path escapes archive root")` and aborts
+    the import.
+  - The manifest's `files[0].sha256` and `files[0].size_bytes`
+    are recomputed against the on-disk `candidates.json` payload
+    bytes; mismatch raises `ValueError("candidate archive hash or
+    size does not match manifest")` so the bridge never persists
+    a tampered archive.
+  - Stable UUIDs are derived through `uuid5(NAMESPACE_URL,
+    "invest-infra:workbuddy-run:<workflow_run_id>")` and
+    `uuid5(NAMESPACE_URL, "invest-infra:workbuddy-artifact:<sha256>")`
+    so a re-import of the same archive **always** resolves to the
+    same `run_id` / `artifact_id` — the integration UoW treats
+    those as the natural idempotency keys.
+  - On a re-import the bridge returns the existing
+    `ExternalWorkflowRun` / `ExternalArtifact` / observation tuple
+    with `BridgeImportResult.idempotent=True`; no rows are
+    touched, no `project_candidates` re-run, no duplicate
+    observations created.
+  - Per-observation IDs are `uuid5(NAMESPACE_URL,
+    "invest-infra:workbuddy-observation:<workflow_run_id>:<index>:<payload>")`,
+    so two archives with byte-identical payloads get identical
+    observation IDs across runs.
+- **Shared-directory gateway — `workbuddy_shared_directory.SharedDirectoryWorkBuddyGateway`.**
+  Manages the filesystem state machine the WorkBuddy producer
+  drives via a `<root>/workbuddy/results/<package>.ready/`
+  inbox. `process_once()` claims every visible `*.ready` package
+  with `os.replace(ready_path, processing/<package>)`, loads the
+  payload (preferring `candidates.json`; falling back to the
+  legacy `sector_result*.json` / `result*.json` triplet through
+  `extract_legacy_candidates`), archives it through
+  `archive_candidates(...)` so the governance archive stays the
+  single source of truth, then delegates to the bridge above. On
+  failure the package is `os.replace`-moved to
+  `workbuddy/failed/<package>` and the `SharedDirectoryImport.error`
+  field carries the exception text so the operator can diagnose
+  without losing the input. On success the package is moved to
+  `workbuddy/archive/<package>`. The gateway enforces a 16 MiB
+  per-file size cap and refuses any file path that escapes the
+  claimed package directory. The whole module is the production
+  surface the
+  [`docs/plan/invest-infra-stage4d-mvp-phased-execution-plan-v1.0.md`](../../docs/plan/invest-infra-stage4d-mvp-phased-execution-plan-v1.0.md)
+  M3 step plugs into; the production CLI
+  (`python -m invest_pipeline.integrations …`) is not wired in
+  this MVP slice — see [§8 Provider error model](#8-provider-error-model).
+- **Observation admission service — `admission.ObservationAdmissionService`.**
+  Thin UoW-bound wrapper around the pure-domain
+  `invest_domain.integration.evaluate_admission`. The pipeline
+  service is the read-only mirror of the API's
+  [`ObservationAdmissionCommandService`](../api/overview.md#schemasadmissionpy-stage-4d-gated-command);
+  it takes the domain `AdmissionVerification` facts and writes
+  the `pending → admitted|rejected|corroborated|conflict`
+  transition through `SqlAlchemyExternalObservationRepository.save_admission`.
+  No DAG asset / schedule / sensor today — admission is driven
+  from the gated HTTP command endpoint per [API overview §5k](../api/overview.md).
+
+```mermaid
+flowchart LR
+    WB[WorkBuddy results/*.ready] --> SD[SharedDirectoryWorkBuddyGateway]
+    SD --> AR[workbuddy_candidates.archive_candidates]
+    SD --> BI[bridge_ingestor.import_archived_candidate_run]
+    AR --> AC[(runs/trade_date/workflow_run_id/)]
+    BI --> UoW[uow.external_workflow_runs / external_artifacts / external_observations]
+    UoW --> API[/api/v1/external-workflows, /opportunity-radar, /integration/health/]
+    OA[ObservationAdmissionCommandService] --> UoW
+    OA --> API2[POST /api/v1/external-observations/observation_id/admission-decisions]
+    UoW --> LINK[ResearchExternalEvidenceService.link]
+    LINK --> RC[(analytics.research_external_evidence)]
+```
+
+Focused tests live in
+[`tests/pipeline/test_bridge_ingestor.py`](../../tests/pipeline/test_bridge_ingestor.py)
+(path-safety rejection, manifest hash mismatch, idempotent
+re-import, symbol/projection tagging) and
+[`tests/pipeline/test_workbuddy_shared_directory.py`](../../tests/pipeline/test_workbuddy_shared_directory.py)
+(claim-then-move atomicity, success → archive, failure → failed,
+legacy-fallback when `candidates.json` is absent, 16 MiB size
+cap, package-path-escape rejection). The pure-domain admission
+suite is in
+[`packages/domain/tests/test_integration.py`](../../packages/domain/tests/test_integration.py).
+
+## 5l. Provider–Engine–Event Phase 0 seam
+
+The [Provider–Engine–Event Phase 0 seam](provider-engine-event.md)
+ships three thin modules on top of the existing catalog / factory
+authority:
+
+- `ProviderRuntimeRegistry` — typed seam future Engine / Event
+  layers consume. Resolves the ETF / stock runtime provider behind
+  a `Settings` instance and returns a frozen `ResolvedProvider`
+  (provider, declaration, key). Preserves the four fail-closed
+  error categories (`KeyError` / `UnknownProviderError` /
+  `RealProviderRequiresExplicitEnablementError` /
+  `ProviderAuthenticationError`) verbatim.
+- `StockDailyBarsEngine` + `StockDailyBarsApplication` — command /
+  outcome dataclasses and the application-layer Engine wiring
+  (`ProviderResolver` / `RawIngestor` / `CorePublisher` /
+  optional `HealthPreflight`). The outcome dataclass scrubs the
+  `_ERROR_SECRET_MARKERS` tuple (`api_key` / `access_token` /
+  `token=` / `password` / `secret`) so an api_key or token
+  fragment cannot leak through the engine summary.
+- `ProviderHealthSnapshot` derivation — five-level priority
+  (`DISABLED` / `UNKNOWN` / `STALE` / `DEGRADED` / `HEALTHY`)
+  that never lowers a higher-precedence result to a lower one
+  even when the underlying quality ratios look perfect.
+- `ProviderPublishDecision` gate — the audit-grade fail-closed
+  decision (`publishable=True` only when every reason slot is
+  empty; reasons are appended in a stable, deterministic order:
+  `low_coverage` / `low_completeness` /
+  `stale_or_failed_freshness` / `failed_symbols`). The freshness
+  requirement is fixed at `"fresh"` and may not be lowered by
+  callers.
+
+Phase 0 ships **no** Event Dispatcher and **no** Engine-driven
+asset wiring (ADR-0013 §3); the seam is the typed entry point
+future consumers will use without re-implementing the catalog /
+factory. See
+[Provider–Engine–Event seam](provider-engine-event.md) for the
+full authority model, the focused test layout, and the explicit
+"what stays outside Phase 0" list.
+
+## 5m. WorkBuddy daily-report governance (M0 / M1 / M2 atomic slices)
+
+[`apps/pipeline/src/invest_pipeline/workbuddy_reports/`](../../apps/pipeline/src/invest_pipeline/workbuddy_reports/)
+is the **legacy report-audit** surface. After the 2026-08-14 contract
+re-scoping
+([`docs/implementation/WORKBUDDY-CANDIDATE-INTAKE-M0-CONTRACT.md`](../../docs/implementation/WORKBUDDY-CANDIDATE-INTAKE-M0-CONTRACT.md))
+it remains the strict-report-audit tool for the historical WorkBuddy
+triplet — it is **not** the candidate-intake gate. The package splits
+into three independently-shippable slices:
+
+- **M0 first slice — validator.**
+  [`validator.validate_triplet`](../../apps/pipeline/src/invest_pipeline/workbuddy_reports/validator.py)
+  is the public entry point. The contract freezes
+  `SUPPORTED_RULES_VERSION = "1.1.2"` and an explicit
+  `_COMPATIBLE_RULES_VERSIONS = frozenset({"1.1.1", "1.1.2"})` set —
+  there is no string-range comparison, no PATCH/MINOR/MAJOR
+  inference. Anything outside the set (1.0.x, 2.0.x, 1.1.3) raises
+  `unsupported_version` → exit `4`. The validator normalises the
+  legacy `result.status` alias into `result.producer_status` (with a
+  warning) so the historical 2026-08-13 sample is not silently
+  reinterpreted; the normalised value still goes through the same
+  `_PRODUCER_STATUSES = frozenset({"succeeded", "failed_validation",
+  "failed_execution", "needs_rule_confirmation"})` allow-list, so a
+  producer `failed_validation` / `failed_execution` /
+  `needs_rule_confirmation` status can never reach `accepted`. Path
+  safety is enforced at the validator boundary: `trade_date` is
+  matched by `^\d{4}-\d{2}-\d{2}$` and then validated through
+  `date.fromisoformat()` so attacker-controlled values cannot construct
+  `<root>/runs/<trade_date>/`; `workflow_run_id` is matched by
+  `^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$` (leading letter/digit,
+  bounded length, no path separators, no whitespace, no control
+  characters) so `..` / `.hidden` cannot smuggle through
+  `os.path.join`. Cross-file identity is computed on the four
+  canonical fields `workflow_run_id` / `trade_date` /
+  `report_rules_version` / `strategy_version` (the
+  `producer_status` slot is intentionally excluded from
+  cross-file matching per M0 §2). After identity passes, the
+  validator runs the full hard-validation matrix — stage
+  adjacency, applied rules, scores, ranking, candidates, markdown
+  consistency — and classifies the final verdict
+  `rejected > partial > accepted` (see
+  `ValidationResult.exit_code`).
+- **M1 first atomic slice — immutable archive.**
+  [`archive.archive_run`](../../apps/pipeline/src/invest_pipeline/workbuddy_reports/archive.py)
+  builds the immutable archive at
+  `<root>/runs/<trade_date>/<workflow_run_id>/` (original basenames
+  + `governed-quality-report.json` +
+  `invest-pipeline/workbuddy-governed-quality-report@1.0` +
+  `manifest.json` with the
+  `invest-pipeline/workbuddy-archive-manifest@1.0` schema). The
+  archive is staged in a `tempfile.mkdtemp(prefix=".tmp-")`
+  directory next to the target; the source triplet is
+  `shutil.copy2`'d into staging, every archived file's bytes are
+  re-hashed independently, the manifest is round-tripped through
+  the staging directory, and the staging dir is moved into place
+  via `os.replace`. Re-importing an identical triplet is
+  idempotent (`is_idempotent=True`, exit `0`); re-importing the
+  same `(trade_date, workflow_run_id)` with different bytes
+  produces a conflict outcome (`is_conflict=True`, exit `5`) and
+  never overwrites the existing archive. `validated_at` is
+  derived from the source triplet's max mtime (with a UTC
+  fallback) so an unchanged source always triggers the
+  idempotency path.
+- **M2 second atomic slice — `latest-accepted.json` pointer.**
+  Only accepted runs advance the pointer. The writer serializes
+  on a fixed lock file inside `governance_root` (`.latest-accepted.lock`)
+  via `fcntl.flock(LOCK_EX)` and refuses to overwrite an older
+  `(trade_date, finished_at, workflow_run_id)` key. The
+  replacement uses `tempfile.mkstemp` + `flush` + `fsync` +
+  `os.replace` so a crash mid-write cannot leave a partial
+  pointer on disk. A parse-failure on the existing pointer or a
+  missing required sort field surfaces as `_LatestPointerCorrupt`
+  (safety halt, never overwritten).
+
+Discovery (`discover_triplet`) accepts the canonical M1 names
+`sector_result*.json` / `板块强度排行榜*.md` /
+`sector_quality*.json` and falls back to the legacy
+`result*.json` / `report*.md` / `quality_report*.json`
+triplets for backward compatibility with the 2026-08-13 sample.
+
+The CLI is [`__main__.py`](../../apps/pipeline/src/invest_pipeline/workbuddy_reports/__main__.py):
+
+```bash
+python -m invest_pipeline.workbuddy_reports validate \
+    --source-dir /path/to/run
+python -m invest_pipeline.workbuddy_reports import \
+    --source-dir /path/to/run \
+    --root /var/lib/workbuddy/governance
+```
+
+The CLI emits a single JSON object on stdout (the contract §9
+shape: `workflow_run_id`, `trade_date`, `producer_status`,
+`governance_status`, `errors`, `warnings`, `file_hashes`,
+`run_dir`, `manifest_path`, `governed_report_path`,
+`is_idempotent`, `is_conflict`, `pointer_updated`, `pointer_path`,
+`exit_code`) and a diagnostic line on stderr. Exit codes are
+`0` (accepted / idempotent), `2` (partial), `3`
+(validation-level rejection), `4` (input / argument /
+unsupported-version), `5` (archive conflict or I/O failure).
+No Make target wraps either subcommand today — see
+[§11 Personal CLIs](#11-personal-clis) for the existing CLI
+catalogue; the promotion plan is the M2 / M3 phase in the candidate
+intake plan (see §5m below) and the
+[WorkBuddy Candidate Intake MVP](../../docs/plan/invest-infra-workbuddy-daily-report-governance-mvp-plan-v1.0.md).
+
+Focused tests live in
+[`apps/pipeline/tests/unit/test_workbuddy_reports_validator.py`](../../apps/pipeline/tests/unit/test_workbuddy_reports_validator.py)
+(30 tests covering `SUPPORTED_RULES_VERSION` pinning, the
+`result.status` alias normalization, the full rejection matrix
+on unsupported versions / cross-file identity drift / stage
+adjacency / applied rules / scoring / ranking / candidates /
+markdown) and
+[`apps/pipeline/tests/unit/test_workbuddy_reports_archive.py`](../../apps/pipeline/tests/unit/test_workbuddy_reports_archive.py)
+(46 tests covering the atomic rename, the manifest-on-disk
+re-hash, the idempotent re-import, the conflict-safe
+non-overwrite path, the M2 `latest-accepted.json` lock + sort-key
+contract, and the `fcntl.flock` serialization). Run them with:
+
+```bash
+cd apps/pipeline && uv run pytest -q \
+    tests/unit/test_workbuddy_reports_validator.py \
+    tests/unit/test_workbuddy_reports_archive.py
+```
+
+The legacy `workbuddy_reports` surface is **not** part of the
+`personal_etf_daily_job` asset graph, does not write to
+PostgreSQL, and never participates in `provider_factory` or
+`ProviderRuntimeRegistry`. It is a self-contained audit tool
+that other operators / CI jobs can drive directly.
+
+## 5n. WorkBuddy candidate intake (M0 contract-aligned slice)
+
+[`apps/pipeline/src/invest_pipeline/workbuddy_candidates/`](../../apps/pipeline/src/invest_pipeline/workbuddy_candidates/)
+is the **candidate intake** surface that the M0 contract
+re-scoping
+([`docs/implementation/WORKBUDDY-CANDIDATE-INTAKE-M0-CONTRACT.md`](../../docs/implementation/WORKBUDDY-CANDIDATE-INTAKE-M0-CONTRACT.md))
+elevates to the canonical WorkBuddy entry. The contract
+re-defines WorkBuddy as a **candidate clue producer** rather
+than a full report publisher: production rules 2.0.0 only
+require run identity (`workflow_run_id` / `trade_date` /
+`strategy_id` / `status`) plus `candidates[]` with non-empty
+`symbol` and `reason` fields. Score, ranking, stage
+adjacency, source refs, Markdown, quality report and producer
+self-checks are **optional context** that cannot block intake.
+The package lands in three small slices:
+
+- **Parser.** [`parse_candidates_payload`](../../apps/pipeline/src/invest_pipeline/workbuddy_candidates/__init__.py)
+  is a pure, DB-free parser. Required fields at batch level are
+  `workflow_run_id` / `trade_date` / `strategy_id` / `status` /
+  `candidates`; missing or wrong-typed fields raise `ValueError`
+  and refuse the whole batch. Identity is validated against
+  the same path-safety contract as the legacy report-audit:
+  `trade_date` matches `^\d{4}-\d{2}-\d{2}$` and survives
+  `date.fromisoformat()`, `workflow_run_id` matches
+  `^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$` so a stray `..` or
+  `/` cannot smuggle through the archive path. Inside
+  `candidates[]`, a missing or empty `symbol` / `reason`
+  **isolates that item** (it lands in `rejected` and contributes
+  a `{scope: item, index, error: "symbol and reason must be
+  non-empty strings"}` finding) — the rest of the batch still
+  parses. Unknown fields on a candidate are preserved on
+  `CandidateItem.raw` so downstream score / reason fields the
+  WorkBuddy producer chose to attach round-trip through the
+  archive unchanged.
+- **Legacy adapter.** [`extract_legacy_candidates`](../../apps/pipeline/src/invest_pipeline/workbuddy_candidates/__init__.py)
+  pulls `candidates[]` out of the historical 1.1.1 / 1.1.2
+  `result.json` without requiring the strict-report-audit
+  triplet to be present. It accepts `strategy_id` directly or
+  falls back to `strategy_version` so the legacy report's
+  strategy-version field still anchors the run. Items that
+  fail the same symbol / reason check are isolated at item
+  level; the absence of `scores`, `ranking`, `stages`,
+  `sources`, Markdown or `quality_report` is **not** an
+  intake blocker — they are optional context.
+- **Immutable archive.**
+  [`archive.archive_candidates`](../../apps/pipeline/src/invest_pipeline/workbuddy_candidates/archive.py)
+  writes the per-run archive at
+  `<archive_root>/runs/<trade_date>/<workflow_run_id>/` with a
+  `candidates.json` (the encoded payload, JSON with
+  `sort_keys=True` for byte-stable re-imports) and a
+  `manifest.json` carrying the
+  `candidate-intake.manifest/1.0` schema plus the
+  `candidate_rules_version: "2.0.0"` marker. Re-importing an
+  identical `candidates.json` returns `ArchiveOutcome.idempotent=True`;
+  re-importing the same identity with different bytes returns
+  `ArchiveOutcome.conflict=True` and never overwrites the
+  existing archive. The staging directory uses
+  `tempfile.mkdtemp(prefix=".archive-", dir=archive_root)`
+  and the move into place is `os.replace`-based, so a crash
+  mid-import cannot leave a partial `run_dir` on disk.
+- **Pure projection.**
+  [`projection.project_candidates`](../../apps/pipeline/src/invest_pipeline/workbuddy_candidates/projection.py)
+  is a database-free projection helper. It takes the
+  `CandidateIntakeResult` plus an injected `Resolver`
+  callable (the seam where the downstream code plugs in its
+  master-data lookup) and a pre-populated `seen_keys`
+  iterable for cross-batch deduplication. Resolved items are
+  re-tagged `status="pending_validation"`; unresolved items
+  move to `ProjectionResult.needs_symbol_resolution` with a
+  per-item finding so the downstream research pipeline can
+  re-attempt resolution without re-reading WorkBuddy
+  artefacts. Resolver exceptions are caught and isolated —
+  a master-data outage on one symbol does not cascade to the
+  rest of the batch.
+
+```mermaid
+flowchart LR
+    A[WorkBuddy 2.0.0 candidates JSON] --> P[parse_candidates_payload]
+    A2[Legacy 1.1.1 / 1.1.2 result.json] --> E[extract_legacy_candidates]
+    P --> R[CandidateIntakeResult]
+    E --> R
+    R --> AC[archive_candidates]
+    AC --> AR[runs/trade_date/workflow_run_id/]
+    R --> PR[project_candidates]
+    PR --> RES[resolver seam]
+    PR --> POOL[research candidate pool]
+    PR --> NR[needs_symbol_resolution]
+```
+
+The package is intentionally minimal: no Dagster sensor, no
+CLI subcommand, no API/Web surface, no DB write. Promotion
+to a Make target, the production `python -m
+invest_pipeline.workbuddy_candidates …` CLI, and the
+candidate-pool writer is the M2 / M3 phase per
+[`docs/plan/invest-infra-workbuddy-daily-report-governance-mvp-plan-v1.0.md` §5](../../docs/plan/invest-infra-workbuddy-daily-report-governance-mvp-plan-v1.0.md).
+
+Focused tests live in
+[`apps/pipeline/tests/unit/test_workbuddy_candidates.py`](../../apps/pipeline/tests/unit/test_workbuddy_candidates.py)
+(minimal payload / item isolation / unknown-field
+preservation / batch failure / `legacy_extracted` strategy-version
+fallback),
+[`apps/pipeline/tests/unit/test_workbuddy_candidates_archive.py`](../../apps/pipeline/tests/unit/test_workbuddy_candidates_archive.py)
+(idempotent re-import / conflict-safe non-overwrite /
+item-level finding surfacing / unsafe-identity rejection) and
+[`apps/pipeline/tests/unit/test_workbuddy_candidates_projection.py`](../../apps/pipeline/tests/unit/test_workbuddy_candidates_projection.py)
+(symbol resolution / `pending_validation` tag / `needs_symbol_resolution`
+isolation / in-batch + cross-batch dedupe /
+`rejected_by_intake` finding propagation). Run them with:
+
+```bash
+cd apps/pipeline && uv run pytest -q \
+    tests/unit/test_workbuddy_candidates.py \
+    tests/unit/test_workbuddy_candidates_archive.py \
+    tests/unit/test_workbuddy_candidates_projection.py
+```
+
 ## 6. ETL service modules
 
 The assets wrap testable, asset-agnostic service functions so the
@@ -841,6 +1355,22 @@ The catalog registers **eight** frozen declarations
 | `tdx_offline` | `research_only` | `STOCK_DAILY_BARS` | `False` |
 | `tushare` | `secondary` | `ETF_DAILY_BARS` / `ETF_MASTER_DATA` | `False` |
 
+The Stage 4C Phase 0 freeze
+([`tasks/stage4c-core-data-layer-integration-plan.md`](../../tasks/stage4c-core-data-layer-integration-plan.md))
+adds four `ProviderCapability` members — `STOCK_MINUTE_BARS` /
+`STOCK_BLOCK_MEMBERSHIPS` / `STOCK_PRICE_LIMITS` /
+`TDX_GUI_ANALYSIS` — but does **not** register a matching provider
+declaration in this slice; the corresponding providers
+(`tdx_offline_minute` / `tdx_local_block` /
+`FixtureDevStockPriceLimitsProvider` / `tdx_gui_analysis`) land in
+later Stage 4C phases and the "do not claim capabilities for
+providers that are not implemented yet" guardrail forbids
+pre-emptive catalog entries. The TDX offline slice's
+`STOCK_DAILY_BARS` capability is intentionally kept unchanged.
+[`FixtureDevStockPriceLimitsProvider`](../../apps/pipeline/src/invest_pipeline/adapters/fixture_dev/price_limits.py)
+is callable directly today without catalog routing
+(see [§5i Stage 4C Stock Price-Limits ETL service](#5i-stage-4c-stock-price-limits-etl-service)).
+
 The negative-capability contract is part of the public catalog
 contract: `quicktiny_mcp`, `rsscast` and `hithink` must never
 advertise `ETF_DAILY_BARS` or `ETF_MASTER_DATA` (matrix §3 / §5.4
@@ -897,6 +1427,18 @@ filtering, and maps markets through the single `MARKET_TO_EXCHANGE`
 mapping (`sh → SSE`, `sz → SZSE`, `bj → BJSE`). `TdxOfflineSettings`
 is disabled by default, validates a non-negative `record_cap`, and
 redacts `data_root` in logs.
+
+Slice 2 (`tushare_pair_request_keys_bounded`) further bounds the
+TDX reader pair-request keys so the by-pairs widening introduced
+in Stage 4B does not leak unbounded multi-pair keys into the
+upstream `provider_requests.request_key` sidecar. `prev_close`
+for the first bar is `None`; subsequent bars inherit the
+immediately previous bar's `close` within the same per-security
+sequence (per ADR-0005 §3 / Stage 4C Task 1.1), so two symbols
+read in the same run never share `prev_close` state. Missing or
+invalid `.day` files fail closed with a
+`ProviderAttemptStatus.FAILED` attempt so the orchestrator can
+surface the gap rather than silently fabricate a stale bar.
 
 The stock asset also reuses a previously persisted stock-master
 snapshot when one exists, rather than rediscovering the universe
