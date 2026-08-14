@@ -1,7 +1,7 @@
 ---
 type: Concept
 title: Provider–Engine–Event seam
-description: ADR-0013 Phase 0 seam that introduces the ProviderRuntimeRegistry, the StockDailyBarsEngine command/outcome dataclasses, the StockDailyBarsApplication lifecycle, the ProviderHealthSnapshot derivation, and the Stage 4C fail-closed ProviderPublishDecision gate — the single typed entry point future Engine and Event layers will consume without re-implementing the catalog / factory / Dagster boundaries.
+description: ADR-0013 Phase 0 / Phase 1 seam that introduces the ProviderRuntimeRegistry, the StockDailyBarsEngine command/outcome dataclasses, the StockDailyBarsApplication lifecycle, the ProviderHealthSnapshot derivation, and the Stage 4C fail-closed ProviderPublishDecision gate — the single typed entry point future Engine and Event layers will consume without re-implementing the catalog / factory / Dagster boundaries.
 resource: /openwiki/pipeline/provider-engine-event.md
 tags: [provider-engine-event, provider-runtime-registry, stock-daily-bars-engine, stock-daily-bars-application, provider-health, provider-publish-decision, stage4c, governance]
 ---
@@ -21,7 +21,7 @@ Dagster / Event layers from drifting:
   run facts.
 - Event Dispatcher — already-published batch results only.
 
-The Phase 0 implementation lands **three thin modules** plus the
+The current Phase 0 / Phase 1 implementation lands **three thin modules** plus the
 Stage 4C fail-closed publishability gate. They are deliberately
 small: every one of them is a composition root that reuses an
 existing authority rather than a parallel source of truth. No new
