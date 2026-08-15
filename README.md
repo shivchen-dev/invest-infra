@@ -119,6 +119,9 @@ systemctl --user enable --now invest-infra-dagster.service
 `docs/adr/` 和
 `docs/plan/invest-infra-stage4a-final-closure-sprint-plan-v1.1.md`。
 
+当前计划权威、完成/延期状态和任务承接关系统一见
+[`docs/plan/README.md`](docs/plan/README.md)；不得仅根据旧 Todo 的未勾选项恢复派工。
+
 ## 验证状态
 
 当前已具备 ETF 主数据、行情、候选池、ETF Profile、指数成分与持仓 Exposure、Evidence Pack/Context Pack 基础能力。Stage 4A 的 Research Case、Research Run、Research Result、JiuwenSwarm Adapter、只读 API 和 Web Research Cockpit 已完成代码级验收；生产风格的 API/Web 联调仍以 Final Acceptance 报告中的明确状态为准。

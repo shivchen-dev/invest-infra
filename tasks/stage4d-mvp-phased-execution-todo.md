@@ -2,7 +2,8 @@
 
 > 计划：`docs/plan/invest-infra-stage4d-mvp-phased-execution-plan-v1.0.md`
 > 状态规则：`[ ]` 未开始，`[~]` 进行中，`[x]` 完成，`[!]` 阻塞。
-> 当前状态：Stage 3.4 Research Case 创建/关联已完成；JiuwenSwarm 联动尚未开始。
+> 当前状态：ACTIVE_CLOSEOUT；3.5 已有受控实现但真实环境验收未完成，3.6–3.9 与 Gate 3 待按代码事实校准和收口。
+> 任务治理：`tasks/README.md`
 
 ## 阶段 0：合同与现场前置验证
 

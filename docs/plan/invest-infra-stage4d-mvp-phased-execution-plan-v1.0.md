@@ -1,11 +1,13 @@
 # Stage 4D MVP 分阶段执行计划
 
 > 文档版本：v1.0
-> 文档状态：Draft for Review
+> 文档状态：ACTIVE_CLOSEOUT
+> 计划治理：`docs/plan/README.md`
 > 制定日期：2026-08-14
 > 上位蓝图：`docs/plan/invest-infra-stage4d-unified-investment-workbench-integration-plan-v1.0.md`
 > 执行清单：`tasks/stage4d-mvp-phased-execution-todo.md`
 > 当前范围：Stage 4D MVP（D0–D5 + D7–D8）
+> 后续承接：中心投研可视化平台的业务定位、信息架构与新增实施任务，以 `docs/plan/invest-infra-central-research-visualization-mvp-plan-v1.0.md` 为准；本计划已完成的只读工作台事实继续有效，不再扩展为回测、自动交易或通用流程平台。
 
 ## 1. 目标
 
