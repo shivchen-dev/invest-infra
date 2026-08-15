@@ -177,7 +177,7 @@ Acceptance criteria:
 - 每个 CandidateProposal 可追溯两个策略版本和阶段运行；
 - 首批不把策略内部规则提升为公共节点，也不建设通用 DAG、图形编排器、自定义表达式语言或动态插件系统。
 
-Verification: 使用 2026-08-13 原始报告回放 23 → 20 → 5 → 2 → 0 和 `needs_rule_confirmation`，并验证阶段依赖、重复运行和历史版本重放。
+Verification: 将 2026-08-13 旧报告作为 `legacy_unapproved/test_only/non_authoritative` fixtures，验证阶段依赖、摄取和正式状态隔离；新工作流只验证 CIA 批准版本的重复运行与历史版本重放，不要求复现旧结果。
 
 ### Task S1.1A：Proposal Revision 与验证记录
 

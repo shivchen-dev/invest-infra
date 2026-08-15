@@ -1,18 +1,21 @@
 # 原候选池两阶段选股报告工作流重建执行清单
 
-## Phase 0：原始报告与行为基线
+## Phase 0：源文档与旧测试材料
 
-- [ ] 登记板块和个股阶段的 Markdown、结构化结果、质量报告及 hash
-- [ ] 固化 23 → 20 → 5 → 2 → 0 阶段计数和 `needs_rule_confirmation`
-- [ ] 固化两阶段上下游输入输出关系
+- [ ] 登记两篇头条原文为不可变 StrategySourceDocument
+- [ ] 登记旧报告和结果并标记 legacy_unapproved/test_only/non_authoritative
+- [ ] 记录 23 → 20 → 5 → 2 → 0 和 needs_rule_confirmation 为测试fixture事实
+- [ ] 记录旧两阶段上下游关系，仅用于摄取和衔接测试
+- [ ] 建立原文、旧实现和待审新提案差异表
 - [ ] 分类确定性规则、策略判断、模型解释和正式准入门禁
 - [ ] 盘点旧 Candidate Pool、WorkBuddy 调度、目录、摄取和准入入口
 - [ ] 明确允许差异、必须一致项和回滚方式
 
 ## Phase 1：策略与交付合同
 
-- [ ] 登记板块和个股 StrategySourceDocument 原文、artifact 和 hash
 - [ ] 完成两个策略范围的 StrategyCapabilityAssessment
+- [ ] WorkBuddy基于原文和能力评估生成两个全新 StrategyProposal
+- [ ] 显式记录所有工程化补充、阈值、TOP数量和原文偏离
 - [ ] 冻结 Sector StrategyVersion 职责和最小输入输出
 - [ ] 冻结 Stock StrategyVersion 职责和最小输入输出
 - [ ] 冻结 CandidateSelectionWorkflowVersion/CandidateSelectionRun 合同
@@ -58,13 +61,12 @@
 - [ ] 验证未准入候选不能创建 ResearchCase/ResearchRun
 - [ ] 验证 WorkBuddy ExternalObservation 不形成正式状态旁路
 
-## Phase 5：双轨报告回放
+## Phase 5：测试隔离、差异审查与切换
 
-- [ ] 使用等价输入运行旧工作流和新工作流
-- [ ] 对比两阶段结构化结果、阶段计数、TOP板块和个股淘汰
-- [ ] 对比状态、候选集合、输入输出 hash 和 artifact 引用
-- [ ] 人工核对报告业务信息，不要求逐字一致
-- [ ] 复现 2026-08-13 基线
+- [ ] 验证旧策略和旧报告不能激活或产生正式候选
+- [ ] 使用旧交付物测试摄取、归档、阶段衔接和差异展示
+- [ ] 新工作流只运行CIA批准的策略版本
+- [ ] 审核新提案相对原文和旧实现的全部差异
 - [ ] 完成至少一个新交易日真实回放
 - [ ] 归类并处理数据、规则、解释、合同和实现差异
 - [ ] 归档测试、原始交付物、数据库记录和差异报告
@@ -82,7 +84,8 @@
 
 - [ ] 两个策略版本和工作流版本不可变且可追溯
 - [ ] 下游输入绑定上游 StageResult、run id 和 artifact hash
-- [ ] 2026-08-13 的 23 → 20 → 5 → 2 → 0 基线可解释复现
+- [ ] 2026-08-13 旧fixture可摄取但不能进入正式候选池
+- [ ] 新策略的工程化偏离均有CIA批准记录
 - [ ] JSON 作为机器权威，Markdown 不被解析为业务状态
 - [ ] error/warning/review 和坏项隔离全链路通过
 - [ ] CandidateAdmission 全链路通过

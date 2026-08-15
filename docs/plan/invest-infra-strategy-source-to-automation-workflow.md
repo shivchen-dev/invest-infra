@@ -31,6 +31,8 @@
 
 交付物到达、WorkBuddy 状态成功、HTTP 200 或文件出现都不代表正式入库成功。只有投研系统完成合同校验、artifact 归档和数据库事务后，才形成正式 StageResult。
 
+旧候选池中的策略和报告未通过 CIA 审查，只能登记为 `legacy_unapproved`、`test_only`、`non_authoritative`。它们可用于验证摄取、阶段衔接、错误处理和报告差异展示，但不得作为正式策略语义、预期选股结果或新策略必须复现的验收基线。
+
 ## 3. 角色职责
 
 | 角色 | 职责 | 不得执行 |
@@ -196,13 +198,16 @@ task_published
 
 业务结果状态由具体阶段合同定义，例如 `succeeded/partial/needs_rule_confirmation/blocked_no_data/failed`，不得与运行或摄取状态混用。
 
-## 8. 首个候选池垂直切片
+## 8. 首个候选池测试垂直切片
 
-首个正式样本使用原候选池两阶段工作流：
+首个测试场景从用户提供的两篇原始策略文章开始，在新工作流中重新完成数据能力评估、策略工程化和 CIA 审查：
 
-1. 登记板块七步与个股六维策略来源文档；
+- 《从零开始：每日“板块强度排行榜”制作完整流程图解》：`https://m.toutiao.com/is/fslPVWFTKSY/`；
+- 《炒股十几年，我悟了：主力最怕散户学会的东西，都藏在通达信里》：`https://m.toutiao.com/is/QwmHBSMbhGQ/`。
+
+1. 将两篇头条文章登记为 StrategySourceDocument；
 2. 评估通达信、金融 MCP、投研 API 和 fallback 的实际数据覆盖；
-3. 分别形成 `sector-seven-step` 与 `tdx-six-dimension` StrategyProposal；
+3. WorkBuddy 分别形成板块强度与通达信个股筛选 StrategyProposal，并显式列出对原文的所有工程化补充、阈值和偏离；
 4. 完成 validation、所需审计和 CIA 批准，创建两个不可变 StrategyVersion；
 5. 创建一个 CandidateSelectionWorkflowVersion 和两个 StrategyAutomationDefinition；
 6. 自动执行板块阶段，摄取结构化结果、Markdown 和质量结果；
@@ -210,7 +215,7 @@ task_published
 8. 摄取 StockStageResult，生成 CandidateProposal；
 9. 经 CandidateAdmission 形成 CandidateEntry 或可解释空结果。
 
-2026-08-13 原始工作流的 23 → 20 → 5 → 2 → 0 与 `needs_rule_confirmation` 作为首个行为回放基线。
+只有完成 CIA 批准和显式激活后，测试工作流才可切换为正式候选生产。2026-08-13 的旧策略、旧报告、23 → 20 → 5 → 2 → 0 和 `needs_rule_confirmation` 仅作为非权威测试 fixtures；新提案和新报告允许且预期与其不同。
 
 ## 9. 分阶段实施顺序
 
@@ -241,13 +246,14 @@ task_published
 ### Phase E：候选池真实闭环
 
 - 串联板块与个股两个策略阶段；
-- 回放 2026-08-13 基线和一个新交易日；
+- 使用旧报告验证测试fixture隔离和差异展示，再以 CIA 批准的新策略运行一个新交易日；
 - CandidateProposal → CandidateAdmission → CandidateEntry 验收。
 
 ## 10. 验收门禁
 
 - 任一 StrategyVersion 可追溯到原始 StrategySourceDocument、能力评估、提案 revision、validation、审计和批准决定；
 - WorkBuddy 不能创建或激活正式 StrategyVersion；
+- `legacy_unapproved/test_only/non_authoritative` 策略和报告不能激活、不能创建正式候选；
 - 自动化定义不复制策略业务规则，并可独立暂停；
 - 只有 active 策略与 active 自动化定义组合能发布任务；
 - 运行成功不替代交付、摄取和业务结果状态；

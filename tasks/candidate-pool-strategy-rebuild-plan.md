@@ -2,19 +2,23 @@
 
 ## 1. 目标
 
-沿用原候选池已经实际运行的业务顺序，将“板块七步策略报告 → 个股六维策略报告 → 正式准入 → 候选池”重建为可版本化、可回放、可审计的候选选择工作流。先冻结真实业务交付物和阶段衔接，再决定哪些步骤由代码确定性执行；不按现有代码结构反推或重写选股业务。
+以用户提供的两篇原始策略文章为 StrategySourceDocument，在新策略库工作流中重新完成数据能力评估、策略工程化、CIA 审查、自动化定义和测试运行。旧候选池策略未通过 CIA 审查，旧报告只用于测试摄取和阶段衔接，不作为正式可靠源或新策略结果基线。
 
-首个工作流固定复刻以下两个完整策略阶段：
+首个提案场景包含以下两个候选阶段，具体规则和组合只有通过 CIA 审查后才能冻结：
 
-1. `sector-seven-step-v2`：从市场与板块数据形成板块强度结构化结果、质量结果和人工报告，输出 TOP 板块及代表标的；
-2. `tdx-six-dimension-v2`：消费第一阶段的正式输出，执行个股筛选并形成结构化候选结果、质量结果和人工报告。
+1. 板块强度策略提案：依据《从零开始：每日“板块强度排行榜”制作完整流程图解》形成可执行提案；
+2. 通达信个股筛选策略提案：依据《炒股十几年，我悟了：主力最怕散户学会的东西，都藏在通达信里》形成可执行提案，并在需要时消费已批准的板块阶段输出。
 
 目标链路：
 
 ```text
 DataAcquisitionMatrixVersion + immutable InputSnapshot
-  → CandidateSelectionWorkflowVersion
-      → Sector StrategyVersion / StrategyTask
+  → StrategySourceDocuments
+  → StrategyCapabilityAssessments
+  → StrategyProposals + CIA review
+  → approved StrategyVersions
+  → CandidateSelectionWorkflowVersion + AutomationDefinitions
+      → Sector StrategyTask
           → sector_result.json + sector_report.md + sector_quality.json
       → validated SectorStageResult
       → Stock StrategyVersion / StrategyTask
@@ -28,16 +32,16 @@ DataAcquisitionMatrixVersion + immutable InputSnapshot
 
 `CandidateSelectionWorkflowVersion` 只对外提供“以冻结输入运行两阶段选股并返回候选提案”的小接口。各策略内部的筛选、评分、否决、排序和解释步骤保留在策略模块内部，不全部提升为独立策略或公共工作流节点。
 
-## 2. 现场行为基线
+## 2. 旧材料的非权威定位
 
-首个回放基线使用 2026-08-13 原始交付物：
+2026-08-13 原始交付物登记为 `legacy_unapproved / test_only / non_authoritative`：
 
 - 板块策略：23 个板块 → 初筛 20 个 → TOP5 板块及 5 只代表标的；
 - 个股策略：5 只输入 → 筹码筛选通过 2 只 → 量价筛选通过 0 只；
 - 个股报告最终状态为 `needs_rule_confirmation`，未形成正式候选；
-- 第二阶段明确引用第一阶段报告及运行结果作为输入。
+- 第二阶段曾引用第一阶段报告及运行结果作为输入。
 
-原始 Markdown、结构化 JSON 和质量报告共同构成行为证据。Markdown 用于人工理解和审核；JSON 是机器流转权威；质量报告记录生产者自检，但不替代投研系统正式验收。
+这些 Markdown、结构化 JSON 和质量报告仅证明旧测试流程曾如何运行，可用于摄取、归档、阶段依赖、状态隔离和差异展示 fixtures。它们不证明策略正确，不约束新提案的规则、阈值、TOP 数量或结果，也不能创建正式 CandidateEntry。
 
 ## 3. 范围
 
@@ -52,7 +56,7 @@ DataAcquisitionMatrixVersion + immutable InputSnapshot
 - 保存工作流版本、两个策略版本、上下游运行身份、artifact hash、输入 hash 和输出 hash；
 - 保留每阶段的结构化结果、Markdown 报告、质量报告、错误、警告和人工复核状态；
 - 将合法的末阶段结果投影为 CandidateProposal，并经 CandidateAdmission 创建 CandidateEntry；
-- 保持旧工作流结果可回放、可对比、可追溯和可回滚。
+- 保持旧测试结果可读取、可对比和可追溯，但与正式策略运行隔离。
 
 ### 不纳入范围
 
@@ -78,18 +82,20 @@ DataAcquisitionMatrixVersion + immutable InputSnapshot
 
 ## 5. 实施阶段
 
-### Phase 0：原始报告与行为基线冻结
+### Phase 0：源文档与旧测试材料登记
 
-- 归档并登记两份原始 Markdown、两个结构化结果和两个质量报告的路径、hash、schema 事实和运行身份；
-- 记录两阶段真实输入输出关系及 23 → 20 → 5 → 2 → 0 的阶段计数；
-- 盘点策略内部确定性规则、模型解释、人工判断、数据缺失和异常处理；
+- 登记两篇头条原文为不可变 StrategySourceDocument，保存来源 URL、提取时间、正文和 hash；
+- 归档旧 Markdown、结构化结果和质量报告，并标记 `legacy_unapproved/test_only/non_authoritative`；
+- 记录旧流程 23 → 20 → 5 → 2 → 0 和 `needs_rule_confirmation`，仅作为测试fixture事实；
+- 对照原文与旧实现，列出所有工程化补充、阈值、TOP数量和语义偏离，交由新提案重新处理；
 - 盘点旧 Candidate Pool、WorkBuddy 目录、调度、摄取和正式准入入口；
-- 明确允许差异、必须一致项、降级规则和回滚方式。
+- 明确测试与正式命名空间隔离、降级规则和回滚方式。
 
 ### Phase 1：两阶段策略与交付合同冻结
 
-- 冻结 Sector StrategyVersion 和 Stock StrategyVersion 的职责、输入和输出；
-- 登记两个阶段的 StrategySourceDocument，并绑定策略范围能力评估；
+- 基于两个 StrategySourceDocument 完成策略范围能力评估；
+- 由 WorkBuddy 形成两个全新 StrategyProposal，并显式说明工程化补充和偏离；
+- 经 validation、所需审计和 CIA 审查后，才冻结 Sector StrategyVersion 和 Stock StrategyVersion 的职责、输入和输出；
 - 冻结 CandidateSelectionWorkflowVersion、CandidateSelectionRun 和阶段依赖合同；
 - 为每阶段设计最小结构化结果、Markdown 推荐模板和质量结果合同；
 - 通用信封只保留身份、stage/schema version、状态、时间、artifact inventory 和 hash；
@@ -125,13 +131,13 @@ DataAcquisitionMatrixVersion + immutable InputSnapshot
 - CandidateEntry 只能由 CandidateAdmission 创建；未准入项不能触发 ResearchCase/ResearchRun；
 - WorkBuddy 既有 ExternalObservation provenance 保留，不形成正式状态旁路。
 
-### Phase 5：双轨报告回放与切换
+### Phase 5：测试隔离、差异审查与切换
 
-- 使用相同数据截止时间和等价输入运行旧工作流与新工作流；
-- 比较两阶段结构化结果、阶段计数、TOP 板块、个股淘汰、状态、候选集合和 hash；
-- 人工比较 Markdown 报告的业务信息完整性，不要求逐字一致；
-- 对差异分类为数据、规则、策略解释、合同归一化或实现缺陷；
-- 完成 2026-08-13 原始样本和至少一组新的真实交易日回放；
+- 验证旧策略和旧报告不能激活、不能进入正式候选池；
+- 使用旧交付物测试摄取、归档、阶段衔接、状态隔离和差异展示；
+- 新工作流以 CIA 批准的策略版本运行，结果不要求复现旧流程；
+- 对新提案相对原文和旧实现的差异分类为批准的工程化补充、数据变化、策略解释或实现缺陷；
+- 完成至少一组新交易日的测试运行和正式切换验收；
 - 验收通过后显式激活新工作流，并将旧入口标记 deprecated。
 
 ### Phase 6：旧编排退役
@@ -146,7 +152,8 @@ DataAcquisitionMatrixVersion + immutable InputSnapshot
 - 两个策略版本及 CandidateSelectionWorkflowVersion 发布后不可变；
 - 第二阶段输入可追溯到第一阶段 run id、正式结构化结果和 artifact hash；
 - 同一工作流版本、两个策略版本、数据矩阵版本和 InputSnapshot 可重复得到一致的阶段身份与 hash；
-- 2026-08-13 基线可解释复现 23 → 20 → 5 → 2 → 0 及 `needs_rule_confirmation`；
+- 2026-08-13 旧fixture可安全摄取和展示，但不能激活或产生正式候选；
+- 新策略所有偏离原文的规则、阈值和组合均已显式记录并通过 CIA 审查；
 - Markdown 表达允许合理变化，机器流转不依赖 Markdown 标题或自然语言解析；
 - Provider、fallback、数据范围、质量结果和每阶段原始 artifact 可追溯；
 - CandidateProposal 不能绕过 CandidateAdmission 创建 CandidateEntry；
@@ -158,7 +165,7 @@ DataAcquisitionMatrixVersion + immutable InputSnapshot
 
 | 风险 | 影响 | 控制措施 |
 |---|---|---|
-| 按代码结构重写业务 | 原有策略语义丢失 | 先冻结真实报告工作流和回放基线 |
+| 把旧测试实现当成正式策略 | 未审查规则被固化 | 旧材料统一非权威标记，从源文档重新生成提案 |
 | 将内部规则过度拆成策略 | 工作流接口膨胀、难以维护 | 两个完整策略作为深模块，内部步骤默认隐藏 |
 | 报告模板门禁过高 | 智能体结果无法流转 | 严格信封、宽容业务载荷、Markdown 只作人工模板 |
 | 数据与规则同时变化 | 无法定位差异来源 | 固定数据截止时间和 Provider 后再做双轨比较 |

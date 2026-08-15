@@ -6,6 +6,7 @@
 - [ ] 冻结 StrategySourceDocument/StrategyCapabilityAssessment 职责
 - [ ] 冻结 StrategyAutomationDefinition 与策略业务规则的分工
 - [ ] 冻结 StrategyRun/StageResult 的运行、交付、摄取和业务状态
+- [ ] 冻结 legacy_unapproved/test_only/non_authoritative 与正式策略的隔离规则
 - [ ] 冻结 CandidateSelectionWorkflowVersion/CandidateSelectionRun 职责
 - [ ] 冻结 CandidateProposal 与正式 CandidateEntry 的分工
 - [ ] 冻结 CandidateAdmission/CandidateEntry 职责
@@ -54,6 +55,7 @@
 - [ ] 验证旧 revision 和旧 hash 决定 fail closed
 - [ ] 实现 StrategyProposal validating/validation_failed/review_pending/approved/rejected
 - [ ] 验证只有人工批准后才能创建正式 StrategyVersion
+- [ ] 验证旧未审策略和报告不能激活或创建正式候选
 - [ ] 实现 Strategy 与不可变 StrategyVersion
 - [ ] 实现策略类型、适用场景、数据依赖和任务模板
 - [ ] 实现 draft/validating/approved/active/suspended/retired
