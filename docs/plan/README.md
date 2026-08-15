@@ -48,7 +48,7 @@
 | `invest-infra-central-research-visualization-mvp-plan-v1.0.md` | `ACTIVE_PLAN` | 当前可视化执行方案；Slice 0–3 为 MVP，Slice 4–5 独立冻结合同和授权 |
 | `invest-infra-stage4d-mvp-phased-execution-plan-v1.0.md` | `ACTIVE_CLOSEOUT` | 当前 Stage 4D 收口权威；只处理真实联调、剩余 Research Workspace 和最终验收 |
 | `invest-infra-strategy-source-to-automation-workflow.md` | `CONTRACT_AUTHORITY` | 策略交付物和来源追溯的合同权威，不作为当前开发排期 |
-| `invest-infra-stage4d-unified-investment-workbench-integration-plan-v1.0.md` | `REFERENCE_BLUEPRINT` | Stage 4D–4G 长期蓝图；不得直接从正文派工 |
+| `archive/reference-blueprints/invest-infra-stage4d-unified-investment-workbench-integration-plan-v1.0.md` | `REFERENCE_BLUEPRINT` | Stage 4D–4G 长期蓝图；保留原文件名和完整内容，不得直接从正文派工 |
 | `invest-infra-data-collection-enhancement-plan-v1.0.md` | `REFERENCE_BLUEPRINT` | 数据采集架构参考；不作为当前全量建设承诺 |
 | `invest-infra-investment-context-provider-integration-plan.md` | `REFERENCE_BLUEPRINT` | Provider/Evidence 参考；新数据源按独立授权切片实施 |
 | `invest-infra-stage4a-final-closure-sprint-plan-v1.1.md` | `REFERENCE_HISTORY` | Stage 4A 历史收口依据，不再派工 |
@@ -99,7 +99,7 @@ ACTIVE_PLAN / ACTIVE
 
 ### 5.3 归档规则
 
-- 本轮不移动已有计划：当前工作树存在未提交的 Stage 4D 文档和实现，移动会破坏引用和审计链；
+- 活动计划留在 `docs/plan/`，历史和长期参考按状态移入 `docs/plan/archive/`；
 - `REFERENCE_HISTORY`、`COMPLETED`、`MERGED_REFERENCE` 在工作树干净后可进行独立归档批次；
 - 归档必须保留本索引中的原文件名、最终状态、替代文档和 commit；
 - 不删除历史设计，不把历史蓝图重新解释为当前承诺。

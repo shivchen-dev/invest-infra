@@ -4,7 +4,7 @@
 > 文档状态：ACTIVE_PLAN（计划已形成，代码开发待用户显性授权）
 > 计划治理：`docs/plan/README.md`
 > 制定日期：2026-08-15
-> 上位蓝图：`docs/plan/invest-infra-stage4d-unified-investment-workbench-integration-plan-v1.0.md`
+> 上位蓝图：`docs/plan/archive/reference-blueprints/invest-infra-stage4d-unified-investment-workbench-integration-plan-v1.0.md`
 > 既有执行基线：`docs/plan/invest-infra-stage4d-mvp-phased-execution-plan-v1.0.md`
 > 执行清单：`tasks/central-research-visualization-mvp-todo.md`
 

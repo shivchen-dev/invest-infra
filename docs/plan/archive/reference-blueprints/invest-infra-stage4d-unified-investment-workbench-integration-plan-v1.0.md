@@ -11,8 +11,11 @@
 > 建设原则：统一入口、平台分工、证据分层、结构化集成、可追溯、人工最终控制、逐阶段收敛
 
 > 文档职责：本文件保留 Stage 4D–4G 的产品、架构和长期路线边界，不再作为 Stage 4D 的日常派工清单。
+> 归档状态：`REFERENCE_BLUEPRINT`；不得直接从正文派工。
+> 当前治理权威：`docs/plan/README.md`。
 > Stage 4D 当前执行权威：`docs/plan/invest-infra-stage4d-mvp-phased-execution-plan-v1.0.md`。
 > Stage 4D 当前任务清单：`tasks/stage4d-mvp-phased-execution-todo.md`。
+> 投研协作职责与权威边界：`docs/adr/0014-investment-collaboration-responsibility-boundaries.md`。
 
 > 拆分说明：本文件第 25、33–37 节保留为原始设计基线；若其任务顺序、阶段边界或验收口径与 Stage 4D 当前执行权威冲突，以分阶段执行计划为准。
 
@@ -684,6 +687,40 @@ investment_case_id
 ---
 
 ## 9. WorkBuddy 集成合同
+
+### 9.0 唯一共享目录纽带
+
+WorkBuddy 与 `invest-infra` 的唯一文件交接面是 **Windows 容器的默认共享目录**。
+WorkBuddy 侧的规范路径固定使用 Z 盘：
+
+```text
+Z:\
+```
+
+宿主机只用于观察和消费 WorkBuddy 交付物，其映射路径为：
+
+```text
+/home/claw/windows-ltsc/shared/
+```
+
+两套路径是同一共享介质的不同命名空间。任务发布、WorkBuddy 指令和开发代码中的 WorkBuddy 路径必须使用 `Z:\...`；投研系统在宿主机检查交付物时才使用 `/home/claw/windows-ltsc/shared/...`。禁止把宿主机路径写进 WorkBuddy 任务，也禁止把 `Z:\` 路径当作 Linux 可读路径。
+
+不得把 NFS、临时目录、项目目录或其他挂载点视为替代路径。所有任务包、处理中状态、交付物、失败包和归档都必须位于这条共享纽带上，但文档和代码必须按使用方写出对应命名空间：WorkBuddy 使用 `Z:\...`，宿主机检查使用 `/home/claw/windows-ltsc/shared/...`。
+
+当前候选结果兼容入口（WorkBuddy 侧）：
+
+```text
+Z:\选股报告
+```
+
+后续任务交接协议也必须继续以 `Z:\` 为 WorkBuddy 侧根，由具体合同定义子目录；宿主机侧只做路径映射和结果观察，不改变共享根目录来规避协议问题。开发代码必须显式区分 `workbuddy_path` 与 `host_observation_path`，不得将两者混用。
+
+验收要求：
+
+- WorkBuddy 通过 `Z:\...` 读写共享内容，投研系统通过 `/home/claw/windows-ltsc/shared/...` 观察和消费；
+- 任务包与交付物使用原子 rename/ready 标记交接；
+- 投研系统只消费宿主机映射目录中符合合同的交付物；
+- 共享目录不可用时，任务必须进入可重试/失败状态，不得静默切换到其他目录。
 
 ## 9.1 Adapter Port
 
@@ -2000,6 +2037,188 @@ feat/stage4d-research-integration-timeline
 → Research Case 页面统一展示发现、证据和深研结果
 ```
 
+## 25.11 WorkBuddy 研究交付链专项实施计划
+
+本专项以本次 `api-research-smoke-20260814-2148` 验收结果为基线：共享目录交接成功，WorkBuddy 能访问 `192.168.6.50:8000`，但 API 返回空数据。因此“HTTP 200”只能作为前置健康信号，不能作为研究任务完成信号。正式完成必须由宿主机侧发现并验证交付物，再由投研系统完成入库或明确失败归档。
+
+### 25.11.1 固定边界与状态信号
+
+```text
+投研系统发布 task.md / task.json
+  → WorkBuddy 侧按 Z:\workbuddy\<stage>\inbox\... 读取任务
+  → WorkBuddy 调用投研只读 API 和已配置 Skill
+  → WorkBuddy 在 Z:\workbuddy\<stage>\results\<task_id>.ready\ 生成交付物
+  → 投研系统在 /home/claw/windows-ltsc/shared/workbuddy/<stage>/results/<task_id>.ready/ 观察
+  → 交付物校验、归档、入库、关联 ResearchCase
+```
+
+必须区分以下状态，不得用 Gateway processing/status 替代：
+
+| 状态 | 事实信号 | 是否可进入正式研究 |
+|---|---|---|
+| `published` | 任务包已发布 | 否 |
+| `picked_up` | 结果目录或 ready 标记出现 | 否 |
+| `delivered` | `result.json` 与 `report.md` 均存在且可解析 | 否 |
+| `validated` | API 观测、来源、时间和交付物合同校验通过 | 否 |
+| `accepted` | ExternalObservation / ResearchRun 已成功入库 | 是 |
+| `failed` | 结构化失败交付物或导入诊断已归档 | 否，可重试 |
+
+WorkBuddy 使用 `Z:\...`，宿主机使用 `/home/claw/windows-ltsc/shared/...`；开发代码必须显式保存两种路径，不得把任一方路径写入另一命名空间。
+
+### 25.11.1.1 按阶段分区的共享目录合同
+
+共享目录按稳定的工作阶段分区，不按具体策略、策略版本、市场或标的建立目录。目录只表达“阶段 + 交付生命周期”，策略身份由任务元数据表达。
+
+```text
+Z:\workbuddy\
+├── strategy\
+│   ├── inbox\
+│   ├── processing\
+│   ├── results\
+│   ├── archive\
+│   └── failed\
+├── candidate\
+│   ├── inbox\
+│   ├── processing\
+│   ├── results\
+│   ├── archive\
+│   └── failed\
+├── research\
+│   ├── inbox\
+│   ├── processing\
+│   ├── results\
+│   ├── archive\
+│   └── failed\
+└── observation\
+    ├── inbox\
+    ├── processing\
+    ├── results\
+    ├── archive\
+    └── failed\
+```
+
+宿主机必须使用相同的相对目录，仅替换共享根：
+
+```text
+/home/claw/windows-ltsc/shared/workbuddy/<stage>/<lifecycle>/...
+```
+
+首批阶段语义和交付合同：
+
+| `stage` | 用途 | 主要输入 | 主要交付物 |
+|---|---|---|---|
+| `strategy` | 策略制定、验证与变更提案 | 策略目标、经验材料、数据能力、历史评价 | `strategy.json`、`strategy.md`、`validation.json`、可选 `change-proposal.json` |
+| `candidate` | 候选发现 | 策略版本、市场范围、筛选条件 | `candidates.json`、`report.md` |
+| `research` | 深度研究与风险反证 | 已准入候选、EvidencePack、研究问题 | `result.json`、`report.md`、`evidence.json` |
+| `observation` | 长期观察与事件复评 | 投资假设、历史研究、触发事件 | `review.json`、`report.md` |
+
+`portfolio` 不进入 Stage 4D 首批共享目录；待组合与监督式执行阶段单独评估后再增加，禁止提前创建空分区。
+
+每个任务包必须在结构化元数据中携带以下路由和追溯字段，不能依赖目录名推断具体策略：
+
+```json
+{
+  "task_id": "task-20260814-001",
+  "stage": "research",
+  "strategy_id": "etf-trend",
+  "strategy_version": "1.0.0",
+  "schema_version": "research-task/1.0"
+}
+```
+
+约束：
+
+- 阶段目录集合由投研系统统一定义，WorkBuddy 不建立第二套阶段分类；`strategy` 负责策略研发，其他阶段只执行已正式发布的策略版本；
+- 新增、改名、暂停或退役策略不得改变共享目录结构；
+- 一个任务关联多条策略时，在元数据中记录全部来源，不复制到多个策略目录；
+- WorkBuddy 按 `stage` 选择自动化、专家团队、Skill 和结果合同，按 `strategy_id + strategy_version` 执行具体策略；
+- 投研系统的扫描、claim、归档、失败隔离和保留期必须在各阶段分区内独立完成，禁止跨阶段移动后丢失原始阶段身份；
+- 旧的单层 `Z:\workbuddy\inbox`、`Z:\workbuddy\results` 只作为迁移期兼容入口；新代码和新任务不得继续写入该口径。
+
+### 25.11.2 P0：数据层可研究基线
+
+目标：先消除“API 可达但数据库为空”的假成功。
+
+- 确认数据导入任务、数据库连接和 provider 配置；
+- 以 `data-freshness`、`etf/instruments`、`etf/daily-bars` 建立最小可研究数据集；
+- 增加真实环境验收记录：`universe_count > 0`、`daily_bar_count > 0`、存在合法 `instrument_id`；
+- 明确空数据时任务状态为 `failed` 或 `blocked_no_data`，不得生成貌似成功的投研结论。
+
+验收：使用一个已知 ETF 能完整读取标的、日期范围和日行情，并保留 `as_of`、`trade_date`、`source_provider`。
+
+### 25.11.3 P1：任务与交付物合同冻结
+
+目标：让 WorkBuddy 只理解研究目标、API 地址、工具约束和交付要求，不暴露投研系统内部队列、租约或 Gateway 状态机。
+
+- 固化 `task_id`、研究问题、API 根地址、允许的只读接口、时间范围和数据要求；
+- 固化 `result.json` 最小字段：`task_id`、`status`、`api_base_url`、`checks`、`observed_at`、`errors`、`artifacts`；
+- 固化 `report.md` 的事实、来源、限制和失败原因结构；
+- 成功、部分成功、无数据、API 不可达、认证失败和接口错误都必须有结构化交付物；
+- 禁止 token、Cookie、内部宿主机路径进入交付物。
+
+验收：同一任务可重复执行而不覆盖已有结果；结果目录通过 ready/原子 rename 后才可消费。
+
+### 25.11.4 P2：宿主机交付物摄取与可重试
+
+目标：把文件交付物转换成投研系统可审计状态，交付物是完成信号，目录扫描是实现细节。
+
+- 在宿主机映射目录发现完整结果包；
+- 校验 JSON schema、任务编号、API 地址、时间、状态和文件 hash；
+- 原始交付物不可变归档，解析失败进入 failed 目录并保留诊断；
+- 合法结果写入 ExternalArtifact / ExternalWorkflowRun；
+- 以 `task_id` 和内容 hash 实现幂等，重复扫描不得重复入库；
+- 数据库写入失败时保留可重试状态，不移动为成功归档。
+
+验收：人工放入成功、partial、failed、损坏 JSON 和重复结果五类 fixture，均能得到确定状态和可追溯诊断。
+
+### 25.11.5 P3：实际投研垂直切片
+
+目标：用一个真实但只读的 ETF 研究任务验证完整闭环。
+
+```text
+发布 ETF 研究任务
+→ WorkBuddy 读取投研 API
+→ 生成 result.json + report.md
+→ 宿主机摄取并归档
+→ 验证 instrument / trade_date / source
+→ 创建 ResearchCase / EvidencePack
+→ 生成 ResearchRun
+→ 交付 ResearchResult
+```
+
+首个实际任务必须包含：一个已知 ETF、明确日期区间、至少一个行情事实、数据新鲜度、来源和限制说明。没有有效数据时只允许生成失败/阻塞交付物，不得进入正式研究结果。
+
+验收：从任务发布到 ResearchResult 全链路可通过交付物、数据库记录和 artifact hash 复核，不依赖 Gateway 最终响应帧。
+
+### 25.11.6 P4：定时执行与运行监控
+
+目标：在人工垂直切片通过后再启用 WorkBuddy 定时取任务。
+
+- WorkBuddy 按阶段定时扫描 `Z:\workbuddy\<stage>\inbox`；
+- 投研系统按阶段扫描 `/home/claw/windows-ltsc/shared/workbuddy/<stage>/results` 并执行对应合同的摄取；
+- 增加 backlog、处理超时、无数据、失败、重复和未归档交付物指标；
+- 任务超时由“缺少交付物”判定，而非 Gateway idle；
+- 定时任务默认关闭，验收通过后按单一开关启用。
+
+验收：连续运行至少两轮，成功、无数据和失败任务均能分别归档，重启后不丢任务、不重复入库。
+
+### 25.11.7 专项实施顺序与停止条件
+
+实施顺序固定为 `P0 → P1 → P2 → P3 → P4`。P0 未通过时不得进行真实投研结论验收；P2 未通过时不得开启自动定时；P3 未通过时不得宣称 WorkBuddy 已替代 JiuwenSwarm 完成投研团队闭环。每个阶段完成后必须保留测试命令、交付物路径、数据库记录和失败样本。
+
+### 25.11.8 共享目录长期治理的最小方案
+
+长期治理只保留必要规则，不引入独立消息队列、文件服务或复杂调度系统。
+
+- **阶段与生命周期**：每个 `strategy/candidate/research/observation` 分区独立执行 `inbox → processing → results → archive/failed`；只有完整交付物进入本阶段 `results` 后才可摄取，成功摄取后归档，结构错误或超时进入本阶段 `failed`；
+- **保留原则**：`archive` 是审计和重放依据，不自动删除未完成、失败或未归档任务；清理策略只针对已完成且超过保留期的归档，并须保留索引、hash 和入库记录；
+- **版本兼容**：任务和结果合同使用显式 `schema_version`；同一主版本保持向后兼容，升级先由投研系统兼容读取，再切换 WorkBuddy 生产版本；不兼容版本进入 `failed`，不得按旧格式猜测解析；
+- **幂等与追溯**：以 `task_id`、`schema_version` 和内容 hash 识别重复交付，保留原始文件、解析结果和最终入库状态；
+- **路径边界**：WorkBuddy 继续使用 `Z:\...`，宿主机继续使用 `/home/claw/windows-ltsc/shared/...`，不增加第二共享根；
+- **故障原则**：共享目录不可用、版本不兼容或交付物不完整时，只进入可重试/失败状态，不静默迁移和覆盖。
+
+长期治理验收只要求证明：生命周期状态可恢复、历史交付物可追溯、版本升级可兼容、失败任务不会阻塞后续任务。容量平台、独立灾备服务和复杂权限中心不属于本阶段范围。
+
 必须通过异常场景：
 
 - Schema 错误；
@@ -2018,6 +2237,233 @@ feat/stage4d-research-integration-timeline
 - Evidence 引用无效；
 - 共享目录暂时不可用；
 - 页面刷新后状态仍可恢复。
+
+## 25.12 策略库驱动的投研主工作流
+
+Stage 4D 在现有 WorkBuddy 交付链之上增加最小策略库骨架，并首先贯通一条 ETF 垂直工作流。完整策略平台不在工作流之前一次性建设；先冻结策略身份、不可变版本、适用场景、数据依赖和任务模板，再由真实工作流反馈后续能力。
+
+主链固定为：
+
+```text
+用户向 CIA 或 ARC 提供原始策略文档
+→ 投研系统登记 StrategySourceDocument
+→ ARC 发布 WorkBuddy 数据能力评估任务
+→ StrategyCapabilityAssessment
+→ ARC 发布策略工程化任务
+→ WorkBuddy 生成 StrategyProposal 与验证材料
+→ 投研系统校验、验证和人工审批
+→ Strategy / StrategyVersion
+→ StrategyAutomationDefinition 验证与显式激活
+→ 发布 candidate 任务
+→ WorkBuddy 候选发现
+→ ExternalObservation
+→ 身份、来源、数据与重复校验
+→ CandidateAdmission / CandidateEntry
+→ 发布 research 任务
+→ WorkBuddy 深度研究与风险反证
+→ ResearchCase / ResearchRun / ResearchResult
+→ Stage 4E WatchlistEntry 长期观察
+→ Stage 4E Investment Proposal
+→ Stage 4F 组合与监督式执行
+→ Stage 4G StrategyEvaluation / StrategyChangeProposal
+→ 验证与人工审批
+→ 新 StrategyVersion
+```
+
+### 25.12.1 最小策略库
+
+首批领域对象：
+
+```text
+Strategy
+StrategySourceDocument
+StrategyCapabilityAssessment
+StrategyVersion
+StrategyAutomationDefinition
+CandidateSelectionWorkflowVersion
+CandidateSelectionRun
+StrategyTask
+CandidateProposal
+CandidateAdmission
+CandidateEntry
+StrategyEvaluation
+StrategyChangeProposal
+```
+
+策略库的正式入口不是直接创建 Strategy，而是登记用户交给 CIA 或 ARC 的原始 StrategySourceDocument。完整的源文档、能力评估、策略工程化、审核、自动化执行和摄取流程以 `docs/plan/invest-infra-strategy-source-to-automation-workflow.md` 为准。
+
+首批策略类型：
+
+- `candidate_discovery`：表达一个完整、可复用的候选发现阶段；首个工作流由板块七步策略和个股六维策略两个版本串联，策略内部规则不默认提升为独立策略；
+- `deep_research`：规定研究问题、专家分工、证据和风险反证要求；
+- `risk_review`：独立验证失败条件和负面证据；
+- `continuous_observation`：规定复评周期、事件触发和退出条件；
+- `portfolio_advisory`：只生成组合建议，不直接产生交易动作。
+
+生命周期固定为：
+
+```text
+draft → validating → approved → active → suspended → retired
+```
+
+约束：
+
+- `Strategy` 是稳定身份，`StrategyVersion` 发布后不可变；
+- 每个 StrategyVersion 必须追溯到 StrategySourceDocument、StrategyCapabilityAssessment、提案 revision、validation 和人工决定；
+- StrategyAutomationDefinition 只保存任务模板、执行 adapter、调度、输入装配和交付合同，不复制策略业务规则，并可独立暂停；
+- `CandidateSelectionWorkflowVersion` 是多策略选股编排的不可变身份；首批只固定“板块策略报告 → 已校验 StageResult → 个股策略报告 → CandidateProposal”，不建设公共规则节点、通用 DAG 或图形编排器；
+- 候选 WorkBuddy 任务必须绑定 `candidate_workflow_id + candidate_workflow_version` 及全部组成 `strategy_id + strategy_version`；其他阶段任务绑定自身策略版本；所有任务同时携带 `stage + schema_version`；
+- 新版本不得改变旧任务、候选、研究和观察结果的解释；
+- WorkBuddy 可以提交 `StrategyChangeProposal`，不得直接修改、激活或退役策略；
+- 生产策略变更必须经过验证和人工批准；
+- 首批不建设自动市场状态切换、复杂回测平台、自动参数优化或自动策略淘汰。
+
+#### 25.12.1.1 策略制定与正式入库
+
+策略库不要求人工直接录入完整生产策略。用户先向 CIA 或 ARC 提供原始策略文档；投研系统登记不可变 StrategySourceDocument，ARC 发布 WorkBuddy 数据能力评估任务并摄取 StrategyCapabilityAssessment。只有在能力评估可继续时，才通过 `strategy` 阶段发布策略工程化或优化任务。WorkBuddy 作为策略研发团队分析原始材料、真实数据能力和历史运行结果，并交付策略提案。
+
+```text
+StrategySourceDocument
+→ StrategyCapabilityAssessment
+→ 投研系统 StrategyTask
+→ Z:\workbuddy\strategy\inbox
+→ WorkBuddy 专家团队制定/优化策略
+→ strategy.json + strategy.md + validation.json
+→ 可选 change-proposal.json
+→ 投研系统摄取并创建 StrategyProposal
+→ schema、数据能力、可计算性、未来数据泄露和样本验证
+→ validating
+→ 人工 approved/rejected
+→ 创建不可变 StrategyVersion
+→ 创建并验证 StrategyAutomationDefinition
+→ 策略版本和自动化定义显式激活后才允许发布执行任务
+```
+
+状态必须区分：
+
+```text
+registered → assessed → proposal → validating → approved/rejected
+→ StrategyVersion → AutomationDefinition → active
+```
+
+WorkBuddy 交付成功只表示提案已到达，不表示策略已通过验证。正式化门禁至少包括规则明确性、所需数据真实可用、可复现性、基础样本或回测、风险与失效条件以及人工批准。WorkBuddy 不得直接创建或修改 active 版本，也不得同时成为策略的唯一提出者、执行者和评价者。
+
+### 25.12.2 候选发现闭环
+
+投研系统先发布绑定 `CandidateSelectionWorkflowVersion` 和板块策略版本的任务。WorkBuddy 交付板块结构化结果、Markdown 报告和质量结果；投研系统校验为 SectorStageResult 后，才发布绑定上游 run id 与 artifact hash 的个股策略任务。个股阶段交付结构化结果、Markdown 报告和质量结果，经校验形成 StockStageResult 与 CandidateProposal。原始结果保留 ExternalObservation provenance；CandidateProposal 必须经过 symbol 映射、去重、来源、时间和正式数据验证，才能形成 `CandidateAdmission` 与正式 `CandidateEntry`。
+
+2026-08-13 的 `sector-seven-step-v2`、`tdx-six-dimension-v2` 和相关报告未通过 CIA 审查，统一登记为 `legacy_unapproved/test_only/non_authoritative`。23 → 20 → TOP5、5 → 2 → 0 和 `needs_rule_confirmation` 只作为摄取、阶段衔接、状态隔离和差异展示 fixtures，不是新策略的业务验收基线。新工作流必须从用户原始策略文档重新完成能力评估、工程化提案和 CIA 审查；结果允许且预期与旧报告不同。
+
+候选阶段采用“广泛发现、正式准入”双层数据边界：WorkBuddy 应优先利用其已安装 Skills、多个金融 MCP、Connector、通达信和公开信息能力做广覆盖发现，不得被限制为只读取投研系统 API；投研系统 API 和内部数据层主要承担标的身份、内部权威值、数据质量、可复现参照和正式准入。所有外部事实必须携带来源、`as_of`、单位和定义，来源冲突不得静默覆盖。
+
+一个候选可关联多条策略来源；候选合并不丢失每条策略的命中理由和版本。单项失败不得拖垮合法候选，未准入项不得进入正式研究任务。
+
+验收：一个真实 ETF 候选任务完成发布、WorkBuddy 交付、摄取、准入和正式候选落库；重复交付幂等，坏项隔离，多策略来源可追溯。
+
+### 25.12.3 深度研究闭环
+
+正式候选按 `deep_research` 策略版本生成或关联 `ResearchCase`，发布 `research` 阶段任务。WorkBuddy 交付 `result.json + report.md + evidence.json`，投研系统完成合同、身份、日期、来源和 Evidence 校验后生成 `ResearchResult`。
+
+研究阶段围绕已准入标的收窄对象和问题范围，但继续使用多金融 MCP、Skills、公告、新闻、研报、行业、宏观、通达信和投研 EvidencePack 做交叉验证；不得因为范围收窄而退化为单一投研 API 数据源。内部权威数据与外部来源冲突时并列保留，交由 Admission/Evidence 规则形成正式结论。
+
+### 25.12.3.1 数据获取矩阵
+
+在冻结候选与研究策略合同前，必须由投研系统发布 `data_acquisition_matrix` 策略任务，要求 WorkBuddy 对当前实际安装和授权的 Skills、金融 MCP、Connector、通达信能力及投研 API 做真实探测，并交付 `data-matrix.json + data-matrix.md + capability-probes.json`。
+
+矩阵必须按 `candidate/research/observation` 阶段明确每类数据的发现主来源、交叉验证来源、正式准入来源、降级来源、覆盖范围、新鲜度、稳定性、可重放性和当前缺口。工具名称或产品宣传不能代替实测；未验证能力必须标记为 `not_tested`。
+
+2026-08-15 现场基线 `data-acquisition-matrix-20260815-0003` 已完成首轮验收：交付物包含 21 类数据路由与 35 项真实探测，其中 `available=26`、`degraded=4`、`unavailable=1`、`auth_required=1`、`not_tested=3`。当前可用核心来源为 `tdx-connector`、`westock-mcp`、`mx-ds-mcp`；投研 API 的身份与工作流接口可用，但数据新鲜度实测为 `stale`、`daily_bar_count=0`，暂不能作为行情级权威准入来源。
+
+首轮矩阵的正式文件 hash：
+
+- `data-matrix.json`：`2ddda0efb1d0b86d70d91f891a498744c8bd72b3681bcecb6a304040e61036e9`；
+- `data-matrix.md`：`3c7e2f5c374d36d73f27a53a3be14f28ef81447ed5b8996f2632deb4f3f5c9c5`；
+- `capability-probes.json`：`a34363c0753c45095e884b3b32b31b8dec4c8fb2616d9e7bc234c7aec2f89b4c`。
+
+该矩阵作为 v1 路由基线而非永久事实；每次新增授权、MCP、数据装载或能力探测后必须发布新矩阵版本，不得覆盖本次现场记录。
+
+研究结果状态至少支持 `succeeded/partial/failed/blocked_no_data`。只有交付物校验和入库完成才算成功；WorkBuddy 运行状态、文件目录出现或 API HTTP 200 均不是正式完成信号。
+
+验收：同一 ETF 可从策略版本追溯至候选、ResearchCase、ResearchRun、Evidence 和 ResearchResult。
+
+### 25.12.4 跨阶段职责
+
+| 阶段 | 主要职责 |
+|---|---|
+| Stage 4D | 最小策略库、候选任务、候选准入、研究任务与 ResearchResult 交付闭环 |
+| Stage 4E | Investment Case、WatchlistEntry、长期观察、复评和投资建议 |
+| Stage 4F | 组合约束、人工审批后的监督式执行、成交与持仓账本 |
+| Stage 4G | 后验、策略评价、变更提案、版本比较和质量闭环 |
+
+实施顺序固定为：`S0 领域合同 → S0A 阶段摄取/自动归档/数据基线 → S1 Strategy Governance 人工审核闭环 → S1A CIA/RAA OpenClaw 适配 → S2 候选闭环 → S3 研究闭环 → S4 观察闭环 → S5 建议/组合联动 → S6 策略评价与演进 → S7 多策略与可视化`。S0A 未通过前不得宣称自动闭环；S3 未通过前不得建设自动策略优化；S4 未通过前不得将观察结果用于持仓建议；S6 未通过前不得自动发布新策略版本。
+
+### 25.12.5 Strategy Governance 与 CIA/RAA 审核优先级
+
+策略审核属于投研核心业务，正式状态必须由 invest-infra 的专用 `Strategy Governance` 模块管理；OpenClaw/GTD 只承担通知、派送、提醒和智能体协作，不保存正式 StrategyVersion、审核 hash 或激活状态。本模块不得扩展为通用 OA 或任意流程设计器。
+
+开发优先级按依赖固定如下：
+
+| 优先级 | 内容 | 阻塞关系 |
+|---|---|---|
+| P0-A | 统一阶段摄取 Worker：strategy/candidate/research/observation 的发现、原子 claim、合同校验、入库、archive/failed、幂等和重启恢复 | 未完成前不能宣称任何阶段自动闭环 |
+| P0-B | 修复并验收 Dagster/systemd 调度、环境变量和阶段目录扫描；Ops 负责生产运行验收 | 未完成前自动摄取不可持续运行 |
+| P0-C | 恢复投研行情数据与 freshness，使正式准入拥有可用权威参照 | 未完成前候选只能保留为外部观察 |
+| P1 | Strategy Governance 领域、存储和人工审核闭环 | 未完成前 WorkBuddy 策略不能正式入库 |
+| P2 | CIA/RAA OpenClaw 适配：审核包派送、结构化审计/决定回写、hash/revision 校验 | 必须复用 P1 接口，不能先造旁路 |
+| P3 | 候选发现与深度研究垂直链 | 候选阶段依赖 active CandidateSelectionWorkflowVersion 及组成策略版本，研究阶段依赖 active StrategyVersion，并共同依赖 P0 数据/摄取门禁 |
+| P4 | Challenger、长期观察、策略评价和版本演进 | 依赖真实运行样本，禁止提前自动优化 |
+
+Strategy Governance 首批只实现以下对象：
+
+```text
+Strategy
+StrategyProposal
+StrategyProposalRevision
+StrategyValidationRun
+StrategyAudit
+StrategyReview
+StrategyDecision
+StrategyVersion
+StrategyActivation
+DataAcquisitionMatrixVersion
+```
+
+首批状态机：
+
+```text
+submitted
+→ validating
+├─ validation_failed
+└─ review_pending
+   ├─ changes_requested
+   ├─ rejected
+   └─ approved
+      → versioned
+      → active / suspended / retired
+```
+
+CIA 审核必须绑定 `source_document_id + capability_assessment_id + proposal_id + revision + reviewed_content_hash + data_matrix_version`；任何内容或评估基线变化使旧决定失效。首批通过投研系统页面或受控 HTTP 接口人工提交结构化决定，验证闭环后再接入 OpenClaw CIA。RAA 审计结果独立保存，不替代 CIA 决定。
+
+首个 Strategy Governance 垂直切片：
+
+```text
+StrategySourceDocument 登记与 hash 固化
+→ WorkBuddy 数据能力评估
+→ StrategyCapabilityAssessment
+→ WorkBuddy strategy/results 交付物
+→ P0 Worker 自动认领、校验和不可变归档
+→ StrategyProposalRevision 入库
+→ 确定性 validation
+→ 生成 ReviewPackage
+→ RAA 审计记录（首批可人工录入）
+→ CIA 批准/拒绝/退回修改
+→ 创建不可变 StrategyVersion v1
+→ 创建 StrategyAutomationDefinition
+→ 人工触发验收
+→ 策略版本和自动化定义显式激活
+```
+
+验收门禁：源文档、能力评估、原始交付物、归档 manifest、数据库记录、Proposal Revision、validation、audit、CIA decision、StrategyVersion 和 AutomationDefinition 的引用与 hash 必须一致；重复摄取幂等，旧 revision 审核拒绝，未经批准不能 versioned，策略或自动化定义任一未激活都不能发布 candidate 任务。
 
 ---
 
@@ -2042,6 +2488,14 @@ feat/stage4d-research-integration-timeline
 - 统一时间线；
 - Case 搜索和列表；
 - ETF 详情页入口。
+
+## 26.2.1 E1A：长期观察窗口
+
+新增 `WatchlistEntry` 作为当前观察状态，不复制或替代永久保存的 `ResearchCase/ResearchResult`。
+
+每个观察条目至少保存：来源策略版本、核心投资假设、关键指标、风险条件、固定复评周期、事件触发器、退出条件和最近复评结果。状态使用 `watching/strengthened/weakened/review_required/closed`，每次复评追加版本，不覆盖历史判断。
+
+WorkBuddy 使用 `observation` 阶段目录接收复评任务并提交 `review.json + report.md`；投研系统负责校验、入库和状态迁移。
 
 ## 26.3 E2：Investment Proposal
 
@@ -2233,6 +2687,12 @@ insufficient_evidence
 - 置信度校准；
 - 订单执行偏差；
 - 对账差异。
+
+## 28.5 策略评价与版本演进
+
+`StrategyEvaluation` 分别评价候选质量、研究质量、观察质量、市场阶段适用性和持仓建议结果，禁止用单个标的结果直接修改整体策略。
+
+WorkBuddy 可以基于多次运行提交 `StrategyChangeProposal`，内容包括建议变更、证据、适用场景、预期收益和风险。投研系统负责样本外验证、版本比较、审批和新 `StrategyVersion` 发布；提出策略的执行流程不得成为唯一评价者。
 
 ---
 
