@@ -140,6 +140,8 @@ Center Dashboard Widgets
 
 目标：冻结页面问题集、来源映射、状态词汇和响应合同，不写业务实现。
 
+冻结合同：`docs/implementation/RESEARCH-CENTER-SLICE0-CONTRACT.md`。
+
 验收标准：
 
 - 每个 Dashboard 字段都有真实来源或明确 unavailable 原因；

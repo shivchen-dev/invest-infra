@@ -7,17 +7,17 @@
 
 ## Slice 0：信息架构与合同冻结
 
-- [ ] 0.1 冻结中心首页最小问题集和导航结构
+- [x] 0.1 冻结中心首页最小问题集和导航结构
   - 验收：`/dashboard` 是唯一中心入口；现有详情页职责不重复。
   - 验证：页面—问题—来源映射逐项审查。
   - 依赖：无。
   - 预计范围：S，文档/API contract。
-- [ ] 0.2 冻结 `ResearchCenterResponse` v1 只读合同
+- [x] 0.2 冻结 `ResearchCenterResponse` v1 只读合同
   - 验收：所有字段均有真实 Reader 来源或明确 unavailable 原因。
   - 验证：schema examples 与 contract tests 设计评审。
   - 依赖：0.1。
   - 预计范围：M，3–5 个文件。
-- [ ] 0.3 冻结统一状态与时间语义
+- [x] 0.3 冻结统一状态与时间语义
   - 验收：freshness、quality、partial、stale、unavailable 不混用；`as_of/observed_at/generated_at` 定义明确。
   - 验证：现有端点映射检查。
   - 依赖：0.1。
@@ -25,8 +25,8 @@
 
 ### Checkpoint 0
 
-- [ ] 字段无模拟数据和隐式零值
-- [ ] 不包含回测、自动批准、自动交易字段
+- [x] 字段无模拟数据和隐式零值
+- [x] 不包含回测、自动批准、自动交易字段
 - [ ] 用户审核并授权 Slice 1
 
 ## Slice 1：市场真实状态
