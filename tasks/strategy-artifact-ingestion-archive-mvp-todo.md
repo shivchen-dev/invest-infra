@@ -64,6 +64,7 @@
 - [x] 未宣称数据库摄取、正式策略版本或 CIA 审查完成。
 - [x] 周期调度、数据库入库和其他 stage 保持未实施。
 
-首版验收结论：已完成文件级自动归档 MVP。当前仍有一个缺少匹配任务包的孤立结果
-`strategy-tdx-main-force-20260814-2350.ready`，Worker 按 fail-closed 规则保持其原位
-并报告 `missing_task`，不纳入首版成功包数量。
+首版验收结论：已完成文件级自动归档 MVP。结果
+`strategy-tdx-main-force-20260814-2350.ready` 当前位于 results，但其原任务包已在
+`workbuddy/.trash/cancelled-tasks-20260815/` 中标记为取消；Worker 按 fail-closed 规则
+保持结果原位并报告 `missing_task`，不纳入首版成功包数量，也不从已取消任务恢复归档。
