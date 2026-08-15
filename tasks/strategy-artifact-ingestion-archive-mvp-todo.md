@@ -28,10 +28,15 @@
 
 ## Checkpoint A：文件级闭环
 
-- [ ] focused tests 通过。
-- [ ] pipeline Ruff 通过。
-- [ ] 成功/失败 fixture 证据包完整且不可覆盖。
-- [ ] ARC 完整 diff 审核确认没有数据库或审批越权。
+- [x] focused tests 通过：归档处理器与 CLI 测试通过。
+- [x] pipeline Ruff 通过：`uv run ruff check src tests` 通过；全量测试通过。
+- [x] 成功/失败 fixture 证据包完整且不可覆盖。
+- [x] ARC 完整 diff 审核确认没有数据库或审批越权。
+
+验收记录（2026-08-15）：全量 `pytest` 为 `2380 passed, 1 skipped`；归档代码与测试已
+独立检查，真实共享根的两份 `-0003` 包 manifest 哈希一致。全仓库 `ruff format
+--check` 仍受既有未格式化文件影响，但不影响本次既有提交的 Ruff 规则检查；未对无关
+文件做格式化。
 
 ## Task 4：单次 CLI 与恢复
 
@@ -54,7 +59,11 @@
 
 ## Checkpoint B：首版完成
 
-- [ ] strategy 文件级自动摄取与归档闭环成立。
-- [ ] archive/failed 原始材料及诊断可重放、可复核。
-- [ ] 未宣称数据库摄取、正式策略版本或 CIA 审查完成。
-- [ ] 周期调度、数据库入库和其他 stage 保持未实施。
+- [x] strategy 文件级自动摄取与归档闭环成立。
+- [x] archive/failed 原始材料及诊断可重放、可复核。
+- [x] 未宣称数据库摄取、正式策略版本或 CIA 审查完成。
+- [x] 周期调度、数据库入库和其他 stage 保持未实施。
+
+首版验收结论：已完成文件级自动归档 MVP。当前仍有一个缺少匹配任务包的孤立结果
+`strategy-tdx-main-force-20260814-2350.ready`，Worker 按 fail-closed 规则保持其原位
+并报告 `missing_task`，不纳入首版成功包数量。
