@@ -64,10 +64,15 @@ def workbuddy_result_import_schedule(context: dg.ScheduleEvaluationContext):
     bridge_root, source_dir = _resolve_paths()
     if not _has_pending_candidates(source_dir):
         return dg.SkipReason(f"no candidates_*.json under {source_dir}")
+    pending_source = "candidates_json"
     scheduled_at = context.scheduled_execution_time.replace(microsecond=0).isoformat()
     return dg.RunRequest(
         run_key=f"workbuddy-import:{scheduled_at}",
-        tags={"trigger_type": "schedule", "bridge_root": str(bridge_root)},
+        tags={
+            "trigger_type": "schedule",
+            "bridge_root": str(bridge_root),
+            "pending_source": pending_source,
+        },
     )
 
 

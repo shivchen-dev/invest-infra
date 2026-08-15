@@ -188,6 +188,8 @@ class JiuwenSwarmCliGatewayTransport:
         prompt_text = build_prompt_text(request)
         _atomic_write_text(task_path, prompt_text, encoding="utf-8")
 
+        pre_result_fingerprint = _capture_result_fingerprint(result_path)
+
         session_key = self._session_key_factory()
         if not isinstance(session_key, str) or not session_key.strip():
             raise JiuwenSwarmTransportError(
@@ -233,6 +235,7 @@ class JiuwenSwarmCliGatewayTransport:
             request_id=request.request_id,
             session_key=session_key,
             result_path=result_path,
+            pre_result_fingerprint=pre_result_fingerprint,
         )
 
     # ------------------------------------------------------------------
@@ -278,6 +281,7 @@ class JiuwenSwarmCliGatewayTransport:
         request_id: str,
         session_key: str,
         result_path: Path,
+        pre_result_fingerprint: tuple[bool, int, int] | None,
     ) -> JiuwenSwarmTransportResult:
         stdout = completed.stdout or ""
         stderr_text = (completed.stderr or "").strip()
@@ -290,6 +294,22 @@ class JiuwenSwarmCliGatewayTransport:
             if not echoed_session_id:
                 raise JiuwenSwarmTransportError(
                     "JiuwenSwarm helper summary.session_id must be a non-blank string"
+                )
+
+            if status in (
+                _STATUS_TIMED_OUT,
+                _STATUS_FAILED,
+                _STATUS_PROCESS,
+                _STATUS_NEEDS_INPUT,
+            ) and _is_fresh_result_artifact(
+                result_path, pre_result_fingerprint
+            ):
+                raw_payload = _load_result_payload(result_path)
+                return JiuwenSwarmTransportResult(
+                    request_id=request_id,
+                    session_id=echoed_session_id,
+                    acceptance=JiuwenSwarmAcceptance.ACCEPTED,
+                    raw_payload=raw_payload,
                 )
 
             if status == _STATUS_TIMED_OUT:
@@ -398,6 +418,59 @@ def _try_parse_summary(
         return _parse_summary(stdout, request_id=request_id)
     except JiuwenSwarmTransportError:
         return None
+
+
+def _capture_result_fingerprint(
+    result_path: Path,
+) -> tuple[bool, int, int] | None:
+    """Snapshot ``result_path`` for the artifact-first freshness check.
+
+    Returns ``None`` when the path does not exist. Otherwise returns a
+    tuple ``(is_symlink, mtime_ns, size)`` derived from :func:`Path.lstat`
+    so the fingerprint is well-defined even when the path is a symbolic
+    link. The fingerprint alone is **not** evidence of a fresh write;
+    callers must additionally confirm the file is a regular non-symlink
+    file and that the post-invocation fingerprint differs from the
+    pre-invocation one.
+    """
+
+    try:
+        st = result_path.lstat()
+    except (FileNotFoundError, NotADirectoryError, OSError):
+        return None
+    return (result_path.is_symlink(), st.st_mtime_ns, st.st_size)
+
+
+def _is_fresh_result_artifact(
+    result_path: Path,
+    pre_fingerprint: tuple[bool, int, int] | None,
+) -> bool:
+    """Decide whether ``result_path`` was produced or changed by the
+    current helper invocation.
+
+    A result is considered fresh **only** when every condition holds:
+
+    - The current path is a regular non-symlink file (``is_file()`` and
+      not a symbolic link). Symlinks and other irregular paths fail
+      closed so a hostile or stale link cannot smuggle in an artifact.
+    - A post-invocation fingerprint can be captured (the file is
+      readable).
+    - Either the path was absent before the invocation, or its
+      ``(mtime_ns, size)`` differ from the pre-invocation values. This
+      rules out an unchanged ``result.md`` left over from a previous
+      attempt overriding the helper summary.
+    """
+
+    if result_path.is_symlink():
+        return False
+    if not result_path.is_file():
+        return False
+    post = _capture_result_fingerprint(result_path)
+    if post is None:
+        return False
+    if pre_fingerprint is None:
+        return True
+    return (post[1], post[2]) != (pre_fingerprint[1], pre_fingerprint[2])
 
 
 def _load_result_payload(result_path: Path) -> Mapping[str, Any]:

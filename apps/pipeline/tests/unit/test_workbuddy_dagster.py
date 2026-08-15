@@ -67,7 +67,45 @@ def test_schedule_requests_run_with_candidates(
 
     assert isinstance(result, dg.RunRequest)
     assert result.run_key == "workbuddy-import:2026-08-14T16:10:00"
-    assert result.tags == {"trigger_type": "schedule", "bridge_root": str(tmp_path)}
+    assert result.tags["trigger_type"] == "schedule"
+    assert result.tags["bridge_root"] == str(tmp_path.resolve())
+    assert result.tags["pending_source"] == "candidates_json"
+
+
+def test_schedule_skips_when_only_stage_ready_pending(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    bridge_root = tmp_path
+    source = tmp_path / "选股报告"
+    source.mkdir()
+    results = bridge_root / "workbuddy" / "research" / "results"
+    results.mkdir(parents=True)
+    (results / "case-9.ready").mkdir()
+    settings = Settings(workbuddy_bridge_root=bridge_root, workbuddy_source_dir=source)
+    monkeypatch.setattr(wb, "get_settings", lambda: settings)
+
+    result = wb.workbuddy_result_import_schedule(_context())
+
+    assert isinstance(result, dg.SkipReason)
+    assert "no candidates_*.json" in result.skip_message
+    assert "stage-ready" not in result.skip_message
+
+
+def test_schedule_still_skips_when_stage_ready_present_alongside_missing_candidates_dir(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    bridge_root = tmp_path
+    source = tmp_path / "missing-source-dir"
+    results = bridge_root / "workbuddy" / "observation" / "results"
+    results.mkdir(parents=True)
+    (results / "obs-1.ready").mkdir()
+    settings = Settings(workbuddy_bridge_root=bridge_root, workbuddy_source_dir=source)
+    monkeypatch.setattr(wb, "get_settings", lambda: settings)
+
+    result = wb.workbuddy_result_import_schedule(_context())
+
+    assert isinstance(result, dg.SkipReason)
+    assert "no candidates_*.json" in result.skip_message
 
 
 def test_schedule_definition_is_weekday_every_five_minutes_and_stopped() -> None:

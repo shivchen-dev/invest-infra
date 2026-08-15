@@ -75,6 +75,9 @@ from invest_pipeline.adapters.jiuwenswarm.codec import (
     coerce_completion,
 )
 from invest_pipeline.adapters.jiuwenswarm.runner import JiuwenSwarmResearchRunner
+from invest_pipeline.adapters.jiuwenswarm.transport import (
+    JiuwenSwarmTransportResult,
+)
 
 # ---------------------------------------------------------------------------
 # Test fixtures — same minimal pack as the Slice 1 tests.
@@ -992,6 +995,402 @@ class JiuwenSwarmCliTransportStatusMappingTest(unittest.TestCase):
 # ---------------------------------------------------------------------------
 # Path traversal, artifact preservation, runner integration
 # ---------------------------------------------------------------------------
+
+
+# ---------------------------------------------------------------------------
+# Artifact-first behavior — a valid result.md must override non-success
+# helper summary statuses (Slice 2 artifact-first contract).
+# ---------------------------------------------------------------------------
+
+
+def _write_completed_artifact(
+    tmp: Path, request: JiuwenSwarmGatewayRequest, payload: dict[str, Any]
+) -> Path:
+    """Write ``_completed_payload()`` JSON to the per-request ``result.md``.
+
+    Mirrors the helper's ``succeeded`` write path so the artifact-first
+    tests can stand up a recoverable artifact alongside any summary
+    ``status`` (timed_out, failed, process_error, needs_input, ...).
+    """
+
+    result_path = tmp / "artifacts" / request.request_id / "result.md"
+    result_path.parent.mkdir(parents=True, exist_ok=True)
+    result_path.write_text(json.dumps(payload), encoding="utf-8")
+    return result_path
+
+
+@dataclass
+class _WritingSummaryRunner:
+    """Fake that writes ``result.md`` during the subprocess invocation.
+
+    Mirrors the helper's real write path: the fake parses ``--output-dir``
+    and ``--request-id`` from the transport's argv, writes the supplied
+    payload to ``result.md`` **inside** the call, and only then emits the
+    summary. This ensures the post-invocation fingerprint differs from the
+    pre-invocation fingerprint so the artifact-first freshness check can
+    detect that the artifact was produced by the current invocation.
+    """
+
+    base_summary: dict[str, Any]
+    payload: dict[str, Any]
+    returncode: int = 0
+    stderr: str = ""
+    calls: list[dict[str, Any]] = field(default_factory=list)
+
+    def __call__(self, *args: Any, **kwargs: Any) -> subprocess.CompletedProcess:
+        self.calls.append({"args": args, "kwargs": dict(kwargs)})
+        argv = list(args[0]) if args else []
+        request_id = ""
+        output_dir = ""
+        for index, token in enumerate(argv):
+            if token == "--request-id" and index + 1 < len(argv):
+                request_id = argv[index + 1]
+            if token == "--output-dir" and index + 1 < len(argv):
+                output_dir = argv[index + 1]
+        result_path = Path(output_dir) / "result.md"
+        result_path.parent.mkdir(parents=True, exist_ok=True)
+        result_path.write_text(json.dumps(self.payload), encoding="utf-8")
+        summary = dict(self.base_summary)
+        summary["request_id"] = request_id
+        return subprocess.CompletedProcess(
+            args=argv,
+            returncode=self.returncode,
+            stdout=json.dumps(summary),
+            stderr=self.stderr,
+        )
+
+
+@dataclass
+class _StaticSummaryRunner:
+    """Fake that emits a summary **without** touching ``result.md``.
+
+    Used to assert that a stale or unchanged ``result.md`` left in place
+    from a previous attempt does not satisfy the artifact-first
+    freshness check. The runner never writes or modifies the artifact,
+    so the post-invocation fingerprint matches the pre-invocation one.
+    """
+
+    base_summary: dict[str, Any]
+    returncode: int = 0
+    stderr: str = ""
+    calls: list[dict[str, Any]] = field(default_factory=list)
+
+    def __call__(self, *args: Any, **kwargs: Any) -> subprocess.CompletedProcess:
+        self.calls.append({"args": args, "kwargs": dict(kwargs)})
+        argv = list(args[0]) if args else []
+        request_id = ""
+        for index, token in enumerate(argv):
+            if token == "--request-id" and index + 1 < len(argv):
+                request_id = argv[index + 1]
+                break
+        summary = dict(self.base_summary)
+        summary["request_id"] = request_id
+        return subprocess.CompletedProcess(
+            args=argv,
+            returncode=self.returncode,
+            stdout=json.dumps(summary),
+            stderr=self.stderr,
+        )
+
+
+class JiuwenSwarmCliTransportArtifactFirstTest(unittest.TestCase):
+    """Artifact-first contract: a parseable ``result.md`` wins over the
+    helper summary only when the artifact was produced or changed by the
+    current helper invocation. Stale, missing, or symlink artifacts must
+    not override the helper status."""
+
+    def _fresh_artifact_result(
+        self,
+        tmp: Path,
+        *,
+        summary_status: str,
+    ) -> tuple[
+        JiuwenSwarmTransportResult,
+        JiuwenSwarmCliGatewayTransport,
+        JiuwenSwarmGatewayRequest,
+    ]:
+        """Run a helper that *writes* ``result.md`` during the call."""
+
+        request = _running_request()
+        settings = _make_settings(tmp)
+        payload = _completed_payload()
+        runner = _WritingSummaryRunner(
+            base_summary={
+                "status": summary_status,
+                "session_id": f"sess-{summary_status}",
+            },
+            payload=payload,
+        )
+        transport = JiuwenSwarmCliGatewayTransport(
+            settings=settings,
+            runner=runner,
+            session_key_factory=lambda: "s",
+        )
+        result = transport.submit(request)
+        return result, transport, request
+
+    def test_timed_out_status_with_fresh_artifact_returns_accepted(self) -> None:
+        with __import__("tempfile").TemporaryDirectory() as td:
+            tmp = Path(td)
+            result, _transport, request = self._fresh_artifact_result(
+                tmp, summary_status="timed_out"
+            )
+            payload = _completed_payload()
+
+        self.assertEqual(result.acceptance, JiuwenSwarmAcceptance.ACCEPTED)
+        self.assertEqual(result.request_id, request.request_id)
+        self.assertEqual(result.session_id, "sess-timed_out")
+        self.assertIsInstance(result.raw_payload, Mapping)
+        self.assertEqual(
+            json.loads(json.dumps(dict(result.raw_payload))),
+            payload,
+        )
+
+    def test_failed_status_with_fresh_artifact_returns_accepted(self) -> None:
+        with __import__("tempfile").TemporaryDirectory() as td:
+            tmp = Path(td)
+            result, _transport, request = self._fresh_artifact_result(
+                tmp, summary_status="failed"
+            )
+            payload = _completed_payload()
+
+        self.assertEqual(result.acceptance, JiuwenSwarmAcceptance.ACCEPTED)
+        self.assertEqual(result.request_id, request.request_id)
+        self.assertEqual(result.session_id, "sess-failed")
+        self.assertIsInstance(result.raw_payload, Mapping)
+        self.assertEqual(
+            json.loads(json.dumps(dict(result.raw_payload))),
+            payload,
+        )
+
+    def test_process_error_status_with_fresh_artifact_returns_accepted(
+        self,
+    ) -> None:
+        with __import__("tempfile").TemporaryDirectory() as td:
+            tmp = Path(td)
+            result, _transport, request = self._fresh_artifact_result(
+                tmp, summary_status="process_error"
+            )
+            payload = _completed_payload()
+
+        self.assertEqual(result.acceptance, JiuwenSwarmAcceptance.ACCEPTED)
+        self.assertEqual(result.request_id, request.request_id)
+        self.assertEqual(result.session_id, "sess-process_error")
+        self.assertIsInstance(result.raw_payload, Mapping)
+        self.assertEqual(
+            json.loads(json.dumps(dict(result.raw_payload))),
+            payload,
+        )
+
+    def test_needs_input_status_with_fresh_artifact_returns_accepted(
+        self,
+    ) -> None:
+        with __import__("tempfile").TemporaryDirectory() as td:
+            tmp = Path(td)
+            result, _transport, request = self._fresh_artifact_result(
+                tmp, summary_status="needs_input"
+            )
+            payload = _completed_payload()
+
+        self.assertEqual(result.acceptance, JiuwenSwarmAcceptance.ACCEPTED)
+        self.assertEqual(result.request_id, request.request_id)
+        self.assertEqual(result.session_id, "sess-needs_input")
+        self.assertIsInstance(result.raw_payload, Mapping)
+        self.assertEqual(
+            json.loads(json.dumps(dict(result.raw_payload))),
+            payload,
+        )
+
+    def _assert_existing_semantics(
+        self,
+        tmp: Path,
+        *,
+        summary_status: str,
+        expectation: str,
+    ) -> None:
+        settings = _make_settings(tmp)
+        request = _running_request()
+        echo_factory = _EchoingSummaryRunner(
+            base_summary={
+                "status": summary_status,
+                "session_id": f"sess-{summary_status}",
+            }
+        )
+        transport = JiuwenSwarmCliGatewayTransport(
+            settings=settings,
+            runner=echo_factory,
+            session_key_factory=lambda: "s",
+        )
+
+        if expectation == "uncertain_timeout":
+            result = transport.submit(request)
+            self.assertEqual(
+                result.acceptance, JiuwenSwarmAcceptance.UNCERTAIN_TIMEOUT
+            )
+            self.assertEqual(result.session_id, f"sess-{summary_status}")
+            self.assertEqual(result.request_id, request.request_id)
+            self.assertIsNone(result.raw_payload)
+        elif expectation == "transport_error":
+            with self.assertRaises(JiuwenSwarmTransportError):
+                transport.submit(request)
+        elif expectation == "rejected":
+            result = transport.submit(request)
+            self.assertEqual(
+                result.acceptance, JiuwenSwarmAcceptance.REJECTED
+            )
+            self.assertEqual(result.session_id, f"sess-{summary_status}")
+            self.assertEqual(result.request_id, request.request_id)
+            self.assertIsNone(result.raw_payload)
+        else:
+            raise AssertionError(f"Unknown expectation: {expectation}")
+
+    def test_timed_out_without_artifact_still_uncertain_timeout(self) -> None:
+        with __import__("tempfile").TemporaryDirectory() as td:
+            tmp = Path(td)
+            self._assert_existing_semantics(
+                tmp, summary_status="timed_out", expectation="uncertain_timeout"
+            )
+
+    def test_failed_without_artifact_still_raises_transport_error(
+        self,
+    ) -> None:
+        with __import__("tempfile").TemporaryDirectory() as td:
+            tmp = Path(td)
+            self._assert_existing_semantics(
+                tmp, summary_status="failed", expectation="transport_error"
+            )
+
+    def test_process_error_without_artifact_still_raises_transport_error(
+        self,
+    ) -> None:
+        with __import__("tempfile").TemporaryDirectory() as td:
+            tmp = Path(td)
+            self._assert_existing_semantics(
+                tmp,
+                summary_status="process_error",
+                expectation="transport_error",
+            )
+
+    def test_needs_input_without_artifact_still_rejected(self) -> None:
+        with __import__("tempfile").TemporaryDirectory() as td:
+            tmp = Path(td)
+            self._assert_existing_semantics(
+                tmp, summary_status="needs_input", expectation="rejected"
+            )
+
+    def _stale_artifact_result(
+        self,
+        tmp: Path,
+        *,
+        summary_status: str,
+    ) -> tuple[JiuwenSwarmGatewayRequest, JiuwenSwarmCliGatewayTransport]:
+        """Stand up a ``result.md`` that the helper will *not* modify.
+
+        The fake runner emits a summary but never writes ``result.md``,
+        so the post-invocation fingerprint matches the pre-invocation
+        fingerprint. The artifact-first contract must reject this stale
+        file and fall through to the existing status semantics.
+        """
+
+        request = _running_request()
+        settings = _make_settings(tmp)
+        pre_payload = _completed_payload()
+        _write_completed_artifact(tmp, request, pre_payload)
+        runner = _StaticSummaryRunner(
+            base_summary={
+                "status": summary_status,
+                "session_id": f"sess-{summary_status}",
+            }
+        )
+        transport = JiuwenSwarmCliGatewayTransport(
+            settings=settings,
+            runner=runner,
+            session_key_factory=lambda: "s",
+        )
+        return request, transport
+
+    def test_unchanged_pre_existing_result_does_not_override_timed_out(
+        self,
+    ) -> None:
+        with __import__("tempfile").TemporaryDirectory() as td:
+            tmp = Path(td)
+            request, transport = self._stale_artifact_result(
+                tmp, summary_status="timed_out"
+            )
+            result = transport.submit(request)
+
+        self.assertEqual(
+            result.acceptance, JiuwenSwarmAcceptance.UNCERTAIN_TIMEOUT
+        )
+        self.assertEqual(result.session_id, "sess-timed_out")
+        self.assertEqual(result.request_id, request.request_id)
+        self.assertIsNone(result.raw_payload)
+
+    def test_unchanged_pre_existing_result_does_not_override_failed(
+        self,
+    ) -> None:
+        with __import__("tempfile").TemporaryDirectory() as td:
+            tmp = Path(td)
+            request, transport = self._stale_artifact_result(
+                tmp, summary_status="failed"
+            )
+            with self.assertRaises(JiuwenSwarmTransportError) as ctx:
+                transport.submit(request)
+        message = str(ctx.exception)
+        self.assertIn("'failed'", message)
+        self.assertIn("sess-failed", message)
+
+    def test_unchanged_pre_existing_result_does_not_override_needs_input(
+        self,
+    ) -> None:
+        with __import__("tempfile").TemporaryDirectory() as td:
+            tmp = Path(td)
+            request, transport = self._stale_artifact_result(
+                tmp, summary_status="needs_input"
+            )
+            result = transport.submit(request)
+
+        self.assertEqual(result.acceptance, JiuwenSwarmAcceptance.REJECTED)
+        self.assertEqual(result.session_id, "sess-needs_input")
+        self.assertEqual(result.request_id, request.request_id)
+        self.assertIsNone(result.raw_payload)
+
+    def test_symlink_result_not_accepted_for_timed_out(self) -> None:
+        with __import__("tempfile").TemporaryDirectory() as td:
+            tmp = Path(td)
+            request = _running_request()
+            settings = _make_settings(tmp)
+            target_dir = tmp / "artifacts" / request.request_id
+            target_dir.mkdir(parents=True, exist_ok=True)
+            target_file = tmp / "real_payload.md"
+            payload = _completed_payload()
+            target_file.write_text(json.dumps(payload), encoding="utf-8")
+            result_path = target_dir / "result.md"
+            result_path.symlink_to(target_file)
+            try:
+                self.assertTrue(result_path.is_symlink())
+                runner = _StaticSummaryRunner(
+                    base_summary={
+                        "status": "timed_out",
+                        "session_id": "sess-symlink",
+                    }
+                )
+                transport = JiuwenSwarmCliGatewayTransport(
+                    settings=settings,
+                    runner=runner,
+                    session_key_factory=lambda: "s",
+                )
+                result = transport.submit(request)
+            finally:
+                if result_path.is_symlink() or result_path.exists():
+                    result_path.unlink()
+
+        self.assertEqual(
+            result.acceptance, JiuwenSwarmAcceptance.UNCERTAIN_TIMEOUT
+        )
+        self.assertEqual(result.session_id, "sess-symlink")
+        self.assertEqual(result.request_id, request.request_id)
+        self.assertIsNone(result.raw_payload)
 
 
 class JiuwenSwarmCliTransportSafetyTest(unittest.TestCase):
