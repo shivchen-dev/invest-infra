@@ -1,0 +1,42 @@
+{
+  "schema_version": "strategy-proposal/1.0",
+  "proposal_id": "strategy-proposal-fixture-review-001",
+  "revision": 1,
+  "task_id": "strategy-engineering-fixture-review-001",
+  "source_document": {
+    "source_document_id": "source-fixture-review-001",
+    "revision": 1,
+    "content_sha256": "5555555555555555555555555555555555555555555555555555555555555555"
+  },
+  "capability_assessment": {
+    "assessment_id": "assessment-fixture-review-001",
+    "task_id": "strategy-capability-fixture-review-001",
+    "artifact_sha256": "6666666666666666666666666666666666666666666666666666666666666666"
+  },
+  "generated_at": "2026-08-15T12:45:00+08:00",
+  "status": "needs_review",
+  "name": "Review proposal fixture",
+  "purpose": "Exercise unresolved engineering choices",
+  "definition": {},
+  "source_rules": [],
+  "engineering_additions": [
+    "Example producer-selected fallback"
+  ],
+  "capability_degradations": [],
+  "subjective_judgments": [],
+  "unresolved_decisions": [
+    "CIA must accept or replace the fallback"
+  ],
+  "invalidation_conditions": [],
+  "limitations": [],
+  "artifacts": [
+    {
+      "name": "strategy.md",
+      "sha256": "7777777777777777777777777777777777777777777777777777777777777777"
+    },
+    {
+      "name": "validation.json",
+      "sha256": "8888888888888888888888888888888888888888888888888888888888888888"
+    }
+  ]
+}

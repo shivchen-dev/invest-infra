@@ -1,0 +1,43 @@
+{
+  "schema_version": "strategy-capability-assessment/1.0",
+  "assessment_id": "assessment-example-001",
+  "task_id": "strategy-capability-example-001",
+  "source_document": {
+    "source_document_id": "source-doc-example-001",
+    "revision": 1,
+    "content_sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+  },
+  "data_matrix_version": "data-matrix-example-001",
+  "as_of": "2026-08-15T10:00:00+08:00",
+  "status": "needs_review",
+  "capabilities": [
+    {
+      "requirement_id": "requirement-example-001",
+      "description": "Example data requirement derived from the source material",
+      "required": true,
+      "status": "not_tested",
+      "primary_source": null,
+      "fallback_sources": [],
+      "limitations": [
+        "Replace this placeholder after a real probe"
+      ]
+    }
+  ],
+  "findings": {
+    "warnings": [],
+    "reviews": [
+      "Required capability has not been tested"
+    ],
+    "blockers": []
+  },
+  "artifacts": [
+    {
+      "name": "capability-assessment.md",
+      "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+    },
+    {
+      "name": "capability-probes.json",
+      "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+    }
+  ]
+}

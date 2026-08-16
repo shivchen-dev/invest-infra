@@ -1,0 +1,38 @@
+{
+  "schema_version": "strategy-proposal/1.0",
+  "proposal_id": "strategy-proposal-fixture-ready-001",
+  "revision": 1,
+  "task_id": "strategy-engineering-fixture-ready-001",
+  "source_document": {
+    "source_document_id": "source-fixture-ready-001",
+    "revision": 1,
+    "content_sha256": "1111111111111111111111111111111111111111111111111111111111111111"
+  },
+  "capability_assessment": {
+    "assessment_id": "assessment-fixture-ready-001",
+    "task_id": "strategy-capability-fixture-ready-001",
+    "artifact_sha256": "2222222222222222222222222222222222222222222222222222222222222222"
+  },
+  "generated_at": "2026-08-15T12:45:00+08:00",
+  "status": "ready_for_review",
+  "name": "Ready proposal fixture",
+  "purpose": "Exercise a complete reviewable proposal envelope",
+  "definition": {},
+  "source_rules": [],
+  "engineering_additions": [],
+  "capability_degradations": [],
+  "subjective_judgments": [],
+  "unresolved_decisions": [],
+  "invalidation_conditions": [],
+  "limitations": [],
+  "artifacts": [
+    {
+      "name": "strategy.md",
+      "sha256": "3333333333333333333333333333333333333333333333333333333333333333"
+    },
+    {
+      "name": "validation.json",
+      "sha256": "4444444444444444444444444444444444444444444444444444444444444444"
+    }
+  ]
+}

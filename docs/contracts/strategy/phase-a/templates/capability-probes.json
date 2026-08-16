@@ -1,0 +1,18 @@
+{
+  "schema_version": "strategy-capability-probes/1.0",
+  "task_id": "strategy-capability-example-001",
+  "assessed_at": "2026-08-15T10:00:00+08:00",
+  "probes": [
+    {
+      "probe_id": "probe-example-001",
+      "requirement_id": "requirement-example-001",
+      "source_id": "source-example-001",
+      "status": "not_tested",
+      "observed_at": null,
+      "evidence_ref": null,
+      "limitations": [
+        "Template probe only"
+      ]
+    }
+  ]
+}

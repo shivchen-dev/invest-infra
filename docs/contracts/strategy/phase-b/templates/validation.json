@@ -1,0 +1,26 @@
+{
+  "schema_version": "strategy-proposal-validation/1.0",
+  "validation_id": "strategy-validation-example-001",
+  "task_id": "strategy-engineering-example-001",
+  "proposal_id": "strategy-proposal-example-001",
+  "proposal_revision": 1,
+  "validated_at": "2026-08-15T12:45:00+08:00",
+  "status": "passed_with_review",
+  "checks": [
+    {
+      "check_id": "source-traceability",
+      "status": "passed",
+      "message": "Source document and capability assessment are bound"
+    },
+    {
+      "check_id": "unresolved-decisions",
+      "status": "review",
+      "message": "CIA review questions remain"
+    }
+  ],
+  "warnings": [],
+  "reviews": [
+    "Producer validation does not imply approval"
+  ],
+  "errors": []
+}

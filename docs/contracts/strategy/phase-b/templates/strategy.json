@@ -1,0 +1,46 @@
+{
+  "schema_version": "strategy-proposal/1.0",
+  "proposal_id": "strategy-proposal-example-001",
+  "revision": 1,
+  "task_id": "strategy-engineering-example-001",
+  "source_document": {
+    "source_document_id": "source-doc-example-001",
+    "revision": 1,
+    "content_sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+  },
+  "capability_assessment": {
+    "assessment_id": "assessment-example-001",
+    "task_id": "strategy-capability-example-001",
+    "artifact_sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+  },
+  "generated_at": "2026-08-15T12:45:00+08:00",
+  "status": "needs_review",
+  "name": "Example strategy proposal",
+  "purpose": "Describe the current strategy objective without claiming approval",
+  "definition": {
+    "stage_role": "example_stage",
+    "workflow": [],
+    "inputs": [],
+    "outputs": [],
+    "report_requirements": []
+  },
+  "source_rules": [],
+  "engineering_additions": [],
+  "capability_degradations": [],
+  "subjective_judgments": [],
+  "unresolved_decisions": [
+    "Replace this placeholder with a CIA review question"
+  ],
+  "invalidation_conditions": [],
+  "limitations": [],
+  "artifacts": [
+    {
+      "name": "strategy.md",
+      "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+    },
+    {
+      "name": "validation.json",
+      "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+    }
+  ]
+}

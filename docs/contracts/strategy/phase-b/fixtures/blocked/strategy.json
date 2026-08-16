@@ -1,0 +1,42 @@
+{
+  "schema_version": "strategy-proposal/1.0",
+  "proposal_id": "strategy-proposal-fixture-blocked-001",
+  "revision": 1,
+  "task_id": "strategy-engineering-fixture-blocked-001",
+  "source_document": {
+    "source_document_id": "source-fixture-blocked-001",
+    "revision": 1,
+    "content_sha256": "9999999999999999999999999999999999999999999999999999999999999999"
+  },
+  "capability_assessment": {
+    "assessment_id": "assessment-fixture-blocked-001",
+    "task_id": "strategy-capability-fixture-blocked-001",
+    "artifact_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  },
+  "generated_at": "2026-08-15T12:45:00+08:00",
+  "status": "blocked",
+  "name": "Blocked proposal fixture",
+  "purpose": "Exercise a valid non-executable proposal result",
+  "definition": {},
+  "source_rules": [],
+  "engineering_additions": [],
+  "capability_degradations": [
+    "Required capability has no accepted fallback"
+  ],
+  "subjective_judgments": [],
+  "unresolved_decisions": [],
+  "invalidation_conditions": [],
+  "limitations": [
+    "No safe executable proposal is available"
+  ],
+  "artifacts": [
+    {
+      "name": "strategy.md",
+      "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    },
+    {
+      "name": "validation.json",
+      "sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+    }
+  ]
+}

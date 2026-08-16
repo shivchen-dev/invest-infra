@@ -1,0 +1,13 @@
+{
+  "schema_version": "strategy-source-document/1.0",
+  "source_document_id": "source-doc-example-001",
+  "revision": 1,
+  "title": "Example strategy source material",
+  "source_type": "web_article",
+  "source_uri": "https://example.invalid/strategy-source",
+  "submitted_by": "user",
+  "submitted_at": "2026-08-15T10:00:00+08:00",
+  "content_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+  "artifact_ref": "strategy-source/source-doc-example-001/revision-1/source.md",
+  "authority_status": "source_material"
+}
