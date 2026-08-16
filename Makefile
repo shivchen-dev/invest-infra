@@ -2,7 +2,7 @@ SHELL := /bin/bash
 
 PIPELINE_ENV_FILE := $(if $(wildcard apps/pipeline/.env),--env-file apps/pipeline/.env)
 
-.PHONY: help up down logs api-dev pipeline-dev web-dev migrate openapi-generate test lint arch-check lock test-domain test-storage test-storage-integration test-migrations test-pipeline test-api test-web provider-smoke personal-daily-run historical-daily-bars-backfill reprocess-date personal-backfill exposure-fixture-run workbuddy-result-import
+.PHONY: help up down logs api-dev pipeline-dev web-dev migrate openapi-generate test lint arch-check lock test-domain test-storage test-storage-integration test-migrations test-pipeline test-api test-web provider-smoke personal-daily-run historical-daily-bars-backfill reprocess-date personal-backfill exposure-fixture-run workbuddy-result-import workbuddy-research-import research-run-worker
 
 help:
 	@echo "make up              启动 PostgreSQL、API、Web、Dagster"
@@ -22,6 +22,8 @@ help:
 	@echo "make historical-daily-bars-backfill  手动回填历史 ETF 日线（不触发 Dagster 作业 / 候选池 / 输入快照）"
 	@echo "make exposure-fixture-run  手动从 Fixture 持久化 Exposure（DC-3，无网络）"
 	@echo "make workbuddy-result-import  导入 Win 共享目录中的 WorkBuddy 候选结果"
+	@echo "make workbuddy-research-import  单次摄取 WorkBuddy research 阶段交付物"
+	@echo "make research-run-worker     执行已入队的 ResearchRun"
 
 up:
 	docker compose up --build
@@ -290,3 +292,23 @@ workbuddy-result-import:
 	INVEST_PIPELINE_AUTO_SCHEDULE_ENABLED=false uv run --project apps/pipeline $(PIPELINE_ENV_FILE) python -m invest_pipeline.workbuddy_bridge_cli \
 		$(if $(BRIDGE_ROOT),--bridge-root '$(BRIDGE_ROOT)') \
 		$(if $(SOURCE_DIR),--source-dir '$(SOURCE_DIR)')
+
+# 人工单次摄取 research 阶段交付；不注册或启用任何定时任务。
+workbuddy-research-import:
+	@if [ -z "$(ARCHIVE_ROOT)" ]; then \
+		echo "ERROR: ARCHIVE_ROOT is required" >&2; exit 2; \
+	fi
+	INVEST_PIPELINE_AUTO_SCHEDULE_ENABLED=false uv run --project apps/pipeline $(PIPELINE_ENV_FILE) python -m invest_pipeline.workbuddy_research_ingest_cli \
+		--archive-root '$(ARCHIVE_ROOT)' \
+		$(if $(BRIDGE_ROOT),--bridge-root '$(BRIDGE_ROOT)') \
+		$(if $(RECOVER),--recover)
+
+research-run-worker:
+	@if [ -z "$(HELPER_PATH)" ] || [ -z "$(WORKSPACE)" ] || [ -z "$(ARTIFACT_ROOT)" ]; then \
+		echo "ERROR: HELPER_PATH, WORKSPACE, and ARTIFACT_ROOT are required" >&2; exit 2; \
+	fi
+	uv run --project apps/pipeline $(PIPELINE_ENV_FILE) python -m invest_pipeline.research_run_worker_cli \
+		--helper-path '$(HELPER_PATH)' --workspace '$(WORKSPACE)' --artifact-root '$(ARTIFACT_ROOT)' \
+		$(if $(RUN_ID),--run-id '$(RUN_ID)') $(if $(LIMIT),--limit '$(LIMIT)') \
+		$(if $(MODE),--mode '$(MODE)') $(if $(TIMEOUT),--timeout '$(TIMEOUT)') \
+		$(if $(IDLE_TIMEOUT),--idle-timeout '$(IDLE_TIMEOUT)')
