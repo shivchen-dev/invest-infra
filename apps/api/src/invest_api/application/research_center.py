@@ -1,30 +1,44 @@
 """Application Read Model for the Research Center home page.
 
-The Research Center slice composes the two existing read-only
-application services — :class:`MarketBreadthQueryService` and
-:class:`DataFreshnessQueryService` — into a single
-:class:`ResearchCenterResponse` view the future
+The Research Center slice composes three existing read-only
+application services — :class:`MarketBreadthQueryService`,
+:class:`DataFreshnessQueryService` and :class:`ResearchQueryService`
+— into a single :class:`ResearchCenterResponse` view the
 ``/api/v1/research-center`` router can render.
 
 Per the Slice 1 contract (see
 ``docs/implementation/RESEARCH-CENTER-SLICE0-CONTRACT.md``):
 
 * the service owns no wall-clock responsibility — ``generated_at``
-  and ``checked_at`` are stamped together by the future router;
-* the two underlying sources are fetched independently (no HTTP
+  and ``checked_at`` are stamped together by the router;
+* the underlying sources are fetched independently (no HTTP
   fan-out, no repository, no migration, no singleton);
-* only :class:`MarketBreadthQueryError` and
-  :class:`DataFreshnessQueryError` are translated into a missing or
-  failed sub-segment; any other exception propagates so the router's
-  generic error boundary stays in charge of sanitising driver-level
-  detail;
-* the top-level ``state`` mirrors the market ``state`` for Slice 1.
+* only :class:`MarketBreadthQueryError`,
+  :class:`DataFreshnessQueryError` and :class:`ResearchQueryError`
+  are translated into a missing or failed sub-segment; any other
+  exception propagates so the router's generic error boundary
+  stays in charge of sanitising driver-level detail;
+* the top-level ``state`` mirrors the market ``state`` for Slice 1
+  (later slices may fold the research sub-segment in).
 
-The service depends on the two application service instances
-structurally — any object exposing ``get_latest(None)`` and
-``get_freshness(None)`` respectively satisfies the constructor — so
-tests can substitute lightweight mocks without touching the
-storage layer.
+Slice 2A adds the ``research`` sub-segment: it is a thin
+projection of :meth:`ResearchQueryService.get_dashboard`, carrying
+the exact ``case_count`` / ``run_count``, the latest case identity
+and ``as_of_date`` when present, and the evidence ``state`` /
+``quality_status`` / ``freshness_status`` already exposed by the
+existing :class:`ResearchDashboardView`. No HTTP fan-out, no second
+research query implementation, no fabrication: a successful read
+that observes zero cases reports ``state="empty"`` (the count is
+real, never a stand-in for "unavailable"), and a controlled
+:class:`ResearchQueryError` reports ``state="failed"``. Candidate
+Pool, external Opportunity Radar, strategy and discipline stays out
+of this increment.
+
+The service depends on the three application service instances
+structurally — any object exposing ``get_latest(None)``,
+``get_freshness(None)`` and ``get_dashboard()`` respectively
+satisfies the constructor — so tests can substitute lightweight
+mocks without touching the storage layer.
 """
 
 from __future__ import annotations
@@ -33,6 +47,7 @@ from dataclasses import dataclass
 from datetime import date
 from decimal import Decimal
 from typing import Literal
+from uuid import UUID
 
 from invest_domain.analytics.market_observations import MarketObservationSnapshot
 
@@ -45,9 +60,41 @@ from invest_api.application.market_breadth import (
     MarketBreadthQueryError,
     MarketBreadthQueryService,
 )
+from invest_api.application.research import (
+    ResearchDashboardEvidenceStatusView,
+    ResearchDashboardResearchSummaryView,
+    ResearchDashboardView,
+    ResearchQueryError,
+    ResearchQueryService,
+)
 
 SCHEMA_VERSION: str = "1.0.0"
 """Frozen response ``schema_version`` the router passes through unchanged."""
+
+RESEARCH_SCHEMA_VERSION: str = "1.0.0"
+"""Frozen ``research.schema_version`` the router mirrors onto the contract response.
+
+Mirrors the upstream dashboard contract version so the central
+``research-center`` endpoint does not invent a separate version. The
+router asserts the value against the application-level constant before
+serialising so a drift never leaks through the public response.
+"""
+
+RESEARCH_FAILED_REASON: str = "research_query_failed"
+"""Stable reason emitted for the ``state == "failed"`` research sub-segment.
+
+The router never echoes driver-level detail (no path, connection string
+or credential text). The single constant is the only legal reason for
+the controlled ``ResearchQueryError`` boundary.
+"""
+
+RESEARCH_EMPTY_REASON: str = "no_research_cases"
+"""Stable reason emitted when the research read succeeded but observed zero cases.
+
+The dashboard's ``count_all`` returned ``0`` so the sub-segment reports
+the explicit empty state without fabricating a value or borrowing
+``unavailable`` semantics from the market segment vocabulary.
+"""
 
 
 @dataclass(frozen=True, slots=True)
@@ -157,6 +204,71 @@ class ResearchCenterCapabilitiesView:
 
 
 @dataclass(frozen=True, slots=True)
+class ResearchCenterLatestCaseView:
+    """Identity of the latest research case surfaced by the dashboard.
+
+    The slice 0 contract only requires ``case_id`` (identity) and
+    ``as_of_date`` (date); no other field of the underlying
+    :class:`ResearchCase` is projected so the central surface stays a
+    thin pointer to the detail page that already owns the full case.
+    """
+
+    case_id: UUID
+    as_of_date: date
+
+
+@dataclass(frozen=True, slots=True)
+class ResearchCenterResearchEvidenceView:
+    """Evidence slot that mirrors the dashboard's ``evidence_status`` verbatim.
+
+    Slot-level fields (``pack_id``, ``quality_status``,
+    ``freshness_status``) are exposed only when ``state ==
+    "available"``; the explicit ``empty`` state carries ``None``
+    placeholders so the front-end never has to special-case missing
+    values. The sub-view only reflects fields the existing
+    :class:`ResearchDashboardView` already produces — no factor-set
+    identifiers or schema versions are invented here.
+    """
+
+    state: Literal["empty", "available"]
+    pack_id: UUID | None
+    quality_status: str | None
+    freshness_status: str | None
+
+
+@dataclass(frozen=True, slots=True)
+class ResearchCenterResearchSummaryView:
+    """Read-only aggregate of the existing research dashboard summary.
+
+    ``state`` vocabulary is a deliberate three-state subset of the
+    four-state market vocabulary, because this surface is not a
+    dependency of any other system:
+
+    * ``available`` — read succeeded and at least one case exists.
+    * ``empty`` — read succeeded, ``count_all`` returned zero; the
+      count is a real observation, never a stand-in for unavailable.
+    * ``failed`` — the application service raised
+      :class:`ResearchQueryError`; ``case_count`` and ``run_count``
+      stay absent (the schema uses ``None``) so the UI cannot
+      mis-render a fabricated total.
+
+    ``case_count`` and ``run_count`` mirror ``ResearchDashboardView
+    .research_summary`` exactly (``count_all`` is exact, not bounded
+    by the recent-runs cap). ``latest_case`` is the slice 0
+    identity/date projection of the dashboard's
+    ``research_summary.latest_case``; ``None`` when no cases exist.
+    ``evidence`` always carries a sub-view so the response shape is
+    stable across the available / empty / failed transitions.
+    """
+
+    state: Literal["available", "empty", "failed"]
+    case_count: int | None
+    run_count: int | None
+    latest_case: ResearchCenterLatestCaseView | None
+    evidence: ResearchCenterResearchEvidenceView
+
+
+@dataclass(frozen=True, slots=True)
 class ResearchCenterResponse:
     """Read-only response the router maps onto the public JSON shape.
 
@@ -166,13 +278,16 @@ class ResearchCenterResponse:
     wall-clock stamp owned by the future router) — the router
     stamps both ``generated_at`` and ``checked_at`` together so two
     callers hitting the service in the same instant observe the
-    same timestamp pair.
+    same timestamp pair. Slice 2A adds the ``research`` sub-segment
+    alongside the existing market / capabilities bundle without
+    re-shaping any existing field.
     """
 
     schema_version: str
     state: str
     market: ResearchCenterMarketView
     capabilities: ResearchCenterCapabilitiesView
+    research: ResearchCenterResearchSummaryView
 
 
 _FRESHNESS_SUBSTATE_BY_STATUS: dict[str, str] = {
@@ -208,46 +323,57 @@ _DEFAULT_CAPABILITIES: ResearchCenterCapabilitiesView = ResearchCenterCapabiliti
 class ResearchCenterQueryService:
     """Application Read Model for the Research Center home page.
 
-    Composes the existing :class:`MarketBreadthQueryService` and
-    :class:`DataFreshnessQueryService` so the future
-    ``research-center`` router can render the contract response
-    without duplicating the orchestration already owned by the two
-    slice services. The service intentionally depends on the
-    application service interfaces (not on the storage
-    repositories or HTTP clients) so the router remains the only
-    place that maps to the public JSON shape and the application
-    layer can be exercised end-to-end without a live database.
+    Composes the existing :class:`MarketBreadthQueryService`,
+    :class:`DataFreshnessQueryService` and
+    :class:`ResearchQueryService` so the ``research-center`` router
+    can render the contract response without duplicating the
+    orchestration already owned by the slice services. The service
+    intentionally depends on the application service interfaces
+    (not on the storage repositories or HTTP clients) so the router
+    remains the only place that maps to the public JSON shape and
+    the application layer can be exercised end-to-end without a
+    live database.
 
     Each underlying call is wrapped in its own narrow error
-    boundary: only :class:`MarketBreadthQueryError` and
-    :class:`DataFreshnessQueryError` are translated into a missing
-    or failed sub-segment; any other exception propagates so the
-    router's generic error boundary stays in charge of sanitising
-    driver-level detail.
+    boundary: only :class:`MarketBreadthQueryError`,
+    :class:`DataFreshnessQueryError` and :class:`ResearchQueryError`
+    are translated into a missing or failed sub-segment; any other
+    exception propagates so the router's generic error boundary
+    stays in charge of sanitising driver-level detail.
     """
 
     def __init__(
         self,
         breadth: MarketBreadthQueryService,
         freshness: DataFreshnessQueryService,
+        research: ResearchQueryService,
     ) -> None:
         self._breadth = breadth
         self._freshness = freshness
+        self._research = research
 
     def get_research_center(self) -> ResearchCenterResponse:
-        """Return the Research Center response view for Slice 1.
+        """Return the Research Center response view for Slice 2A.
 
-        The breadth and freshness reads are issued independently
-        (``get_latest(None)`` and ``get_freshness(None)``) so neither
-        side blocks on the other; their results feed a single
-        state derivation that decides the top-level and market
-        ``state`` together.
+        The breadth, freshness and research reads are issued
+        independently (``get_latest(None)``, ``get_freshness(None)``
+        and ``get_dashboard()``) so neither side blocks on the
+        other; the breadth / freshness results feed the state
+        derivation that decides the top-level and market ``state``;
+        the research result is projected onto the new ``research``
+        sub-segment without affecting the existing state machine.
         """
 
         breadth_snapshot, breadth_error = self._fetch_breadth()
         freshness_view, freshness_error = self._fetch_freshness()
+        research_view, research_error = self._fetch_research()
         return self._build_response(
-            breadth_snapshot, breadth_error, freshness_view, freshness_error
+            breadth_snapshot,
+            breadth_error,
+            freshness_view,
+            freshness_error,
+            research_view,
+            research_error,
         )
 
     def _fetch_breadth(
@@ -266,12 +392,22 @@ class ResearchCenterQueryService:
         except DataFreshnessQueryError as exc:
             return None, exc
 
+    def _fetch_research(
+        self,
+    ) -> tuple[ResearchDashboardView | None, ResearchQueryError | None]:
+        try:
+            return self._research.get_dashboard(), None
+        except ResearchQueryError as exc:
+            return None, exc
+
     def _build_response(
         self,
         breadth_snapshot: MarketObservationSnapshot | None,
         breadth_error: MarketBreadthQueryError | None,
         freshness_view: DataFreshnessView | None,
         freshness_error: DataFreshnessQueryError | None,
+        research_view: ResearchDashboardView | None,
+        research_error: ResearchQueryError | None,
     ) -> ResearchCenterResponse:
         state = self._derive_state(
             breadth_snapshot, breadth_error, freshness_view, freshness_error
@@ -300,6 +436,7 @@ class ResearchCenterQueryService:
                 ),
             ),
             capabilities=_DEFAULT_CAPABILITIES,
+            research=self._build_research_view(research_view, research_error),
         )
 
     @staticmethod
@@ -354,6 +491,101 @@ class ResearchCenterQueryService:
             daily_bar_count=view.daily_bar_count,
             missing_count=view.missing_count,
             status=view.status,
+        )
+
+    @staticmethod
+    def _build_research_view(
+        view: ResearchDashboardView | None,
+        error: ResearchQueryError | None,
+    ) -> ResearchCenterResearchSummaryView:
+        """Project :class:`ResearchDashboardView` onto the slice 0 sub-segment.
+
+        Three explicit branches carry the slice 0 invariant
+        *"never use fabricated zero values to mean unavailable"*:
+
+        * ``ResearchQueryError`` → ``state="failed"`` with
+          ``case_count`` and ``run_count`` left ``None``; the front
+          end can render an explicit failure slot without mistaking
+          ``0`` for "data unavailable".
+        * ``view`` resolved with ``case_count == 0`` → ``state="empty"``
+          with ``case_count`` / ``run_count`` carrying the real,
+          observed values from the dashboard reader and
+          ``latest_case`` left ``None``.
+        * ``view`` resolved with at least one case → ``state="available"``
+          with the dashboard-derived counts and the identity/date
+          projection of ``research_summary.latest_case``.
+        """
+
+        if error is not None:
+            return ResearchCenterResearchSummaryView(
+                state="failed",
+                case_count=None,
+                run_count=None,
+                latest_case=None,
+                evidence=ResearchCenterResearchEvidenceView(
+                    state="empty",
+                    pack_id=None,
+                    quality_status=None,
+                    freshness_status=None,
+                ),
+            )
+
+        if view is None:
+            return ResearchCenterResearchSummaryView(
+                state="failed",
+                case_count=None,
+                run_count=None,
+                latest_case=None,
+                evidence=ResearchCenterResearchEvidenceView(
+                    state="empty",
+                    pack_id=None,
+                    quality_status=None,
+                    freshness_status=None,
+                ),
+            )
+
+        summary: ResearchDashboardResearchSummaryView = view.research_summary
+        evidence: ResearchDashboardEvidenceStatusView = view.evidence_status
+        case_count = summary.case_count
+        run_count = summary.run_count
+
+        if case_count <= 0:
+            return ResearchCenterResearchSummaryView(
+                state="empty",
+                case_count=case_count,
+                run_count=run_count,
+                latest_case=None,
+                evidence=ResearchCenterResearchEvidenceView(
+                    state="empty",
+                    pack_id=None,
+                    quality_status=None,
+                    freshness_status=None,
+                ),
+            )
+
+        latest = summary.latest_case
+        latest_case_view: ResearchCenterLatestCaseView | None
+        if latest is not None:
+            latest_case_view = ResearchCenterLatestCaseView(
+                case_id=latest.case_id,
+                as_of_date=latest.as_of_date,
+            )
+        else:
+            latest_case_view = None
+
+        evidence_view = ResearchCenterResearchEvidenceView(
+            state=evidence.state,
+            pack_id=evidence.pack_id,
+            quality_status=evidence.quality_status,
+            freshness_status=evidence.freshness_status,
+        )
+
+        return ResearchCenterResearchSummaryView(
+            state="available",
+            case_count=case_count,
+            run_count=run_count,
+            latest_case=latest_case_view,
+            evidence=evidence_view,
         )
 
     @staticmethod
@@ -445,13 +677,19 @@ class ResearchCenterQueryService:
 
 
 __all__ = [
+    "RESEARCH_EMPTY_REASON",
+    "RESEARCH_FAILED_REASON",
+    "RESEARCH_SCHEMA_VERSION",
     "ResearchCenterBreadthView",
     "ResearchCenterCapabilitiesView",
     "ResearchCenterCapabilityView",
     "ResearchCenterDataFreshnessView",
+    "ResearchCenterLatestCaseView",
     "ResearchCenterMarketView",
     "ResearchCenterObservationView",
     "ResearchCenterQueryService",
+    "ResearchCenterResearchEvidenceView",
+    "ResearchCenterResearchSummaryView",
     "ResearchCenterResponse",
     "SCHEMA_VERSION",
 ]

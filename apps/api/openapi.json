@@ -2350,6 +2350,27 @@
         "title": "ResearchCenterDataFreshnessResponse",
         "type": "object"
       },
+      "ResearchCenterLatestCaseResponse": {
+        "description": "Identity-only projection of the dashboard ``research_summary.latest_case``.\n\nThe contract surfaces only the two fields the central page needs\nfor a deep-link (``case_id``) and a date label (``as_of_date``);\nno additional :class:`ResearchCase` field is exposed here so the\nexisting case-detail endpoint remains the single source of truth\nfor the full case shape.",
+        "properties": {
+          "as_of_date": {
+            "format": "date",
+            "title": "As Of Date",
+            "type": "string"
+          },
+          "case_id": {
+            "format": "uuid",
+            "title": "Case Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "case_id",
+          "as_of_date"
+        ],
+        "title": "ResearchCenterLatestCaseResponse",
+        "type": "object"
+      },
       "ResearchCenterMarketResponse": {
         "description": "Market segment of the contract response.\n\n``state`` mirrors the top-level ``state`` for Slice 1 (the\ncontract makes the two equivalent). ``as_of_date`` prefers the\nbreadth snapshot date, falls back to the freshness latest\npublished trade date, and is ``None`` when neither source has a\ndate. ``quality_status`` and ``freshness_status`` carry the\nbreadth domain values verbatim, or ``None`` when no breadth\nsnapshot is available. ``breadth`` and ``data_freshness`` are the\nper-source sub-segments. Genuine absence is ``None`` while a\ncontrolled error is represented by an explicit failed object.",
         "properties": {
@@ -2480,8 +2501,121 @@
         "title": "ResearchCenterObservationResponse",
         "type": "object"
       },
+      "ResearchCenterResearchEvidenceResponse": {
+        "description": "Evidence sub-segment of ``research`` mirroring the dashboard verbatim.\n\n``state`` is the dashboard ``empty | available`` vocabulary; the\nthree slot-level fields (``pack_id``, ``quality_status``,\n``freshness_status``) stay ``None`` whenever ``state == \"empty\"``\nso the front-end can render an explicit empty evidence slot\nwithout special-casing ``None`` vs. unset.",
+        "properties": {
+          "freshness_status": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Freshness Status"
+          },
+          "pack_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pack Id"
+          },
+          "quality_status": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Quality Status"
+          },
+          "state": {
+            "enum": [
+              "empty",
+              "available"
+            ],
+            "title": "State",
+            "type": "string"
+          }
+        },
+        "required": [
+          "state"
+        ],
+        "title": "ResearchCenterResearchEvidenceResponse",
+        "type": "object"
+      },
+      "ResearchCenterResearchSummaryResponse": {
+        "description": "``research`` sub-segment of the contract response (Slice 2A).\n\nMirrors :class:`invest_api.application.research_center.ResearchCenterResearchSummaryView`\nfield-by-field and adds the router-owned ``schema_version``.\nThe ``state`` vocabulary is the three-state\n``available | empty | failed`` set; ``case_count`` /\n``run_count`` are ``None`` only when ``state == \"failed\"`` so a\nfabricated zero can never masquerade as \"data unavailable\".",
+        "properties": {
+          "case_count": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Case Count"
+          },
+          "evidence": {
+            "$ref": "#/components/schemas/ResearchCenterResearchEvidenceResponse"
+          },
+          "latest_case": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ResearchCenterLatestCaseResponse"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "run_count": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Run Count"
+          },
+          "schema_version": {
+            "const": "1.0.0",
+            "title": "Schema Version",
+            "type": "string"
+          },
+          "state": {
+            "enum": [
+              "available",
+              "empty",
+              "failed"
+            ],
+            "title": "State",
+            "type": "string"
+          }
+        },
+        "required": [
+          "schema_version",
+          "state",
+          "evidence"
+        ],
+        "title": "ResearchCenterResearchSummaryResponse",
+        "type": "object"
+      },
       "ResearchCenterResponse": {
-        "description": "Read-only response envelope for the contract endpoint.\n\nMirrors :class:`invest_api.application.research_center.ResearchCenterResponse`\nfield-by-field and adds the two router-owned timestamps\n(``generated_at`` and the propagated ``market.data_freshness.checked_at``).\nBoth timestamps come from the same ``datetime.now(UTC)`` call so a\nsingle response always observes identical values; the application\nservice intentionally does not own a clock.",
+        "description": "Read-only response envelope for the contract endpoint.\n\nMirrors :class:`invest_api.application.research_center.ResearchCenterResponse`\nfield-by-field and adds the two router-owned timestamps\n(``generated_at`` and the propagated ``market.data_freshness.checked_at``).\nBoth timestamps come from the same ``datetime.now(UTC)`` call so a\nsingle response always observes identical values; the application\nservice intentionally does not own a clock. Slice 2A adds the\n``research`` sub-segment alongside the market / capabilities\nbundle without re-shaping any existing field.",
         "properties": {
           "capabilities": {
             "$ref": "#/components/schemas/ResearchCenterCapabilitiesResponse"
@@ -2493,6 +2627,9 @@
           },
           "market": {
             "$ref": "#/components/schemas/ResearchCenterMarketResponse"
+          },
+          "research": {
+            "$ref": "#/components/schemas/ResearchCenterResearchSummaryResponse"
           },
           "schema_version": {
             "const": "1.0.0",
@@ -2515,7 +2652,8 @@
           "generated_at",
           "state",
           "market",
-          "capabilities"
+          "capabilities",
+          "research"
         ],
         "title": "ResearchCenterResponse",
         "type": "object"

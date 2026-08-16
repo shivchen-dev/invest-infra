@@ -3,11 +3,14 @@
 The endpoint is exercised through ``fastapi.testclient.TestClient`` with
 the application-level :class:`ResearchCenterQueryService` replaced
 through a ``MagicMock`` so the handler can be driven without a live
-PostgreSQL connection (and without composing the breadth / freshness
-underlying services). The router-level tests assert the HTTP contract:
+PostgreSQL connection (and without composing the breadth / freshness /
+research underlying services). The router-level tests assert the HTTP
+contract:
 
 * the response shape is the frozen ``ResearchCenterResponse`` v1 with
   ``schema_version="1.0.0"``;
+* the new Slice 2A ``research`` sub-segment projects the application
+  view onto the public JSON shape with ``schema_version="1.0.0"``;
 * ``generated_at`` and ``market.data_freshness.checked_at`` are stamped
   from the same UTC wall-clock call so two callers hitting the
   endpoint in the same instant observe the same timestamp pair;
@@ -15,19 +18,23 @@ underlying services). The router-level tests assert the HTTP contract:
   failed``) round-trip through the response with the breadth /
   freshness sub-segments set or ``None`` exactly as the application
   service hands them off;
+* the research sub-segment three-state vocabulary (``available |
+  empty | failed``) round-trips with explicit ``case_count`` /
+  ``run_count`` / ``latest_case`` / ``evidence`` payloads, never with
+  fabricated zero values masquerading as "unavailable";
 * the OpenAPI declaration exposes a single GET and the response
   ``$ref`` points at ``ResearchCenterResponse``;
 * raw exception / connection-string / credential text never appears in
-  a normal 200 response (the application service translates the two
-  controlled query errors into a missing or failed sub-segment, and
-  any other exception propagates through the generic FastAPI
-  boundary rather than leaking through this surface).
+  a normal 200 response (the application service translates the
+  three controlled query errors into a missing or failed
+  sub-segment, and any other exception propagates through the generic
+  FastAPI boundary rather than leaking through this surface).
 
 The application-level tests in
 :mod:`tests.test_research_center_service` exercise the service against
-mock breadth / freshness services and own the state machine,
-observation mapping, capability placeholders, ``as_of_date``
-resolution and narrow per-source error boundary.
+mock breadth / freshness / research services and own the state
+machine, observation mapping, capability placeholders,
+``as_of_date`` resolution and narrow per-source error boundary.
 """
 
 from __future__ import annotations
@@ -35,18 +42,23 @@ from __future__ import annotations
 from datetime import date
 from decimal import Decimal
 from unittest.mock import MagicMock
+from uuid import uuid4
 
 import pytest
 from fastapi.testclient import TestClient
 from invest_api.application.research_center import (
+    RESEARCH_SCHEMA_VERSION,
     SCHEMA_VERSION,
     ResearchCenterBreadthView,
     ResearchCenterCapabilitiesView,
     ResearchCenterCapabilityView,
     ResearchCenterDataFreshnessView,
+    ResearchCenterLatestCaseView,
     ResearchCenterMarketView,
     ResearchCenterObservationView,
     ResearchCenterQueryService,
+    ResearchCenterResearchEvidenceView,
+    ResearchCenterResearchSummaryView,
 )
 from invest_api.application.research_center import (
     ResearchCenterResponse as ResearchCenterResponseView,
@@ -142,6 +154,32 @@ def _capabilities_view() -> ResearchCenterCapabilitiesView:
     )
 
 
+def _research_summary_view(
+    *,
+    state: str = "available",
+    case_count: int | None = 3,
+    run_count: int | None = 2,
+    latest_case: ResearchCenterLatestCaseView | None = None,
+    evidence: ResearchCenterResearchEvidenceView | None = None,
+) -> ResearchCenterResearchSummaryView:
+    """Return a populated research sub-segment view for endpoint tests."""
+
+    if evidence is None:
+        evidence = ResearchCenterResearchEvidenceView(
+            state="empty",
+            pack_id=None,
+            quality_status=None,
+            freshness_status=None,
+        )
+    return ResearchCenterResearchSummaryView(
+        state=state,  # type: ignore[arg-type]
+        case_count=case_count,
+        run_count=run_count,
+        latest_case=latest_case,
+        evidence=evidence,
+    )
+
+
 def _response_view(
     *,
     state: str = "available",
@@ -150,9 +188,12 @@ def _response_view(
     as_of_date: date | None = _AS_OF,
     quality_status: str | None = "complete",
     freshness_status: str | None = "fresh",
+    research: ResearchCenterResearchSummaryView | None = None,
 ) -> ResearchCenterResponseView:
     """Build a populated :class:`ResearchCenterResponse` view for endpoint tests."""
 
+    if research is None:
+        research = _research_summary_view()
     return ResearchCenterResponseView(
         schema_version=SCHEMA_VERSION,
         state=state,
@@ -165,6 +206,7 @@ def _response_view(
             data_freshness=data_freshness,
         ),
         capabilities=_capabilities_view(),
+        research=research,
     )
 
 
@@ -668,9 +710,268 @@ class TestResearchCenterServiceWiring:
         ) or research_center_service.__class__.__name__ == "MagicMock"
 
 
+class TestResearchCenterResearchSummarySerialization:
+    """Coverage for the Slice 2A ``research`` sub-segment on the wire."""
+
+    def test_available_state_projects_counts_and_latest_case_identity(
+        self,
+        client: TestClient,
+        research_center_service: MagicMock,
+    ) -> None:
+        latest_case_id = uuid4()
+        pack_id = uuid4()
+        research = _research_summary_view(
+            state="available",
+            case_count=4,
+            run_count=7,
+            latest_case=ResearchCenterLatestCaseView(
+                case_id=latest_case_id,
+                as_of_date=date(2026, 8, 14),
+            ),
+            evidence=ResearchCenterResearchEvidenceView(
+                state="available",
+                pack_id=pack_id,
+                quality_status="complete",
+                freshness_status="fresh",
+            ),
+        )
+        research_center_service.get_research_center.return_value = _response_view(
+            breadth=_breadth_view(),
+            data_freshness=_data_freshness_view(),
+            research=research,
+        )
+
+        body = client.get(ENDPOINT).json()
+
+        research_body = body["research"]
+        assert research_body["schema_version"] == RESEARCH_SCHEMA_VERSION
+        assert research_body["state"] == "available"
+        assert research_body["case_count"] == 4
+        assert research_body["run_count"] == 7
+        assert research_body["latest_case"] == {
+            "case_id": str(latest_case_id),
+            "as_of_date": "2026-08-14",
+        }
+        assert research_body["evidence"] == {
+            "state": "available",
+            "pack_id": str(pack_id),
+            "quality_status": "complete",
+            "freshness_status": "fresh",
+        }
+
+    def test_empty_state_projects_zero_counts_and_no_latest_case(
+        self,
+        client: TestClient,
+        research_center_service: MagicMock,
+    ) -> None:
+        research = _research_summary_view(
+            state="empty",
+            case_count=0,
+            run_count=0,
+            latest_case=None,
+            evidence=ResearchCenterResearchEvidenceView(
+                state="empty",
+                pack_id=None,
+                quality_status=None,
+                freshness_status=None,
+            ),
+        )
+        research_center_service.get_research_center.return_value = _response_view(
+            breadth=_breadth_view(),
+            data_freshness=_data_freshness_view(),
+            research=research,
+        )
+
+        body = client.get(ENDPOINT).json()
+
+        research_body = body["research"]
+        assert research_body["schema_version"] == RESEARCH_SCHEMA_VERSION
+        assert research_body["state"] == "empty"
+        # Real zero counts are explicit empty, not "unavailable".
+        assert research_body["case_count"] == 0
+        assert research_body["run_count"] == 0
+        assert research_body["latest_case"] is None
+        assert research_body["evidence"] == {
+            "state": "empty",
+            "pack_id": None,
+            "quality_status": None,
+            "freshness_status": None,
+        }
+
+    def test_failed_state_emits_null_counts_not_zero(
+        self,
+        client: TestClient,
+        research_center_service: MagicMock,
+    ) -> None:
+        research = _research_summary_view(
+            state="failed",
+            case_count=None,
+            run_count=None,
+            latest_case=None,
+            evidence=ResearchCenterResearchEvidenceView(
+                state="empty",
+                pack_id=None,
+                quality_status=None,
+                freshness_status=None,
+            ),
+        )
+        research_center_service.get_research_center.return_value = _response_view(
+            breadth=_breadth_view(),
+            data_freshness=_data_freshness_view(),
+            research=research,
+        )
+
+        body = client.get(ENDPOINT).json()
+
+        research_body = body["research"]
+        assert research_body["schema_version"] == RESEARCH_SCHEMA_VERSION
+        assert research_body["state"] == "failed"
+        # Null counts must remain ``null`` so the UI cannot mistake a
+        # controlled failure for "data unavailable".
+        assert research_body["case_count"] is None
+        assert research_body["run_count"] is None
+        assert research_body["latest_case"] is None
+
+    def test_research_subsegment_survives_other_market_subsegments_failing(
+        self,
+        client: TestClient,
+        research_center_service: MagicMock,
+    ) -> None:
+        # Defensive: a partial market state (breadth failed, freshness
+        # available) must still surface the research sub-segment
+        # verbatim so the central page can render the research slice
+        # even when the market slice is degraded.
+        research = _research_summary_view(
+            state="available",
+            case_count=1,
+            run_count=0,
+            latest_case=ResearchCenterLatestCaseView(
+                case_id=uuid4(),
+                as_of_date=date(2026, 8, 14),
+            ),
+            evidence=ResearchCenterResearchEvidenceView(
+                state="empty",
+                pack_id=None,
+                quality_status=None,
+                freshness_status=None,
+            ),
+        )
+        research_center_service.get_research_center.return_value = _response_view(
+            state="partial",
+            breadth=ResearchCenterBreadthView(state="failed"),
+            data_freshness=_data_freshness_view(
+                state="available", status="fresh"
+            ),
+            quality_status=None,
+            freshness_status=None,
+            research=research,
+        )
+
+        body = client.get(ENDPOINT).json()
+
+        assert body["state"] == "partial"
+        assert body["market"]["state"] == "partial"
+        assert body["research"]["state"] == "available"
+        assert body["research"]["case_count"] == 1
+        assert body["market"]["breadth"]["state"] == "failed"
+
+    def test_research_subsegment_keys_match_documented_contract(
+        self,
+        client: TestClient,
+        research_center_service: MagicMock,
+    ) -> None:
+        research_center_service.get_research_center.return_value = _response_view(
+            breadth=_breadth_view(),
+            data_freshness=_data_freshness_view(),
+        )
+
+        body = client.get(ENDPOINT).json()
+
+        research_body = body["research"]
+        # Only the documented keys are emitted; the front-end cannot
+        # reach into the underlying domain objects.
+        assert set(research_body) == {
+            "schema_version",
+            "state",
+            "case_count",
+            "run_count",
+            "latest_case",
+            "evidence",
+        }
+        assert set(research_body["evidence"]) == {
+            "state",
+            "pack_id",
+            "quality_status",
+            "freshness_status",
+        }
+        if research_body["latest_case"] is not None:
+            assert set(research_body["latest_case"]) == {
+                "case_id",
+                "as_of_date",
+            }
+
+    def test_calls_application_service_once(
+        self,
+        client: TestClient,
+        research_center_service: MagicMock,
+    ) -> None:
+        research_center_service.get_research_center.return_value = _response_view(
+            breadth=_breadth_view(),
+            data_freshness=_data_freshness_view(),
+        )
+
+        response = client.get(ENDPOINT)
+
+        assert response.status_code == 200
+        research_center_service.get_research_center.assert_called_once_with()
+
+
+class TestResearchCenterResearchDependencyWiring:
+    """``/api/v1/research-center`` receives the dependency-injected service."""
+
+    def test_router_uses_injected_research_center_service_for_research_slice(
+        self,
+        client: TestClient,
+        research_center_service: MagicMock,
+    ) -> None:
+        research_center_service.get_research_center.return_value = _response_view(
+            breadth=_breadth_view(),
+            data_freshness=_data_freshness_view(),
+            research=_research_summary_view(
+                state="available",
+                case_count=2,
+                run_count=1,
+                latest_case=ResearchCenterLatestCaseView(
+                    case_id=uuid4(),
+                    as_of_date=date(2026, 8, 14),
+                ),
+                evidence=ResearchCenterResearchEvidenceView(
+                    state="empty",
+                    pack_id=None,
+                    quality_status=None,
+                    freshness_status=None,
+                ),
+            ),
+        )
+
+        response = client.get(ENDPOINT)
+
+        assert response.status_code == 200
+        body = response.json()
+        # The router must call the dependency-injected service
+        # exactly once for the whole envelope; the research sub-segment
+        # is composed server-side inside the application service, so
+        # there is no second source call to assert.
+        research_center_service.get_research_center.assert_called_once_with()
+        assert body["research"]["state"] == "available"
+        assert body["research"]["case_count"] == 2
+
+
 __all__ = [
     "TestResearchCenterHappyPath",
     "TestResearchCenterOpenAPI",
+    "TestResearchCenterResearchDependencyWiring",
+    "TestResearchCenterResearchSummarySerialization",
     "TestResearchCenterServiceWiring",
     "TestResearchCenterStateSerialization",
     "TestResearchCenterUnknownException",

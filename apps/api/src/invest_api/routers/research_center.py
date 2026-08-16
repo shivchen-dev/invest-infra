@@ -1,30 +1,36 @@
 """Read-only ``GET /api/v1/research-center`` endpoint.
 
 This router is the only public surface of the central Research
-Visualization Slice 1 module. It composes the two existing read-only
-application services — :class:`MarketBreadthQueryService` and
-:class:`DataFreshnessQueryService` — through the
-:class:`ResearchCenterQueryService` the application layer owns, then
-maps the resulting dataclass view onto the frozen
+Visualization Slice module. It composes the three existing read-only
+application services — :class:`MarketBreadthQueryService`,
+:class:`DataFreshnessQueryService` and :class:`ResearchQueryService`
+— through the :class:`ResearchCenterQueryService` the application
+layer owns, then maps the resulting dataclass view onto the frozen
 :class:`ResearchCenterResponse` Pydantic shape from
 :mod:`invest_api.schemas.research_center`.
 
 The router is intentionally minimal:
 
-* it does not issue HTTP calls to either of the two underlying
-  endpoints — composition happens in the application service against
-  the same request-scoped SQLAlchemy session the other read routers
-  already use;
+* it does not issue HTTP calls to any of the underlying endpoints
+  — composition happens in the application service against the same
+  request-scoped SQLAlchemy session the other read routers already
+  use;
 * it stamps a single ``datetime.now(UTC)`` value and reuses it for
   both the top-level ``generated_at`` and
   ``market.data_freshness.checked_at`` so two callers hitting the
   endpoint in the same instant observe the same timestamp pair;
 * it does not catch unknown exceptions: only the controlled
-  per-source failures are already represented explicitly in the 200 response by
-  the application service; anything else propagates so FastAPI's
-  generic error boundary stays in charge of sanitising driver-level
-  detail (no path, connection string or credential text in the
-  response body).
+  per-source failures are already represented explicitly in the 200
+  response by the application service; anything else propagates so
+  FastAPI's generic error boundary stays in charge of sanitising
+  driver-level detail (no path, connection string or credential
+  text in the response body).
+
+Slice 2A adds the ``research`` sub-segment driven by the existing
+``ResearchQueryService.get_dashboard`` orchestrator; the router
+simply projects the application-level
+:class:`ResearchCenterResearchSummaryView` onto the new Pydantic
+fields without re-shaping the existing market / capabilities bundle.
 """
 
 from __future__ import annotations
@@ -35,13 +41,17 @@ from typing import Annotated
 from fastapi import APIRouter, Depends
 
 from invest_api.application.research_center import (
+    RESEARCH_SCHEMA_VERSION,
     ResearchCenterBreadthView,
     ResearchCenterCapabilitiesView,
     ResearchCenterCapabilityView,
     ResearchCenterDataFreshnessView,
+    ResearchCenterLatestCaseView,
     ResearchCenterMarketView,
     ResearchCenterObservationView,
     ResearchCenterQueryService,
+    ResearchCenterResearchEvidenceView,
+    ResearchCenterResearchSummaryView,
 )
 from invest_api.application.research_center import (
     ResearchCenterResponse as ResearchCenterResponseView,
@@ -52,8 +62,11 @@ from invest_api.schemas.research_center import (
     ResearchCenterCapabilitiesResponse,
     ResearchCenterCapabilityResponse,
     ResearchCenterDataFreshnessResponse,
+    ResearchCenterLatestCaseResponse,
     ResearchCenterMarketResponse,
     ResearchCenterObservationResponse,
+    ResearchCenterResearchEvidenceResponse,
+    ResearchCenterResearchSummaryResponse,
     ResearchCenterResponse,
     ResearchCenterSchemaVersion,
 )
@@ -165,6 +178,60 @@ def _capabilities_from_view(
     )
 
 
+def _latest_case_from_view(
+    view: ResearchCenterLatestCaseView | None,
+) -> ResearchCenterLatestCaseResponse | None:
+    """Translate the application latest-case view onto the Pydantic shape."""
+
+    if view is None:
+        return None
+    return ResearchCenterLatestCaseResponse(
+        case_id=view.case_id,
+        as_of_date=view.as_of_date,
+    )
+
+
+def _research_evidence_from_view(
+    view: ResearchCenterResearchEvidenceView,
+) -> ResearchCenterResearchEvidenceResponse:
+    """Translate the application evidence sub-view onto the Pydantic shape."""
+
+    return ResearchCenterResearchEvidenceResponse(
+        state=view.state,  # type: ignore[arg-type]
+        pack_id=view.pack_id,
+        quality_status=view.quality_status,
+        freshness_status=view.freshness_status,
+    )
+
+
+def _research_summary_from_view(
+    view: ResearchCenterResearchSummaryView,
+) -> ResearchCenterResearchSummaryResponse:
+    """Translate the Slice 2A research sub-segment onto the Pydantic shape.
+
+    Asserts ``schema_version`` against the application-level frozen
+    constant so any drift between the application view and the
+    public contract raises a generic exception *before* Pydantic
+    serialisation, identical to the top-level guard.
+    """
+
+    if view.state == "failed" and (
+        view.case_count is not None or view.run_count is not None
+    ):
+        raise RuntimeError(
+            "research-center research sub-segment reported failure with "
+            "non-null counts; refusing to serialise a fabricated total"
+        )
+    return ResearchCenterResearchSummaryResponse(
+        schema_version=RESEARCH_SCHEMA_VERSION,  # type: ignore[arg-type]
+        state=view.state,  # type: ignore[arg-type]
+        case_count=view.case_count,
+        run_count=view.run_count,
+        latest_case=_latest_case_from_view(view.latest_case),
+        evidence=_research_evidence_from_view(view.evidence),
+    )
+
+
 def _response_from_view(
     view: ResearchCenterResponseView,
     *,
@@ -194,6 +261,7 @@ def _response_from_view(
         state=view.state,  # type: ignore[arg-type]
         market=_market_from_view(view.market, checked_at=checked_at),
         capabilities=_capabilities_from_view(view.capabilities),
+        research=_research_summary_from_view(view.research),
     )
 
 

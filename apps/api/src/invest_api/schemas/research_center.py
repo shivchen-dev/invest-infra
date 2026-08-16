@@ -2,10 +2,13 @@
 
 The endpoint exposes the contract-pinned :class:`ResearchCenterResponse`
 shape (see ``docs/implementation/RESEARCH-CENTER-SLICE0-CONTRACT.md``)
-the central ``/dashboard`` page renders. Slice 1 only fills the
-``market`` segment (Market Breadth + Data Freshness composition) and
-the deterministic capability placeholders; later slices will extend
-the response without re-shaping the existing fields.
+the central ``/dashboard`` page renders. Slice 1 fills the ``market``
+segment (Market Breadth + Data Freshness composition) and the
+deterministic capability placeholders; Slice 2A adds the ``research``
+sub-segment driven by the existing
+:meth:`invest_api.application.research.ResearchQueryService.get_dashboard`
+orchestration. Later slices will extend the response without
+re-shaping the existing fields.
 
 Field-level invariants worth restating:
 
@@ -13,6 +16,11 @@ Field-level invariants worth restating:
   (``"1.0.0"``); the router passes the application-level
   :class:`invest_api.application.research_center.SCHEMA_VERSION`
   constant through unchanged.
+* ``research.schema_version`` mirrors the dashboard contract version
+  (``"1.0.0"``) so the central surface does not invent a parallel
+  version; the router asserts the application-level
+  :class:`invest_api.application.research_center.RESEARCH_SCHEMA_VERSION`
+  constant before serialising.
 * ``generated_at`` and ``market.data_freshness.checked_at`` are stamped
   by the router from a single UTC wall-clock call so two callers
   hitting the endpoint in the same instant observe the same timestamp
@@ -24,8 +32,19 @@ Field-level invariants worth restating:
   native ``Decimal | str | None`` type so Pydantic serialises it the
   same way :class:`invest_api.schemas.market_breadth.MarketBreadthObservationResponse`
   already does.
-* The capability section is frozen to the Slice 1 placeholders so the
-  response shape is stable while later slices land.
+* ``research.case_count`` and ``research.run_count`` mirror the
+  dashboard reader's ``count_all`` exactly. ``research.latest_case``
+  carries only ``case_id`` (identity) and ``as_of_date`` (date) — the
+  front-end can deep-link into the existing case-detail page for the
+  full shape.
+* The ``research`` sub-segment uses its own three-state vocabulary
+  (``available | empty | failed``) so the dashboard never confuses an
+  explicit ``0`` total with "data unavailable"; ``failed`` is reserved
+  for the controlled
+  :class:`invest_api.application.research.ResearchQueryError` boundary,
+  while ``empty`` is the exact-zero count path. The capability section
+  remains frozen to the Slice 1 placeholders so the response shape is
+  stable while later slices land.
 """
 
 from __future__ import annotations
@@ -33,6 +52,7 @@ from __future__ import annotations
 from datetime import date, datetime
 from decimal import Decimal
 from typing import Literal
+from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict
 
@@ -57,6 +77,24 @@ ResearchCenterFreshnessStatus = Literal[
 
 ResearchCenterCapabilityState = Literal["deferred", "unavailable"]
 """Pinned capability ``state`` vocabulary for Slice 1 placeholders."""
+
+ResearchCenterResearchState = Literal["available", "empty", "failed"]
+"""Three-state vocabulary for the ``research.state`` sub-segment.
+
+Distinct from the top-level four-state vocabulary because this
+sub-segment is read-only and never participates in the market state
+machine. ``available`` requires at least one case; ``empty`` is the
+explicit zero-count path; ``failed`` is the controlled
+:class:`ResearchQueryError` boundary.
+"""
+
+ResearchCenterResearchEvidenceState = Literal["empty", "available"]
+"""Two-state vocabulary for ``research.evidence.state``.
+
+Mirrors the dashboard ``evidence_status.state`` verbatim; the front
+end can render the same empty / available distinction without a
+second vocabulary.
+"""
 
 
 class ResearchCenterObservationResponse(BaseModel):
@@ -176,6 +214,61 @@ class ResearchCenterCapabilitiesResponse(BaseModel):
     discipline: ResearchCenterCapabilityResponse
 
 
+class ResearchCenterLatestCaseResponse(BaseModel):
+    """Identity-only projection of the dashboard ``research_summary.latest_case``.
+
+    The contract surfaces only the two fields the central page needs
+    for a deep-link (``case_id``) and a date label (``as_of_date``);
+    no additional :class:`ResearchCase` field is exposed here so the
+    existing case-detail endpoint remains the single source of truth
+    for the full case shape.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    case_id: UUID
+    as_of_date: date
+
+
+class ResearchCenterResearchEvidenceResponse(BaseModel):
+    """Evidence sub-segment of ``research`` mirroring the dashboard verbatim.
+
+    ``state`` is the dashboard ``empty | available`` vocabulary; the
+    three slot-level fields (``pack_id``, ``quality_status``,
+    ``freshness_status``) stay ``None`` whenever ``state == "empty"``
+    so the front-end can render an explicit empty evidence slot
+    without special-casing ``None`` vs. unset.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    state: ResearchCenterResearchEvidenceState
+    pack_id: UUID | None = None
+    quality_status: str | None = None
+    freshness_status: str | None = None
+
+
+class ResearchCenterResearchSummaryResponse(BaseModel):
+    """``research`` sub-segment of the contract response (Slice 2A).
+
+    Mirrors :class:`invest_api.application.research_center.ResearchCenterResearchSummaryView`
+    field-by-field and adds the router-owned ``schema_version``.
+    The ``state`` vocabulary is the three-state
+    ``available | empty | failed`` set; ``case_count`` /
+    ``run_count`` are ``None`` only when ``state == "failed"`` so a
+    fabricated zero can never masquerade as "data unavailable".
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    schema_version: Literal["1.0.0"]
+    state: ResearchCenterResearchState
+    case_count: int | None = None
+    run_count: int | None = None
+    latest_case: ResearchCenterLatestCaseResponse | None = None
+    evidence: ResearchCenterResearchEvidenceResponse
+
+
 class ResearchCenterResponse(BaseModel):
     """Read-only response envelope for the contract endpoint.
 
@@ -184,7 +277,9 @@ class ResearchCenterResponse(BaseModel):
     (``generated_at`` and the propagated ``market.data_freshness.checked_at``).
     Both timestamps come from the same ``datetime.now(UTC)`` call so a
     single response always observes identical values; the application
-    service intentionally does not own a clock.
+    service intentionally does not own a clock. Slice 2A adds the
+    ``research`` sub-segment alongside the market / capabilities
+    bundle without re-shaping any existing field.
     """
 
     model_config = ConfigDict(frozen=True)
@@ -194,6 +289,7 @@ class ResearchCenterResponse(BaseModel):
     state: ResearchCenterTopLevelState
     market: ResearchCenterMarketResponse
     capabilities: ResearchCenterCapabilitiesResponse
+    research: ResearchCenterResearchSummaryResponse
 
 
 __all__ = [
@@ -203,9 +299,14 @@ __all__ = [
     "ResearchCenterCapabilityState",
     "ResearchCenterDataFreshnessResponse",
     "ResearchCenterFreshnessStatus",
+    "ResearchCenterLatestCaseResponse",
     "ResearchCenterMarketResponse",
     "ResearchCenterMarketState",
     "ResearchCenterObservationResponse",
+    "ResearchCenterResearchEvidenceResponse",
+    "ResearchCenterResearchEvidenceState",
+    "ResearchCenterResearchState",
+    "ResearchCenterResearchSummaryResponse",
     "ResearchCenterResponse",
     "ResearchCenterSchemaVersion",
     "ResearchCenterTopLevelState",

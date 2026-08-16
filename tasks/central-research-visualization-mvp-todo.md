@@ -2,7 +2,7 @@
 
 > 计划：`docs/plan/invest-infra-central-research-visualization-mvp-plan-v1.0.md`
 > 状态规则：`[ ]` 未开始，`[~]` 进行中，`[x]` 完成，`[!]` 阻塞。
-> 当前状态：ACTIVE_PLAN，尚未授权代码开发。
+> 当前状态：ACTIVE_EXECUTION，Slice 1 代码已完成，Slice 2.1 API 代码已完成；真实环境 Gate A 与 Web/后续切片仍未收口。
 > 任务治理：`tasks/README.md`
 
 ## Slice 0：信息架构与合同冻结
@@ -27,21 +27,21 @@
 
 - [x] 字段无模拟数据和隐式零值
 - [x] 不包含回测、自动批准、自动交易字段
-- [ ] 用户审核并授权 Slice 1
+- [x] 用户审核并授权 Slice 1
 
 ## Slice 1：市场真实状态
 
-- [ ] 1.1 实现中心 Read Model 的市场状态切片
+- [x] 1.1 实现中心 Read Model 的市场状态切片
   - 验收：组合 Market Breadth、数据新鲜度和市场日期；返回确定性空/错误状态。
   - 验证：Application focused tests。
   - 依赖：Checkpoint 0。
   - 预计范围：M，3–5 个文件。
-- [ ] 1.2 暴露中心只读端点并同步 OpenAPI
+- [x] 1.2 暴露中心只读端点并同步 OpenAPI
   - 验收：响应版本固定；错误脱敏；生成客户端无 drift。
   - 验证：API tests、OpenAPI drift check。
   - 依赖：1.1。
   - 预计范围：M，3–5 个文件。
-- [ ] 1.3 交付市场状态卡片
+- [x] 1.3 交付市场状态卡片
   - 验收：展示来源、日期、freshness、quality；loading/empty/stale/partial/failed 齐全。
   - 验证：Web component tests、typecheck、build。
   - 依赖：1.2。
@@ -56,7 +56,7 @@
 
 ## Slice 2：研究与机会工作台
 
-- [ ] 2.1 聚合 Research Case/Run/Evidence 摘要
+- [x] 2.1 聚合 Research Case/Run/Evidence 摘要
   - 验收：研究数量、最新研究、运行和证据状态来源明确。
   - 验证：Application/API focused tests。
   - 依赖：Gate A。

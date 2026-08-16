@@ -210,9 +210,10 @@ def get_research_center_query_service(
 ) -> ResearchCenterQueryService:
     """Build the application service that backs ``/api/v1/research-center``.
 
-    Composes the two existing read-only application services —
-    :class:`MarketBreadthQueryService` and
-    :class:`DataFreshnessQueryService` — against the FastAPI-provided
+    Composes the three existing read-only application services —
+    :class:`MarketBreadthQueryService`,
+    :class:`DataFreshnessQueryService` and
+    :class:`ResearchQueryService` — against the FastAPI-provided
     session. The composition happens in the application layer (no HTTP
     fan-out, no new repository); tests override this dependency
     through ``app.dependency_overrides`` to inject a mock service
@@ -224,6 +225,12 @@ def get_research_center_query_service(
             SqlAlchemyMarketObservationSnapshotRepository(session)
         ),
         freshness=DataFreshnessQueryService(SqlAlchemyDataFreshnessReader(session)),
+        research=ResearchQueryService(
+            case_repository=SqlAlchemyResearchCaseRepository(session),
+            evidence_repository=SqlAlchemyEvidencePackRepository(session),
+            run_repository=SqlAlchemyResearchRunRepository(session),
+            result_repository=SqlAlchemyResearchResultRepository(session),
+        ),
     )
 
 

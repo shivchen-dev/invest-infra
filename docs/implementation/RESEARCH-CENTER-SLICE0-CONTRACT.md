@@ -168,3 +168,9 @@ Slice 1 不直接调用已有 HTTP 端点做服务内 fan-out；聚合 Module �
 - 不替换现有资源端点，不新增数据库对象；
 - 不包含回测、收益、买卖、策略批准或仓位动作；
 - Slice 2–5 不得借本合同提前扩张。
+
+## 11. Slice 2A 合同增量
+
+Slice 2A 在不改变既有 `market`、`capabilities` 和顶层状态语义的前提下，向 `ResearchCenterResponse` 增加必填只读字段 `research`。该字段是既有 `ResearchQueryService.get_dashboard()` 的受限投影，包含 `case_count`、`run_count`、最新 Case 身份/日期和 Evidence 状态；不包含策略、持仓或投资结论。
+
+`research.state` 只允许 `available | empty | failed`：成功读取且 Case 数为零时为 `empty`，受控研究查询失败时为 `failed`，失败状态的计数必须为 `null`。该增量通过独立 schema `schema_version` 和 OpenAPI drift check 管理，Slice 3 及后续切片仍不得借此字段扩张其他业务范围。
