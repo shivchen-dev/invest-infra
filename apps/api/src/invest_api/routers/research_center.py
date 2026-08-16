@@ -27,7 +27,19 @@ The router is intentionally minimal:
   response by the application service; anything else propagates so
   FastAPI's generic error boundary stays in charge of sanitising
   driver-level detail (no path, connection string or credential
-  text in the response body).
+  text in the response body);
+* the four ``_delivery_*_from_view`` mappers feed
+  ``view.source`` through the canonical application-layer
+  :func:`sanitize_source_value` filter against the matching
+  ``PIPELINE_TRIGGER_TYPE_WHITELIST`` /
+  ``INTEGRATION_PRODUCER_WHITELIST`` /
+  ``ARCHIVE_MEDIA_TYPE_WHITELIST`` /
+  ``RESEARCH_RUNS_RUNNER_KEY_WHITELIST`` whitelist so the API
+  boundary stays defence-in-depth — a rogue upstream caller
+  who bypasses :class:`ResearchCenterQueryService` cannot
+  echo a credential, host path, control character or
+  connection string through the response body even when
+  the bounded view already carries the malicious text.
 
 Slice 2A adds the ``research`` sub-segment driven by the existing
 ``ResearchQueryService.get_dashboard`` orchestrator; Slice 2B adds
@@ -52,7 +64,11 @@ from typing import Annotated
 from fastapi import APIRouter, Depends
 
 from invest_api.application.research_center import (
+    ARCHIVE_MEDIA_TYPE_WHITELIST,
     DELIVERY_SCHEMA_VERSION,
+    INTEGRATION_PRODUCER_WHITELIST,
+    PIPELINE_TRIGGER_TYPE_WHITELIST,
+    RESEARCH_RUNS_RUNNER_KEY_WHITELIST,
     RESEARCH_SCHEMA_VERSION,
     ResearchCenterArchiveSummaryView,
     ResearchCenterBreadthView,
@@ -71,6 +87,7 @@ from invest_api.application.research_center import (
     ResearchCenterResearchEvidenceView,
     ResearchCenterResearchRunsSummaryView,
     ResearchCenterResearchSummaryView,
+    sanitize_source_value,
 )
 from invest_api.application.research_center import (
     ResearchCenterResponse as ResearchCenterResponseView,
@@ -310,16 +327,38 @@ def _opportunity_from_view(
 def _delivery_pipeline_from_view(
     view: ResearchCenterPipelineSummaryView,
 ) -> ResearchCenterDeliveryPipelineResponse:
-    """Translate the Slice 3A pipeline sub-segment onto the Pydantic shape.
+    """Translate the pipeline sub-segment onto the Pydantic shape.
 
     Mirrors
     :class:`ResearchCenterPipelineSummaryView` field-by-field;
-    the application-level invariant check is enforced there so this
-    mapper stays a thin pass-through. The pipeline sub-segment is
-    the only Slice 3A sub-segment whose ``state`` vocabulary is
-    extended to five states (``available | empty | running |
-    partial | failed``) so the UI can render an in-flight or
-    partially-completed run without misclassifying it.
+    the application-level invariant check is enforced there so
+    this mapper stays a thin pass-through. The pipeline
+    sub-segment is the only delivery sub-segment whose ``state``
+    vocabulary is extended to five states (``available | empty
+    | running | partial | failed``) so the UI can render an
+    in-flight or partially-completed run without misclassifying
+    it. The Slice 3B ``freshness_at`` anchor is projected
+    verbatim from the application-level view so the central
+    page can render the freshness badge.
+
+    ``source`` is **not** trusted verbatim: the mapper feeds
+    ``view.source`` through the canonical application-layer
+    :func:`sanitize_source_value` filter against the
+    :data:`PIPELINE_TRIGGER_TYPE_WHITELIST` whitelist so a
+    rogue upstream caller who bypasses
+    :class:`ResearchCenterQueryService` and hands a
+    pre-built view to the API boundary cannot echo a
+    credential, host path, control character or
+    connection string. Whitelisted labels
+    (``"scheduled"`` / ``"manual"`` / ``"dagster"``) round-trip
+    verbatim; every other value the whitelist rejects —
+    including ``None`` — surfaces as ``None`` on the wire.
+    Defence-in-depth: the application service already runs the
+    same filter at view construction time, so the router
+    mapper re-applies the exact same canonical filter to keep
+    the contract intact when a view reaches the boundary
+    through any other path (tests, future programmatic
+    callers, regression fixtures).
     """
 
     return ResearchCenterDeliveryPipelineResponse(
@@ -328,6 +367,11 @@ def _delivery_pipeline_from_view(
         started_at=view.started_at,
         finished_at=view.finished_at,
         business_completion_date=view.business_completion_date,
+        freshness_at=view.freshness_at,
+        source=sanitize_source_value(
+            view.source,
+            whitelist=PIPELINE_TRIGGER_TYPE_WHITELIST,
+        ),
         reason=view.reason,
     )
 
@@ -335,16 +379,34 @@ def _delivery_pipeline_from_view(
 def _delivery_integration_from_view(
     view: ResearchCenterIntegrationSummaryView,
 ) -> ResearchCenterDeliveryIntegrationResponse:
-    """Translate the Slice 3A integration sub-segment onto the Pydantic shape.
+    """Translate the integration sub-segment onto the Pydantic shape.
 
     Mirrors
     :class:`ResearchCenterIntegrationSummaryView` field-by-field;
     the bounded ``sample_size``, the pre-populated
     ``producer_status_counts`` / ``intake_status_counts``
-    dictionaries and the latest ``as_of`` date are projected
-    verbatim from the application-level view. No payload blob,
-    source URI, run identifier, host path, producer or producer
-    identifier is projected.
+    dictionaries, the latest ``as_of`` date and the bounded
+    ``freshness_at`` anchor are projected verbatim from the
+    application-level view. No payload blob, source URI, run
+    identifier, host path, producer identifier, secret or
+    connection string is projected.
+
+    ``source`` is **not** trusted verbatim: the mapper feeds
+    ``view.source`` through the canonical application-layer
+    :func:`sanitize_source_value` filter against the
+    :data:`INTEGRATION_PRODUCER_WHITELIST` whitelist so a
+    rogue upstream caller who bypasses
+    :class:`ResearchCenterQueryService` cannot echo a
+    credential, host path, control character or
+    connection string. Whitelisted labels
+    (``"workbuddy"`` / ``"cifangquant"`` / ``"fixture"`` /
+    ``"fixture_dev"``) round-trip verbatim; every other value
+    surfaces as ``None`` on the wire. Defence-in-depth: the
+    application service already runs the same filter at view
+    construction time, so the router mapper re-applies the
+    canonical filter to keep the contract intact for any
+    boundary caller (tests, fixtures, future programmatic
+    callers).
     """
 
     return ResearchCenterDeliveryIntegrationResponse(
@@ -362,6 +424,11 @@ def _delivery_integration_from_view(
             else None
         ),
         latest_as_of=view.latest_as_of,
+        freshness_at=view.freshness_at,
+        source=sanitize_source_value(
+            view.source,
+            whitelist=INTEGRATION_PRODUCER_WHITELIST,
+        ),
         reason=view.reason,
     )
 
@@ -369,22 +436,47 @@ def _delivery_integration_from_view(
 def _delivery_archive_from_view(
     view: ResearchCenterArchiveSummaryView,
 ) -> ResearchCenterDeliveryArchiveResponse:
-    """Translate the Slice 3A archive sub-segment onto the Pydantic shape.
+    """Translate the archive sub-segment onto the Pydantic shape.
 
     Mirrors
     :class:`ResearchCenterArchiveSummaryView` field-by-field;
     the bounded ``artifact_count``, the latest run's
-    :attr:`ExternalWorkflowRun.producer_status` value and the
+    :attr:`ExternalWorkflowRun.producer_status` value, the
     maximum ``created_at.date()`` across the bounded artifact
-    slice are projected verbatim. No artifact URI, payload,
-    metadata, host path, logical URI, content hash, run
-    identifier or credential is projected.
+    slice and the bounded ``freshness_at`` anchor are
+    projected verbatim. No artifact URI, payload, metadata,
+    host path, logical URI, content hash, run identifier,
+    secret or connection string is projected.
+
+    ``source`` is **not** trusted verbatim: the mapper feeds
+    ``view.source`` through the canonical application-layer
+    :func:`sanitize_source_value` filter against the
+    :data:`ARCHIVE_MEDIA_TYPE_WHITELIST` whitelist so a
+    rogue upstream caller who bypasses
+    :class:`ResearchCenterQueryService` cannot echo a
+    logical URI, host path, content hash, payload blob,
+    credential, control character or connection string.
+    Whitelisted IANA-registered media types
+    (``"application/json"`` / ``"application/pdf"`` /
+    ``"application/xml"`` / ``"text/plain"`` /
+    ``"text/markdown"`` / ``"text/html"`` / ``"text/csv"``)
+    round-trip verbatim; every other value surfaces as
+    ``None`` on the wire. Defence-in-depth: the application
+    service already runs the same filter at view construction
+    time, so the router mapper re-applies the canonical
+    filter to keep the contract intact for any boundary
+    caller.
     """
 
     return ResearchCenterDeliveryArchiveResponse(
         state=view.state,  # type: ignore[arg-type]
         artifact_count=view.artifact_count,
         latest_as_of=view.latest_as_of,
+        freshness_at=view.freshness_at,
+        source=sanitize_source_value(
+            view.source,
+            whitelist=ARCHIVE_MEDIA_TYPE_WHITELIST,
+        ),
         latest_run_status=view.latest_run_status,
         reason=view.reason,
     )
@@ -393,16 +485,34 @@ def _delivery_archive_from_view(
 def _delivery_research_runs_from_view(
     view: ResearchCenterResearchRunsSummaryView,
 ) -> ResearchCenterDeliveryResearchRunsResponse:
-    """Translate the Slice 3A research-runs sub-segment onto the Pydantic shape.
+    """Translate the research-runs sub-segment onto the Pydantic shape.
 
     Mirrors
     :class:`ResearchCenterResearchRunsSummaryView` field-by-field;
     the bounded ``run_count``, the pre-populated
-    :class:`ResearchRunStatus` -> ``int`` count dictionary and the
-    most-recent run's status / start / finish timestamps are
-    projected verbatim. No report body, evidence bundle,
-    ``error_summary``, ``case_id`` or ``evidence_pack_id`` is
-    projected.
+    :class:`ResearchRunStatus` -> ``int`` count dictionary, the
+    most-recent run's status / start / finish timestamps and
+    the bounded ``freshness_at`` anchor are projected
+    verbatim. No report body, evidence bundle,
+    ``error_summary``, ``case_id``, ``playbook_key`` or
+    ``evidence_pack_id`` is projected.
+
+    ``source`` is **not** trusted verbatim: the mapper feeds
+    ``view.source`` through the canonical application-layer
+    :func:`sanitize_source_value` filter against the
+    :data:`RESEARCH_RUNS_RUNNER_KEY_WHITELIST` whitelist so a
+    rogue upstream caller who bypasses
+    :class:`ResearchCenterQueryService` cannot echo a host
+    path, credential, control character, payload blob or
+    connection string. Whitelisted runner keys
+    (``"jiuwenswarm-runner-v1"`` / ``"jiuwenswarm"`` /
+    ``"llm"`` / ``"deterministic"`` / ``"fake-runner-v1"``)
+    round-trip verbatim; every other value surfaces as
+    ``None`` on the wire. Defence-in-depth: the application
+    service already runs the same filter at view construction
+    time, so the router mapper re-applies the canonical
+    filter to keep the contract intact for any boundary
+    caller.
     """
 
     return ResearchCenterDeliveryResearchRunsResponse(
@@ -416,6 +526,11 @@ def _delivery_research_runs_from_view(
         latest_status=view.latest_status,
         latest_started_at=view.latest_started_at,
         latest_finished_at=view.latest_finished_at,
+        freshness_at=view.freshness_at,
+        source=sanitize_source_value(
+            view.source,
+            whitelist=RESEARCH_RUNS_RUNNER_KEY_WHITELIST,
+        ),
         reason=view.reason,
     )
 

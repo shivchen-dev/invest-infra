@@ -105,7 +105,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from datetime import date, datetime
+from datetime import UTC, date, datetime
 from decimal import Decimal
 from typing import Literal
 from uuid import UUID
@@ -647,6 +647,11 @@ class ResearchCenterPipelineSummaryView:
       deliberately reuses ``partial`` (rather than
       misclassifying the run as ``available``) so the front-end
       can render the explicit "terminal without success" slot.
+      An orphan terminal run that carries no ``finished_at`` (a
+      defensive path the domain invariant forbids, but the
+      application layer still tolerates) also lands here so the
+      UI can render the explainable-but-uncertain slot without
+      borrowing ``available``.
     * ``empty`` — :meth:`PipelineRunQueryService.get_latest_run`
       returned ``None`` because the personal daily job has not
       produced a matching run yet. Every field stays ``None`` so
@@ -669,9 +674,17 @@ class ResearchCenterPipelineSummaryView:
     :class:`invest_domain.pipeline.PipelineRun` already produces:
     the canonical ``status`` value, the timezone-aware execution
     timestamps, the business completion date (derived from
-    ``finished_at``), and the stable reason for the controlled
-    failure path. ``error_summary`` is **never** projected so the
-    public response can never echo a driver-level message.
+    ``finished_at``), the bounded ``trigger_type`` (e.g.
+    ``"scheduled"`` / ``"manual"``), the canonical
+    :data:`freshness_at` anchor (the calendar day the run
+    produced terminal output, or ``None`` for in-flight / no-run
+    / failed-query paths), and the stable reason for the
+    controlled failure path. ``error_summary`` is **never**
+    projected so the public response can never echo a
+    driver-level message; ``trigger_type`` is bounded to the
+    non-blank values the domain validator already enforces so
+    the public surface can never echo a host path or credential or
+    connection string.
     """
 
     state: Literal["available", "empty", "failed", "running", "partial"]
@@ -679,6 +692,8 @@ class ResearchCenterPipelineSummaryView:
     started_at: datetime | None = None
     finished_at: datetime | None = None
     business_completion_date: date | None = None
+    freshness_at: date | None = None
+    source: str | None = None
     reason: str | None = None
 
 
@@ -701,12 +716,20 @@ class ResearchCenterIntegrationSummaryView:
       ``started_at`` when ``finished_at`` is absent) and is
       ``None`` only when the latest run carries no timestamps
       (defensive — the domain invariant requires a started_at).
+      ``freshness_at`` mirrors ``latest_as_of`` so the public
+      contract carries a clearly-labeled freshness anchor.
+      ``source`` projects the bounded ``producer`` value of
+      the latest run (e.g. ``"workbuddy"``) so the central
+      page can render the source identity without exposing
+      ``producer_status`` detail or run identifiers.
     * ``empty`` — :meth:`ExternalWorkflowQueryService.health`
       returned ``sample_size == 0``; ``sample_size`` is the real
       zero, ``status`` is ``"healthy"`` (the bounded sample has
       no failed runs) and the status-count dictionaries are
       pre-populated with zero defaults so the UI never has to
-      special-case missing keys.
+      special-case missing keys. ``freshness_at`` /
+      ``source`` stay ``None`` because no run exists to
+      anchor them.
     * ``failed`` — the read raised a
       :class:`sqlalchemy.exc.SQLAlchemyError` (the
       external-workflow reader does not translate storage errors
@@ -715,16 +738,22 @@ class ResearchCenterIntegrationSummaryView:
       :data:`INTEGRATION_FAILED_REASON` reason is surfaced so
       the UI can render an explicit failure slot. The original
       exception's driver-level detail never reaches the public
-      response.
+      response. ``freshness_at`` / ``source`` stay ``None`` so
+      a fabricated zero cannot masquerade as "data unavailable".
 
     The sub-view exposes only bounded source facts — never
     payload blobs, never source URIs, never the latest run's
-    payload / metadata / logical URI / producer / producer
-    identifier — so the central surface remains a thin pointer
-    to the existing detail page that already owns the full
-    shape. ``latest_run_id`` is intentionally not exposed; the
+    payload / metadata / logical URI / producer identifier —
+    so the central surface remains a thin pointer to the
+    existing detail page that already owns the full shape.
+    ``latest_run_id`` is intentionally not exposed; the
     public contract uses ``latest_as_of`` as the equivalent
-    bounded time fact so a UUID is never echoed.
+    bounded time fact so a UUID is never echoed. The bounded
+    ``source`` projects only the latest run's ``producer``
+    label (bounded by the storage layer's
+    ``length(producer) <= 64`` constraint) so the central
+    surface never echoes a host path or credential or connection
+    string.
     """
 
     state: Literal["available", "empty", "failed"]
@@ -733,6 +762,8 @@ class ResearchCenterIntegrationSummaryView:
     producer_status_counts: dict[str, int] | None = None
     intake_status_counts: dict[str, int] | None = None
     latest_as_of: date | None = None
+    freshness_at: date | None = None
+    source: str | None = None
     reason: str | None = None
 
 
@@ -753,11 +784,20 @@ class ResearchCenterArchiveSummaryView:
       ``created_at.date()`` across the bounded artifact slice are
       exposed so the front-end can render the archive summary
       without reaching into the per-artifact detail.
+      ``freshness_at`` mirrors ``latest_as_of`` so the public
+      contract carries a clearly-labeled freshness anchor.
+      ``source`` projects the most-recent artifact's bounded
+      ``media_type`` value (e.g. ``"application/json"``) so the
+      central page can render the archive's source media
+      without echoing a logical URI, payload, host path or
+      content hash.
     * ``empty`` — either the latest-run selection returned
       ``None`` (no external run exists yet) or the per-run
       artifact list is empty; the bounded ``artifact_count`` is
       ``0`` (the real observation count, never a stand-in for
       failure) and every other field stays ``None``.
+      ``freshness_at`` / ``source`` stay ``None`` because no
+      bounded artifact exists to anchor them.
     * ``failed`` — the read raised a
       :class:`sqlalchemy.exc.SQLAlchemyError` (the
       external-workflow reader does not translate storage errors
@@ -765,6 +805,8 @@ class ResearchCenterArchiveSummaryView:
       status / latest-as-of facts stay ``None`` and the opaque
       :data:`ARCHIVE_FAILED_REASON` reason is surfaced so the
       UI can render an explicit failure slot.
+      ``freshness_at`` / ``source`` stay ``None`` so a
+      fabricated zero cannot masquerade as "data unavailable".
 
     The sub-view exposes only bounded source facts — never
     artifact URI, payload, metadata, host path, logical URI or
@@ -772,11 +814,18 @@ class ResearchCenterArchiveSummaryView:
     to the existing detail page. The bounded
     ``artifact_count`` is the only count surfaced; the latest
     run's ``producer_status`` is the only status surfaced.
+    The bounded ``source`` projects only the most-recent
+    artifact's ``media_type`` value (bounded by the storage
+    layer's ``length(media_type) <= 128`` constraint) so the
+    public surface never echoes a logical URI, host path,
+    content hash, payload blob or connection string.
     """
 
     state: Literal["available", "empty", "failed"]
     artifact_count: int | None = None
     latest_as_of: date | None = None
+    freshness_at: date | None = None
+    source: str | None = None
     latest_run_status: str | None = None
     reason: str | None = None
 
@@ -800,11 +849,20 @@ class ResearchCenterResearchRunsSummaryView:
       derived from the first entry of the bounded recent-runs
       page (the most-recent run in the dashboard reader's
       deterministic ``created_at`` / ``run_id`` ordering).
+      ``freshness_at`` mirrors ``latest_finished_at`` so the
+      public contract carries a clearly-labeled freshness
+      anchor. ``source`` projects the bounded ``runner_key``
+      of the latest run (e.g. ``"llm"``) so the central page
+      can render the runner identity without exposing the
+      case / evidence-pack identifiers, the report body or
+      the run's error message.
     * ``empty`` — :attr:`ResearchDashboardView.recent_runs`
       resolved an empty list; ``run_count`` is the real
       observation count (``0``) and the status-count dictionary
       is pre-populated with zero defaults so the UI never has to
-      special-case missing keys.
+      special-case missing keys. ``freshness_at`` / ``source``
+      stay ``None`` because no recent run exists to anchor
+      them.
     * ``failed`` — the read raised a controlled
       :class:`ResearchQueryError` (the
       :meth:`ResearchQueryService.get_dashboard` boundary);
@@ -812,16 +870,24 @@ class ResearchCenterResearchRunsSummaryView:
       ``None`` and the opaque
       :data:`RESEARCH_RUNS_FAILED_REASON` reason is surfaced so
       the UI can render an explicit failure slot.
+      ``freshness_at`` / ``source`` stay ``None`` so a
+      fabricated zero cannot masquerade as "data unavailable".
 
     The sub-view exposes only bounded source facts the existing
     :attr:`ResearchDashboardView.recent_runs` already produces:
     the bounded ``run_count``, the run-status counts keyed by
-    the existing :class:`ResearchRunStatus` vocabulary, and the
-    most-recent run's status / start / finish timestamps. No
-    report body, evidence bundle, ``error_summary``,
-    ``case_id`` or ``evidence_pack_id`` is projected so the
-    public surface stays a thin pointer to the existing
-    research-runs detail page.
+    the existing :class:`ResearchRunStatus` vocabulary, the
+    most-recent run's status / start / finish timestamps and
+    the bounded ``runner_key`` source label. No report body,
+    evidence bundle, ``error_summary``, ``case_id``,
+    ``playbook_key`` or ``evidence_pack_id`` is projected so
+    the public surface stays a thin pointer to the existing
+    research-runs detail page. The bounded ``source`` projects
+    only the latest run's ``runner_key`` (the domain
+    validator enforces a non-blank string with no path,
+    credential or connection-string affordances) so the
+    central surface can never echo a host path or credential,
+    payload blob or connection string.
     """
 
     state: Literal["available", "empty", "failed"]
@@ -830,6 +896,8 @@ class ResearchCenterResearchRunsSummaryView:
     latest_status: str | None = None
     latest_started_at: datetime | None = None
     latest_finished_at: datetime | None = None
+    freshness_at: datetime | None = None
+    source: str | None = None
     reason: str | None = None
 
 
@@ -900,6 +968,191 @@ _FRESHNESS_SUBSTATE_BY_STATUS: dict[str, str] = {
 """Mapping from Data Freshness vocabulary to sub-segment ``state`` vocabulary."""
 
 
+DELIVERY_CAPABILITY_REASON: str = "slice_3b_delivery_summary_available"
+"""Stable reason emitted for the ``capabilities.delivery.state == "available"`` slot.
+
+Slice 3B promotes the delivery capability from the Slice 1
+``deferred`` placeholder to ``available`` because the
+``/api/v1/research-center`` envelope now exposes the bounded
+``delivery`` sub-segment end-to-end (pipeline, integration,
+archive, research_runs) with explicit freshness / source /
+state facts and redacted failure reasons. The reason is the
+only legal string the capability slot emits and is opaque to
+clients; it does not leak slice-version internals or driver
+detail.
+"""
+
+
+PIPELINE_TRIGGER_TYPE_WHITELIST: frozenset[str] = frozenset(
+    {"scheduled", "manual", "dagster"}
+)
+"""Safe, stable ``trigger_type`` values the public ``source`` field may emit.
+
+The whitelist is the only legal set of values the central
+``delivery.pipeline.source`` field can carry. The values come
+from the existing storage / pipeline layer:
+
+* ``"scheduled"`` — the default ; the personal-daily job's
+  scheduled trigger.
+* ``"manual"`` — :data:`invest_pipeline.personal_daily_cli._TRIGGER_TYPE_MANUAL`,
+  the CLI-driven trigger.
+* ``"dagster"`` — the Dagster sensor / schedule trigger used
+  by the platforms that own the pipeline asset.
+
+Any value outside the whitelist (driver-level exception text,
+postgres / connection strings, absolute file paths, raw
+control characters, an empty string, or even a storage-layer
+row that has drifted to an unrecognised label) is **not**
+emitted and the source field stays ``None`` so the controller
+can never echo a credential, secret, host path or
+payload-blob through the public response.
+"""
+
+
+INTEGRATION_PRODUCER_WHITELIST: frozenset[str] = frozenset(
+    {"workbuddy", "cifangquant", "fixture", "fixture_dev"}
+)
+"""Safe, stable ``producer`` values the public ``source`` field may emit.
+
+The whitelist is the only legal set of values the central
+``delivery.integration.source`` field can carry. The values
+come from the bridge ingestor (``"workbuddy"``) and the ETF
+data adapters (``"cifangquant"``, ``"fixture_dev"``,
+``"fixture"``) the codebase already owns. Any value outside
+the whitelist (driver-level exception text, postgres /
+connection strings, absolute file paths, raw control
+characters, an empty string, or a storage-layer row that has
+drifted to an unrecognised label) is **not** emitted and the
+source field stays ``None`` so the controller can never echo
+a credential, secret, host path or payload-blob through the
+public response.
+"""
+
+
+ARCHIVE_MEDIA_TYPE_WHITELIST: frozenset[str] = frozenset(
+    {
+        "application/json",
+        "application/pdf",
+        "application/xml",
+        "text/plain",
+        "text/markdown",
+        "text/html",
+        "text/csv",
+    }
+)
+"""Safe, stable ``media_type`` values the public ``source`` field may emit.
+
+The whitelist is the only legal set of MIME-type values the
+central ``delivery.archive.source`` field can carry. The
+values are the standard IANA-registered media types the
+external-workflow artifact pipeline emits today
+(``"application/json"`` from the bridge ingestor, the
+document-oriented media types the workbuddy-archive
+potentially emits, the text-oriented media types the
+markdown / CSV pipelines emit). Any value outside the
+whitelist (driver-level exception text, postgres /
+connection strings, absolute file paths, raw control
+characters, an empty string, or a storage-layer row that has
+drifted to an unrecognised label) is **not** emitted and the
+source field stays ``None`` so the controller can never echo
+a credential, secret, host path, content hash, payload blob
+or connection string through the public response.
+"""
+
+
+RESEARCH_RUNS_RUNNER_KEY_WHITELIST: frozenset[str] = frozenset(
+    {
+        "jiuwenswarm-runner-v1",
+        "jiuwenswarm",
+        "llm",
+        "deterministic",
+        "fake-runner-v1",
+    }
+)
+"""Safe, stable ``runner_key`` values the public ``source`` field may emit.
+
+The whitelist is the only legal set of values the central
+``delivery.research_runs.source`` field can carry. The values
+come from the existing JiuwenSwarm runner
+(``"jiuwenswarm-runner-v1"`` / ``"jiuwenswarm"``) and the
+test-only / fallback runners (``"llm"`` / ``"deterministic"``
+/ ``"fake-runner-v1"``) the codebase already documents. Any
+value outside the whitelist (driver-level exception text,
+postgres / connection strings, absolute file paths, raw
+control characters, an empty string, or a storage-layer row
+that has drifted to an unrecognised label) is **not**
+emitted and the source field stays ``None`` so the controller
+can never echo a credential, secret, host path or payload-blob
+through the public response.
+"""
+
+
+def sanitize_source_value(
+    raw_value: str | None, *, whitelist: frozenset[str]
+) -> str | None:
+    """Return ``raw_value`` only if it is a short, whitelisted, control-free label.
+
+    The canonical public sanitizer the API boundary relies on
+    so a malicious or drifted storage-layer value can never
+    reach the response body. The public ``source`` field on
+    every delivery sub-segment only emits labels that are
+    simultaneously:
+
+    * a non-empty string after ``strip()`` (the underlying
+      typing layer rejects empty / whitespace-only values, but
+      a defensive strip protects against future drift);
+    * composed of printable ASCII or a small, bounded unicode
+      subset (any control character — ``\\x00``-``\\x1f``,
+      ``\\x7f``, ``\\x80``-``\\x9f`` — disqualifies the value
+      so a raw traceback line that escaped the driver-level
+      sanitation can never surface here);
+    * contained in the supplied :class:`frozenset` whitelist
+      (the only legal labels the central dashboard renders).
+
+    Any value that fails any of the three checks returns
+    ``None`` so the public response can never echo a
+    credential, secret, host path, raw connection string or
+    payload blob. The whitelist is intentionally
+    :class:`frozenset` so the membership check is O(1) and
+    the function stays safe under hot-path reads.
+
+    This is the **single canonical source filter** the
+    application and the router boundary share so the contract
+    cannot drift: every :class:`ResearchCenter*View.source`
+    value the public response emits must pass through this
+    filter against the matching whitelist. Direct construction
+    of the application views is **not** trusted — the router
+    mappers re-apply this filter to ``view.source`` before
+    projecting onto the Pydantic response so a rogue upstream
+    caller cannot bypass the application service and leak a
+    credential, host path or connection string through the
+    API response.
+    """
+
+    if not isinstance(raw_value, str):
+        return None
+    candidate = raw_value.strip()
+    if not candidate:
+        return None
+    if any(ord(char) < 0x20 or ord(char) == 0x7f for char in candidate):
+        return None
+    if candidate not in whitelist:
+        return None
+    return candidate
+
+
+_sanitize_source_value = sanitize_source_value
+"""Deprecated private alias kept for backwards compatibility within this module.
+
+New callers should :func:`import` the public
+:func:`sanitize_source_value` symbol instead — they are
+literally the same function so the routing layer and the
+application service share the exact same filter and any
+future tightening of the contract automatically applies on
+both sides of the boundary.
+"""
+
+
 _DEFAULT_CAPABILITIES: ResearchCenterCapabilitiesView = ResearchCenterCapabilitiesView(
     opportunities=ResearchCenterCapabilityView(
         state="deferred", reason="slice_2_not_implemented"
@@ -908,7 +1161,7 @@ _DEFAULT_CAPABILITIES: ResearchCenterCapabilitiesView = ResearchCenterCapabiliti
         state="deferred", reason="slice_2_not_implemented"
     ),
     delivery=ResearchCenterCapabilityView(
-        state="deferred", reason="slice_3_not_implemented"
+        state="available", reason=DELIVERY_CAPABILITY_REASON
     ),
     strategy=ResearchCenterCapabilityView(
         state="unavailable", reason="strategy_iteration_contract_not_frozen"
@@ -917,7 +1170,16 @@ _DEFAULT_CAPABILITIES: ResearchCenterCapabilitiesView = ResearchCenterCapabiliti
         state="unavailable", reason="position_discipline_contract_not_frozen"
     ),
 )
-"""Frozen Slice 1 capability bundle — Slice 2+ replaces this with real sources."""
+"""Frozen capability bundle.
+
+``delivery`` flips to ``available`` once Slice 3B lands because
+the bounded ``delivery`` sub-segment now renders end-to-end;
+``opportunities`` / ``research`` stay ``deferred`` because
+those slices ship their data on the ``opportunities`` /
+``research`` sub-segments directly and never expose a separate
+capability card; ``strategy`` / ``discipline`` stay
+``unavailable`` because their contracts are not yet frozen.
+"""
 
 
 class ResearchCenterQueryService:
@@ -999,11 +1261,13 @@ class ResearchCenterQueryService:
         (
             integration_health,
             integration_latest_as_of,
+            integration_latest_producer,
             integration_error,
         ) = self._fetch_integration()
         (
             archive_artifacts,
             archive_run_status,
+            archive_latest_media_type,
             archive_error,
         ) = self._fetch_archive()
         recent_runs = (
@@ -1016,9 +1280,11 @@ class ResearchCenterQueryService:
             pipeline_error,
             integration_health,
             integration_latest_as_of,
+            integration_latest_producer,
             integration_error,
             archive_artifacts,
             archive_run_status,
+            archive_latest_media_type,
             archive_error,
             recent_runs,
             research_error,
@@ -1120,31 +1386,41 @@ class ResearchCenterQueryService:
     ) -> tuple[
         Mapping[str, object] | None,
         date | None,
+        str | None,
         SQLAlchemyError | None,
     ]:
-        """Return the bounded integration health and latest ``as_of`` date.
+        """Return the bounded integration health, latest ``as_of`` date and producer.
 
         Reuses :meth:`ExternalWorkflowQueryService.health` for the
         bounded status / sample-size / status-count facts; the
-        latest ``as_of`` date is derived from the most recent
+        latest ``as_of`` date and bounded ``producer`` label are
+        derived from the most recent
         :class:`ExternalWorkflowRun` in the bounded sample so the
-        public surface exposes a time fact instead of a UUID. Any
-        underlying :class:`sqlalchemy.exc.SQLAlchemyError` is
-        captured as the controlled failure boundary.
+        public surface exposes a time fact and a source label
+        instead of a UUID. The bounded ``producer`` value is
+        run through :func:`sanitize_source_value` against
+        :data:`INTEGRATION_PRODUCER_WHITELIST` so the public
+        surface can never echo a host path, credential, control
+        character or connection string even when the storage
+        layer's ``length(producer) <= 64`` constraint is
+        bypassed. Any underlying
+        :class:`sqlalchemy.exc.SQLAlchemyError` is captured as
+        the controlled failure boundary.
         """
 
         try:
             health = self._external_workflows.health()
         except SQLAlchemyError as exc:
-            return None, None, exc
+            return None, None, None, exc
 
         latest_run_id = health.get("latest_run_id") if health else None
         latest_as_of: date | None = None
+        latest_producer: str | None = None
         if latest_run_id is not None:
             try:
                 latest_run = self._external_workflows.get_run(latest_run_id)
             except SQLAlchemyError as exc:
-                return health, None, exc
+                return health, None, None, exc
             if latest_run is not None:
                 timestamp = (
                     latest_run.finished_at
@@ -1153,16 +1429,22 @@ class ResearchCenterQueryService:
                 )
                 if timestamp is not None:
                     latest_as_of = timestamp.date()
-        return health, latest_as_of, None
+                raw_producer = getattr(latest_run, "producer", None)
+                latest_producer = sanitize_source_value(
+                    raw_producer if isinstance(raw_producer, str) else None,
+                    whitelist=INTEGRATION_PRODUCER_WHITELIST,
+                )
+        return health, latest_as_of, latest_producer, None
 
     def _fetch_archive(
         self,
     ) -> tuple[
         Sequence[object] | None,
         str | None,
+        str | None,
         SQLAlchemyError | None,
     ]:
-        """Return the bounded artifact list and latest-run status.
+        """Return the bounded artifact list, latest-run status and latest media type.
 
         Walks :meth:`ExternalWorkflowQueryService.list_runs` (limit 1)
         to resolve the latest run, then
@@ -1171,7 +1453,14 @@ class ResearchCenterQueryService:
         artifact slice. The latest run's
         :attr:`ExternalWorkflowRun.producer_status` is the only
         status fact surfaced (no payload / URI / metadata /
-        identifier leak).
+        identifier leak). The most-recent artifact's bounded
+        ``media_type`` is the source label surfaced; the value
+        is run through :func:`sanitize_source_value` against
+        :data:`ARCHIVE_MEDIA_TYPE_WHITELIST` so the public
+        surface cannot echo a logical URI, host path, content
+        hash, payload blob, control character or connection
+        string even when the storage layer's
+        ``length(media_type) <= 128`` constraint is bypassed.
         """
 
         try:
@@ -1181,10 +1470,10 @@ class ResearchCenterQueryService:
                 )
             )
         except SQLAlchemyError as exc:
-            return None, None, exc
+            return None, None, None, exc
 
         if not recent_runs:
-            return (), None, None
+            return (), None, None, None
 
         latest_run = recent_runs[0]
         run_status = getattr(latest_run.producer_status, "value", None)
@@ -1198,8 +1487,20 @@ class ResearchCenterQueryService:
                 )
             )
         except SQLAlchemyError as exc:
-            return None, run_status, exc
-        return artifacts, run_status, None
+            return None, run_status, None, exc
+        latest_media_type: str | None = None
+        if artifacts:
+            latest_artifact = max(
+                artifacts,
+                key=lambda artifact: getattr(artifact, "created_at", None)
+                or datetime.min.replace(tzinfo=UTC),
+            )
+            raw_media_type = getattr(latest_artifact, "media_type", None)
+            latest_media_type = sanitize_source_value(
+                raw_media_type if isinstance(raw_media_type, str) else None,
+                whitelist=ARCHIVE_MEDIA_TYPE_WHITELIST,
+            )
+        return artifacts, run_status, latest_media_type, None
 
     def _build_response(
         self,
@@ -1527,14 +1828,16 @@ class ResearchCenterQueryService:
         pipeline_error: PipelineRunQueryError | None,
         integration_health: Mapping[str, object] | None,
         integration_latest_as_of: date | None,
+        integration_latest_producer: str | None,
         integration_error: SQLAlchemyError | None,
         archive_artifacts: Sequence[object] | None,
         archive_run_status: str | None,
+        archive_latest_media_type: str | None,
         archive_error: SQLAlchemyError | None,
         recent_runs: Sequence[ResearchRun] | None,
         research_error: ResearchQueryError | None,
     ) -> ResearchCenterDeliveryView:
-        """Compose the Slice 3A ``delivery`` sub-segment from four bounded reads.
+        """Compose the ``delivery`` sub-segment from four bounded reads.
 
         Each of the four sub-segments (pipeline, integration,
         archive, research-runs) is translated independently with
@@ -1543,7 +1846,13 @@ class ResearchCenterQueryService:
         because each sub-builder owns its own narrow error
         boundary. ``schema_version`` mirrors
         :data:`DELIVERY_SCHEMA_VERSION` so the router can guard
-        against drift before serialising.
+        against drift before serialising. The Slice 3B bounded
+        ``source`` identity facts (latest ``producer`` /
+        ``media_type`` / ``runner_key`` / ``trigger_type``)
+        surface as the ``source`` field on each sub-segment so
+        the central page can render a per-source badge without
+        ever echoing a host path or credential, connection string or
+        raw exception traceback.
         """
 
         return ResearchCenterDeliveryView(
@@ -1554,10 +1863,14 @@ class ResearchCenterQueryService:
             integration=ResearchCenterQueryService._build_integration_view(
                 integration_health,
                 integration_latest_as_of,
+                integration_latest_producer,
                 integration_error,
             ),
             archive=ResearchCenterQueryService._build_archive_view(
-                archive_artifacts, archive_run_status, archive_error
+                archive_artifacts,
+                archive_run_status,
+                archive_latest_media_type,
+                archive_error,
             ),
             research_runs=ResearchCenterQueryService._build_research_runs_view(
                 recent_runs, research_error
@@ -1569,28 +1882,45 @@ class ResearchCenterQueryService:
         pipeline_run: object | None,
         error: PipelineRunQueryError | None,
     ) -> ResearchCenterPipelineSummaryView:
-        """Project the latest pipeline run onto the Slice 3A sub-segment.
+        """Project the latest pipeline run onto the delivery sub-segment.
 
         The five-state vocabulary
         ``available | empty | running | partial | failed`` is the
-        Slice 3A pipeline sub-segment convention. The mapping is
-        pinned explicitly so a terminal ``succeeded`` run is the
-        only path that reports ``available``; ``failed`` runs
-        surface ``failed`` (never misclassified as available so the
-        UI can render the explicit failure slot); ``partial`` runs
-        surface ``partial``; ``cancelled`` runs surface ``partial``
-        so the central page can show the run reached a terminal
-        state without success without borrowing the ``available``
-        vocabulary; ``running`` runs surface ``running`` (so the UI
-        can render the in-flight state without misclassifying it as
+        pipeline sub-segment convention. The mapping is pinned
+        explicitly so a terminal ``succeeded`` run is the only
+        path that reports ``available``; ``failed`` runs surface
+        ``failed`` (never misclassified as available so the UI
+        can render the explicit failure slot); ``partial`` runs
+        surface ``partial``; ``cancelled`` runs surface
+        ``partial`` so the central page can show the run
+        reached a terminal state without success without
+        borrowing the ``available`` vocabulary; ``running``
+        runs surface ``running`` (so the UI can render the
+        in-flight state without misclassifying it as
         ``partial`` or ``failed``); ``queued`` runs surface
-        ``running`` (a pre-start pipeline is still in flight from
-        the user's perspective and never misclassified as
-        ``available``); the "no run yet" path reports ``empty``; and
-        a controlled :class:`PipelineRunQueryError` reports
-        ``failed`` with the opaque :data:`PIPELINE_FAILED_REASON`.
-        ``error_summary`` is **never** projected so a driver-level
-        message can never leak through the response body.
+        ``running`` (a pre-start pipeline is still in flight
+        from the user's perspective and never misclassified as
+        ``available``); an unknown / orphan terminal status
+        also lands on ``partial`` so the run is explainable as
+        "terminal without success" rather than misclassified
+        as ``available`` (the orphan case is a defensive path
+        the domain invariant forbids, but the application
+        layer still tolerates); the "no run yet" path reports
+        ``empty``; a controlled :class:`PipelineRunQueryError`
+        reports ``failed`` with the opaque
+        :data:`PIPELINE_FAILED_REASON`. ``error_summary`` is
+        **never** projected so a driver-level message can
+        never leak through the response body.
+
+        ``freshness_at`` mirrors :attr:`business_completion_date`
+        so the contract surfaces a clearly-labeled freshness
+        anchor; ``source`` projects the bounded
+        :attr:`PipelineRun.trigger_type` so the central page
+        can render the trigger kind (e.g. ``"scheduled"`` /
+        ``"manual"``) without ever echoing a host path or credential,
+        connection string or payload blob. The domain validator
+        already pins ``trigger_type`` to a non-blank string with
+        no path / credential affordances.
         """
 
         if error is not None:
@@ -1610,33 +1940,47 @@ class ResearchCenterQueryService:
         elif status_value == "succeeded":
             state = "available"
         else:
-            state = "available"
+            # Defensive: an unknown terminal status (or any
+            # terminal-without-success path the vocabulary does
+            # not explicitly recognise) lands on ``partial`` so
+            # the run is explainable as "terminal without
+            # success" rather than silently misclassified as
+            # ``available``.
+            state = "partial"
         started_at = getattr(pipeline_run, "started_at", None)
         finished_at = getattr(pipeline_run, "finished_at", None)
         business_completion_date: date | None = None
         if isinstance(finished_at, datetime):
             business_completion_date = finished_at.date()
+        raw_trigger_type = getattr(pipeline_run, "trigger_type", None)
+        source_value = sanitize_source_value(
+            raw_trigger_type if isinstance(raw_trigger_type, str) else None,
+            whitelist=PIPELINE_TRIGGER_TYPE_WHITELIST,
+        )
         return ResearchCenterPipelineSummaryView(
             state=state,  # type: ignore[arg-type]
             status=status_value,
             started_at=started_at,
             finished_at=finished_at,
             business_completion_date=business_completion_date,
+            freshness_at=business_completion_date,
+            source=source_value,
         )
 
     @staticmethod
     def _build_integration_view(
         health: Mapping[str, object] | None,
         latest_as_of: date | None,
+        latest_producer: str | None,
         error: SQLAlchemyError | None,
     ) -> ResearchCenterIntegrationSummaryView:
-        """Project the bounded health dictionary onto the Slice 3A sub-segment.
+        """Project the bounded health dictionary onto the delivery sub-segment.
 
         The three-state vocabulary
         ``available | empty | failed`` mirrors the Slice 2A
-        ``research`` sub-segment convention so the central surface
-        never has to invent a fourth "no external run yet"
-        vocabulary: a controlled
+        ``research`` sub-segment convention so the central
+        surface never has to invent a fourth "no external run
+        yet" vocabulary: a controlled
         :class:`sqlalchemy.exc.SQLAlchemyError` reports
         ``failed`` with the opaque
         :data:`INTEGRATION_FAILED_REASON`; a populated health
@@ -1644,7 +1988,14 @@ class ResearchCenterQueryService:
         with the zero-defaulted status-count dictionaries; a
         populated health dictionary with ``sample_size > 0``
         reports ``available`` with the bounded status / sample /
-        counts / latest-as-of facts.
+        counts / latest-as-of / freshness / source facts.
+        ``freshness_at`` mirrors ``latest_as_of``; ``source``
+        projects the bounded ``producer`` of the latest run so
+        the central page can render the producer identity
+        (e.g. ``"workbuddy"``) without ever echoing a host
+        path, credential or connection string. The storage layer
+        pins ``producer`` to ``length(producer) <= 64`` so the
+        public surface cannot echo a credential or path.
         """
 
         if error is not None:
@@ -1685,6 +2036,8 @@ class ResearchCenterQueryService:
                 producer_status_counts=producer_status_counts,
                 intake_status_counts=intake_status_counts,
                 latest_as_of=None,
+                freshness_at=None,
+                source=None,
                 reason=INTEGRATION_EMPTY_REASON,
             )
         return ResearchCenterIntegrationSummaryView(
@@ -1694,15 +2047,18 @@ class ResearchCenterQueryService:
             producer_status_counts=producer_status_counts,
             intake_status_counts=intake_status_counts,
             latest_as_of=latest_as_of,
+            freshness_at=latest_as_of,
+            source=latest_producer,
         )
 
     @staticmethod
     def _build_archive_view(
         artifacts: Sequence[object] | None,
         latest_run_status: str | None,
+        latest_media_type: str | None,
         error: SQLAlchemyError | None,
     ) -> ResearchCenterArchiveSummaryView:
-        """Project the bounded per-run artifact slice onto the Slice 3A sub-segment.
+        """Project the bounded per-run artifact slice onto the delivery sub-segment.
 
         The three-state vocabulary
         ``available | empty | failed`` mirrors the Slice 2A
@@ -1712,21 +2068,30 @@ class ResearchCenterQueryService:
         :data:`ARCHIVE_FAILED_REASON`; a non-empty bounded
         artifact list reports ``available`` with the bounded
         ``artifact_count``, the latest run's
-        :attr:`ExternalWorkflowRun.producer_status` value and the
-        maximum ``created_at.date()`` across the bounded slice; an
-        empty bounded list (either no recent run or no
-        artifacts for the latest run) reports ``empty`` with the
-        real zero count and the opaque
-        :data:`ARCHIVE_EMPTY_REASON` reason. No artifact URI,
-        payload, metadata, host path, logical URI or content
-        hash is projected so the public surface stays a thin
-        pointer to the existing detail page.
+        :attr:`ExternalWorkflowRun.producer_status` value, the
+        maximum ``created_at.date()`` across the bounded slice,
+        the ``freshness_at`` anchor and the ``source``
+        ``media_type`` of the most-recent artifact; an empty
+        bounded list (either no recent run or no artifacts for
+        the latest run) reports ``empty`` with the real zero
+        count, ``freshness_at`` / ``source`` left ``None`` and
+        the opaque :data:`ARCHIVE_EMPTY_REASON` reason. No
+        artifact URI, payload, metadata, host path, logical
+        URI or content hash is projected so the public surface
+        stays a thin pointer to the existing detail page. The
+        bounded ``source`` projects only the most-recent
+        artifact's ``media_type`` value (the storage layer
+        pins ``media_type`` to ``length(media_type) <= 128``)
+        so the public surface cannot echo a logical URI, host
+        path, content hash, payload blob or connection string.
         """
 
         if error is not None:
             return ResearchCenterArchiveSummaryView(
                 state="failed",
                 latest_run_status=latest_run_status,
+                freshness_at=None,
+                source=None,
                 reason=ARCHIVE_FAILED_REASON,
             )
         if not artifacts:
@@ -1734,6 +2099,8 @@ class ResearchCenterQueryService:
                 state="empty",
                 artifact_count=0,
                 latest_run_status=latest_run_status,
+                freshness_at=None,
+                source=None,
                 reason=ARCHIVE_EMPTY_REASON,
             )
         latest_as_of: date | None = None
@@ -1747,6 +2114,8 @@ class ResearchCenterQueryService:
             state="available",
             artifact_count=len(artifacts),
             latest_as_of=latest_as_of,
+            freshness_at=latest_as_of,
+            source=latest_media_type,
             latest_run_status=latest_run_status,
         )
 
@@ -1755,7 +2124,7 @@ class ResearchCenterQueryService:
         recent_runs: Sequence[ResearchRun] | None,
         error: ResearchQueryError | None,
     ) -> ResearchCenterResearchRunsSummaryView:
-        """Project the dashboard's bounded ``recent_runs`` onto the Slice 3A sub-segment.
+        """Project the dashboard's bounded ``recent_runs`` onto the delivery sub-segment.
 
         The three-state vocabulary
         ``available | empty | failed`` mirrors the Slice 2A
@@ -1766,11 +2135,17 @@ class ResearchCenterQueryService:
         real zero count and the pre-populated status-count
         dictionary; a non-empty page reports ``available`` with
         the bounded ``run_count``, the
-        :class:`ResearchRunStatus` -> ``int`` count dictionary
-        and the most-recent run's status / start / finish
-        timestamps. No report body, evidence bundle,
-        ``error_summary``, ``case_id`` or ``evidence_pack_id``
-        is projected.
+        :class:`ResearchRunStatus` -> ``int`` count dictionary,
+        the most-recent run's status / start / finish
+        timestamps, the ``freshness_at`` anchor and the
+        ``source`` ``runner_key`` of the latest run. No report
+        body, evidence bundle, ``error_summary``, ``case_id``,
+        ``playbook_key`` or ``evidence_pack_id`` is projected.
+        The bounded ``source`` projects only the latest run's
+        ``runner_key`` (the domain validator enforces a
+        non-blank string with no path / credential affordances)
+        so the public surface cannot echo a host path or credential,
+        payload blob or connection string.
         """
 
         if error is not None:
@@ -1785,6 +2160,8 @@ class ResearchCenterQueryService:
                 status_counts={
                     status.value: 0 for status in ResearchRunStatus
                 },
+                freshness_at=None,
+                source=None,
                 reason=RESEARCH_RUNS_EMPTY_REASON,
             )
         status_counts: dict[str, int] = {
@@ -1800,13 +2177,26 @@ class ResearchCenterQueryService:
         latest_status_value = getattr(
             latest_run.status, "value", latest_run.status
         )
+        raw_runner_key = getattr(latest_run, "runner_key", None)
+        source_value = sanitize_source_value(
+            raw_runner_key if isinstance(raw_runner_key, str) else None,
+            whitelist=RESEARCH_RUNS_RUNNER_KEY_WHITELIST,
+        )
+        latest_finished_at = latest_run.finished_at
+        freshness_at: datetime | None = (
+            latest_finished_at
+            if isinstance(latest_finished_at, datetime)
+            else None
+        )
         return ResearchCenterResearchRunsSummaryView(
             state="available",
             run_count=len(recent_runs),
             status_counts=status_counts,
             latest_status=str(latest_status_value),
             latest_started_at=latest_run.started_at,
-            latest_finished_at=latest_run.finished_at,
+            latest_finished_at=latest_finished_at,
+            freshness_at=freshness_at,
+            source=source_value,
         )
 
     @staticmethod
@@ -1901,21 +2291,26 @@ __all__ = [
     "ARCHIVE_ARTIFACT_LIMIT",
     "ARCHIVE_EMPTY_REASON",
     "ARCHIVE_FAILED_REASON",
+    "ARCHIVE_MEDIA_TYPE_WHITELIST",
     "ARCHIVE_RUN_LIMIT",
     "CANDIDATE_POOL_FAILED_REASON",
     "CANDIDATE_POOL_SNAPSHOT_MISSING_REASON",
+    "DELIVERY_CAPABILITY_REASON",
     "DELIVERY_SCHEMA_VERSION",
     "INTEGRATION_EMPTY_REASON",
     "INTEGRATION_FAILED_REASON",
     "INTEGRATION_HEALTH_RUN_LIMIT",
+    "INTEGRATION_PRODUCER_WHITELIST",
     "OPPORTUNITY_EMPTY_REASON",
     "OPPORTUNITY_FAILED_REASON",
     "OPPORTUNITY_RADAR_LIMIT",
     "PIPELINE_FAILED_REASON",
+    "PIPELINE_TRIGGER_TYPE_WHITELIST",
     "RESEARCH_EMPTY_REASON",
     "RESEARCH_FAILED_REASON",
     "RESEARCH_RUNS_EMPTY_REASON",
     "RESEARCH_RUNS_FAILED_REASON",
+    "RESEARCH_RUNS_RUNNER_KEY_WHITELIST",
     "RESEARCH_SCHEMA_VERSION",
     "ResearchCenterArchiveSummaryView",
     "ResearchCenterBreadthView",
@@ -1936,4 +2331,5 @@ __all__ = [
     "ResearchCenterResearchSummaryView",
     "ResearchCenterResponse",
     "SCHEMA_VERSION",
+    "sanitize_source_value",
 ]

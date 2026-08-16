@@ -147,7 +147,18 @@ def _data_freshness_view(
 
 
 def _capabilities_view() -> ResearchCenterCapabilitiesView:
-    """Return the Slice 1 frozen capability bundle."""
+    """Return the frozen capability bundle.
+
+    Slice 3B promotes the ``delivery`` capability from the
+    Slice 1 ``deferred`` placeholder to ``available`` because
+    the bounded ``delivery`` sub-segment now renders
+    end-to-end; the other capability entries stay on the
+    frozen ``deferred`` / ``unavailable`` vocabulary.
+    """
+
+    from invest_api.application.research_center import (
+        DELIVERY_CAPABILITY_REASON,
+    )
 
     return ResearchCenterCapabilitiesView(
         opportunities=ResearchCenterCapabilityView(
@@ -157,7 +168,7 @@ def _capabilities_view() -> ResearchCenterCapabilitiesView:
             state="deferred", reason="slice_2_not_implemented"
         ),
         delivery=ResearchCenterCapabilityView(
-            state="deferred", reason="slice_3_not_implemented"
+            state="available", reason=DELIVERY_CAPABILITY_REASON
         ),
         strategy=ResearchCenterCapabilityView(
             state="unavailable",
@@ -257,18 +268,28 @@ def _delivery_pipeline_view(
     started_at: datetime | None = None,
     finished_at: datetime | None = None,
     business_completion_date: date | None = _AS_OF,
+    freshness_at: date | None | object = _UNSET,
+    source: str | None | object = _UNSET,
     reason: str | None = None,
 ) -> ResearchCenterPipelineSummaryView:
     """Return a populated delivery pipeline sub-segment view."""
 
     effective_started = started_at or datetime(2026, 8, 15, 9, 0, tzinfo=UTC)
     effective_finished = finished_at or datetime(2026, 8, 15, 10, 0, tzinfo=UTC)
+    effective_freshness = (
+        business_completion_date
+        if freshness_at is _UNSET
+        else freshness_at
+    )
+    effective_source = "scheduled" if source is _UNSET else source
     return ResearchCenterPipelineSummaryView(
         state=state,  # type: ignore[arg-type]
         status=status,
         started_at=effective_started,
         finished_at=effective_finished,
         business_completion_date=business_completion_date,
+        freshness_at=effective_freshness,
+        source=effective_source,
         reason=reason,
     )
 
@@ -281,10 +302,14 @@ def _delivery_integration_view(
     producer_status_counts: dict[str, int] | None = None,
     intake_status_counts: dict[str, int] | None = None,
     latest_as_of: date | None = _AS_OF,
+    freshness_at: date | None | object = _UNSET,
+    source: str | None | object = _UNSET,
     reason: str | None = None,
 ) -> ResearchCenterIntegrationSummaryView:
     """Return a populated delivery integration sub-segment view."""
 
+    effective_freshness = latest_as_of if freshness_at is _UNSET else freshness_at
+    effective_source = "workbuddy" if source is _UNSET else source
     return ResearchCenterIntegrationSummaryView(
         state=state,  # type: ignore[arg-type]
         status=status,
@@ -296,6 +321,8 @@ def _delivery_integration_view(
         if intake_status_counts is not None
         else {"accepted": 5, "partial": 0, "pending": 0, "rejected": 0},
         latest_as_of=latest_as_of,
+        freshness_at=effective_freshness,
+        source=effective_source,
         reason=reason,
     )
 
@@ -305,15 +332,21 @@ def _delivery_archive_view(
     state: str = "available",
     artifact_count: int | None = 3,
     latest_as_of: date | None = _AS_OF,
+    freshness_at: date | None | object = _UNSET,
+    source: str | None | object = _UNSET,
     latest_run_status: str | None = "succeeded",
     reason: str | None = None,
 ) -> ResearchCenterArchiveSummaryView:
     """Return a populated delivery archive sub-segment view."""
 
+    effective_freshness = latest_as_of if freshness_at is _UNSET else freshness_at
+    effective_source = "application/json" if source is _UNSET else source
     return ResearchCenterArchiveSummaryView(
         state=state,  # type: ignore[arg-type]
         artifact_count=artifact_count,
         latest_as_of=latest_as_of,
+        freshness_at=effective_freshness,
+        source=effective_source,
         latest_run_status=latest_run_status,
         reason=reason,
     )
@@ -327,12 +360,18 @@ def _delivery_research_runs_view(
     latest_status: str | None = "succeeded",
     latest_started_at: datetime | None = None,
     latest_finished_at: datetime | None = None,
+    freshness_at: datetime | None | object = _UNSET,
+    source: str | None | object = _UNSET,
     reason: str | None = None,
 ) -> ResearchCenterResearchRunsSummaryView:
     """Return a populated delivery research-runs sub-segment view."""
 
     effective_started = latest_started_at or datetime(2026, 8, 15, 9, 0, tzinfo=UTC)
     effective_finished = latest_finished_at or datetime(2026, 8, 15, 10, 0, tzinfo=UTC)
+    effective_freshness = (
+        effective_finished if freshness_at is _UNSET else freshness_at
+    )
+    effective_source = "llm" if source is _UNSET else source
     return ResearchCenterResearchRunsSummaryView(
         state=state,  # type: ignore[arg-type]
         run_count=run_count,
@@ -348,6 +387,8 @@ def _delivery_research_runs_view(
         latest_status=latest_status,
         latest_started_at=effective_started,
         latest_finished_at=effective_finished,
+        freshness_at=effective_freshness,
+        source=effective_source,
         reason=reason,
     )
 
@@ -524,6 +565,10 @@ class TestResearchCenterHappyPath:
 
         assert response.status_code == 200
         capabilities = response.json()["capabilities"]
+        from invest_api.application.research_center import (
+            DELIVERY_CAPABILITY_REASON,
+        )
+
         assert capabilities == {
             "opportunities": {
                 "state": "deferred",
@@ -534,8 +579,8 @@ class TestResearchCenterHappyPath:
                 "reason": "slice_2_not_implemented",
             },
             "delivery": {
-                "state": "deferred",
-                "reason": "slice_3_not_implemented",
+                "state": "available",
+                "reason": DELIVERY_CAPABILITY_REASON,
             },
             "strategy": {
                 "state": "unavailable",
@@ -1489,13 +1534,17 @@ class TestResearchCenterSubsegmentFailureLeakage:
 
 
 class TestResearchCenterDeliveryEndpointSerialization:
-    """Real ``TestClient`` coverage for the Slice 3A ``delivery`` sub-segment on the wire.
+    """Real ``TestClient`` coverage for the Slice 3B ``delivery`` sub-segment on the wire.
 
     The :class:`ResearchCenterQueryService` is replaced with a
     ``MagicMock`` so the handler can be driven end-to-end through the
     FastAPI / Pydantic serialisation pipeline without a live database;
     the assertions then pin the on-wire contract the central
-    delivery-chain card consumes.
+    delivery-chain card consumes. Slice 3B adds the bounded
+    ``freshness_at`` anchor and the bounded ``source`` label on
+    every sub-segment so the central page can render the
+    freshness / source badges without re-fetching the upstream
+    readers.
     """
 
     def test_delivery_schema_version_and_all_four_subsegments_round_trip(
@@ -1536,22 +1585,197 @@ class TestResearchCenterDeliveryEndpointSerialization:
             assert isinstance(delivery[subsegment], dict)
             assert "state" in delivery[subsegment]
             assert "reason" in delivery[subsegment]
+            # Slice 3B pins the bounded freshness / source fields
+            # on every sub-segment so the central page can render
+            # the per-source badge.
+            assert "freshness_at" in delivery[subsegment]
+            assert "source" in delivery[subsegment]
 
-    def test_failed_delivery_subsegments_never_leak_driver_level_detail(
+    def test_delivery_subsegment_keys_match_documented_contract(
         self,
         client: TestClient,
         research_center_service: MagicMock,
     ) -> None:
-        # Every delivery sub-segment carries a controlled failure
-        # with the matching stable reason; the on-wire contract
-        # must surface the reason text but never the driver-level
-        # detail (no path, connection string, host or credential).
+        """The on-wire sub-segment shapes match the documented contract.
+
+        The Slice 3B additions (``freshness_at`` and ``source``)
+        are emitted on every sub-segment so the central page can
+        render the freshness / source badges. ``source`` projects
+        only the bounded storage-layer label (e.g.
+        ``"scheduled"`` / ``"workbuddy"`` /
+        ``"application/json"`` / ``"llm"``); the bounded value
+        is never a host path, secret or connection string.
+        """
+
+        research_center_service.get_research_center.return_value = _response_view(
+            breadth=_breadth_view(),
+            data_freshness=_data_freshness_view(),
+        )
+
+        body = client.get(ENDPOINT).json()
+
+        assert set(body["delivery"]["pipeline"]) == {
+            "state",
+            "status",
+            "started_at",
+            "finished_at",
+            "business_completion_date",
+            "freshness_at",
+            "source",
+            "reason",
+        }
+        assert set(body["delivery"]["integration"]) == {
+            "state",
+            "status",
+            "sample_size",
+            "producer_status_counts",
+            "intake_status_counts",
+            "latest_as_of",
+            "freshness_at",
+            "source",
+            "reason",
+        }
+        assert set(body["delivery"]["archive"]) == {
+            "state",
+            "artifact_count",
+            "latest_as_of",
+            "freshness_at",
+            "source",
+            "latest_run_status",
+            "reason",
+        }
+        assert set(body["delivery"]["research_runs"]) == {
+            "state",
+            "run_count",
+            "status_counts",
+            "latest_status",
+            "latest_started_at",
+            "latest_finished_at",
+            "freshness_at",
+            "source",
+            "reason",
+        }
+
+    def test_delivery_source_labels_round_trip_verbatim(
+        self,
+        client: TestClient,
+        research_center_service: MagicMock,
+    ) -> None:
+        """The bounded source labels surface verbatim on the wire.
+
+        Each sub-segment projects only the bounded storage-layer
+        source label (``trigger_type`` / ``producer`` /
+        ``media_type`` / ``runner_key``) so the central page can
+        render the per-source badge. The on-wire values must
+        round-trip exactly because every client of the central
+        page consumes the literal label (no fabricated
+        translation).
+        """
+
+        pipeline = _delivery_pipeline_view(source="manual")
+        integration = _delivery_integration_view(source="workbuddy")
+        archive = _delivery_archive_view(source="application/json")
+        research_runs = _delivery_research_runs_view(source="llm")
+        research_center_service.get_research_center.return_value = _response_view(
+            breadth=_breadth_view(),
+            data_freshness=_data_freshness_view(),
+            delivery=ResearchCenterDeliveryView(
+                schema_version=DELIVERY_SCHEMA_VERSION,
+                pipeline=pipeline,
+                integration=integration,
+                archive=archive,
+                research_runs=research_runs,
+            ),
+        )
+
+        body = client.get(ENDPOINT).json()
+        delivery = body["delivery"]
+        assert delivery["pipeline"]["source"] == "manual"
+        assert delivery["integration"]["source"] == "workbuddy"
+        assert delivery["archive"]["source"] == "application/json"
+        assert delivery["research_runs"]["source"] == "llm"
+        # The ``freshness_at`` anchor mirrors the existing time
+        # fact (``business_completion_date`` / ``latest_as_of`` /
+        # ``latest_finished_at``) so the on-wire value is the
+        # canonical calendar day the source last produced
+        # terminal output.
+        assert (
+            delivery["pipeline"]["freshness_at"]
+            == delivery["pipeline"]["business_completion_date"]
+        )
+        assert (
+            delivery["integration"]["freshness_at"]
+            == delivery["integration"]["latest_as_of"]
+        )
+        assert (
+            delivery["archive"]["freshness_at"]
+            == delivery["archive"]["latest_as_of"]
+        )
+        assert (
+            delivery["research_runs"]["freshness_at"]
+            == delivery["research_runs"]["latest_finished_at"]
+        )
+
+    def test_capability_delivery_state_is_available_not_deferred(
+        self,
+        client: TestClient,
+        research_center_service: MagicMock,
+    ) -> None:
+        """The ``capabilities.delivery`` slot flips to ``available``.
+
+        Slice 3B removes the Slice 1 ``slice_3_not_implemented``
+        placeholder because the bounded ``delivery`` sub-segment
+        now renders end-to-end; the other capability entries
+        stay on ``deferred`` / ``unavailable`` because their
+        contracts are still frozen.
+        """
+
+        from invest_api.application.research_center import (
+            DELIVERY_CAPABILITY_REASON,
+        )
+
+        research_center_service.get_research_center.return_value = _response_view(
+            breadth=_breadth_view(),
+            data_freshness=_data_freshness_view(),
+        )
+
+        body = client.get(ENDPOINT).json()
+
+        assert body["capabilities"]["delivery"] == {
+            "state": "available",
+            "reason": DELIVERY_CAPABILITY_REASON,
+        }
+        # Other capabilities stay frozen on their slice 1
+        # placeholders.
+        assert body["capabilities"]["opportunities"]["state"] == "deferred"
+        assert body["capabilities"]["research"]["state"] == "deferred"
+        assert body["capabilities"]["strategy"]["state"] == "unavailable"
+        assert body["capabilities"]["discipline"]["state"] == "unavailable"
+
+    def test_failed_delivery_subsegments_leak_no_source_or_credential_text(
+        self,
+        client: TestClient,
+        research_center_service: MagicMock,
+    ) -> None:
+        """Failed sub-segments must not echo driver-level detail
+        even when the bounded ``source`` field is populated.
+
+        The application layer swallows the controlled
+        :class:`sqlalchemy.exc.SQLAlchemyError` / typed
+        application errors and surfaces only the opaque stable
+        reason. ``freshness_at`` / ``source`` stay ``None`` on
+        the failed path so the bounded source identity never
+        leaks alongside the failure reason.
+        """
+
         pipeline = _delivery_pipeline_view(
             state="failed",
             status=None,
             started_at=None,
             finished_at=None,
             business_completion_date=None,
+            freshness_at=None,
+            source=None,
             reason="pipeline_query_failed",
         )
         integration = _delivery_integration_view(
@@ -1561,12 +1785,16 @@ class TestResearchCenterDeliveryEndpointSerialization:
             producer_status_counts=None,
             intake_status_counts=None,
             latest_as_of=None,
+            freshness_at=None,
+            source=None,
             reason="integration_health_query_failed",
         )
         archive = _delivery_archive_view(
             state="failed",
             artifact_count=None,
             latest_as_of=None,
+            freshness_at=None,
+            source=None,
             latest_run_status=None,
             reason="archive_query_failed",
         )
@@ -1577,6 +1805,93 @@ class TestResearchCenterDeliveryEndpointSerialization:
             latest_status=None,
             latest_started_at=None,
             latest_finished_at=None,
+            freshness_at=None,
+            source=None,
+            reason="research_runs_query_failed",
+        )
+        research_center_service.get_research_center.return_value = _response_view(
+            breadth=_breadth_view(),
+            data_freshness=_data_freshness_view(),
+            delivery=ResearchCenterDeliveryView(
+                schema_version=DELIVERY_SCHEMA_VERSION,
+                pipeline=pipeline,
+                integration=integration,
+                archive=archive,
+                research_runs=research_runs,
+            ),
+        )
+
+        body_text = client.get(ENDPOINT).text
+
+        for forbidden in (
+            "postgres",
+            "postgresql",
+            "secret",
+            "password",
+            "/home/",
+            "Traceback",
+            "Connection refused",
+        ):
+            assert forbidden not in body_text, (
+                f"forbidden token {forbidden!r} leaked via delivery sub-segment"
+            )
+
+    def test_failed_delivery_subsegments_never_leak_driver_level_detail(
+        self,
+        client: TestClient,
+        research_center_service: MagicMock,
+    ) -> None:
+        """Every delivery sub-segment surfaces its own redacted stable reason.
+
+        Re-uses the same controlled-failure fixture as
+        :meth:`test_failed_delivery_subsegments_leak_no_source_or_credential_text`
+        so the on-wire contract must surface the matching stable
+        reason text but never the driver-level detail (no path,
+        connection string, host or credential); the bounded
+        ``source`` / ``freshness_at`` fields stay ``None`` so a
+        fabricated zero / source identity cannot masquerade as
+        "data unavailable" on the failure path.
+        """
+
+        pipeline = _delivery_pipeline_view(
+            state="failed",
+            status=None,
+            started_at=None,
+            finished_at=None,
+            business_completion_date=None,
+            freshness_at=None,
+            source=None,
+            reason="pipeline_query_failed",
+        )
+        integration = _delivery_integration_view(
+            state="failed",
+            status=None,
+            sample_size=None,
+            producer_status_counts=None,
+            intake_status_counts=None,
+            latest_as_of=None,
+            freshness_at=None,
+            source=None,
+            reason="integration_health_query_failed",
+        )
+        archive = _delivery_archive_view(
+            state="failed",
+            artifact_count=None,
+            latest_as_of=None,
+            freshness_at=None,
+            source=None,
+            latest_run_status=None,
+            reason="archive_query_failed",
+        )
+        research_runs = _delivery_research_runs_view(
+            state="failed",
+            run_count=None,
+            status_counts=None,
+            latest_status=None,
+            latest_started_at=None,
+            latest_finished_at=None,
+            freshness_at=None,
+            source=None,
             reason="research_runs_query_failed",
         )
         research_center_service.get_research_center.return_value = _response_view(
@@ -1607,6 +1922,16 @@ class TestResearchCenterDeliveryEndpointSerialization:
         assert delivery["archive"]["reason"] == "archive_query_failed"
         assert delivery["research_runs"]["state"] == "failed"
         assert delivery["research_runs"]["reason"] == "research_runs_query_failed"
+        # The Slice 3B bounded fields stay ``None`` on every failed
+        # sub-segment so the failure shape is stable.
+        for subsegment in (
+            "pipeline",
+            "integration",
+            "archive",
+            "research_runs",
+        ):
+            assert delivery[subsegment]["freshness_at"] is None
+            assert delivery[subsegment]["source"] is None
         # Defence-in-depth: the wire never echoes driver-level
         # text (path, connection string, credential, host or
         # Python traceback) regardless of which sub-segment is in
@@ -1624,6 +1949,702 @@ class TestResearchCenterDeliveryEndpointSerialization:
             assert forbidden not in body_text, (
                 f"forbidden token {forbidden!r} leaked via delivery sub-segment"
             )
+
+    def test_whitelisted_source_labels_round_trip_through_pydantic(
+        self,
+        client: TestClient,
+        research_center_service: MagicMock,
+    ) -> None:
+        """The whitelist normal values survive the FastAPI / Pydantic
+        serialisation pipeline.
+
+        The application-level whitelist the source sanitizer
+        enforces is the canonical source of truth; the
+        FastAPI / Pydantic serialisation pipeline must not
+        re-shape the bounded ``source`` label, so the
+        on-the-wire value is byte-identical to the application
+        view's value for every whitelist label. The endpoint
+        test pinpoints the wire format; the broader
+        "no-leakage" contract is asserted at the
+        application-layer test in
+        :mod:`tests.test_research_center_service` (which
+        drives the real :func:`sanitize_source_value` filter).
+        """
+
+        research_center_service.get_research_center.return_value = _response_view(
+            breadth=_breadth_view(),
+            data_freshness=_data_freshness_view(),
+            delivery=ResearchCenterDeliveryView(
+                schema_version=DELIVERY_SCHEMA_VERSION,
+                pipeline=_delivery_pipeline_view(source="dagster"),
+                integration=_delivery_integration_view(source="cifangquant"),
+                archive=_delivery_archive_view(source="application/pdf"),
+                research_runs=_delivery_research_runs_view(
+                    source="jiuwenswarm-runner-v1"
+                ),
+            ),
+        )
+
+        body = client.get(ENDPOINT).json()
+        delivery = body["delivery"]
+        assert delivery["pipeline"]["source"] == "dagster"
+        assert delivery["integration"]["source"] == "cifangquant"
+        assert delivery["archive"]["source"] == "application/pdf"
+        assert delivery["research_runs"]["source"] == "jiuwenswarm-runner-v1"
+
+    @pytest.mark.parametrize(
+        "subsegment",
+        ["pipeline", "integration", "archive", "research_runs"],
+    )
+    def test_sanitized_source_field_round_trips_as_null_on_wire(
+        self,
+        client: TestClient,
+        research_center_service: MagicMock,
+        subsegment: str,
+    ) -> None:
+        """A sanitized ``source=None`` view round-trips as JSON ``null``.
+
+        The application-layer sanitizer is the only path that
+        decides whether the ``source`` field carries a label;
+        the FastAPI / Pydantic serialisation pipeline must
+        faithfully project ``None`` to JSON ``null`` so the
+        no-leakage invariant the sanitizer enforces
+        round-trips intact on the wire. The endpoint test
+        guards the wire format; the broad "no-leakage"
+        contract is asserted at the application layer in
+        :mod:`tests.test_research_center_service`.
+        """
+
+        builders = {
+            "pipeline": _delivery_pipeline_view,
+            "integration": _delivery_integration_view,
+            "archive": _delivery_archive_view,
+            "research_runs": _delivery_research_runs_view,
+        }
+        # Build a delivery view where the targeted sub-segment
+        # carries ``source=None`` (the value the sanitizer
+        # surfaces for any banned input) and the other
+        # sub-segments carry a normal whitelist label.
+        kwargs = {subsegment: builders[subsegment](source=None)}
+        for other, builder in builders.items():
+            if other == subsegment:
+                continue
+            kwargs[other] = builder(source="placeholder")
+
+        research_center_service.get_research_center.return_value = _response_view(
+            breadth=_breadth_view(),
+            data_freshness=_data_freshness_view(),
+            delivery=ResearchCenterDeliveryView(
+                schema_version=DELIVERY_SCHEMA_VERSION,
+                **kwargs,
+            ),
+        )
+
+        body = client.get(ENDPOINT).json()
+        assert body["delivery"][subsegment]["source"] is None
+
+
+class TestResearchCenterDeliverySourceBoundaryDefense:
+    """API-boundary defense-in-depth: a malicious ``view.source`` is
+    sanitised to ``None`` on the wire before it can leak.
+
+    Regression coverage for the ARC call-out: the application
+    service :func:`sanitize_source_value` filter is the
+    canonical source of truth for the public ``source`` field,
+    but the router mappers **re-apply** the same filter to
+    ``view.source`` before serialising so the API boundary
+    stays safe even when a rogue upstream caller bypasses
+    :class:`ResearchCenterQueryService` and hands a
+    pre-built view to the handler. The tests construct views
+    with adversarial ``source`` values verbatim (the attack
+    surface the arc call-out calls out — postgres /
+    postgresql URLs, absolute host paths, secret / password /
+    token / key text, control characters, unknown labels,
+    empty strings) and assert every on-wire ``source``
+    surfaces as JSON ``null``, never the raw attack string.
+
+    The endpoint test exercises the full FastAPI / Pydantic
+    serialisation pipeline; the direct mapper test exercises
+    every ``_delivery_*_from_view`` mapper in isolation to
+    pinpoint the boundary that contained the leak (so a
+    future regression that re-introduces a pass-through
+    mapper is caught at the unit layer rather than only at
+    the wire-format layer).
+    """
+
+    @pytest.fixture
+    def _banned_source_values(self) -> tuple[str, ...]:
+        """Return the adversarial ``source`` strings that must be dropped.
+
+        Mirrors the leak-vector coverage the ARC call-out
+        enumerates: postgres / postgresql connection strings,
+        absolute host paths, secret / password / token /
+        private-key text, control characters, empty /
+        whitespace-only strings, and labels that drifted
+        outside the canonical whitelist.
+        """
+
+        return (
+            "postgres://user:secret@host/db",
+            "postgresql://user:secret@host/db",
+            "/home/admin/secrets/credentials.txt",
+            "secret_value_42",
+            "password=hunter2",
+            "token=eyJhbGciOiJIUzI1NiJ9",
+            "private_key=-----BEGIN PRIVATE KEY-----",
+            "scheduled\x00postgres",
+            "scheduled\npostgres://user:secret@host/db",
+            "scheduled\tpostgres:secret",
+            "scheduled\x1b[31m",
+            "",
+            "   ",
+            "drifted_label",
+        )
+
+    @pytest.fixture
+    def _forbidden_tokens(self) -> tuple[str, ...]:
+        """Tokens that must never appear anywhere in the on-wire body."""
+
+        return (
+            "postgres",
+            "postgresql",
+            "secret",
+            "password",
+            "/home/",
+            "Traceback",
+            "BEGIN PRIVATE KEY",
+            "token=",
+        )
+
+    @pytest.mark.parametrize(
+        "subsegment",
+        [
+            "pipeline", "integration", "archive", "research_runs"
+        ],
+    )
+    @pytest.mark.parametrize(
+        "banned_source",
+        [
+            pytest.param(
+                "postgres://user:secret@host/db",
+                id="postgres_url",
+            ),
+            pytest.param(
+                "postgresql://user:secret@host/db",
+                id="postgresql_url",
+            ),
+            pytest.param(
+                "/home/admin/secrets/credentials.txt",
+                id="absolute_path",
+            ),
+            pytest.param(
+                "secret_value_42",
+                id="secret_word",
+            ),
+            pytest.param(
+                "password=hunter2",
+                id="password_word",
+            ),
+            pytest.param(
+                "token=eyJhbGciOiJIUzI1NiJ9",
+                id="token_word",
+            ),
+            pytest.param(
+                "private_key=-----BEGIN PRIVATE KEY-----",
+                id="private_key_word",
+            ),
+            pytest.param(
+                "scheduled\x00postgres",
+                id="null_byte_injection",
+            ),
+            pytest.param(
+                "scheduled\npostgres://user:secret@host/db",
+                id="newline_injection",
+            ),
+            pytest.param(
+                "scheduled\tpostgres:secret",
+                id="tab_injection",
+            ),
+            pytest.param("", id="empty_string"),
+            pytest.param("drifted_label", id="drifted_label"),
+        ],
+    )
+    def test_delivery_subsegment_source_field_drops_malicious_view_to_none(
+        self,
+        client: TestClient,
+        research_center_service: MagicMock,
+        subsegment: str,
+        banned_source: str,
+    ) -> None:
+        """A ``view`` carrying a malicious ``source`` round-trips as JSON ``null``.
+
+        The targeted sub-segment is built with the adversarial
+        ``source`` verbatim — the very attack surface the ARC
+        call-out calls out (a rogue upstream caller passing a
+        pre-built view past the application service). The
+        router mapper re-applies the canonical
+        :func:`sanitize_source_value` filter and the on-wire
+        ``source`` is ``null``. The other three sub-segments
+        carry a normal whitelist label so the test pins the
+        sub-segment under test, not the others. The on-wire
+        body never echoes any forbidden token (postgres /
+        postgresql URLs, absolute paths, credentials,
+        control characters, tokenised key material) so the
+        defense-in-depth invariant holds end-to-end through
+        the FastAPI / Pydantic serialisation pipeline.
+        """
+
+        builders = {
+            "pipeline": _delivery_pipeline_view,
+            "integration": _delivery_integration_view,
+            "archive": _delivery_archive_view,
+            "research_runs": _delivery_research_runs_view,
+        }
+        labels = {
+            "pipeline": "scheduled",
+            "integration": "workbuddy",
+            "archive": "application/json",
+            "research_runs": "llm",
+        }
+        # Build a delivery view where the targeted sub-segment
+        # carries the adversarial source verbatim and the
+        # other sub-segments carry a normal whitelist label.
+        kwargs: dict[str, object] = {
+            subsegment: builders[subsegment](source=banned_source),
+        }
+        for other, builder in builders.items():
+            if other == subsegment:
+                continue
+            kwargs[other] = builder(source=labels[other])
+
+        research_center_service.get_research_center.return_value = _response_view(
+            breadth=_breadth_view(),
+            data_freshness=_data_freshness_view(),
+            delivery=ResearchCenterDeliveryView(
+                schema_version=DELIVERY_SCHEMA_VERSION,
+                **kwargs,  # type: ignore[arg-type]
+            ),
+        )
+
+        response = client.get(ENDPOINT)
+        assert response.status_code == 200
+        body = response.json()
+        # Targeted sub-segment: the malicious ``source`` is
+        # sanitised to JSON ``null`` on the wire.
+        assert body["delivery"][subsegment]["source"] is None
+        # The other three sub-segments keep their whitelist
+        # label so the test pins the targeted sub-segment only.
+        for other in builders:
+            if other == subsegment:
+                continue
+            assert body["delivery"][other]["source"] == labels[other]
+
+        # Defence-in-depth: the on-wire body never echoes any
+        # forbidden token regardless of which sub-segment
+        # carried the adversarial ``source``.
+        for forbidden in (
+            "postgres",
+            "postgresql",
+            "secret",
+            "password",
+            "/home/",
+            "BEGIN PRIVATE KEY",
+        ):
+            assert forbidden not in response.text, (
+                f"forbidden token {forbidden!r} leaked via "
+                f"{subsegment}.source={banned_source!r}"
+            )
+
+    def test_endpoint_helper_view_does_not_silently_coerce_malicious_source(
+        self,
+        _banned_source_values: tuple[str, ...],
+    ) -> None:
+        """The endpoint test helper itself never silently coerces
+        banned inputs to ``None``.
+
+        The ARC call-out is explicit that replacing the
+        adversarial ``source`` with ``None`` in the view
+        fixture before serialising would lose the boundary
+        coverage (the test would then trivially pass for the
+        wrong reason). This guard verifies the
+        :func:`_delivery_pipeline_view` /
+        :func:`_delivery_integration_view` /
+        :func:`_delivery_archive_view` /
+        :func:`_delivery_research_runs_view` helpers used
+        elsewhere in the suite keep whatever ``source`` the
+        caller supplies verbatim, so the end-to-end test
+        above is guaranteed to exercise the mapper-level
+        filter — not a helper-level no-op.
+        """
+
+        builders = (
+            (
+                _delivery_pipeline_view,
+                ResearchCenterPipelineSummaryView,
+            ),
+            (
+                _delivery_integration_view,
+                ResearchCenterIntegrationSummaryView,
+            ),
+            (
+                _delivery_archive_view,
+                ResearchCenterArchiveSummaryView,
+            ),
+            (
+                _delivery_research_runs_view,
+                ResearchCenterResearchRunsSummaryView,
+            ),
+        )
+        for builder, _view_type in builders:
+            for banned in _banned_source_values:
+                view = builder(source=banned)
+                # The helper must carry the banned string
+                # verbatim through to the application-level
+                # view so the router mapper (and not the test
+                # helper) is the boundary under test.
+                assert view.source == banned, (
+                    f"{builder.__name__} silently coerced "
+                    f"banned source {banned!r} to {view.source!r}"
+                )
+
+    @pytest.mark.parametrize(
+        "banned_source",
+        [
+            pytest.param(
+                "postgres://user:secret@host/db", id="postgres_url"
+            ),
+            pytest.param(
+                "postgresql://user:secret@host/db", id="postgresql_url"
+            ),
+            pytest.param(
+                "/home/admin/secrets/credentials.txt",
+                id="absolute_path",
+            ),
+            pytest.param(
+                "secret_value_42", id="secret_word"
+            ),
+            pytest.param(
+                "password=hunter2", id="password_word"
+            ),
+            pytest.param(
+                "token=eyJhbGciOiJIUzI1NiJ9", id="token_word"
+            ),
+            pytest.param(
+                "private_key=-----BEGIN PRIVATE KEY-----",
+                id="private_key_word",
+            ),
+            pytest.param(
+                "scheduled\x00postgres", id="null_byte_injection"
+            ),
+            pytest.param(
+                "scheduled\npostgres://user:secret@host/db",
+                id="newline_injection",
+            ),
+            pytest.param(
+                "scheduled\tpostgres:secret", id="tab_injection"
+            ),
+            pytest.param("", id="empty_string"),
+            pytest.param("   ", id="whitespace_only"),
+            pytest.param("drifted_label", id="drifted_label"),
+        ],
+    )
+    def test_router_mapper_pipeline_drops_malicious_source_to_none(
+        self,
+        banned_source: str,
+    ) -> None:
+        """Direct ``_delivery_pipeline_from_view`` call drops a
+        malicious ``source`` to ``None``.
+
+        The unit-level companion to the endpoint-level
+        guard: a direct call to the mapper function pins
+        the exact boundary under test so the defence
+        contract is localised rather than implied through
+        the FastAPI / Pydantic serialisation pipeline. A
+        view carrying ``source="postgres://user:..."``
+        round-trips through the mapper as
+        ``source=None`` — the canonical no-leak shape —
+        and the rest of the field-by-field projection
+        carries the view verbatim.
+        """
+
+        from invest_api.routers.research_center import (
+            _delivery_pipeline_from_view,
+        )
+
+        view = _delivery_pipeline_view(source=banned_source)
+        response = _delivery_pipeline_from_view(view)
+        assert response.source is None
+        for forbidden in (
+            "postgres",
+            "postgresql",
+            "secret",
+            "password",
+            "/home/",
+            "BEGIN PRIVATE KEY",
+        ):
+            assert forbidden not in str(response), (
+                f"forbidden token {forbidden!r} leaked via "
+                f"_delivery_pipeline_from_view(source={banned_source!r})"
+            )
+
+    @pytest.mark.parametrize(
+        "banned_source",
+        [
+            pytest.param(
+                "postgres://user:secret@host/db", id="postgres_url"
+            ),
+            pytest.param(
+                "postgresql://user:secret@host/db", id="postgresql_url"
+            ),
+            pytest.param(
+                "/home/admin/secrets/credentials.txt",
+                id="absolute_path",
+            ),
+            pytest.param(
+                "secret_value_42", id="secret_word"
+            ),
+            pytest.param(
+                "password=hunter2", id="password_word"
+            ),
+            pytest.param(
+                "token=eyJhbGciOiJIUzI1NiJ9", id="token_word"
+            ),
+            pytest.param(
+                "private_key=-----BEGIN PRIVATE KEY-----",
+                id="private_key_word",
+            ),
+            pytest.param(
+                "scheduled\x00postgres", id="null_byte_injection"
+            ),
+            pytest.param(
+                "scheduled\npostgres://user:secret@host/db",
+                id="newline_injection",
+            ),
+            pytest.param(
+                "scheduled\tpostgres:secret", id="tab_injection"
+            ),
+            pytest.param("", id="empty_string"),
+            pytest.param("   ", id="whitespace_only"),
+            pytest.param("drifted_label", id="drifted_label"),
+        ],
+    )
+    def test_router_mapper_integration_drops_malicious_source_to_none(
+        self,
+        banned_source: str,
+    ) -> None:
+        """Direct ``_delivery_integration_from_view`` call drops a
+        malicious ``source`` to ``None``."""
+
+        from invest_api.routers.research_center import (
+            _delivery_integration_from_view,
+        )
+
+        view = _delivery_integration_view(source=banned_source)
+        response = _delivery_integration_from_view(view)
+        assert response.source is None
+        for forbidden in (
+            "postgres",
+            "postgresql",
+            "secret",
+            "password",
+            "/home/",
+            "BEGIN PRIVATE KEY",
+        ):
+            assert forbidden not in str(response), (
+                f"forbidden token {forbidden!r} leaked via "
+                f"_delivery_integration_from_view(source={banned_source!r})"
+            )
+
+    @pytest.mark.parametrize(
+        "banned_source",
+        [
+            pytest.param(
+                "postgres://user:secret@host/db", id="postgres_url"
+            ),
+            pytest.param(
+                "postgresql://user:secret@host/db", id="postgresql_url"
+            ),
+            pytest.param(
+                "/home/admin/secrets/credentials.txt",
+                id="absolute_path",
+            ),
+            pytest.param(
+                "secret_value_42", id="secret_word"
+            ),
+            pytest.param(
+                "password=hunter2", id="password_word"
+            ),
+            pytest.param(
+                "token=eyJhbGciOiJIUzI1NiJ9", id="token_word"
+            ),
+            pytest.param(
+                "private_key=-----BEGIN PRIVATE KEY-----",
+                id="private_key_word",
+            ),
+            pytest.param(
+                "scheduled\x00postgres", id="null_byte_injection"
+            ),
+            pytest.param(
+                "scheduled\npostgres://user:secret@host/db",
+                id="newline_injection",
+            ),
+            pytest.param(
+                "scheduled\tpostgres:secret", id="tab_injection"
+            ),
+            pytest.param("", id="empty_string"),
+            pytest.param("   ", id="whitespace_only"),
+            pytest.param("drifted_label", id="drifted_label"),
+        ],
+    )
+    def test_router_mapper_archive_drops_malicious_source_to_none(
+        self,
+        banned_source: str,
+    ) -> None:
+        """Direct ``_delivery_archive_from_view`` call drops a
+        malicious ``source`` to ``None``."""
+
+        from invest_api.routers.research_center import (
+            _delivery_archive_from_view,
+        )
+
+        view = _delivery_archive_view(source=banned_source)
+        response = _delivery_archive_from_view(view)
+        assert response.source is None
+        for forbidden in (
+            "postgres",
+            "postgresql",
+            "secret",
+            "password",
+            "/home/",
+            "BEGIN PRIVATE KEY",
+        ):
+            assert forbidden not in str(response), (
+                f"forbidden token {forbidden!r} leaked via "
+                f"_delivery_archive_from_view(source={banned_source!r})"
+            )
+
+    @pytest.mark.parametrize(
+        "banned_source",
+        [
+            pytest.param(
+                "postgres://user:secret@host/db", id="postgres_url"
+            ),
+            pytest.param(
+                "postgresql://user:secret@host/db", id="postgresql_url"
+            ),
+            pytest.param(
+                "/home/admin/secrets/credentials.txt",
+                id="absolute_path",
+            ),
+            pytest.param(
+                "secret_value_42", id="secret_word"
+            ),
+            pytest.param(
+                "password=hunter2", id="password_word"
+            ),
+            pytest.param(
+                "token=eyJhbGciOiJIUzI1NiJ9", id="token_word"
+            ),
+            pytest.param(
+                "private_key=-----BEGIN PRIVATE KEY-----",
+                id="private_key_word",
+            ),
+            pytest.param(
+                "scheduled\x00postgres", id="null_byte_injection"
+            ),
+            pytest.param(
+                "scheduled\npostgres://user:secret@host/db",
+                id="newline_injection",
+            ),
+            pytest.param(
+                "scheduled\tpostgres:secret", id="tab_injection"
+            ),
+            pytest.param("", id="empty_string"),
+            pytest.param("   ", id="whitespace_only"),
+            pytest.param("drifted_label", id="drifted_label"),
+        ],
+    )
+    def test_router_mapper_research_runs_drops_malicious_source_to_none(
+        self,
+        banned_source: str,
+    ) -> None:
+        """Direct ``_delivery_research_runs_from_view`` call drops a
+        malicious ``source`` to ``None``."""
+
+        from invest_api.routers.research_center import (
+            _delivery_research_runs_from_view,
+        )
+
+        view = _delivery_research_runs_view(source=banned_source)
+        response = _delivery_research_runs_from_view(view)
+        assert response.source is None
+        for forbidden in (
+            "postgres",
+            "postgresql",
+            "secret",
+            "password",
+            "/home/",
+            "BEGIN PRIVATE KEY",
+        ):
+            assert forbidden not in str(response), (
+                f"forbidden token {forbidden!r} leaked via "
+                f"_delivery_research_runs_from_view(source={banned_source!r})"
+            )
+
+    @pytest.mark.parametrize(
+        ("subsegment", "whitelisted_label"),
+        [
+            ("pipeline", "scheduled"),
+            ("integration", "workbuddy"),
+            ("archive", "application/json"),
+            ("research_runs", "llm"),
+        ],
+    )
+    def test_router_mapper_whitelisted_source_round_trips_verbatim(
+        self,
+        subsegment: str,
+        whitelisted_label: str,
+    ) -> None:
+        """Router mapper round-trips the canonical whitelist label verbatim.
+
+        Defence-in-depth complement: the mapper-level filter
+        must accept every existing canonical whitelist label
+        (``scheduled`` / ``workbuddy`` / ``application/json``
+        / ``llm``) so the whitelist normal-available path is
+        never broken by the new boundary check.
+        """
+
+        from invest_api.routers.research_center import (
+            _delivery_archive_from_view,
+            _delivery_integration_from_view,
+            _delivery_pipeline_from_view,
+            _delivery_research_runs_from_view,
+        )
+
+        builders = {
+            "pipeline": (
+                _delivery_pipeline_view,
+                _delivery_pipeline_from_view,
+            ),
+            "integration": (
+                _delivery_integration_view,
+                _delivery_integration_from_view,
+            ),
+            "archive": (
+                _delivery_archive_view,
+                _delivery_archive_from_view,
+            ),
+            "research_runs": (
+                _delivery_research_runs_view,
+                _delivery_research_runs_from_view,
+            ),
+        }
+        view_builder, mapper = builders[subsegment]
+        response = mapper(view_builder(source=whitelisted_label))
+        assert response.source == whitelisted_label, (
+            f"{subsegment} mapper dropped whitelisted source "
+            f"{whitelisted_label!r} -> {response.source!r}"
+        )
 
 
 __all__ = [

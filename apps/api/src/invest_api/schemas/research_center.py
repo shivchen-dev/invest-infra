@@ -132,8 +132,22 @@ ResearchCenterFreshnessStatus = Literal[
 ]
 """Five-state Data Freshness vocabulary passed through unchanged."""
 
-ResearchCenterCapabilityState = Literal["deferred", "unavailable"]
-"""Pinned capability ``state`` vocabulary for Slice 1 placeholders."""
+ResearchCenterCapabilityState = Literal["deferred", "unavailable", "available"]
+"""Pinned capability ``state`` vocabulary for the contract response.
+
+The two-state ``deferred | unavailable`` vocabulary covered the
+Slice 1 placeholder bundle. Slice 3B extends the vocabulary with
+``available`` so :attr:`capabilities.delivery` can flip from
+``deferred`` to ``available`` once the bounded ``delivery``
+sub-segment renders end-to-end; the other capability entries
+remain on ``deferred`` / ``unavailable`` because their contracts
+are still frozen. The extension is backward-compatible — every
+client that previously accepted ``"deferred"`` or
+``"unavailable"`` continues to observe those values for the
+un-affected capability entries; the new ``"available"`` value is
+the only legal state the delivery capability can carry going
+forward.
+"""
 
 ResearchCenterResearchState = Literal["available", "empty", "failed"]
 """Three-state vocabulary for the ``research.state`` sub-segment.
@@ -302,9 +316,14 @@ class ResearchCenterMarketResponse(BaseModel):
 class ResearchCenterCapabilityResponse(BaseModel):
     """One capability entry on the contract response shape.
 
-    Slice 1 pins every capability to a deterministic placeholder so
-    the response shape is stable and later slices can replace
-    individual entries without re-shaping the application layer.
+    The capability section is frozen to a deterministic
+    vocabulary (``deferred`` / ``unavailable`` /
+    ``available``) so the response shape is stable and later
+    slices can replace individual entries without re-shaping
+    the application layer. Slice 3B promotes ``delivery`` to
+    ``available`` because the bounded ``delivery`` sub-segment
+    now renders end-to-end; the other capability entries
+    remain on ``deferred`` / ``unavailable`` placeholders.
     """
 
     model_config = ConfigDict(frozen=True)
@@ -444,7 +463,7 @@ class ResearchCenterOpportunitySummaryResponse(BaseModel):
 
 
 class ResearchCenterDeliveryPipelineResponse(BaseModel):
-    """``delivery.pipeline`` sub-segment of the contract response (Slice 3A).
+    """``delivery.pipeline`` sub-segment of the contract response (Slice 3B).
 
     Mirrors
     :class:`invest_api.application.research_center.ResearchCenterPipelineSummaryView`
@@ -453,27 +472,37 @@ class ResearchCenterDeliveryPipelineResponse(BaseModel):
     :meth:`invest_api.application.pipeline_runs.PipelineRunQueryService.get_latest_run`
     already produces — the latest run's ``status`` value, the
     timezone-aware execution timestamps (``started_at`` and
-    ``finished_at``) and the business completion date (derived
-    from ``finished_at``). ``error_summary`` is **never**
-    projected so a driver-level message can never leak through
-    the response body.
+    ``finished_at``), the business completion date (derived
+    from ``finished_at``), the bounded ``freshness_at`` anchor
+    (calendar day the run produced terminal output, mirroring
+    :attr:`business_completion_date`) and the bounded ``source``
+    label (the run's :attr:`PipelineRun.trigger_type`, e.g.
+    ``"scheduled"`` / ``"manual"``). ``error_summary`` is
+    **never** projected so a driver-level message can never leak
+    through the response body; the bounded ``source`` value is
+    the non-blank string the domain validator already enforces
+    so the public surface can never echo a host path or credential or
+    connection string.
 
     The five-state vocabulary
     ``available | empty | running | partial | failed`` is the
-    only Slice 3A sub-segment vocabulary that exposes the
-    in-flight ``running`` and terminal ``partial`` states in
-    addition to the three-state ``available | empty | failed``
-    set so the UI can render an in-flight or partially-completed
-    run without misclassifying it. ``available`` is reserved for
+    pipeline sub-segment vocabulary that exposes the in-flight
+    ``running`` and terminal ``partial`` states in addition to
+    the three-state ``available | empty | failed`` set so the
+    UI can render an in-flight or partially-completed run
+    without misclassifying it. ``available`` is reserved for
     terminal ``succeeded`` runs only — ``failed`` /
     ``cancelled`` runs never borrow the ``available`` vocabulary;
     ``running`` covers both ``running`` and ``queued`` runs;
-    ``partial`` covers both ``partial`` and ``cancelled`` runs;
-    ``failed`` covers a controlled
+    ``partial`` covers ``partial``, ``cancelled`` and orphan
+    terminal-without-success runs so the front-end can render
+    the explainable-but-uncertain slot; ``failed`` covers a
+    controlled
     :class:`invest_api.application.pipeline_runs.PipelineRunQueryError`
-    boundary **or** a terminal ``failed`` run. ``status`` carries
-    the canonical :class:`invest_domain.pipeline.PipelineRunStatus`
-    value; ``reason`` stays ``None`` whenever
+    boundary **or** a terminal ``failed`` run. ``status``
+    carries the canonical
+    :class:`invest_domain.pipeline.PipelineRunStatus` value;
+    ``reason`` stays ``None`` whenever
     ``state != "failed"``, and the only legal ``reason`` value
     (when ``state == "failed"``) is
     :data:`invest_api.application.research_center.PIPELINE_FAILED_REASON`
@@ -487,11 +516,13 @@ class ResearchCenterDeliveryPipelineResponse(BaseModel):
     started_at: datetime | None = None
     finished_at: datetime | None = None
     business_completion_date: date | None = None
+    freshness_at: date | None = None
+    source: str | None = None
     reason: str | None = None
 
 
 class ResearchCenterDeliveryIntegrationResponse(BaseModel):
-    """``delivery.integration`` sub-segment of the contract response (Slice 3A).
+    """``delivery.integration`` sub-segment of the contract response (Slice 3B).
 
     Mirrors
     :class:`invest_api.application.research_center.ResearchCenterIntegrationSummaryView`
@@ -500,13 +531,16 @@ class ResearchCenterDeliveryIntegrationResponse(BaseModel):
     :meth:`invest_api.application.external_workflows.ExternalWorkflowQueryService.health`
     already produces — the bounded ``sample_size`` (always
     ``<= INTEGRATION_HEALTH_RUN_LIMIT``), the ``status``
-    (``healthy`` / ``degraded``) and the pre-populated
+    (``healthy`` / ``degraded``), the pre-populated
     ``producer_status_counts`` / ``intake_status_counts``
-    dictionaries — plus the latest ``as_of`` date resolved from
-    the most recent run. No payload blob, source URI, run
-    identifier, host path, producer or producer identifier is
-    projected so the central surface remains a thin pointer to
-    the existing detail page.
+    dictionaries, the latest ``as_of`` date resolved from the
+    most recent run, the bounded ``freshness_at`` anchor
+    (mirrors ``latest_as_of``) and the bounded ``source``
+    ``producer`` label of the latest run (e.g.
+    ``"workbuddy"``). No payload blob, source URI, run
+    identifier, host path, producer identifier, credential or
+    connection string is projected so the central surface
+    remains a thin pointer to the existing detail page.
 
     The three-state vocabulary
     ``available | empty | failed`` mirrors Slice 2A's
@@ -514,6 +548,9 @@ class ResearchCenterDeliveryIntegrationResponse(BaseModel):
     invent a fourth "no external run yet" token. Every field
     stays ``None`` whenever ``state == "failed"`` so a
     fabricated zero cannot masquerade as "data unavailable".
+    The bounded ``source`` projects only the storage-layer
+    ``producer`` value (length-bounded by the schema) so the
+    public surface cannot echo a credential or path.
     """
 
     model_config = ConfigDict(frozen=True)
@@ -524,11 +561,13 @@ class ResearchCenterDeliveryIntegrationResponse(BaseModel):
     producer_status_counts: dict[str, int] | None = None
     intake_status_counts: dict[str, int] | None = None
     latest_as_of: date | None = None
+    freshness_at: date | None = None
+    source: str | None = None
     reason: str | None = None
 
 
 class ResearchCenterDeliveryArchiveResponse(BaseModel):
-    """``delivery.archive`` sub-segment of the contract response (Slice 3A).
+    """``delivery.archive`` sub-segment of the contract response (Slice 3B).
 
     Mirrors
     :class:`invest_api.application.research_center.ResearchCenterArchiveSummaryView`
@@ -537,12 +576,19 @@ class ResearchCenterDeliveryArchiveResponse(BaseModel):
     :meth:`invest_api.application.external_workflows.ExternalWorkflowQueryService.list_artifacts`
     already produces — the bounded ``artifact_count`` (always
     ``<= ARCHIVE_ARTIFACT_LIMIT``), the latest run's
-    :attr:`ExternalWorkflowRun.producer_status` value, and the
+    :attr:`ExternalWorkflowRun.producer_status` value, the
     maximum ``created_at.date()`` across the bounded artifact
-    slice. No artifact URI, payload, metadata, host path, logical
-    URI, content hash, run identifier or credential is projected
-    so the central surface remains a thin pointer to the
-    existing detail page.
+    slice, the bounded ``freshness_at`` anchor (mirrors
+    ``latest_as_of``) and the bounded ``source`` ``media_type``
+    label of the most-recent artifact (e.g.
+    ``"application/json"``). No artifact URI, payload,
+    metadata, host path, logical URI, content hash, run
+    identifier, credential or connection string is projected so the
+    central surface remains a thin pointer to the existing
+    detail page. The bounded ``source`` projects only the
+    storage-layer ``media_type`` value (length-bounded by the
+    schema) so the public surface cannot echo a logical URI,
+    host path, content hash, payload blob or connection string.
 
     The three-state vocabulary
     ``available | empty | failed`` mirrors Slice 2A's
@@ -557,12 +603,14 @@ class ResearchCenterDeliveryArchiveResponse(BaseModel):
     state: ResearchCenterDeliveryThreeState
     artifact_count: int | None = None
     latest_as_of: date | None = None
+    freshness_at: date | None = None
+    source: str | None = None
     latest_run_status: str | None = None
     reason: str | None = None
 
 
 class ResearchCenterDeliveryResearchRunsResponse(BaseModel):
-    """``delivery.research_runs`` sub-segment of the contract response (Slice 3A).
+    """``delivery.research_runs`` sub-segment of the contract response (Slice 3B).
 
     Mirrors
     :class:`invest_api.application.research_center.ResearchCenterResearchRunsSummaryView`
@@ -571,12 +619,18 @@ class ResearchCenterDeliveryResearchRunsResponse(BaseModel):
     already produces — the bounded ``run_count`` (always
     ``<= DASHBOARD_RECENT_RUNS_LIMIT``), the
     :class:`invest_domain.research.research_run.ResearchRunStatus`
-    -> ``int`` count dictionary, and the most-recent run's
-    status / start / finish timestamps. No report body,
-    evidence bundle, ``error_summary``, ``case_id`` or
-    ``evidence_pack_id`` is projected so the public surface
+    -> ``int`` count dictionary, the most-recent run's
+    status / start / finish timestamps, the bounded
+    ``freshness_at`` anchor (mirrors ``latest_finished_at``)
+    and the bounded ``source`` ``runner_key`` label of the
+    latest run (e.g. ``"llm"``). No report body, evidence
+    bundle, ``error_summary``, ``case_id``, ``playbook_key``
+    or ``evidence_pack_id`` is projected so the public surface
     stays a thin pointer to the existing research-runs detail
-    page.
+    page. The bounded ``source`` projects only the
+    domain-validated ``runner_key`` so the public surface
+    cannot echo a host path or credential, payload blob or
+    connection string.
 
     The three-state vocabulary
     ``available | empty | failed`` mirrors Slice 2A's
@@ -594,6 +648,8 @@ class ResearchCenterDeliveryResearchRunsResponse(BaseModel):
     latest_status: str | None = None
     latest_started_at: datetime | None = None
     latest_finished_at: datetime | None = None
+    freshness_at: datetime | None = None
+    source: str | None = None
     reason: str | None = None
 
 

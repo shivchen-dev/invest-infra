@@ -69,6 +69,19 @@
 - 验收：不泄漏宿主路径/凭据；cancelled orphan 可解释且不阻断其他卡片；刷新恢复。
 - 依赖：3A。
 
+### Task 3B 拆分
+
+1. **3B-API：可信度与脱敏契约**
+   - 在四个 delivery 子段（pipeline / integration / archive / research_runs）上新增最小兼容扩展：``freshness_at`` 锚点（基于真实 ``finished_at`` / ``latest_as_of`` / ``latest_finished_at``）和 ``source`` 标签（基于真实 ``trigger_type`` / ``producer`` / ``media_type`` / ``runner_key``）；不引入新的虚构字段，不修改既有 3A 字段含义。
+   - 统一 reason / 错误展示：禁止宿主绝对路径、连接串、凭据、原始异常堆栈进入 API 响应；reason 仅取 3A 已有的稳定 token（``pipeline_query_failed`` / ``integration_health_query_failed`` / ``archive_query_failed`` / ``research_runs_query_failed``），新增 token 仅用于 ``capabilities.delivery`` 的 ``slice_3b_delivery_summary_available`` 升级。
+   - cancelled / orphan pipeline run：保留 3A 的 ``partial`` 语义（``cancelled`` / 未知 terminal 状态），不再阻断其他 delivery 子段查询；任何子段失败仅污染自身槽位。
+   - 失败恢复：每个调用都是 fresh materialisation，无内部缓存；下一次 refresh 即恢复，单元测试断言先 ``failed`` 再 ``available`` 的回放。
+   - ``capabilities.delivery``：从 Slice 1 ``slice_3_not_implemented`` 占位升级到 ``available / slice_3b_delivery_summary_available``；``ResearchCenterCapabilityState`` Literal 最小扩展为 ``deferred | unavailable | available``。
+2. **3B-Web：可信度与脱敏卡片**
+   - 由 Web 团队后续切片处理；本次仅交付 API 与 OpenAPI 契约。
+3. **3B-验收与收口**
+   - API focused tests + 全量 API tests + ruff + OpenAPI drift + 架构边界检查 + 域/存储单元测试保持通过；任何子段失败原因字符串、``source`` 标签、``freshness_at`` 锚点都不允许泄漏 forbidden token（``postgres`` / ``postgresql`` / ``secret`` / ``password`` / ``/home/`` / ``Traceback`` / ``Connection refused``）。
+
 ## Task 3C：真实环境收口
 
 - 结果：保留真实、stale/unavailable、外部交付异常三种验收证据并校准 Todo/Gate B。

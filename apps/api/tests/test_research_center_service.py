@@ -753,7 +753,17 @@ class TestAsOfDateResolution:
 
 
 class TestCapabilityBundle:
-    """The Slice 1 capability bundle is frozen until later slices land."""
+    """The capability bundle stays deterministic and stable across slices.
+
+    Slice 3B promotes ``capabilities.delivery`` from the Slice 1
+    ``deferred`` placeholder to ``available`` because the bounded
+    ``delivery`` sub-segment now renders end-to-end; the other
+    capability entries stay on the frozen ``deferred`` /
+    ``unavailable`` vocabulary. The capability section is
+    decoupled from any specific source read so a single delivery
+    sub-segment failure can never poison the capability bundle;
+    each call is a fresh materialisation.
+    """
 
     def test_capability_bundle_matches_frozen_contract(self) -> None:
         service, _, _, _, _, _, _ = _service_with(
@@ -763,6 +773,10 @@ class TestCapabilityBundle:
 
         response = service.get_research_center()
 
+        from invest_api.application.research_center import (
+            DELIVERY_CAPABILITY_REASON,
+        )
+
         assert response.capabilities == ResearchCenterCapabilitiesView(
             opportunities=ResearchCenterCapabilityView(
                 state="deferred", reason="slice_2_not_implemented"
@@ -771,7 +785,7 @@ class TestCapabilityBundle:
                 state="deferred", reason="slice_2_not_implemented"
             ),
             delivery=ResearchCenterCapabilityView(
-                state="deferred", reason="slice_3_not_implemented"
+                state="available", reason=DELIVERY_CAPABILITY_REASON
             ),
             strategy=ResearchCenterCapabilityView(
                 state="unavailable",
@@ -2342,6 +2356,1103 @@ class TestDeliverySchemaVersion:
         assert response.delivery.schema_version == DELIVERY_SCHEMA_VERSION
 
 
+class TestDeliveryFreshnessAndSource:
+    """Slice 3B freshness / source labels round-trip from real source data.
+
+    Every delivery sub-segment projects one bounded
+    ``freshness_at`` anchor and one bounded ``source`` label
+    derived from real underlying source rows (not fabricated):
+    pipeline ``trigger_type``, integration ``producer``, archive
+    ``media_type`` and research-runs ``runner_key``. The bounded
+    values are the storage-layer / domain-validated handles the
+    schema already pins, so the public surface can never echo a
+    host path, credential, payload blob, raw exception traceback
+    or connection string. ``freshness_at`` mirrors the existing
+    time fact (``business_completion_date`` /
+    ``latest_as_of`` / ``latest_finished_at``) so the public
+    contract surfaces a canonical calendar-day freshness anchor.
+    """
+
+    def test_pipeline_freshness_at_and_source_project_from_real_run(
+        self,
+    ) -> None:
+        started = datetime(2026, 8, 15, 9, 0, tzinfo=UTC)
+        finished = datetime(2026, 8, 15, 10, 0, tzinfo=UTC)
+        service, _, _, _, _, _, _ = _service_with(
+            breadth_return=_snapshot(),
+            freshness_return=_freshness_view(status="fresh"),
+            pipeline_return=_pipeline_run(
+                status="succeeded",
+                started_at=started,
+                finished_at=finished,
+            ),
+        )
+        # Mutate the helper's default ``trigger_type`` to verify
+        # the bounded value projects verbatim from the source
+        # row (the helper uses ``trigger_type="scheduled"``).
+        pipeline_run = service._pipeline.get_latest_run.return_value
+        object.__setattr__(
+            pipeline_run, "trigger_type", "manual"
+        )
+
+        response = service.get_research_center()
+        pipeline = response.delivery.pipeline
+
+        assert pipeline.freshness_at == date(2026, 8, 15)
+        assert pipeline.source == "manual"
+
+    def test_integration_freshness_at_and_source_project_from_latest_run(
+        self,
+    ) -> None:
+        latest_run_id = uuid4()
+        service, _, _, _, _, external_workflows, _ = _service_with(
+            breadth_return=_snapshot(),
+            freshness_return=_freshness_view(status="fresh"),
+            integration_health_return=_integration_health(
+                status="healthy",
+                sample_size=2,
+                latest_run_id=latest_run_id,
+            ),
+        )
+        latest_run = _external_workflow_run(
+            run_id=latest_run_id,
+            finished_at=datetime(2026, 8, 15, 10, 0, tzinfo=UTC),
+        )
+        # Override the helper's default ``producer`` to verify
+        # the bounded value projects verbatim from the source row
+        # (the helper uses ``producer="workbuddy"``).
+        object.__setattr__(latest_run, "producer", "cifangquant")
+        external_workflows.get_run.return_value = latest_run
+
+        response = service.get_research_center()
+        integration = response.delivery.integration
+
+        assert integration.freshness_at == date(2026, 8, 15)
+        assert integration.source == "cifangquant"
+
+    def test_archive_freshness_at_and_source_project_from_most_recent_artifact(
+        self,
+    ) -> None:
+        run = _external_workflow_run(
+            finished_at=datetime(2026, 8, 15, 10, 0, tzinfo=UTC),
+        )
+        artifacts = (
+            _external_artifact(
+                run_id=run.run_id,
+                created_at=datetime(2026, 8, 15, 10, 30, tzinfo=UTC),
+            ),
+            _external_artifact(
+                run_id=run.run_id,
+                created_at=datetime(2026, 8, 15, 10, 15, tzinfo=UTC),
+            ),
+        )
+        # Override the helper's default ``media_type`` on the
+        # most-recent artifact so we can verify the bounded
+        # value is the most-recent artifact's ``media_type``.
+        object.__setattr__(artifacts[0], "media_type", "application/pdf")
+        object.__setattr__(artifacts[1], "media_type", "application/json")
+        service, _, _, _, _, external_workflows, _ = _service_with(
+            breadth_return=_snapshot(),
+            freshness_return=_freshness_view(status="fresh"),
+            archive_run_return=[run],
+            archive_artifacts_return=list(artifacts),
+        )
+
+        response = service.get_research_center()
+        archive = response.delivery.archive
+
+        assert archive.freshness_at == date(2026, 8, 15)
+        assert archive.source == "application/pdf"
+
+    def test_research_runs_freshness_at_and_source_project_from_latest_run(
+        self,
+    ) -> None:
+        latest_run = _research_run(
+            status="succeeded",
+            started_at=datetime(2026, 8, 15, 9, 0, tzinfo=UTC),
+            finished_at=datetime(2026, 8, 15, 10, 0, tzinfo=UTC),
+        )
+        # Override the helper's default ``runner_key`` so we can
+        # verify the bounded value projects verbatim from the
+        # latest run's source row (the helper uses
+        # ``runner_key="llm"``).
+        object.__setattr__(latest_run, "runner_key", "deterministic")
+        dashboard_view = _dashboard_view(
+            case_count=1,
+            run_count=1,
+            latest_case=None,
+            recent_runs=[latest_run],
+        )
+        service, _, _, _, _, _, _ = _service_with(
+            breadth_return=_snapshot(),
+            freshness_return=_freshness_view(status="fresh"),
+            research_return=dashboard_view,
+        )
+
+        response = service.get_research_center()
+        research_runs = response.delivery.research_runs
+
+        assert research_runs.freshness_at == datetime(
+            2026, 8, 15, 10, 0, tzinfo=UTC
+        )
+        assert research_runs.source == "deterministic"
+
+    def test_empty_and_failed_subsegments_have_no_source_or_freshness(
+        self,
+    ) -> None:
+        """``freshness_at`` / ``source`` stay ``None`` on empty / failed paths.
+
+        A fabricated zero / fabricated source identity can
+        never masquerade as "data unavailable"; only the
+        controlled-failure or zero-observation paths are
+        permitted to surface the bounded fields as ``None``.
+        """
+
+        # Empty / no-source pipeline.
+        service, _, _, _, _, _, _ = _service_with(
+            breadth_return=_snapshot(),
+            freshness_return=_freshness_view(status="fresh"),
+            pipeline_return=None,
+        )
+        response = service.get_research_center()
+        assert response.delivery.pipeline.freshness_at is None
+        assert response.delivery.pipeline.source is None
+
+        # Failed pipeline surfaces the bounded failure path
+        # without the bounded source / freshness facts.
+        service, _, _, _, _, _, _ = _service_with(
+            breadth_return=_snapshot(),
+            freshness_return=_freshness_view(status="fresh"),
+            pipeline_return=PipelineRunQueryError(
+                "driver-level boom: postgres://user:secret@host/db"
+            ),
+        )
+        response = service.get_research_center()
+        assert response.delivery.pipeline.state == "failed"
+        assert response.delivery.pipeline.freshness_at is None
+        assert response.delivery.pipeline.source is None
+
+    def test_failed_subsegments_redact_source_field_from_response(
+        self,
+    ) -> None:
+        """``source`` stays ``None`` even when the underlying source row
+        could have leaked a credential / path.
+
+        The bounded ``source`` value comes from a
+        length-bounded storage column (``producer <= 64``,
+        ``media_type <= 128``, domain-validated ``trigger_type``
+        / ``runner_key``), so a malformed payload can never
+        reach the response; the controlled failure path pins
+        ``source`` to ``None`` to remove any risk of a
+        fabricated zero / fabricated identity leak.
+        """
+
+        service, _, _, _, _, external_workflows, _ = _service_with(
+            breadth_return=_snapshot(),
+            freshness_return=_freshness_view(status="fresh"),
+            integration_health_return=OperationalError(
+                "SELECT",
+                {},
+                Exception("postgres://user:secret@host/db"),
+            ),
+        )
+        response = service.get_research_center()
+        integration = response.delivery.integration
+        assert integration.state == "failed"
+        assert integration.freshness_at is None
+        assert integration.source is None
+        # Defence-in-depth: the bounded field never echoes the
+        # driver-level exception detail.
+        external_workflows.get_run.assert_not_called()
+
+
+class TestDeliveryOrphanPipelineExplainability:
+    """Cancelled / orphan pipeline runs map to explainable existing states.
+
+    The Slice 3B pipeline sub-segment vocabulary
+    ``available | empty | running | partial | failed`` covers
+    every :class:`invest_domain.pipeline.PipelineRunStatus` value
+    plus the defensive "orphan terminal-without-success" path:
+    a cancelled run maps to ``partial`` so the front-end can
+    render the explicit "terminal without success" slot, and an
+    unknown / orphan terminal status also maps to ``partial``
+    so a defensive read does not silently misclassify the run
+    as ``available``.
+    """
+
+    def test_orphan_terminal_status_maps_to_partial_not_available(self) -> None:
+        """An unknown terminal status surfaces as ``partial``.
+
+        The defensive path the application layer keeps for any
+        terminal status the six-value vocabulary does not
+        recognise: the run lands on ``partial`` so the UI can
+        render the explainable-but-uncertain slot without ever
+        silently misclassifying the run as ``available``.
+        """
+
+        started = datetime(2026, 8, 15, 9, 0, tzinfo=UTC)
+        finished = datetime(2026, 8, 15, 10, 0, tzinfo=UTC)
+        orphan_run = SimpleNamespace(
+            id=uuid4(),
+            job_key="personal_etf_daily_job",
+            trigger_type="scheduled",
+            status=SimpleNamespace(value="unknown_terminal"),
+            started_at=started,
+            finished_at=finished,
+            error_summary=None,
+        )
+        service, _, _, _, _, _, _ = _service_with(
+            breadth_return=_snapshot(),
+            freshness_return=_freshness_view(status="fresh"),
+            pipeline_return=orphan_run,
+        )
+
+        response = service.get_research_center()
+        pipeline = response.delivery.pipeline
+        assert pipeline.state == "partial"
+        assert pipeline.state != "available"
+        assert pipeline.status == "unknown_terminal"
+        assert pipeline.started_at == started
+        assert pipeline.finished_at == finished
+        assert pipeline.business_completion_date == date(2026, 8, 15)
+        # The bounded freshness / source fields stay populated
+        # so the front-end can still render the per-source badge.
+        assert pipeline.freshness_at == date(2026, 8, 15)
+        assert pipeline.source == "scheduled"
+        assert pipeline.reason is None
+
+    def test_orphan_pipeline_does_not_block_other_subsegments(self) -> None:
+        """An orphan / cancelled pipeline run never bleeds into the
+        other delivery sub-segments.
+
+        The single-source failure isolation invariant the
+        application layer has always enforced: a pipeline
+        sub-segment that lands on ``partial`` (cancelled or
+        orphan terminal) must leave the integration / archive /
+        research_runs sub-segments free to surface their own
+        populated state.
+        """
+
+        orphan_run = SimpleNamespace(
+            id=uuid4(),
+            job_key="personal_etf_daily_job",
+            trigger_type="manual",
+            status=SimpleNamespace(value="cancelled"),
+            started_at=datetime(2026, 8, 15, 9, 0, tzinfo=UTC),
+            finished_at=datetime(2026, 8, 15, 10, 0, tzinfo=UTC),
+            error_summary=None,
+        )
+        run = _external_workflow_run()
+        artifacts = (
+            _external_artifact(
+                run_id=run.run_id,
+                created_at=datetime(2026, 8, 15, 10, 30, tzinfo=UTC),
+            ),
+        )
+        latest_run = _research_run(
+            status="succeeded",
+            started_at=datetime(2026, 8, 15, 9, 0, tzinfo=UTC),
+            finished_at=datetime(2026, 8, 15, 10, 0, tzinfo=UTC),
+        )
+        dashboard_view = _dashboard_view(
+            case_count=1,
+            run_count=1,
+            latest_case=None,
+            recent_runs=[latest_run],
+        )
+        service, _, _, _, _, external_workflows, _ = _service_with(
+            breadth_return=_snapshot(),
+            freshness_return=_freshness_view(status="fresh"),
+            research_return=dashboard_view,
+            pipeline_return=orphan_run,
+            integration_health_return=_integration_health(
+                status="healthy",
+                sample_size=2,
+                latest_run_id=run.run_id,
+            ),
+            archive_run_return=[run],
+            archive_artifacts_return=list(artifacts),
+        )
+        external_workflows.get_run.return_value = run
+
+        response = service.get_research_center()
+        delivery = response.delivery
+        assert delivery.pipeline.state == "partial"
+        assert delivery.pipeline.status == "cancelled"
+        # The other three sub-segments stay operational.
+        assert delivery.integration.state == "available"
+        assert delivery.archive.state == "available"
+        assert delivery.research_runs.state == "available"
+
+
+class TestDeliverySourceFieldSanitization:
+    """The bounded ``source`` field never echoes driver-level detail.
+
+    Each sub-segment's bounded ``source`` value is fed through
+    :func:`sanitize_source_value` against the corresponding
+    whitelist (``PIPELINE_TRIGGER_TYPE_WHITELIST`` /
+    ``INTEGRATION_PRODUCER_WHITELIST`` /
+    ``ARCHIVE_MEDIA_TYPE_WHITELIST`` /
+    ``RESEARCH_RUNS_RUNNER_KEY_WHITELIST``) so the public
+    surface can never echo a host path, raw exception message,
+    payload blob, control character or connection string. A
+    value outside the whitelist (covering the sensitive
+    inputs the call-outs call out — absolute paths, postgres
+    / postgresql URLs, secret / password / token / key text,
+    control characters) is dropped to ``None`` so the public
+    response always carries a safe, stable classification or
+    ``None`` on the failure path.
+    """
+
+    def test_failed_subsegment_source_field_does_not_echo_credential_text(
+        self,
+    ) -> None:
+        """A ``SQLAlchemyError`` carrying a credential message never
+        leaks via ``source``.
+
+        The bounded ``source`` field stays ``None`` on the
+        controlled failure path even though the underlying
+        exception carries a host path, secret or connection
+        string. Defence-in-depth: every bounded field that the
+        response emits is independently redacted.
+        """
+
+        boom = OperationalError(
+            "SELECT",
+            {},
+            Exception("postgres://user:secret@host/db"),
+        )
+        service, _, _, _, _, external_workflows, _ = _service_with(
+            breadth_return=_snapshot(),
+            freshness_return=_freshness_view(status="fresh"),
+            integration_health_return=boom,
+        )
+        response = service.get_research_center()
+        integration = response.delivery.integration
+        assert integration.state == "failed"
+        assert integration.source is None
+        # Defence-in-depth: the bounded field text never carries
+        # any of the forbidden tokens regardless of which
+        # sub-segment is in the failed slot.
+        for forbidden in ("postgres", "secret", "/home/", "Traceback"):
+            assert forbidden not in str(integration)
+
+    def test_cancelled_pipeline_source_field_does_not_echo_secret(
+        self,
+    ) -> None:
+        """A ``cancelled`` / orphan pipeline run with a corrupt
+        ``trigger_type`` never echoes the secret; the source field
+        is dropped to ``None`` so the bounded ``source`` field
+        can never carry a credential, host path, control
+        character or connection string.
+
+        The defensive state mapping still pins cancelled /
+        orphan to ``partial`` so the central page can render
+        the explainable terminal-without-success slot; the
+        application layer's ``sanitize_source_value`` filter
+        makes sure the banned input can never reach the
+        response body, irrespective of the storage-layer
+        validator's permissive non-blank string guarantee.
+        """
+
+        started = datetime(2026, 8, 15, 9, 0, tzinfo=UTC)
+        finished = datetime(2026, 8, 15, 10, 0, tzinfo=UTC)
+        corrupt_run = SimpleNamespace(
+            id=uuid4(),
+            job_key="personal_etf_daily_job",
+            trigger_type="postgres://user:secret@host/db",
+            status=SimpleNamespace(value="cancelled"),
+            started_at=started,
+            finished_at=finished,
+            error_summary=None,
+        )
+        service, _, _, _, _, _, _ = _service_with(
+            breadth_return=_snapshot(),
+            freshness_return=_freshness_view(status="fresh"),
+            pipeline_return=corrupt_run,
+        )
+
+        response = service.get_research_center()
+        pipeline = response.delivery.pipeline
+        # The bounded ``source`` field is dropped to ``None`` because
+        # the raw ``trigger_type`` is not in the
+        # :data:`PIPELINE_TRIGGER_TYPE_WHITELIST` whitelist. The
+        # original secret-carrying string can never reach the
+        # public response body.
+        assert pipeline.source is None
+        # The defensive state mapping pins cancelled / orphan to
+        # ``partial`` so the central page can render the explainable
+        # terminal-without-success slot.
+        assert pipeline.state == "partial"
+        # Defence-in-depth: none of the credential / path / connection
+        # string tokens leak into the pipeline view text.
+        for forbidden in (
+            "postgres", "secret", "user:secret", "/home/", "Traceback",
+        ):
+            assert forbidden not in str(pipeline), (
+                f"forbidden token {forbidden!r} leaked via pipeline.source"
+            )
+
+
+class TestDeliverySourceWhitelistAccepts:
+    """The bounded ``source`` field round-trips every whitelisted label.
+
+    Regression coverage for the ARC call-out: the sanitizer
+    must accept the existing safe, stable labels the codebase
+    already owns (``scheduled`` / ``manual`` / ``dagster``,
+    ``workbuddy`` / ``cifangquant`` / ``fixture`` /
+    ``fixture_dev``, ``application/json`` / ``application/pdf``
+    / ``text/markdown``, ``jiuwenswarm-runner-v1`` /
+    ``jiuwenswarm`` / ``llm`` / ``deterministic`` /
+    ``fake-runner-v1``) so the central page can keep rendering
+    the per-source badge in the normal-available path.
+    """
+
+    def test_every_whitelisted_trigger_type_round_trips_to_source(self) -> None:
+        from invest_api.application.research_center import (
+            PIPELINE_TRIGGER_TYPE_WHITELIST,
+        )
+
+        for trigger_type in PIPELINE_TRIGGER_TYPE_WHITELIST:
+            service, _, _, _, _, _, _ = _service_with(
+                breadth_return=_snapshot(),
+                freshness_return=_freshness_view(status="fresh"),
+                pipeline_return=_pipeline_run(
+                    status="succeeded",
+                    started_at=datetime(2026, 8, 15, 9, 0, tzinfo=UTC),
+                    finished_at=datetime(2026, 8, 15, 10, 0, tzinfo=UTC),
+                ),
+            )
+            object.__setattr__(
+                service._pipeline.get_latest_run.return_value,
+                "trigger_type",
+                trigger_type,
+            )
+
+            response = service.get_research_center()
+            assert response.delivery.pipeline.source == trigger_type, (
+                f"whitelisted trigger_type {trigger_type!r} was dropped"
+            )
+
+    def test_every_whitelisted_producer_round_trips_to_source(self) -> None:
+        from invest_api.application.research_center import (
+            INTEGRATION_PRODUCER_WHITELIST,
+        )
+
+        for producer in INTEGRATION_PRODUCER_WHITELIST:
+            latest_run_id = uuid4()
+            service, _, _, _, _, external_workflows, _ = _service_with(
+                breadth_return=_snapshot(),
+                freshness_return=_freshness_view(status="fresh"),
+                integration_health_return=_integration_health(
+                    status="healthy",
+                    sample_size=2,
+                    latest_run_id=latest_run_id,
+                ),
+            )
+            latest_run = _external_workflow_run(
+                run_id=latest_run_id,
+                finished_at=datetime(2026, 8, 15, 10, 0, tzinfo=UTC),
+            )
+            object.__setattr__(latest_run, "producer", producer)
+            external_workflows.get_run.return_value = latest_run
+
+            response = service.get_research_center()
+            assert response.delivery.integration.source == producer, (
+                f"whitelisted producer {producer!r} was dropped"
+            )
+
+    def test_every_whitelisted_media_type_round_trips_to_source(self) -> None:
+        from invest_api.application.research_center import (
+            ARCHIVE_MEDIA_TYPE_WHITELIST,
+        )
+
+        for media_type in ARCHIVE_MEDIA_TYPE_WHITELIST:
+            run = _external_workflow_run(
+                finished_at=datetime(2026, 8, 15, 10, 0, tzinfo=UTC),
+            )
+            artifact = _external_artifact(
+                run_id=run.run_id,
+                created_at=datetime(2026, 8, 15, 10, 30, tzinfo=UTC),
+            )
+            object.__setattr__(artifact, "media_type", media_type)
+            service, _, _, _, _, _, _ = _service_with(
+                breadth_return=_snapshot(),
+                freshness_return=_freshness_view(status="fresh"),
+                archive_run_return=[run],
+                archive_artifacts_return=[artifact],
+            )
+
+            response = service.get_research_center()
+            assert response.delivery.archive.source == media_type, (
+                f"whitelisted media_type {media_type!r} was dropped"
+            )
+
+    def test_every_whitelisted_runner_key_round_trips_to_source(self) -> None:
+        from invest_api.application.research_center import (
+            RESEARCH_RUNS_RUNNER_KEY_WHITELIST,
+        )
+
+        for runner_key in RESEARCH_RUNS_RUNNER_KEY_WHITELIST:
+            latest_run = _research_run(
+                status="succeeded",
+                started_at=datetime(2026, 8, 15, 9, 0, tzinfo=UTC),
+                finished_at=datetime(2026, 8, 15, 10, 0, tzinfo=UTC),
+            )
+            object.__setattr__(latest_run, "runner_key", runner_key)
+            dashboard_view = _dashboard_view(
+                case_count=1,
+                run_count=1,
+                latest_case=None,
+                recent_runs=[latest_run],
+            )
+            service, _, _, _, _, _, _ = _service_with(
+                breadth_return=_snapshot(),
+                freshness_return=_freshness_view(status="fresh"),
+                research_return=dashboard_view,
+            )
+
+            response = service.get_research_center()
+            assert response.delivery.research_runs.source == runner_key, (
+                f"whitelisted runner_key {runner_key!r} was dropped"
+            )
+
+
+class TestDeliverySourceWhitenedAgainstLeaks:
+    """The bounded ``source`` field is empty for every banned input.
+
+    Regression coverage for the ARC call-out: the sanitizer
+    must reject every input the audit flags as a leak
+    vector — absolute paths, postgres / postgresql URLs,
+    secret / password / token / key text, control characters
+    — and the public ``source`` field must stay ``None`` so
+    the original text can never reach the response body. The
+    state machine (``partial`` / ``failed`` / ``available`` /
+    ``empty``) stays decoupled: the no-leakage invariant
+    never relaxes the "no leakage" acceptance just to keep
+    a state shape.
+    """
+
+    @pytest.mark.parametrize(
+        "raw_trigger_type",
+        [
+            pytest.param(
+                "postgres://user:secret@host/db",
+                id="postgres_url",
+            ),
+            pytest.param(
+                "postgresql+psycopg://user:secret@host/db",
+                id="postgresql_url",
+            ),
+            pytest.param(
+                "/home/admin/secrets/credentials.txt",
+                id="absolute_path",
+            ),
+            pytest.param(
+                "secret_value_42",
+                id="secret_word",
+            ),
+            pytest.param(
+                "password=hunter2",
+                id="password_word",
+            ),
+            pytest.param(
+                "token=eyJhbGciOiJIUzI1NiJ9",
+                id="token_word",
+            ),
+            pytest.param(
+                "private_key=-----BEGIN PRIVATE KEY-----",
+                id="private_key_word",
+            ),
+            pytest.param(
+                "scheduled\x00postgres",
+                id="null_byte",
+            ),
+            pytest.param(
+                "scheduled\npostgres://user:secret@host/db",
+                id="newline_injection",
+            ),
+            pytest.param(
+                "scheduled\tpostgres:secret",
+                id="tab_injection",
+            ),
+            pytest.param(
+                "scheduled\rpostgres",
+                id="carriage_return",
+            ),
+            pytest.param(
+                "scheduled\x1b[31m",
+                id="escape_character",
+            ),
+            pytest.param("", id="empty_string"),
+            pytest.param("   ", id="whitespace_only"),
+            pytest.param("cron", id="drifted_label"),
+        ],
+    )
+    def test_pipeline_trigger_type_drops_to_none_for_banned_input(
+        self, raw_trigger_type: str
+    ) -> None:
+        """A ``trigger_type`` carrying a leak vector is never echoed.
+
+        The bounded ``source`` field stays ``None`` regardless
+        of the underlying :class:`PipelineRun`'s status (the
+        cancelled / orphan terminal-without-success path still
+        maps to ``partial``; the in-flight / partial path stays
+        on its own state) so the response body can never
+        surface a credential, host path, control character or
+        connection string.
+        """
+
+        started = datetime(2026, 8, 15, 9, 0, tzinfo=UTC)
+        finished = datetime(2026, 8, 15, 10, 0, tzinfo=UTC)
+        corrupt_run = SimpleNamespace(
+            id=uuid4(),
+            job_key="personal_etf_daily_job",
+            trigger_type=raw_trigger_type,
+            status=SimpleNamespace(value="cancelled"),
+            started_at=started,
+            finished_at=finished,
+            error_summary=None,
+        )
+        service, _, _, _, _, _, _ = _service_with(
+            breadth_return=_snapshot(),
+            freshness_return=_freshness_view(status="fresh"),
+            pipeline_return=corrupt_run,
+        )
+
+        response = service.get_research_center()
+        pipeline = response.delivery.pipeline
+        # The "no leakage" acceptance is the test: the bounded
+        # ``source`` field is dropped to ``None`` for every
+        # banned input regardless of the underlying status.
+        assert pipeline.source is None, (
+            f"pipeline.source leaked {pipeline.source!r} for "
+            f"trigger_type={raw_trigger_type!r}"
+        )
+        # The state machine still pins cancelled / orphan to
+        # ``partial`` so the central page can render the
+        # explainable terminal-without-success slot; the
+        # no-leakage acceptance does not relax the state
+        # mapping.
+        assert pipeline.state == "partial"
+        # Defence-in-depth: the raw text never reaches the
+        # pipeline view string.
+        for forbidden in (
+            "postgres", "postgresql", "secret", "password",
+            "token", "BEGIN PRIVATE KEY", "/home/", "Traceback",
+        ):
+            assert forbidden not in str(pipeline), (
+                f"forbidden token {forbidden!r} leaked via pipeline.source"
+            )
+
+    @pytest.mark.parametrize(
+        "raw_producer",
+        [
+            pytest.param(
+                "postgres://user:secret@host/db",
+                id="postgres_url",
+            ),
+            pytest.param(
+                "postgresql://user:secret@host/db",
+                id="postgresql_url",
+            ),
+            pytest.param(
+                "/home/admin/secrets/credentials.txt",
+                id="absolute_path",
+            ),
+            pytest.param(
+                "secret_producer",
+                id="secret_word",
+            ),
+            pytest.param(
+                "password=hunter2",
+                id="password_word",
+            ),
+            pytest.param(
+                "token=eyJhbGciOiJIUzI1NiJ9",
+                id="token_word",
+            ),
+            pytest.param(
+                "private_key=-----BEGIN PRIVATE KEY-----",
+                id="private_key_word",
+            ),
+            pytest.param(
+                "workbuddy\x00postgres",
+                id="null_byte",
+            ),
+            pytest.param(
+                "workbuddy\npostgres://user:secret@host/db",
+                id="newline_injection",
+            ),
+            pytest.param(
+                "workbuddy\tpostgres:secret",
+                id="tab_injection",
+            ),
+            pytest.param("", id="empty_string"),
+            pytest.param("cifangquant_dev", id="drifted_label"),
+        ],
+    )
+    def test_integration_producer_drops_to_none_for_banned_input(
+        self, raw_producer: str
+    ) -> None:
+        """A ``producer`` carrying a leak vector is never echoed.
+
+        The bounded ``source`` field stays ``None`` for every
+        banned input so the public response body can never
+        surface a credential, host path, control character or
+        connection string.
+        """
+
+        latest_run_id = uuid4()
+        service, _, _, _, _, external_workflows, _ = _service_with(
+            breadth_return=_snapshot(),
+            freshness_return=_freshness_view(status="fresh"),
+            integration_health_return=_integration_health(
+                status="healthy",
+                sample_size=2,
+                latest_run_id=latest_run_id,
+            ),
+        )
+        latest_run = _external_workflow_run(
+            run_id=latest_run_id,
+            finished_at=datetime(2026, 8, 15, 10, 0, tzinfo=UTC),
+        )
+        object.__setattr__(latest_run, "producer", raw_producer)
+        external_workflows.get_run.return_value = latest_run
+
+        response = service.get_research_center()
+        integration = response.delivery.integration
+        assert integration.state == "available"
+        assert integration.source is None, (
+            f"integration.source leaked {integration.source!r} "
+            f"for producer={raw_producer!r}"
+        )
+        for forbidden in (
+            "postgres", "postgresql", "secret", "password",
+            "token", "BEGIN PRIVATE KEY", "/home/", "Traceback",
+        ):
+            assert forbidden not in str(integration), (
+                f"forbidden token {forbidden!r} leaked via integration.source"
+            )
+
+    @pytest.mark.parametrize(
+        "raw_media_type",
+        [
+            pytest.param(
+                "postgres://user:secret@host/db",
+                id="postgres_url",
+            ),
+            pytest.param(
+                "postgresql://user:secret@host/db",
+                id="postgresql_url",
+            ),
+            pytest.param(
+                "/home/admin/secrets/credentials.txt",
+                id="absolute_path",
+            ),
+            pytest.param(
+                "application/secret",
+                id="secret_word",
+            ),
+            pytest.param(
+                "application/password",
+                id="password_word",
+            ),
+            pytest.param(
+                "text/token=eyJhbGciOiJIUzI1NiJ9",
+                id="token_word",
+            ),
+            pytest.param(
+                "application/x-secret-key",
+                id="key_word",
+            ),
+            pytest.param(
+                "application/json\x00postgres",
+                id="null_byte",
+            ),
+            pytest.param(
+                "application/json\npostgres://user:secret@host/db",
+                id="newline_injection",
+            ),
+            pytest.param(
+                "application/json\tpostgres:secret",
+                id="tab_injection",
+            ),
+            pytest.param("", id="empty_string"),
+            pytest.param("application/x-custom-binary", id="drifted_label"),
+        ],
+    )
+    def test_archive_media_type_drops_to_none_for_banned_input(
+        self, raw_media_type: str
+    ) -> None:
+        """A ``media_type`` carrying a leak vector is never echoed.
+
+        The bounded ``source`` field stays ``None`` for every
+        banned input so the public response body can never
+        surface a credential, host path, control character or
+        connection string.
+        """
+
+        run = _external_workflow_run(
+            finished_at=datetime(2026, 8, 15, 10, 0, tzinfo=UTC),
+        )
+        artifact = _external_artifact(
+            run_id=run.run_id,
+            created_at=datetime(2026, 8, 15, 10, 30, tzinfo=UTC),
+        )
+        object.__setattr__(artifact, "media_type", raw_media_type)
+        service, _, _, _, _, _, _ = _service_with(
+            breadth_return=_snapshot(),
+            freshness_return=_freshness_view(status="fresh"),
+            archive_run_return=[run],
+            archive_artifacts_return=[artifact],
+        )
+
+        response = service.get_research_center()
+        archive = response.delivery.archive
+        assert archive.state == "available"
+        assert archive.source is None, (
+            f"archive.source leaked {archive.source!r} for "
+            f"media_type={raw_media_type!r}"
+        )
+        for forbidden in (
+            "postgres", "postgresql", "secret", "password",
+            "token", "/home/", "Traceback",
+        ):
+            assert forbidden not in str(archive), (
+                f"forbidden token {forbidden!r} leaked via archive.source"
+            )
+
+    @pytest.mark.parametrize(
+        "raw_runner_key",
+        [
+            pytest.param(
+                "postgres://user:secret@host/db",
+                id="postgres_url",
+            ),
+            pytest.param(
+                "postgresql://user:secret@host/db",
+                id="postgresql_url",
+            ),
+            pytest.param(
+                "/home/admin/secrets/credentials.txt",
+                id="absolute_path",
+            ),
+            pytest.param(
+                "runner-with-secret",
+                id="secret_word",
+            ),
+            pytest.param(
+                "runner-password-hunter2",
+                id="password_word",
+            ),
+            pytest.param(
+                "token=eyJhbGciOiJIUzI1NiJ9",
+                id="token_word",
+            ),
+            pytest.param(
+                "private_key=-----BEGIN PRIVATE KEY-----",
+                id="private_key_word",
+            ),
+            pytest.param(
+                "jiuwenswarm\x00postgres",
+                id="null_byte",
+            ),
+            pytest.param(
+                "jiuwenswarm\npostgres://user:secret@host/db",
+                id="newline_injection",
+            ),
+            pytest.param(
+                "jiuwenswarm\tpostgres:secret",
+                id="tab_injection",
+            ),
+            pytest.param("", id="empty_string"),
+            pytest.param("jiuwenswarm-runner-v2", id="drifted_label"),
+        ],
+    )
+    def test_research_runs_runner_key_drops_to_none_for_banned_input(
+        self, raw_runner_key: str
+    ) -> None:
+        """A ``runner_key`` carrying a leak vector is never echoed.
+
+        The bounded ``source`` field stays ``None`` for every
+        banned input so the public response body can never
+        surface a credential, host path, control character or
+        connection string.
+        """
+
+        latest_run = _research_run(
+            status="succeeded",
+            started_at=datetime(2026, 8, 15, 9, 0, tzinfo=UTC),
+            finished_at=datetime(2026, 8, 15, 10, 0, tzinfo=UTC),
+        )
+        object.__setattr__(latest_run, "runner_key", raw_runner_key)
+        dashboard_view = _dashboard_view(
+            case_count=1,
+            run_count=1,
+            latest_case=None,
+            recent_runs=[latest_run],
+        )
+        service, _, _, _, _, _, _ = _service_with(
+            breadth_return=_snapshot(),
+            freshness_return=_freshness_view(status="fresh"),
+            research_return=dashboard_view,
+        )
+
+        response = service.get_research_center()
+        research_runs = response.delivery.research_runs
+        assert research_runs.state == "available"
+        assert research_runs.source is None, (
+            f"research_runs.source leaked {research_runs.source!r} "
+            f"for runner_key={raw_runner_key!r}"
+        )
+        for forbidden in (
+            "postgres", "postgresql", "secret", "password",
+            "token", "BEGIN PRIVATE KEY", "/home/", "Traceback",
+        ):
+            assert forbidden not in str(research_runs), (
+                f"forbidden token {forbidden!r} leaked via research_runs.source"
+            )
+
+    def test_sanitizer_accepts_each_whitelisted_label(self) -> None:
+        """The sanitizer round-trips every whitelist value verbatim.
+
+        Smoke test the public contract: the sanitizer identity
+        function on the whitelist membership side is the
+        single source of truth the four ``source`` fields
+        rely on.
+        """
+
+        from invest_api.application.research_center import (
+            ARCHIVE_MEDIA_TYPE_WHITELIST,
+            INTEGRATION_PRODUCER_WHITELIST,
+            PIPELINE_TRIGGER_TYPE_WHITELIST,
+            RESEARCH_RUNS_RUNNER_KEY_WHITELIST,
+            sanitize_source_value,
+        )
+
+        for whitelist in (
+            PIPELINE_TRIGGER_TYPE_WHITELIST,
+            INTEGRATION_PRODUCER_WHITELIST,
+            ARCHIVE_MEDIA_TYPE_WHITELIST,
+            RESEARCH_RUNS_RUNNER_KEY_WHITELIST,
+        ):
+            for allowed in whitelist:
+                assert sanitize_source_value(allowed, whitelist=whitelist) == allowed
+                assert sanitize_source_value(
+                    " " + allowed + " ", whitelist=whitelist
+                ) == allowed
+
+    def test_sanitizer_returns_none_for_every_banned_input(self) -> None:
+        """The sanitizer drops every banned input to ``None``.
+
+        Coverage for the call-out cases: absolute paths,
+        postgres / postgresql URLs, secret / password / token
+        / key text, control characters, empty / whitespace
+        strings, drifted labels, and non-string values.
+        """
+
+        from invest_api.application.research_center import (
+            PIPELINE_TRIGGER_TYPE_WHITELIST,
+            sanitize_source_value,
+        )
+
+        banned = (
+            "postgres://user:secret@host/db",
+            "postgresql://user:secret@host/db",
+            "/home/admin/secrets/credentials.txt",
+            "secret",
+            "password=hunter2",
+            "token=eyJhbGciOiJIUzI1NiJ9",
+            "private_key=-----BEGIN PRIVATE KEY-----",
+            "scheduled\x00postgres",
+            "scheduled\npostgres",
+            "scheduled\tpostgres",
+            "scheduled\rpostgres",
+            "scheduled\x1b[31m",
+            "",
+            "   ",
+            "drifted_label",
+        )
+        for raw in banned:
+            assert sanitize_source_value(
+                raw, whitelist=PIPELINE_TRIGGER_TYPE_WHITELIST
+            ) is None, f"sanitizer leaked {raw!r}"
+        assert sanitize_source_value(
+            None, whitelist=PIPELINE_TRIGGER_TYPE_WHITELIST
+        ) is None
+        assert sanitize_source_value(
+            42, whitelist=PIPELINE_TRIGGER_TYPE_WHITELIST
+        ) is None
+        assert sanitize_source_value(
+            ["scheduled"], whitelist=PIPELINE_TRIGGER_TYPE_WHITELIST
+        ) is None
+
+
+class TestDeliveryIndependentRecoveryAfterFailure:
+    """A controlled failure on one source never poisons the next refresh.
+
+    Each delivery sub-segment owns its own narrow error
+    boundary; a controlled failure on one source only flips
+    that sub-segment's state to ``failed`` with the matching
+    opaque stable reason. The next call constructs fresh
+    views, so a recovered upstream read naturally restores the
+    sub-segment without any cache to invalidate.
+    """
+
+    def test_recovery_after_controlled_failure_clears_redaction(
+        self,
+    ) -> None:
+        """The next refresh recovers the controlled failure.
+
+        The first call simulates a controlled
+        :class:`PipelineRunQueryError` and asserts the bounded
+        sub-segment surfaces ``state="failed"`` with the opaque
+        ``PIPELINE_FAILED_REASON`` reason; the second call
+        resolves a terminal ``succeeded`` run and asserts the
+        sub-segment recovers to ``state="available"`` with the
+        real bounded freshness / source fields populated.
+        """
+
+        service, _, _, _, _, _, _ = _service_with(
+            breadth_return=_snapshot(),
+            freshness_return=_freshness_view(status="fresh"),
+            pipeline_return=PipelineRunQueryError(
+                "driver-level boom: postgres://user:secret@host/db"
+            ),
+        )
+
+        first = service.get_research_center()
+        assert first.delivery.pipeline.state == "failed"
+        assert first.delivery.pipeline.reason == PIPELINE_FAILED_REASON
+        assert first.delivery.pipeline.freshness_at is None
+        assert first.delivery.pipeline.source is None
+
+        # Next refresh: the controlled failure is gone and the
+        # pipeline reader returns a terminal succeeded run.
+        started = datetime(2026, 8, 15, 9, 0, tzinfo=UTC)
+        finished = datetime(2026, 8, 15, 10, 0, tzinfo=UTC)
+        service._pipeline.get_latest_run.return_value = _pipeline_run(
+            status="succeeded",
+            started_at=started,
+            finished_at=finished,
+        )
+        service._pipeline.get_latest_run.side_effect = None
+
+        second = service.get_research_center()
+        assert second.delivery.pipeline.state == "available"
+        assert second.delivery.pipeline.reason is None
+        assert second.delivery.pipeline.status == "succeeded"
+        assert second.delivery.pipeline.business_completion_date == date(
+            2026, 8, 15
+        )
+        # The bounded freshness / source fields re-populate on
+        # recovery so the central page can render the per-source
+        # badge again.
+        assert second.delivery.pipeline.freshness_at == date(2026, 8, 15)
+        assert second.delivery.pipeline.source == "scheduled"
+
+
 __all__ = [
     "TestAsOfDateResolution",
     "TestCandidatePoolAndOpportunityDoNotAffectTopLevelState",
@@ -2353,9 +3464,12 @@ __all__ = [
     "TestDeliveryArchiveAvailable",
     "TestDeliveryArchiveEmpty",
     "TestDeliveryArchiveFailure",
+    "TestDeliveryFreshnessAndSource",
+    "TestDeliveryIndependentRecoveryAfterFailure",
     "TestDeliveryIntegrationAvailable",
     "TestDeliveryIntegrationEmpty",
     "TestDeliveryIntegrationFailure",
+    "TestDeliveryOrphanPipelineExplainability",
     "TestDeliveryPipelineAvailable",
     "TestDeliveryPipelineEmptyAndFailure",
     "TestDeliveryPipelineTerminalStateMapping",
@@ -2363,6 +3477,9 @@ __all__ = [
     "TestDeliveryResearchRunsEmpty",
     "TestDeliveryResearchRunsFailure",
     "TestDeliverySchemaVersion",
+    "TestDeliverySourceFieldSanitization",
+    "TestDeliverySourceWhitelistAccepts",
+    "TestDeliverySourceWhitenedAgainstLeaks",
     "TestDeliverySubsegmentFailureDoesNotPerturbTopLevelState",
     "TestDeliverySubsegmentsIndependent",
     "TestObservationMapping",
