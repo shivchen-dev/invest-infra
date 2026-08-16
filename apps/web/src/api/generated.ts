@@ -197,6 +197,24 @@ export interface paths {
      */
     get: operations["get_research_case_workspace_api_v1_research_cases__case_id__workspace_get"];
   };
+  "/api/v1/research-center": {
+    /**
+     * Get Research Center
+     * @description Return the Slice 1 Research Center contract response.
+     *
+     * The handler owns a single UTC wall-clock value and reuses it for
+     * both ``generated_at`` and ``market.data_freshness.checked_at`` so
+     * the two timestamps are always identical. The application service
+     * converts the two underlying sources' controlled errors into
+     * explicit failed sub-segments before this router sees them; any
+     * other exception is intentionally allowed to propagate so FastAPI's
+     * generic error boundary (and not this router) sanitises the
+     * response. The endpoint is intentionally GET-only — no POST, PUT,
+     * PATCH or DELETE handlers exist on this router and the OpenAPI
+     * spec reflects that.
+     */
+    get: operations["get_research_center_api_v1_research_center_get"];
+  };
   "/api/v1/research-dashboard": {
     /**
      * Get Research Dashboard
@@ -1131,6 +1149,189 @@ export interface components {
       results?: (components["schemas"]["ResearchResultResponse"] | null)[];
       /** Runs */
       runs?: components["schemas"]["ResearchRunResponse"][];
+    };
+    /**
+     * ResearchCenterBreadthResponse
+     * @description Market Breadth sub-segment of the contract response.
+     *
+     * Mirrors :class:`invest_api.application.research_center.ResearchCenterBreadthView`
+     * field-by-field. A controlled error is an explicit ``failed``
+     * object whose payload fields are null; a genuinely missing snapshot
+     * remains ``None``. No identity, scope or observation is fabricated.
+     */
+    ResearchCenterBreadthResponse: {
+      /** Algorithm Version */
+      algorithm_version?: string | null;
+      /** Observations */
+      observations?: components["schemas"]["ResearchCenterObservationResponse"][] | null;
+      /** Scope Key */
+      scope_key?: string | null;
+      /** Scope Type */
+      scope_type?: string | null;
+      /** Snapshot Id */
+      snapshot_id?: string | null;
+      /**
+       * State
+       * @enum {string}
+       */
+      state: "available" | "failed";
+    };
+    /**
+     * ResearchCenterCapabilitiesResponse
+     * @description Slice 1 capability bundle — frozen until later slices land.
+     */
+    ResearchCenterCapabilitiesResponse: {
+      delivery: components["schemas"]["ResearchCenterCapabilityResponse"];
+      discipline: components["schemas"]["ResearchCenterCapabilityResponse"];
+      opportunities: components["schemas"]["ResearchCenterCapabilityResponse"];
+      research: components["schemas"]["ResearchCenterCapabilityResponse"];
+      strategy: components["schemas"]["ResearchCenterCapabilityResponse"];
+    };
+    /**
+     * ResearchCenterCapabilityResponse
+     * @description One capability entry on the contract response shape.
+     *
+     * Slice 1 pins every capability to a deterministic placeholder so
+     * the response shape is stable and later slices can replace
+     * individual entries without re-shaping the application layer.
+     */
+    ResearchCenterCapabilityResponse: {
+      /** Reason */
+      reason: string;
+      /**
+       * State
+       * @enum {string}
+       */
+      state: "deferred" | "unavailable";
+    };
+    /**
+     * ResearchCenterDataFreshnessResponse
+     * @description Data Freshness sub-segment of the contract response.
+     *
+     * ``checked_at`` is the router-stamped UTC wall-clock value the
+     * application service intentionally omits; the router reuses the
+     * same ``datetime.now(UTC)`` value it stamps on the top-level
+     * ``generated_at`` so the two timestamps are always identical for a
+     * given response. ``state`` is the four-state substate derived from
+     * ``status`` so the UI can render without re-reading the underlying
+     * five-state vocabulary; ``status`` carries the original
+     * ``fresh | partial | stale | missing | failed`` value verbatim.
+     */
+    ResearchCenterDataFreshnessResponse: {
+      /**
+       * Checked At
+       * Format: date-time
+       */
+      checked_at: string;
+      /** Daily Bar Count */
+      daily_bar_count?: number | null;
+      /** Latest Published Trade Date */
+      latest_published_trade_date?: string | null;
+      /** Missing Count */
+      missing_count?: number | null;
+      /**
+       * State
+       * @enum {string}
+       */
+      state: "available" | "partial" | "unavailable" | "failed";
+      /**
+       * Status
+       * @enum {string}
+       */
+      status: "fresh" | "partial" | "stale" | "missing" | "failed";
+      /** Universe Count */
+      universe_count?: number | null;
+    };
+    /**
+     * ResearchCenterMarketResponse
+     * @description Market segment of the contract response.
+     *
+     * ``state`` mirrors the top-level ``state`` for Slice 1 (the
+     * contract makes the two equivalent). ``as_of_date`` prefers the
+     * breadth snapshot date, falls back to the freshness latest
+     * published trade date, and is ``None`` when neither source has a
+     * date. ``quality_status`` and ``freshness_status`` carry the
+     * breadth domain values verbatim, or ``None`` when no breadth
+     * snapshot is available. ``breadth`` and ``data_freshness`` are the
+     * per-source sub-segments. Genuine absence is ``None`` while a
+     * controlled error is represented by an explicit failed object.
+     */
+    ResearchCenterMarketResponse: {
+      /** As Of Date */
+      as_of_date?: string | null;
+      breadth?: components["schemas"]["ResearchCenterBreadthResponse"] | null;
+      data_freshness?: components["schemas"]["ResearchCenterDataFreshnessResponse"] | null;
+      /** Freshness Status */
+      freshness_status?: string | null;
+      /** Quality Status */
+      quality_status?: string | null;
+      /**
+       * State
+       * @enum {string}
+       */
+      state: "available" | "partial" | "unavailable" | "failed";
+    };
+    /**
+     * ResearchCenterObservationResponse
+     * @description One Market Breadth observation on the contract response shape.
+     *
+     * Maps the application-level
+     * :class:`invest_api.application.research_center.ResearchCenterObservationView`
+     * onto the public JSON field names: ``observation_key`` is renamed
+     * to ``key``; every other observation field is preserved verbatim.
+     * ``value`` keeps its native ``Decimal | str | None`` type so
+     * Pydantic renders ``Decimal`` as a string (matching the existing
+     * Market Breadth endpoint) while a plain textual value stays a
+     * string and ``None`` stays ``null``.
+     */
+    ResearchCenterObservationResponse: {
+      /** Key */
+      key: string;
+      /**
+       * Observed Date
+       * Format: date
+       */
+      observed_date: string;
+      /** Quality Status */
+      quality_status: string;
+      /** Source Kind */
+      source_kind: string;
+      /** Source Ref */
+      source_ref: string;
+      /** Unit */
+      unit: string;
+      /** Value */
+      value: string | null;
+    };
+    /**
+     * ResearchCenterResponse
+     * @description Read-only response envelope for the contract endpoint.
+     *
+     * Mirrors :class:`invest_api.application.research_center.ResearchCenterResponse`
+     * field-by-field and adds the two router-owned timestamps
+     * (``generated_at`` and the propagated ``market.data_freshness.checked_at``).
+     * Both timestamps come from the same ``datetime.now(UTC)`` call so a
+     * single response always observes identical values; the application
+     * service intentionally does not own a clock.
+     */
+    ResearchCenterResponse: {
+      capabilities: components["schemas"]["ResearchCenterCapabilitiesResponse"];
+      /**
+       * Generated At
+       * Format: date-time
+       */
+      generated_at: string;
+      market: components["schemas"]["ResearchCenterMarketResponse"];
+      /**
+       * Schema Version
+       * @constant
+       */
+      schema_version: "1.0.0";
+      /**
+       * State
+       * @enum {string}
+       */
+      state: "available" | "partial" | "unavailable" | "failed";
     };
     /**
      * ResearchDashboardEvidenceStatus
@@ -2099,6 +2300,31 @@ export interface operations {
       422: {
         content: {
           "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  /**
+   * Get Research Center
+   * @description Return the Slice 1 Research Center contract response.
+   *
+   * The handler owns a single UTC wall-clock value and reuses it for
+   * both ``generated_at`` and ``market.data_freshness.checked_at`` so
+   * the two timestamps are always identical. The application service
+   * converts the two underlying sources' controlled errors into
+   * explicit failed sub-segments before this router sees them; any
+   * other exception is intentionally allowed to propagate so FastAPI's
+   * generic error boundary (and not this router) sanitises the
+   * response. The endpoint is intentionally GET-only — no POST, PUT,
+   * PATCH or DELETE handlers exist on this router and the OpenAPI
+   * spec reflects that.
+   */
+  get_research_center_api_v1_research_center_get: {
+    responses: {
+      /** @description Successful Response */
+      200: {
+        content: {
+          "application/json": components["schemas"]["ResearchCenterResponse"];
         };
       };
     };

@@ -1,23 +1,21 @@
 import { useQuery } from "@tanstack/react-query";
-import { fetchDataFreshness } from "../api/dataFreshness";
 import {
   fetchCandidatePoolLatest,
   fetchCandidatePoolLatestDiff,
 } from "../api/candidatePool";
 import { fetchLatestPipelineRun } from "../api/pipelineRuns";
 import { fetchIntegrationHealth } from "../api/integrationHealth";
+import { useResearchCenter } from "../api/researchCenter";
 import { useResearchDashboard } from "../api/researchDashboard";
 import type {
   CandidatePoolDiffResponse,
   CandidatePoolLatestResponse,
-  DataFreshnessResponse,
   PipelineRunResponse,
 } from "../api/types";
-import { FreshnessPanel } from "../features/dashboard/FreshnessPanel";
-import { MetricsPanel } from "../features/dashboard/MetricsPanel";
 import { CandidateDiffPanel } from "../features/dashboard/CandidateDiffPanel";
 import { TopCandidatesPanel } from "../features/dashboard/TopCandidatesPanel";
 import { LatestRunPanel } from "../features/dashboard/LatestRunPanel";
+import { ResearchCenterMarketStatusPanel } from "../features/dashboard/ResearchCenterMarketStatusPanel";
 import { ResearchCockpitSection } from "../features/research/dashboard/ResearchCockpitSection";
 import { LoadingState } from "../components/LoadingState";
 import { formatCount, formatDate } from "../utils/format";
@@ -26,19 +24,12 @@ import { IntegrationHealthPanel } from "../features/dashboard/IntegrationHealthP
 const TOP_N = 10;
 
 const REFETCH_INTERVAL = {
-  freshness: 60_000,
   candidatePool: 5 * 60_000,
   pipelineRun: 60_000,
   integrationHealth: 60_000,
 } as const;
 
 export function DashboardPage() {
-  const freshness = useQuery<DataFreshnessResponse>({
-    queryKey: ["data-freshness"],
-    queryFn: ({ signal }) => fetchDataFreshness(signal),
-    refetchInterval: REFETCH_INTERVAL.freshness,
-  });
-
   const latestPool = useQuery<CandidatePoolLatestResponse>({
     queryKey: ["candidate-pool", "latest"],
     queryFn: ({ signal }) => fetchCandidatePoolLatest(signal),
@@ -63,14 +54,15 @@ export function DashboardPage() {
     refetchInterval: REFETCH_INTERVAL.integrationHealth,
   });
 
+  const researchCenter = useResearchCenter();
   const researchDashboard = useResearchDashboard();
 
   const initialLoading =
-    freshness.isPending &&
     latestPool.isPending &&
     latestDiff.isPending &&
     latestRun.isPending &&
-    integrationHealth.isPending;
+    integrationHealth.isPending &&
+    researchCenter.isPending;
 
   if (initialLoading) {
     return <LoadingState label="正在加载 Dashboard 数据" />;
@@ -86,13 +78,8 @@ export function DashboardPage() {
         </p>
       </header>
 
-      <section className="pageSection" aria-label="数据状态">
-        <FreshnessPanel query={freshness} />
-      </section>
-
-      <section className="pageSection" aria-label="关键指标">
-        <h3 className="sectionTitle">关键指标</h3>
-        <MetricsPanel query={freshness} />
+      <section className="pageSection" aria-label="Research Center 市场状态">
+        <ResearchCenterMarketStatusPanel query={researchCenter} />
       </section>
 
       <section className="pageSection" aria-label="候选池变化">

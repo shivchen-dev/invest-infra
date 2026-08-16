@@ -131,3 +131,39 @@ export type ResearchDashboardResponse = Omit<
   research_summary: ResearchDashboardResearchSummary;
   recent_runs: ResearchRunResponse[];
 };
+export type ResearchCenterObservation = RequiredDefined<
+  components["schemas"]["ResearchCenterObservationResponse"]
+>;
+type ResearchCenterBreadthWire = RequiredDefined<
+  components["schemas"]["ResearchCenterBreadthResponse"]
+>;
+export type ResearchCenterBreadth =
+  | (Omit<ResearchCenterBreadthWire, "state" | "observations"> & {
+      state: "available";
+      observations: ResearchCenterObservation[] | null;
+    })
+  | (Omit<ResearchCenterBreadthWire, "state"> & {
+      state: "failed";
+    });
+export type ResearchCenterDataFreshness = RequiredDefined<
+  components["schemas"]["ResearchCenterDataFreshnessResponse"]
+>;
+export type ResearchCenterCapability = RequiredDefined<
+  components["schemas"]["ResearchCenterCapabilityResponse"]
+>;
+export type ResearchCenterCapabilities = RequiredDefined<
+  components["schemas"]["ResearchCenterCapabilitiesResponse"]
+>;
+export type ResearchCenterMarket = Omit<
+  RequiredDefined<components["schemas"]["ResearchCenterMarketResponse"]>,
+  "breadth" | "data_freshness"
+> & {
+  breadth: ResearchCenterBreadth | null;
+  data_freshness: ResearchCenterDataFreshness | null;
+};
+export type ResearchCenterResponse = Omit<
+  RequiredDefined<components["schemas"]["ResearchCenterResponse"]>,
+  "market"
+> & {
+  market: ResearchCenterMarket;
+};

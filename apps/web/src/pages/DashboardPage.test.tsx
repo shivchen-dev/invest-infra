@@ -14,16 +14,17 @@ import type {
   CandidatePoolDiffResponse,
   CandidatePoolItem,
   CandidatePoolLatestResponse,
-  DataFreshnessResponse,
   PipelineRunResponse,
+  ResearchCenterBreadth,
+  ResearchCenterCapabilities,
+  ResearchCenterCapability,
+  ResearchCenterDataFreshness,
+  ResearchCenterMarket,
+  ResearchCenterResponse,
   ResearchDashboardResponse,
   ResearchRunResponse,
 } from "../api/types";
-
-vi.mock("../api/dataFreshness", () => ({
-  fetchDataFreshness: vi.fn(),
-  freshnessQueryKey: ["data-freshness"],
-}));
+import { Router } from "../router";
 
 vi.mock("../api/candidatePool", () => ({
   fetchCandidatePoolLatest: vi.fn(),
@@ -46,7 +47,13 @@ vi.mock("../api/researchDashboard", () => ({
   RESEARCH_DASHBOARD_REFETCH_INTERVAL: 60_000,
 }));
 
-import { fetchDataFreshness } from "../api/dataFreshness";
+vi.mock("../api/researchCenter", () => ({
+  fetchResearchCenter: vi.fn(),
+  useResearchCenter: vi.fn(),
+  researchCenterQueryKey: ["research-center"],
+  RESEARCH_CENTER_REFETCH_INTERVAL: 60_000,
+}));
+
 import {
   fetchCandidatePoolLatest,
   fetchCandidatePoolLatestDiff,
@@ -56,17 +63,20 @@ import {
   useResearchDashboard,
 } from "../api/researchDashboard";
 import {
+  useResearchCenter,
+} from "../api/researchCenter";
+import {
   errorQuery,
   pendingQuery,
   successQuery,
 } from "../features/research/dashboard/test-helpers";
 import { DashboardPage } from "./DashboardPage";
 
-const mockFetchFreshness = vi.mocked(fetchDataFreshness);
 const mockFetchLatestPool = vi.mocked(fetchCandidatePoolLatest);
 const mockFetchLatestDiff = vi.mocked(fetchCandidatePoolLatestDiff);
 const mockFetchLatestRun = vi.mocked(fetchLatestPipelineRun);
 const mockUseResearchDashboard = vi.mocked(useResearchDashboard);
+const mockUseResearchCenter = vi.mocked(useResearchCenter);
 
 function neverResolvingPromise<T>(): Promise<T> {
   return new Promise<T>(() => {
@@ -74,20 +84,87 @@ function neverResolvingPromise<T>(): Promise<T> {
   });
 }
 
-function makeFreshness(
-  overrides: Partial<DataFreshnessResponse> = {},
-): DataFreshnessResponse {
+function makeCapability(
+  overrides: Partial<ResearchCenterCapability> = {},
+): ResearchCenterCapability {
   return {
-    as_of: "2026-08-03T12:00:00Z",
-    candidate_count: 12,
+    reason: "slice_2_not_implemented",
+    state: "deferred",
+    ...overrides,
+  };
+}
+
+function makeCapabilities(
+  overrides: Partial<ResearchCenterCapabilities> = {},
+): ResearchCenterCapabilities {
+  return {
+    opportunities: makeCapability({ reason: "slice_2_not_implemented" }),
+    research: makeCapability({ reason: "slice_2_not_implemented" }),
+    delivery: makeCapability({ reason: "slice_3_not_implemented" }),
+    strategy: makeCapability({
+      reason: "strategy_iteration_contract_not_frozen",
+      state: "unavailable",
+    }),
+    discipline: makeCapability({
+      reason: "position_discipline_contract_not_frozen",
+      state: "unavailable",
+    }),
+    ...overrides,
+  };
+}
+
+function makeBreadth(
+  overrides: Partial<ResearchCenterBreadth> = {},
+): ResearchCenterBreadth {
+  return {
+    algorithm_version: "2.0.0",
+    observations: [],
+    scope_key: "ashare_active_universe_v1",
+    scope_type: "ashare_universe",
+    snapshot_id: "55555555-5555-5555-5555-555555555555",
+    ...overrides,
+    state: "available",
+  };
+}
+
+function makeFreshness(
+  overrides: Partial<ResearchCenterDataFreshness> = {},
+): ResearchCenterDataFreshness {
+  return {
+    checked_at: "2026-08-03T12:00:00Z",
     daily_bar_count: 45,
     latest_published_trade_date: "2026-08-02",
     missing_count: 1,
-    pipeline_run_id: "11111111-1111-1111-1111-111111111111",
-    pipeline_status: "success",
-    snapshot_id: "22222222-2222-2222-2222-222222222222",
+    state: "available",
     status: "fresh",
     universe_count: 50,
+    ...overrides,
+  };
+}
+
+function makeMarket(
+  overrides: Partial<ResearchCenterMarket> = {},
+): ResearchCenterMarket {
+  return {
+    as_of_date: "2026-08-02",
+    breadth: null,
+    data_freshness: makeFreshness(),
+    freshness_status: "fresh",
+    quality_status: "complete",
+    state: "available",
+    ...overrides,
+  };
+}
+
+function makeResearchCenter(
+  overrides: Partial<ResearchCenterResponse> = {},
+): ResearchCenterResponse {
+  return {
+    schema_version: "1.0.0",
+    generated_at: "2026-08-03T12:00:00Z",
+    state: "available",
+    market: makeMarket(),
+    capabilities: makeCapabilities(),
     ...overrides,
   };
 }
@@ -227,7 +304,11 @@ function renderWithClient() {
     },
   });
   function Wrapper({ children }: { children: ReactNode }) {
-    return <QueryClientProvider client={client}>{children}</QueryClientProvider>;
+    return (
+      <Router routes={[{ path: "/dashboard", element: null }]}>
+        <QueryClientProvider client={client}>{children}</QueryClientProvider>
+      </Router>
+    );
   }
   return render(<DashboardPage />, { wrapper: Wrapper });
 }
@@ -238,6 +319,12 @@ function configureResearchDashboard(
   mockUseResearchDashboard.mockReturnValue(result);
 }
 
+function configureResearchCenter(
+  result: ReturnType<typeof successQuery<ResearchCenterResponse>>,
+) {
+  mockUseResearchCenter.mockReturnValue(result);
+}
+
 afterEach(() => {
   cleanup();
   vi.clearAllMocks();
@@ -245,21 +332,18 @@ afterEach(() => {
 
 describe("DashboardPage", () => {
   describe("initial loading", () => {
-    it("renders the loading state when all four queries are pending", () => {
-      mockFetchFreshness.mockReturnValue(neverResolvingPromise());
+    it("renders the loading state when all queries are pending", () => {
       mockFetchLatestPool.mockReturnValue(neverResolvingPromise());
       mockFetchLatestDiff.mockReturnValue(neverResolvingPromise());
       mockFetchLatestRun.mockReturnValue(neverResolvingPromise());
       mockUseResearchDashboard.mockReturnValue(pendingQuery());
+      mockUseResearchCenter.mockReturnValue(pendingQuery());
 
       renderWithClient();
 
-      // LoadingState renders a role="status" live region with the dashboard
-      // copy; the accessible name comes from the visible label text.
       expect(
         screen.getByText("正在加载 Dashboard 数据"),
       ).toBeInTheDocument();
-      // Page sections should not yet be visible.
       expect(
         screen.queryByRole("heading", { name: "个人 ETF 数据工作台" }),
       ).not.toBeInTheDocument();
@@ -268,24 +352,21 @@ describe("DashboardPage", () => {
 
   describe("successful render", () => {
     beforeEach(() => {
-      mockFetchFreshness.mockResolvedValue(makeFreshness());
       mockFetchLatestPool.mockResolvedValue(makePoolResponse(15));
       mockFetchLatestDiff.mockResolvedValue(makeDiffResponse());
       mockFetchLatestRun.mockResolvedValue(makeRunResponse());
       configureResearchDashboard(successQuery(makeResearchDashboard()));
+      configureResearchCenter(successQuery(makeResearchCenter()));
     });
 
-    it("renders the page header and all sections once data resolves", async () => {
+    it("renders the page header and every preserved section once data resolves", async () => {
       renderWithClient();
 
       expect(
         await screen.findByRole("heading", { name: "个人 ETF 数据工作台" }),
       ).toBeInTheDocument();
       expect(
-        screen.getByRole("region", { name: "数据状态" }),
-      ).toBeInTheDocument();
-      expect(
-        screen.getByRole("region", { name: "关键指标" }),
+        screen.getByRole("region", { name: "Research Center 市场状态" }),
       ).toBeInTheDocument();
       expect(
         screen.getByRole("region", { name: "候选池变化" }),
@@ -300,10 +381,30 @@ describe("DashboardPage", () => {
         screen.getByRole("region", { name: "Research Cockpit" }),
       ).toBeInTheDocument();
 
-      // Freshness banner is rendered with the "fresh" status copy.
+      // The duplicate sections must be gone now that the center panel takes over.
       expect(
-        await screen.findByRole("status", { name: "数据已更新" }),
+        screen.queryByRole("region", { name: "数据状态" }),
+      ).not.toBeInTheDocument();
+      expect(
+        screen.queryByRole("region", { name: "关键指标" }),
+      ).not.toBeInTheDocument();
+    });
+
+    it("renders the Research Center market-status panel with dates and provenance", async () => {
+      renderWithClient();
+
+      const region = await screen.findByRole("region", {
+        name: "Research Center 市场状态",
+      });
+
+      expect(
+        within(region).getByText(
+          "Read API · /api/v1/research-center · schema 1.0.0",
+        ),
       ).toBeInTheDocument();
+      const stateLine = within(region).getByRole("status", { name: "市场状态 available" });
+      expect(stateLine.textContent ?? "").toContain("市场广度与数据新鲜度均可展示");
+      expect(within(region).getAllByText("2026-08-02").length).toBeGreaterThanOrEqual(1);
     });
 
     it("only displays the top 10 included candidates sorted by rank", async () => {
@@ -311,7 +412,6 @@ describe("DashboardPage", () => {
 
       const region = await screen.findByRole("region", { name: "最新候选" });
 
-      // Wait for the table to render with exactly 10 data rows + 1 header row.
       await waitFor(() => {
         const rows = within(region).getAllByRole("row");
         expect(rows).toHaveLength(11);
@@ -319,7 +419,6 @@ describe("DashboardPage", () => {
 
       const table = within(region).getByRole("table");
 
-      // Ranks 1..10 should be present; ranks 11..15 should be truncated.
       for (let i = 1; i <= 10; i += 1) {
         expect(within(table).getByText(String(i))).toBeInTheDocument();
       }
@@ -327,7 +426,6 @@ describe("DashboardPage", () => {
         expect(within(table).queryByText(String(i))).not.toBeInTheDocument();
       }
 
-      // Header meta should reflect the full row count and included count.
       expect(
         within(region).getByText(/共\s*15\s*只\s*·\s*入选\s*15/),
       ).toBeInTheDocument();
@@ -342,40 +440,169 @@ describe("DashboardPage", () => {
         expect(within(region).getByText("success")).toBeInTheDocument();
       });
       expect(within(region).getByText("manual")).toBeInTheDocument();
-      // Pipeline status also surfaces in the metrics card.
-      expect(screen.getAllByText("success").length).toBeGreaterThanOrEqual(1);
     });
   });
 
-  describe("error states", () => {
-    it("renders the freshness error state when the freshness query fails", async () => {
-      const message = "数据服务异常";
-      mockFetchFreshness.mockRejectedValue(new ApiError(message, 500));
+  describe("research-center section", () => {
+    beforeEach(() => {
       mockFetchLatestPool.mockResolvedValue(makePoolResponse(5));
       mockFetchLatestDiff.mockResolvedValue(makeDiffResponse());
       mockFetchLatestRun.mockResolvedValue(makeRunResponse());
       configureResearchDashboard(successQuery(makeResearchDashboard()));
+    });
+
+    it("renders the loading placeholder while the Research Center query is pending", async () => {
+      configureResearchCenter(pendingQuery());
 
       renderWithClient();
 
-      const region = await screen.findByRole("region", { name: "数据状态" });
-
-      await waitFor(() => {
-        const alert = within(region).getByRole("alert");
-        expect(alert).toHaveTextContent("无法读取数据新鲜度");
+      const region = await screen.findByRole("region", {
+        name: "Research Center 市场状态",
       });
-      // The raw ApiError message is forwarded as the user-facing error text.
-      expect(within(region).getByText(message)).toBeInTheDocument();
+      expect(
+        within(region).getByText("正在加载 Research Center 市场状态"),
+      ).toBeInTheDocument();
     });
 
-    it("renders the empty state in TopCandidatesPanel when the candidate pool returns 404", async () => {
-      mockFetchFreshness.mockResolvedValue(makeFreshness());
-      mockFetchLatestPool.mockRejectedValue(
-        new ApiError("Candidate pool not found", 404),
+    it("renders the HTTP error state when the Research Center query fails", async () => {
+      configureResearchCenter(
+        errorQuery(new ApiError("research-center 503", 503)),
       );
+
+      renderWithClient();
+
+      const region = await screen.findByRole("region", {
+        name: "Research Center 市场状态",
+      });
+      const alert = await within(region).findByRole("alert");
+      expect(alert).toHaveTextContent("无法读取 Research Center 市场状态");
+      expect(within(region).getByText("research-center 503")).toBeInTheDocument();
+    });
+
+    it("renders the empty unavailable state when both sub-sources are missing", async () => {
+      configureResearchCenter(
+        successQuery(
+          makeResearchCenter({
+            state: "unavailable",
+            market: makeMarket({
+              state: "unavailable",
+              data_freshness: null,
+            }),
+          }),
+        ),
+      );
+
+      renderWithClient();
+
+      const region = await screen.findByRole("region", {
+        name: "Research Center 市场状态",
+      });
+      expect(within(region).getByLabelText("市场广度")).toHaveTextContent(
+        "市场广度 · unavailable",
+      );
+      expect(within(region).getByLabelText("数据新鲜度")).toHaveTextContent(
+        "数据新鲜度 · unavailable",
+      );
+    });
+
+    it("renders explicit text for the controlled failed state when both sources failed", async () => {
+      configureResearchCenter(
+        successQuery(
+          makeResearchCenter({
+            state: "failed",
+            market: makeMarket({
+              state: "failed",
+              breadth: null,
+              data_freshness: null,
+              quality_status: null,
+              freshness_status: null,
+            }),
+          }),
+        ),
+      );
+
+      renderWithClient();
+
+      const region = await screen.findByRole("region", {
+        name: "Research Center 市场状态",
+      });
+      expect(within(region).getByText("failed")).toBeInTheDocument();
+      expect(
+        within(region).getByText(/failed · 受控查询失败/),
+      ).toBeInTheDocument();
+    });
+
+    it("renders the backend-valid unavailable wire shape with sentinel counts without surfacing them as metrics", async () => {
+      configureResearchCenter(
+        successQuery(
+          makeResearchCenter({
+            state: "unavailable",
+            market: {
+              as_of_date: null,
+              breadth: null,
+              data_freshness: {
+                checked_at: "2026-08-12T01:30:00Z",
+                daily_bar_count: 0,
+                latest_published_trade_date: null,
+                missing_count: 0,
+                state: "unavailable",
+                status: "missing",
+                universe_count: 0,
+              },
+              freshness_status: "missing",
+              quality_status: null,
+              state: "unavailable",
+            },
+          }),
+        ),
+      );
+
+      renderWithClient();
+
+      const region = await screen.findByRole("region", {
+        name: "Research Center 市场状态",
+      });
+      const panel = within(region).getByLabelText(
+        "Research Center 市场状态",
+      );
+      expect(panel).toHaveAttribute("data-state", "unavailable");
+      expect(
+        within(region).getByText(/unavailable · 两个市场来源均无可展示结果/),
+      ).toBeInTheDocument();
+
+      const freshness = screen.getByLabelText("数据新鲜度");
+      expect(within(freshness).getByText("missing")).toBeInTheDocument();
+      expect(within(freshness).getByText("unavailable")).toBeInTheDocument();
+      expect(
+        within(freshness).getByText(/missing · 尚无发布结果/),
+      ).toBeInTheDocument();
+      expect(
+        within(freshness).getByText("数据新鲜度 · unavailable / missing"),
+      ).toBeInTheDocument();
+      expect(
+        within(freshness).queryByText("0 只"),
+      ).not.toBeInTheDocument();
+
+      expect(screen.getByLabelText("候选池变化")).toBeInTheDocument();
+      expect(screen.getByLabelText("最新候选")).toBeInTheDocument();
+      expect(screen.getByLabelText("最新运行")).toBeInTheDocument();
+      expect(screen.getByLabelText("Research Cockpit")).toBeInTheDocument();
+    });
+  });
+
+  describe("other panels", () => {
+    beforeEach(() => {
+      mockFetchLatestPool.mockResolvedValue(makePoolResponse(5));
       mockFetchLatestDiff.mockResolvedValue(makeDiffResponse());
       mockFetchLatestRun.mockResolvedValue(makeRunResponse());
       configureResearchDashboard(successQuery(makeResearchDashboard()));
+      configureResearchCenter(successQuery(makeResearchCenter()));
+    });
+
+    it("renders the empty state in TopCandidatesPanel when the candidate pool returns 404", async () => {
+      mockFetchLatestPool.mockRejectedValue(
+        new ApiError("Candidate pool not found", 404),
+      );
 
       renderWithClient();
 
@@ -384,18 +611,13 @@ describe("DashboardPage", () => {
       await waitFor(() => {
         expect(within(region).getByText("尚无候选结果")).toBeInTheDocument();
       });
-      // 404 is treated as empty state, not as an error alert.
       expect(within(region).queryByRole("alert")).not.toBeInTheDocument();
     });
 
     it("renders the error state in LatestRunPanel when the pipeline run fails with a non-404 status", async () => {
-      mockFetchFreshness.mockResolvedValue(makeFreshness());
-      mockFetchLatestPool.mockResolvedValue(makePoolResponse(5));
-      mockFetchLatestDiff.mockResolvedValue(makeDiffResponse());
       mockFetchLatestRun.mockRejectedValue(
         new ApiError("Pipeline service unavailable", 503),
       );
-      configureResearchDashboard(successQuery(makeResearchDashboard()));
 
       renderWithClient();
 
@@ -409,46 +631,14 @@ describe("DashboardPage", () => {
         within(region).getByText("Pipeline service unavailable"),
       ).toBeInTheDocument();
     });
-
-    it("shows a failed pipeline run status pill and surfaces its error summary", async () => {
-      // The FreshnessPanel banner status comes from `data.status`, so set
-      // it to "failed" to mirror a backend-reported pipeline failure.
-      mockFetchFreshness.mockResolvedValue(
-        makeFreshness({ pipeline_status: "failed", status: "failed" }),
-      );
-      mockFetchLatestPool.mockResolvedValue(makePoolResponse(5));
-      mockFetchLatestDiff.mockResolvedValue(makeDiffResponse());
-      mockFetchLatestRun.mockResolvedValue(
-        makeRunResponse({
-          status: "failed",
-          error_summary: "data source timeout",
-        }),
-      );
-      configureResearchDashboard(successQuery(makeResearchDashboard()));
-
-      renderWithClient();
-
-      const region = await screen.findByRole("region", { name: "最新运行" });
-
-      await waitFor(() => {
-        expect(within(region).getByText("failed")).toBeInTheDocument();
-      });
-      expect(
-        within(region).getByText("data source timeout"),
-      ).toBeInTheDocument();
-      // Freshness banner reflects the failed pipeline state.
-      expect(
-        await screen.findByRole("status", { name: "最新任务失败" }),
-      ).toBeInTheDocument();
-    });
   });
 
   describe("research cockpit section", () => {
     beforeEach(() => {
-      mockFetchFreshness.mockResolvedValue(makeFreshness());
       mockFetchLatestPool.mockResolvedValue(makePoolResponse(5));
       mockFetchLatestDiff.mockResolvedValue(makeDiffResponse());
       mockFetchLatestRun.mockResolvedValue(makeRunResponse());
+      configureResearchCenter(successQuery(makeResearchCenter()));
     });
 
     it("renders six research cockpit widgets with empty default state", async () => {
@@ -473,12 +663,10 @@ describe("DashboardPage", () => {
       ).toBeInTheDocument();
       expect(within(section).getByText("Risk Monitor")).toBeInTheDocument();
 
-      // Market Status must surface the explicit unavailable reason.
       const market = await within(section).findByText(
         "reason: no market dashboard source registered",
       );
       expect(market).toBeInTheDocument();
-      // Factor Snapshot & Risk Monitor must NOT contain buy/sell/position.
       const factor = section.querySelector(
         '[data-widget-id="factor-snapshot"]',
       ) as HTMLElement;
@@ -552,10 +740,8 @@ describe("DashboardPage", () => {
       const table = within(section).getByRole("table");
       expect(within(table).getByText("run-1")).toBeInTheDocument();
       expect(within(table).getByText("run-2")).toBeInTheDocument();
-      // Status strings are surfaced verbatim.
       expect(within(table).getByText("succeeded")).toBeInTheDocument();
       expect(within(table).getByText("failed")).toBeInTheDocument();
-      // Stance / confidence fields must not appear.
       expect(within(section).queryByText("Stance")).not.toBeInTheDocument();
       expect(
         within(section).queryByText("Confidence"),
