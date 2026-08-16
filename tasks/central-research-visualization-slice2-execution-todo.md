@@ -12,7 +12,13 @@
   - [x] generated API types synchronized with Research Center contract
   - [x] Candidate Pool / Opportunity Radar read-only summary cards
   - [x] existing detail links and available/empty/failed UI tests
-- [ ] Checkpoint 2：API/Web/typecheck/build
+- [x] Checkpoint 2：API/Web/typecheck/build
+  - [x] API 347 tests, Web 201 tests
+  - [x] Web typecheck and production build
+  - [x] OpenAPI drift and architecture boundary checks
 - [ ] 3A Pipeline / Integration / Archive 摘要
+  - [ ] 3A-API：复用 PipelineRun / IntegrationHealth / ExternalWorkflow readers，定义只读交付链摘要
+  - [ ] 3A-Web：Dashboard 交付链卡片与既有详情入口
+  - [ ] 3A-验收：空、运行中、成功、失败、部分完成状态及脱敏回归
 - [ ] 3B 可信度、脱敏和异常状态
 - [ ] 3C 真实环境验收记录与 Gate B

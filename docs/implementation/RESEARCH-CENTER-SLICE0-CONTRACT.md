@@ -184,3 +184,17 @@ Slice 2B 在不改变既有 `market`、`capabilities`、`research` 和顶层状�
 `opportunities` 复用 `ExternalWorkflowQueryService.list_radar(status=None, limit=50, offset=0)`，只投影有界观察数量、最新 `as_of` 和按既有 `AdmissionStatus` 值统计的准入状态计数；零观察为 `empty`，受控 SQLAlchemy 查询异常为 `failed`，失败状态不返回计数。两字段均只允许 `available | empty | failed`，未知程序异常继续交由统一错误边界处理。
 
 该增量不透传 payload、source URI、观察身份、宿主机路径、凭据或原始异常文本；不新增数据库对象、不执行 HTTP fan-out、不引入写操作，并通过 OpenAPI drift check 固定响应形状。
+
+## 13. Slice 3A API 合同增量
+
+Slice 3A 在不改变既有 `market`、`capabilities`、`research`、`candidate_pool` 和 `opportunities` 语义以及顶层 `state` 机器的前提下，向 `ResearchCenterResponse` 增加必填只读字段 `delivery`。该字段是四个独立子状态的有界投影（`pipeline`、`integration`、`archive`、`research_runs`），单来源受控失败不得污染其他子状态，不透传 artifact URI、payload、logical_uri、宿主机路径、凭据或原始异常文本；不新增数据库对象、不执行 HTTP fan-out、不引入写操作。
+
+`delivery.pipeline` 复用 `PipelineRunQueryService.get_latest_run()`，只投影 `status`、`started_at`、`finished_at`、派生自 `finished_at.date()` 的业务完成日期；`state` 词汇为 `available | empty | running | partial | failed`：`succeeded` 终态为 `available`，`running` 在飞为 `running`，`partial` 终态为 `partial`，无匹配运行时为 `empty`，受控 `PipelineRunQueryError` 为 `failed`（不返回 `error_summary`）。
+
+`delivery.integration` 复用 `ExternalWorkflowQueryService.health()`，只投影 `status`（healthy/degraded）、`sample_size`、预填充的 `producer_status_counts` / `intake_status_counts` 字典以及最新运行 `finished_at`（缺则 `started_at`）派生的 `latest_as_of` 日期；`state` 词汇为 `available | empty | failed`：受控 SQLAlchemy 异常为 `failed`（`sample_size` 等均为 `null`），`sample_size == 0` 为 `empty`，其余为 `available`。
+
+`delivery.archive` 复用 `ExternalWorkflowQueryService.list_runs(limit=1, offset=0)` + `list_artifacts(run_id, limit=100, offset=0)`，只投影有界 `artifact_count`、最新运行 `producer_status` 和最大 `created_at.date()`；`state` 词汇为 `available | empty | failed`：受控 SQLAlchemy 异常为 `failed`（`artifact_count` 为 `null`），无最新运行或零 artifact 为 `empty`，其余为 `available`。不暴露 artifact URI、payload、metadata、宿主路径、logical_uri、content_hash、运行身份或凭据。
+
+`delivery.research_runs` 复用 `ResearchQueryService.get_dashboard().recent_runs`，只投影有界 `run_count`、`ResearchRunStatus -> int` 状态计数以及首条 run 的 `status` / `started_at` / `finished_at`；`state` 词汇为 `available | empty | failed`：受控 `ResearchQueryError` 为 `failed`（`run_count` 为 `null`），`recent_runs` 空为 `empty`，其余为 `available`。不暴露 report、evidence、`error_summary`、`case_id` 或 `evidence_pack_id`。
+
+`delivery.schema_version` 固定为 `"1.0.0"`；顶层 `state` 仍等于 `market.state`，delivery 子状态不参与顶层机器。该增量通过 OpenAPI drift check 固定响应形状；未知程序异常继续交由统一错误边界处理。

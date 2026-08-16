@@ -74,9 +74,9 @@
 
 ### Checkpoint 2
 
-- [ ] 市场事实、外部观察和研究判断视觉分层
-- [ ] 空、部分、冲突和失败状态有稳定呈现
-- [ ] Web typecheck、tests、build 通过
+- [x] 市场事实、外部观察和研究判断视觉分层
+- [x] 空、部分、冲突和失败状态有稳定呈现
+- [x] Web typecheck、tests、build 通过
 
 ## Slice 3：交付链与可信度
 

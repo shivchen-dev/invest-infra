@@ -47,7 +47,7 @@ per-source error boundary.
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import UTC, date, datetime
 from decimal import Decimal
 from unittest.mock import MagicMock
 from uuid import uuid4
@@ -55,19 +55,25 @@ from uuid import uuid4
 import pytest
 from fastapi.testclient import TestClient
 from invest_api.application.research_center import (
+    DELIVERY_SCHEMA_VERSION,
     RESEARCH_SCHEMA_VERSION,
     SCHEMA_VERSION,
+    ResearchCenterArchiveSummaryView,
     ResearchCenterBreadthView,
     ResearchCenterCandidatePoolSummaryView,
     ResearchCenterCapabilitiesView,
     ResearchCenterCapabilityView,
     ResearchCenterDataFreshnessView,
+    ResearchCenterDeliveryView,
+    ResearchCenterIntegrationSummaryView,
     ResearchCenterLatestCaseView,
     ResearchCenterMarketView,
     ResearchCenterObservationView,
     ResearchCenterOpportunitySummaryView,
+    ResearchCenterPipelineSummaryView,
     ResearchCenterQueryService,
     ResearchCenterResearchEvidenceView,
+    ResearchCenterResearchRunsSummaryView,
     ResearchCenterResearchSummaryView,
 )
 from invest_api.application.research_center import (
@@ -244,6 +250,127 @@ def _opportunity_summary_view(
     )
 
 
+def _delivery_pipeline_view(
+    *,
+    state: str = "available",
+    status: str | None = "succeeded",
+    started_at: datetime | None = None,
+    finished_at: datetime | None = None,
+    business_completion_date: date | None = _AS_OF,
+    reason: str | None = None,
+) -> ResearchCenterPipelineSummaryView:
+    """Return a populated delivery pipeline sub-segment view."""
+
+    effective_started = started_at or datetime(2026, 8, 15, 9, 0, tzinfo=UTC)
+    effective_finished = finished_at or datetime(2026, 8, 15, 10, 0, tzinfo=UTC)
+    return ResearchCenterPipelineSummaryView(
+        state=state,  # type: ignore[arg-type]
+        status=status,
+        started_at=effective_started,
+        finished_at=effective_finished,
+        business_completion_date=business_completion_date,
+        reason=reason,
+    )
+
+
+def _delivery_integration_view(
+    *,
+    state: str = "available",
+    status: str | None = "healthy",
+    sample_size: int | None = 5,
+    producer_status_counts: dict[str, int] | None = None,
+    intake_status_counts: dict[str, int] | None = None,
+    latest_as_of: date | None = _AS_OF,
+    reason: str | None = None,
+) -> ResearchCenterIntegrationSummaryView:
+    """Return a populated delivery integration sub-segment view."""
+
+    return ResearchCenterIntegrationSummaryView(
+        state=state,  # type: ignore[arg-type]
+        status=status,
+        sample_size=sample_size,
+        producer_status_counts=producer_status_counts
+        if producer_status_counts is not None
+        else {"succeeded": 4, "partial": 1, "failed": 0, "cancelled": 0},
+        intake_status_counts=intake_status_counts
+        if intake_status_counts is not None
+        else {"accepted": 5, "partial": 0, "pending": 0, "rejected": 0},
+        latest_as_of=latest_as_of,
+        reason=reason,
+    )
+
+
+def _delivery_archive_view(
+    *,
+    state: str = "available",
+    artifact_count: int | None = 3,
+    latest_as_of: date | None = _AS_OF,
+    latest_run_status: str | None = "succeeded",
+    reason: str | None = None,
+) -> ResearchCenterArchiveSummaryView:
+    """Return a populated delivery archive sub-segment view."""
+
+    return ResearchCenterArchiveSummaryView(
+        state=state,  # type: ignore[arg-type]
+        artifact_count=artifact_count,
+        latest_as_of=latest_as_of,
+        latest_run_status=latest_run_status,
+        reason=reason,
+    )
+
+
+def _delivery_research_runs_view(
+    *,
+    state: str = "available",
+    run_count: int | None = 2,
+    status_counts: dict[str, int] | None = None,
+    latest_status: str | None = "succeeded",
+    latest_started_at: datetime | None = None,
+    latest_finished_at: datetime | None = None,
+    reason: str | None = None,
+) -> ResearchCenterResearchRunsSummaryView:
+    """Return a populated delivery research-runs sub-segment view."""
+
+    effective_started = latest_started_at or datetime(2026, 8, 15, 9, 0, tzinfo=UTC)
+    effective_finished = latest_finished_at or datetime(2026, 8, 15, 10, 0, tzinfo=UTC)
+    return ResearchCenterResearchRunsSummaryView(
+        state=state,  # type: ignore[arg-type]
+        run_count=run_count,
+        status_counts=status_counts
+        if status_counts is not None
+        else {
+            "queued": 0,
+            "running": 0,
+            "succeeded": 2,
+            "failed": 0,
+            "cancelled": 0,
+        },
+        latest_status=latest_status,
+        latest_started_at=effective_started,
+        latest_finished_at=effective_finished,
+        reason=reason,
+    )
+
+
+def _delivery_view(
+    *,
+    schema_version: str = DELIVERY_SCHEMA_VERSION,
+    pipeline: ResearchCenterPipelineSummaryView | None = None,
+    integration: ResearchCenterIntegrationSummaryView | None = None,
+    archive: ResearchCenterArchiveSummaryView | None = None,
+    research_runs: ResearchCenterResearchRunsSummaryView | None = None,
+) -> ResearchCenterDeliveryView:
+    """Build a populated :class:`ResearchCenterDeliveryView`."""
+
+    return ResearchCenterDeliveryView(
+        schema_version=schema_version,
+        pipeline=pipeline or _delivery_pipeline_view(),
+        integration=integration or _delivery_integration_view(),
+        archive=archive or _delivery_archive_view(),
+        research_runs=research_runs or _delivery_research_runs_view(),
+    )
+
+
 def _response_view(
     *,
     state: str = "available",
@@ -255,6 +382,7 @@ def _response_view(
     research: ResearchCenterResearchSummaryView | None = None,
     candidate_pool: ResearchCenterCandidatePoolSummaryView | None = None,
     opportunities: ResearchCenterOpportunitySummaryView | None = None,
+    delivery: ResearchCenterDeliveryView | None = None,
 ) -> ResearchCenterResponseView:
     """Build a populated :class:`ResearchCenterResponse` view for endpoint tests."""
 
@@ -264,6 +392,8 @@ def _response_view(
         candidate_pool = _candidate_pool_summary_view()
     if opportunities is None:
         opportunities = _opportunity_summary_view()
+    if delivery is None:
+        delivery = _delivery_view()
     return ResearchCenterResponseView(
         schema_version=SCHEMA_VERSION,
         state=state,
@@ -279,6 +409,7 @@ def _response_view(
         research=research,
         candidate_pool=candidate_pool,
         opportunities=opportunities,
+        delivery=delivery,
     )
 
 
@@ -1357,8 +1488,147 @@ class TestResearchCenterSubsegmentFailureLeakage:
             )
 
 
+class TestResearchCenterDeliveryEndpointSerialization:
+    """Real ``TestClient`` coverage for the Slice 3A ``delivery`` sub-segment on the wire.
+
+    The :class:`ResearchCenterQueryService` is replaced with a
+    ``MagicMock`` so the handler can be driven end-to-end through the
+    FastAPI / Pydantic serialisation pipeline without a live database;
+    the assertions then pin the on-wire contract the central
+    delivery-chain card consumes.
+    """
+
+    def test_delivery_schema_version_and_all_four_subsegments_round_trip(
+        self,
+        client: TestClient,
+        research_center_service: MagicMock,
+    ) -> None:
+        research_center_service.get_research_center.return_value = _response_view(
+            breadth=_breadth_view(),
+            data_freshness=_data_freshness_view(),
+        )
+
+        body = client.get(ENDPOINT).json()
+
+        delivery = body["delivery"]
+        # The router-facing ``schema_version`` mirrors the
+        # application-level frozen constant on the wire so the
+        # central page can guard against drift before it parses the
+        # sub-segments.
+        assert delivery["schema_version"] == DELIVERY_SCHEMA_VERSION
+        # The four bounded sub-segments (pipeline, integration,
+        # archive, research_runs) are all present and accessible
+        # from the wire so the central delivery-chain card can
+        # render each slot on its own.
+        assert set(delivery) == {
+            "schema_version",
+            "pipeline",
+            "integration",
+            "archive",
+            "research_runs",
+        }
+        for subsegment in (
+            "pipeline",
+            "integration",
+            "archive",
+            "research_runs",
+        ):
+            assert isinstance(delivery[subsegment], dict)
+            assert "state" in delivery[subsegment]
+            assert "reason" in delivery[subsegment]
+
+    def test_failed_delivery_subsegments_never_leak_driver_level_detail(
+        self,
+        client: TestClient,
+        research_center_service: MagicMock,
+    ) -> None:
+        # Every delivery sub-segment carries a controlled failure
+        # with the matching stable reason; the on-wire contract
+        # must surface the reason text but never the driver-level
+        # detail (no path, connection string, host or credential).
+        pipeline = _delivery_pipeline_view(
+            state="failed",
+            status=None,
+            started_at=None,
+            finished_at=None,
+            business_completion_date=None,
+            reason="pipeline_query_failed",
+        )
+        integration = _delivery_integration_view(
+            state="failed",
+            status=None,
+            sample_size=None,
+            producer_status_counts=None,
+            intake_status_counts=None,
+            latest_as_of=None,
+            reason="integration_health_query_failed",
+        )
+        archive = _delivery_archive_view(
+            state="failed",
+            artifact_count=None,
+            latest_as_of=None,
+            latest_run_status=None,
+            reason="archive_query_failed",
+        )
+        research_runs = _delivery_research_runs_view(
+            state="failed",
+            run_count=None,
+            status_counts=None,
+            latest_status=None,
+            latest_started_at=None,
+            latest_finished_at=None,
+            reason="research_runs_query_failed",
+        )
+        research_center_service.get_research_center.return_value = _response_view(
+            breadth=_breadth_view(),
+            data_freshness=_data_freshness_view(),
+            delivery=ResearchCenterDeliveryView(
+                schema_version=DELIVERY_SCHEMA_VERSION,
+                pipeline=pipeline,
+                integration=integration,
+                archive=archive,
+                research_runs=research_runs,
+            ),
+        )
+
+        response = client.get(ENDPOINT)
+
+        assert response.status_code == 200
+        body = response.json()
+        delivery = body["delivery"]
+        # Every sub-segment surfaces its own redacted stable reason
+        # so the central page can render the explicit failure slot
+        # without re-fetching the upstream readers.
+        assert delivery["pipeline"]["state"] == "failed"
+        assert delivery["pipeline"]["reason"] == "pipeline_query_failed"
+        assert delivery["integration"]["state"] == "failed"
+        assert delivery["integration"]["reason"] == "integration_health_query_failed"
+        assert delivery["archive"]["state"] == "failed"
+        assert delivery["archive"]["reason"] == "archive_query_failed"
+        assert delivery["research_runs"]["state"] == "failed"
+        assert delivery["research_runs"]["reason"] == "research_runs_query_failed"
+        # Defence-in-depth: the wire never echoes driver-level
+        # text (path, connection string, credential, host or
+        # Python traceback) regardless of which sub-segment is in
+        # the failed slot.
+        body_text = response.text
+        for forbidden in (
+            "postgres",
+            "postgresql",
+            "secret",
+            "password",
+            "/home/",
+            "Traceback",
+            "Connection refused",
+        ):
+            assert forbidden not in body_text, (
+                f"forbidden token {forbidden!r} leaked via delivery sub-segment"
+            )
+
+
 __all__ = [
     "TestResearchCenterCandidatePoolSummarySerialization",
+    "TestResearchCenterDeliveryEndpointSerialization",
     "TestResearchCenterHappyPath",
     "TestResearchCenterOpenAPI",
     "TestResearchCenterOpportunitySummarySerialization",

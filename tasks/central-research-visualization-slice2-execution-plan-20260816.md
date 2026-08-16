@@ -48,6 +48,21 @@
 - 验收：归档成功、业务准入、研究完成保持独立；复用现有 API/Reader。
 - 依赖：Checkpoint 2。
 
+### Task 3A 拆分
+
+1. **3A-API：交付链只读聚合**
+   - 复用 `PipelineRunQueryService.get_latest_run()`、`ExternalWorkflowQueryService.health()` 及既有 Research Run / Artifact reader；不在中心模块直接访问数据库或 HTTP。
+   - 只投影状态、计数、业务日期/时间和有界归档事实；不透传 artifact URI、payload、宿主路径、凭据或原始异常。
+   - Pipeline、Integration、Archive、Research Run 保持独立子状态，单来源受控失败不得污染其他子状态。
+
+2. **3A-Web：交付链摘要卡**
+   - 使用 Research Center 单一聚合响应渲染交付链卡片，复用 `/operations`、`/automation`、Research History 等既有详情入口。
+   - 覆盖 loading、empty、running、succeeded、partial、failed；不新增浏览器写操作和重复资源请求。
+
+3. **3A-验收与收口**
+   - API focused/full tests、Web focused/full tests、typecheck、production build、OpenAPI drift、架构边界检查和代码代理审查全部通过后，才标记 3A 完成。
+   - 真实 WorkBuddy/JiuwenSwarm 链路仍属于 3C/Gate B，不以本地 mock 代替真实验收。
+
 ## Task 3B：可信度与异常状态
 
 - 结果：交付链卡片补齐 freshness/quality/source/原因和脱敏异常展示。
@@ -63,5 +78,5 @@
 ## 检查点
 
 - Checkpoint 2A：API focused tests、OpenAPI drift、完整 diff 审查通过后再进入 2B（已通过）。
-- Checkpoint 2：2A–2C 的 API/Web focused tests、typecheck、production build 通过后再进入 3A（代码检查已通过，联合验收记录仍待收口）。
+- Checkpoint 2：2A–2C 的 API/Web focused tests、typecheck、production build 通过后再进入 3A（已通过：API 347、Web 201、OpenAPI drift、架构边界检查均通过）。
 - Gate B：3A–3C 证据齐全且用户审核通过后才宣称 MVP 完成。

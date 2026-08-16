@@ -210,12 +210,13 @@ def get_research_center_query_service(
 ) -> ResearchCenterQueryService:
     """Build the application service that backs ``/api/v1/research-center``.
 
-    Composes the five existing read-only application services —
+    Composes the six existing read-only application services —
     :class:`MarketBreadthQueryService`,
     :class:`DataFreshnessQueryService`,
     :class:`ResearchQueryService`,
-    :class:`CandidatePoolQueryService` and
-    :class:`ExternalWorkflowQueryService` — against the
+    :class:`CandidatePoolQueryService`,
+    :class:`ExternalWorkflowQueryService` and
+    :class:`PipelineRunQueryService` — against the
     FastAPI-provided session. The composition happens in the
     application layer (no HTTP fan-out, no new repository); tests
     override this dependency through ``app.dependency_overrides`` to
@@ -244,6 +245,7 @@ def get_research_center_query_service(
             artifact_repository=SqlAlchemyExternalArtifactRepository(session),
             observation_repository=SqlAlchemyExternalObservationRepository(session),
         ),
+        pipeline=PipelineRunQueryService(SqlAlchemyPipelineRunRepository(session)),
     )
 
 

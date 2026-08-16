@@ -2437,6 +2437,362 @@
         "title": "ResearchCenterDataFreshnessResponse",
         "type": "object"
       },
+      "ResearchCenterDeliveryArchiveResponse": {
+        "description": "``delivery.archive`` sub-segment of the contract response (Slice 3A).\n\nMirrors\n:class:`invest_api.application.research_center.ResearchCenterArchiveSummaryView`\nfield-by-field. The sub-segment exposes only bounded source\nfacts the existing\n:meth:`invest_api.application.external_workflows.ExternalWorkflowQueryService.list_artifacts`\nalready produces — the bounded ``artifact_count`` (always\n``<= ARCHIVE_ARTIFACT_LIMIT``), the latest run's\n:attr:`ExternalWorkflowRun.producer_status` value, and the\nmaximum ``created_at.date()`` across the bounded artifact\nslice. No artifact URI, payload, metadata, host path, logical\nURI, content hash, run identifier or credential is projected\nso the central surface remains a thin pointer to the\nexisting detail page.\n\nThe three-state vocabulary\n``available | empty | failed`` mirrors Slice 2A's\n``research`` contract so the central surface never has to\ninvent a fourth \"no artifact yet\" token. ``artifact_count``\nis the real bounded count (or ``None`` under\n``state == \"failed\"``).",
+        "properties": {
+          "artifact_count": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Artifact Count"
+          },
+          "latest_as_of": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Latest As Of"
+          },
+          "latest_run_status": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Latest Run Status"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          },
+          "state": {
+            "enum": [
+              "available",
+              "empty",
+              "failed"
+            ],
+            "title": "State",
+            "type": "string"
+          }
+        },
+        "required": [
+          "state"
+        ],
+        "title": "ResearchCenterDeliveryArchiveResponse",
+        "type": "object"
+      },
+      "ResearchCenterDeliveryIntegrationResponse": {
+        "description": "``delivery.integration`` sub-segment of the contract response (Slice 3A).\n\nMirrors\n:class:`invest_api.application.research_center.ResearchCenterIntegrationSummaryView`\nfield-by-field. The sub-segment exposes only bounded source\nfacts the existing\n:meth:`invest_api.application.external_workflows.ExternalWorkflowQueryService.health`\nalready produces — the bounded ``sample_size`` (always\n``<= INTEGRATION_HEALTH_RUN_LIMIT``), the ``status``\n(``healthy`` / ``degraded``) and the pre-populated\n``producer_status_counts`` / ``intake_status_counts``\ndictionaries — plus the latest ``as_of`` date resolved from\nthe most recent run. No payload blob, source URI, run\nidentifier, host path, producer or producer identifier is\nprojected so the central surface remains a thin pointer to\nthe existing detail page.\n\nThe three-state vocabulary\n``available | empty | failed`` mirrors Slice 2A's\n``research`` contract so the central surface never has to\ninvent a fourth \"no external run yet\" token. Every field\nstays ``None`` whenever ``state == \"failed\"`` so a\nfabricated zero cannot masquerade as \"data unavailable\".",
+        "properties": {
+          "intake_status_counts": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "type": "integer"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Intake Status Counts"
+          },
+          "latest_as_of": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Latest As Of"
+          },
+          "producer_status_counts": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "type": "integer"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Producer Status Counts"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          },
+          "sample_size": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sample Size"
+          },
+          "state": {
+            "enum": [
+              "available",
+              "empty",
+              "failed"
+            ],
+            "title": "State",
+            "type": "string"
+          },
+          "status": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Status"
+          }
+        },
+        "required": [
+          "state"
+        ],
+        "title": "ResearchCenterDeliveryIntegrationResponse",
+        "type": "object"
+      },
+      "ResearchCenterDeliveryPipelineResponse": {
+        "description": "``delivery.pipeline`` sub-segment of the contract response (Slice 3A).\n\nMirrors\n:class:`invest_api.application.research_center.ResearchCenterPipelineSummaryView`\nfield-by-field. The sub-segment exposes only bounded source\nfacts the existing\n:meth:`invest_api.application.pipeline_runs.PipelineRunQueryService.get_latest_run`\nalready produces — the latest run's ``status`` value, the\ntimezone-aware execution timestamps (``started_at`` and\n``finished_at``) and the business completion date (derived\nfrom ``finished_at``). ``error_summary`` is **never**\nprojected so a driver-level message can never leak through\nthe response body.\n\nThe five-state vocabulary\n``available | empty | running | partial | failed`` is the\nonly Slice 3A sub-segment vocabulary that exposes the\nin-flight ``running`` and terminal ``partial`` states in\naddition to the three-state ``available | empty | failed``\nset so the UI can render an in-flight or partially-completed\nrun without misclassifying it. ``available`` is reserved for\nterminal ``succeeded`` runs only — ``failed`` /\n``cancelled`` runs never borrow the ``available`` vocabulary;\n``running`` covers both ``running`` and ``queued`` runs;\n``partial`` covers both ``partial`` and ``cancelled`` runs;\n``failed`` covers a controlled\n:class:`invest_api.application.pipeline_runs.PipelineRunQueryError`\nboundary **or** a terminal ``failed`` run. ``status`` carries\nthe canonical :class:`invest_domain.pipeline.PipelineRunStatus`\nvalue; ``reason`` stays ``None`` whenever\n``state != \"failed\"``, and the only legal ``reason`` value\n(when ``state == \"failed\"``) is\n:data:`invest_api.application.research_center.PIPELINE_FAILED_REASON`\nfor the controlled query-error path.",
+        "properties": {
+          "business_completion_date": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Business Completion Date"
+          },
+          "finished_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Finished At"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          },
+          "started_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Started At"
+          },
+          "state": {
+            "enum": [
+              "available",
+              "empty",
+              "failed",
+              "running",
+              "partial"
+            ],
+            "title": "State",
+            "type": "string"
+          },
+          "status": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Status"
+          }
+        },
+        "required": [
+          "state"
+        ],
+        "title": "ResearchCenterDeliveryPipelineResponse",
+        "type": "object"
+      },
+      "ResearchCenterDeliveryResearchRunsResponse": {
+        "description": "``delivery.research_runs`` sub-segment of the contract response (Slice 3A).\n\nMirrors\n:class:`invest_api.application.research_center.ResearchCenterResearchRunsSummaryView`\nfield-by-field. The sub-segment exposes only bounded source\nfacts the dashboard reader's bounded ``recent_runs`` page\nalready produces — the bounded ``run_count`` (always\n``<= DASHBOARD_RECENT_RUNS_LIMIT``), the\n:class:`invest_domain.research.research_run.ResearchRunStatus`\n-> ``int`` count dictionary, and the most-recent run's\nstatus / start / finish timestamps. No report body,\nevidence bundle, ``error_summary``, ``case_id`` or\n``evidence_pack_id`` is projected so the public surface\nstays a thin pointer to the existing research-runs detail\npage.\n\nThe three-state vocabulary\n``available | empty | failed`` mirrors Slice 2A's\n``research`` contract so the central surface never has to\ninvent a fourth \"no run yet\" token. Every field stays\n``None`` whenever ``state == \"failed\"`` so a fabricated\nzero cannot masquerade as \"data unavailable\".",
+        "properties": {
+          "latest_finished_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Latest Finished At"
+          },
+          "latest_started_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Latest Started At"
+          },
+          "latest_status": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Latest Status"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          },
+          "run_count": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Run Count"
+          },
+          "state": {
+            "enum": [
+              "available",
+              "empty",
+              "failed"
+            ],
+            "title": "State",
+            "type": "string"
+          },
+          "status_counts": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "type": "integer"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Status Counts"
+          }
+        },
+        "required": [
+          "state"
+        ],
+        "title": "ResearchCenterDeliveryResearchRunsResponse",
+        "type": "object"
+      },
+      "ResearchCenterDeliveryResponse": {
+        "description": "``delivery`` sub-segment of the contract response (Slice 3A).\n\nMirrors\n:class:`invest_api.application.research_center.ResearchCenterDeliveryView`\nfield-by-field. The sub-segment bundles the four bounded\nread-only sub-segments (pipeline, integration, archive,\nresearch runs) the central delivery-chain card consumes. Each\nsub-segment is fetched and translated independently so a\nsingle controlled failure on one of the four sources can never\nbleed into the other three; the front-end renders each slot\non its own failure shape.",
+        "properties": {
+          "archive": {
+            "$ref": "#/components/schemas/ResearchCenterDeliveryArchiveResponse"
+          },
+          "integration": {
+            "$ref": "#/components/schemas/ResearchCenterDeliveryIntegrationResponse"
+          },
+          "pipeline": {
+            "$ref": "#/components/schemas/ResearchCenterDeliveryPipelineResponse"
+          },
+          "research_runs": {
+            "$ref": "#/components/schemas/ResearchCenterDeliveryResearchRunsResponse"
+          },
+          "schema_version": {
+            "const": "1.0.0",
+            "title": "Schema Version",
+            "type": "string"
+          }
+        },
+        "required": [
+          "schema_version",
+          "pipeline",
+          "integration",
+          "archive",
+          "research_runs"
+        ],
+        "title": "ResearchCenterDeliveryResponse",
+        "type": "object"
+      },
       "ResearchCenterLatestCaseResponse": {
         "description": "Identity-only projection of the dashboard ``research_summary.latest_case``.\n\nThe contract surfaces only the two fields the central page needs\nfor a deep-link (``case_id``) and a date label (``as_of_date``);\nno additional :class:`ResearchCase` field is exposed here so the\nexisting case-detail endpoint remains the single source of truth\nfor the full case shape.",
         "properties": {
@@ -2769,13 +3125,16 @@
         "type": "object"
       },
       "ResearchCenterResponse": {
-        "description": "Read-only response envelope for the contract endpoint.\n\nMirrors :class:`invest_api.application.research_center.ResearchCenterResponse`\nfield-by-field and adds the two router-owned timestamps\n(``generated_at`` and the propagated ``market.data_freshness.checked_at``).\nBoth timestamps come from the same ``datetime.now(UTC)`` call so a\nsingle response always observes identical values; the application\nservice intentionally does not own a clock. Slice 2A adds the\n``research`` sub-segment alongside the market / capabilities\nbundle without re-shaping any existing field. Slice 2B adds the\n``candidate_pool`` and ``opportunities`` sub-segments on top of\nthat bundle without re-shaping any existing field either.",
+        "description": "Read-only response envelope for the contract endpoint.\n\nMirrors :class:`invest_api.application.research_center.ResearchCenterResponse`\nfield-by-field and adds the two router-owned timestamps\n(``generated_at`` and the propagated ``market.data_freshness.checked_at``).\nBoth timestamps come from the same ``datetime.now(UTC)`` call so a\nsingle response always observes identical values; the application\nservice intentionally does not own a clock. Slice 2A adds the\n``research`` sub-segment alongside the market / capabilities\nbundle without re-shaping any existing field. Slice 2B adds the\n``candidate_pool`` and ``opportunities`` sub-segments on top of\nthat bundle without re-shaping any existing field either. Slice\n3A adds the ``delivery`` sub-segment on top of the same bundle\nwithout re-shaping any existing field.",
         "properties": {
           "candidate_pool": {
             "$ref": "#/components/schemas/ResearchCenterCandidatePoolSummaryResponse"
           },
           "capabilities": {
             "$ref": "#/components/schemas/ResearchCenterCapabilitiesResponse"
+          },
+          "delivery": {
+            "$ref": "#/components/schemas/ResearchCenterDeliveryResponse"
           },
           "generated_at": {
             "format": "date-time",
@@ -2815,7 +3174,8 @@
           "capabilities",
           "research",
           "candidate_pool",
-          "opportunities"
+          "opportunities",
+          "delivery"
         ],
         "title": "ResearchCenterResponse",
         "type": "object"

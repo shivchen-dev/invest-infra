@@ -1,11 +1,12 @@
 """Read-only ``GET /api/v1/research-center`` endpoint.
 
 This router is the only public surface of the central Research
-Visualization Slice module. It composes the five existing read-only
+Visualization Slice module. It composes the six existing read-only
 application services — :class:`MarketBreadthQueryService`,
 :class:`DataFreshnessQueryService`, :class:`ResearchQueryService`,
-:class:`CandidatePoolQueryService` and
-:class:`ExternalWorkflowQueryService` — through the
+:class:`CandidatePoolQueryService`,
+:class:`ExternalWorkflowQueryService` and
+:class:`PipelineRunQueryService` — through the
 :class:`ResearchCenterQueryService` the application layer owns, then
 maps the resulting dataclass view onto the frozen
 :class:`ResearchCenterResponse` Pydantic shape from
@@ -32,10 +33,15 @@ Slice 2A adds the ``research`` sub-segment driven by the existing
 ``ResearchQueryService.get_dashboard`` orchestrator; Slice 2B adds
 the ``candidate_pool`` and ``opportunities`` sub-segments driven by
 the existing ``CandidatePoolQueryService.get_latest`` and
-``ExternalWorkflowQueryService.list_radar`` readers. The router
-simply projects the application-level views onto the new Pydantic
-fields without re-shaping the existing market / capabilities /
-research bundle.
+``ExternalWorkflowQueryService.list_radar`` readers. Slice 3A adds
+the ``delivery`` sub-segment driven by the existing
+``PipelineRunQueryService.get_latest_run`` and the
+``ExternalWorkflowQueryService.health`` /
+``list_runs`` / ``list_artifacts`` /
+``ResearchQueryService.get_dashboard().recent_runs`` readers. The
+router simply projects the application-level views onto the new
+Pydantic fields without re-shaping the existing market /
+capabilities / research / candidate_pool / opportunities bundle.
 """
 
 from __future__ import annotations
@@ -46,18 +52,24 @@ from typing import Annotated
 from fastapi import APIRouter, Depends
 
 from invest_api.application.research_center import (
+    DELIVERY_SCHEMA_VERSION,
     RESEARCH_SCHEMA_VERSION,
+    ResearchCenterArchiveSummaryView,
     ResearchCenterBreadthView,
     ResearchCenterCandidatePoolSummaryView,
     ResearchCenterCapabilitiesView,
     ResearchCenterCapabilityView,
     ResearchCenterDataFreshnessView,
+    ResearchCenterDeliveryView,
+    ResearchCenterIntegrationSummaryView,
     ResearchCenterLatestCaseView,
     ResearchCenterMarketView,
     ResearchCenterObservationView,
     ResearchCenterOpportunitySummaryView,
+    ResearchCenterPipelineSummaryView,
     ResearchCenterQueryService,
     ResearchCenterResearchEvidenceView,
+    ResearchCenterResearchRunsSummaryView,
     ResearchCenterResearchSummaryView,
 )
 from invest_api.application.research_center import (
@@ -70,6 +82,11 @@ from invest_api.schemas.research_center import (
     ResearchCenterCapabilitiesResponse,
     ResearchCenterCapabilityResponse,
     ResearchCenterDataFreshnessResponse,
+    ResearchCenterDeliveryArchiveResponse,
+    ResearchCenterDeliveryIntegrationResponse,
+    ResearchCenterDeliveryPipelineResponse,
+    ResearchCenterDeliveryResearchRunsResponse,
+    ResearchCenterDeliveryResponse,
     ResearchCenterLatestCaseResponse,
     ResearchCenterMarketResponse,
     ResearchCenterObservationResponse,
@@ -290,6 +307,147 @@ def _opportunity_from_view(
     )
 
 
+def _delivery_pipeline_from_view(
+    view: ResearchCenterPipelineSummaryView,
+) -> ResearchCenterDeliveryPipelineResponse:
+    """Translate the Slice 3A pipeline sub-segment onto the Pydantic shape.
+
+    Mirrors
+    :class:`ResearchCenterPipelineSummaryView` field-by-field;
+    the application-level invariant check is enforced there so this
+    mapper stays a thin pass-through. The pipeline sub-segment is
+    the only Slice 3A sub-segment whose ``state`` vocabulary is
+    extended to five states (``available | empty | running |
+    partial | failed``) so the UI can render an in-flight or
+    partially-completed run without misclassifying it.
+    """
+
+    return ResearchCenterDeliveryPipelineResponse(
+        state=view.state,  # type: ignore[arg-type]
+        status=view.status,
+        started_at=view.started_at,
+        finished_at=view.finished_at,
+        business_completion_date=view.business_completion_date,
+        reason=view.reason,
+    )
+
+
+def _delivery_integration_from_view(
+    view: ResearchCenterIntegrationSummaryView,
+) -> ResearchCenterDeliveryIntegrationResponse:
+    """Translate the Slice 3A integration sub-segment onto the Pydantic shape.
+
+    Mirrors
+    :class:`ResearchCenterIntegrationSummaryView` field-by-field;
+    the bounded ``sample_size``, the pre-populated
+    ``producer_status_counts`` / ``intake_status_counts``
+    dictionaries and the latest ``as_of`` date are projected
+    verbatim from the application-level view. No payload blob,
+    source URI, run identifier, host path, producer or producer
+    identifier is projected.
+    """
+
+    return ResearchCenterDeliveryIntegrationResponse(
+        state=view.state,  # type: ignore[arg-type]
+        status=view.status,
+        sample_size=view.sample_size,
+        producer_status_counts=(
+            dict(view.producer_status_counts)
+            if view.producer_status_counts is not None
+            else None
+        ),
+        intake_status_counts=(
+            dict(view.intake_status_counts)
+            if view.intake_status_counts is not None
+            else None
+        ),
+        latest_as_of=view.latest_as_of,
+        reason=view.reason,
+    )
+
+
+def _delivery_archive_from_view(
+    view: ResearchCenterArchiveSummaryView,
+) -> ResearchCenterDeliveryArchiveResponse:
+    """Translate the Slice 3A archive sub-segment onto the Pydantic shape.
+
+    Mirrors
+    :class:`ResearchCenterArchiveSummaryView` field-by-field;
+    the bounded ``artifact_count``, the latest run's
+    :attr:`ExternalWorkflowRun.producer_status` value and the
+    maximum ``created_at.date()`` across the bounded artifact
+    slice are projected verbatim. No artifact URI, payload,
+    metadata, host path, logical URI, content hash, run
+    identifier or credential is projected.
+    """
+
+    return ResearchCenterDeliveryArchiveResponse(
+        state=view.state,  # type: ignore[arg-type]
+        artifact_count=view.artifact_count,
+        latest_as_of=view.latest_as_of,
+        latest_run_status=view.latest_run_status,
+        reason=view.reason,
+    )
+
+
+def _delivery_research_runs_from_view(
+    view: ResearchCenterResearchRunsSummaryView,
+) -> ResearchCenterDeliveryResearchRunsResponse:
+    """Translate the Slice 3A research-runs sub-segment onto the Pydantic shape.
+
+    Mirrors
+    :class:`ResearchCenterResearchRunsSummaryView` field-by-field;
+    the bounded ``run_count``, the pre-populated
+    :class:`ResearchRunStatus` -> ``int`` count dictionary and the
+    most-recent run's status / start / finish timestamps are
+    projected verbatim. No report body, evidence bundle,
+    ``error_summary``, ``case_id`` or ``evidence_pack_id`` is
+    projected.
+    """
+
+    return ResearchCenterDeliveryResearchRunsResponse(
+        state=view.state,  # type: ignore[arg-type]
+        run_count=view.run_count,
+        status_counts=(
+            dict(view.status_counts)
+            if view.status_counts is not None
+            else None
+        ),
+        latest_status=view.latest_status,
+        latest_started_at=view.latest_started_at,
+        latest_finished_at=view.latest_finished_at,
+        reason=view.reason,
+    )
+
+
+def _delivery_from_view(
+    view: ResearchCenterDeliveryView,
+) -> ResearchCenterDeliveryResponse:
+    """Translate the Slice 3A delivery sub-segment onto the Pydantic shape.
+
+    Asserts ``schema_version`` against the application-level frozen
+    constant so any drift between the application view and the
+    public contract raises a generic exception *before* Pydantic
+    serialisation, identical to the top-level guard. The four
+    sub-segments are translated independently so a single
+    controlled failure on one of the four sources can never bleed
+    into the other three.
+    """
+
+    if view.schema_version != DELIVERY_SCHEMA_VERSION:
+        raise RuntimeError(
+            "research-center delivery schema version drift; "
+            "refusing to serialise"
+        )
+    return ResearchCenterDeliveryResponse(
+        schema_version=DELIVERY_SCHEMA_VERSION,  # type: ignore[arg-type]
+        pipeline=_delivery_pipeline_from_view(view.pipeline),
+        integration=_delivery_integration_from_view(view.integration),
+        archive=_delivery_archive_from_view(view.archive),
+        research_runs=_delivery_research_runs_from_view(view.research_runs),
+    )
+
+
 def _response_from_view(
     view: ResearchCenterResponseView,
     *,
@@ -322,6 +480,7 @@ def _response_from_view(
         research=_research_summary_from_view(view.research),
         candidate_pool=_candidate_pool_from_view(view.candidate_pool),
         opportunities=_opportunity_from_view(view.opportunities),
+        delivery=_delivery_from_view(view.delivery),
     )
 
 

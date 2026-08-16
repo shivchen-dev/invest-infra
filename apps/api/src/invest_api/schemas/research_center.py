@@ -12,8 +12,17 @@ sub-segments driven by the existing
 :meth:`invest_api.application.candidate_pool.CandidatePoolQueryService.get_latest`
 and
 :meth:`invest_api.application.external_workflows.ExternalWorkflowQueryService.list_radar`
-readers. Later slices will extend the response without re-shaping the
-existing fields.
+readers. Slice 3A adds the ``delivery`` sub-segment driven by the
+existing personal-daily pipeline run reader
+(:meth:`invest_api.application.pipeline_runs.PipelineRunQueryService.get_latest_run`),
+the external integration health reader
+(:meth:`invest_api.application.external_workflows.ExternalWorkflowQueryService.health`),
+the external artifact reader
+(:meth:`invest_api.application.external_workflows.ExternalWorkflowQueryService.list_artifacts`)
+and the research dashboard's bounded ``recent_runs`` reader
+(:attr:`invest_api.application.research.ResearchDashboardView.recent_runs`).
+Later slices will extend the response without re-shaping the existing
+fields.
 
 Field-level invariants worth restating:
 
@@ -25,6 +34,11 @@ Field-level invariants worth restating:
   (``"1.0.0"``) so the central surface does not invent a parallel
   version; the router asserts the application-level
   :class:`invest_api.application.research_center.RESEARCH_SCHEMA_VERSION`
+  constant before serialising.
+* ``delivery.schema_version`` mirrors the central contract version
+  (``"1.0.0"``) for the same reason; the router asserts the
+  application-level
+  :class:`invest_api.application.research_center.DELIVERY_SCHEMA_VERSION`
   constant before serialising.
 * ``generated_at`` and ``market.data_freshness.checked_at`` are stamped
   by the router from a single UTC wall-clock call so two callers
@@ -75,6 +89,19 @@ Field-level invariants worth restating:
   while ``empty`` is the exact-zero count path. The capability section
   remains frozen to the Slice 1 placeholders so the response shape is
   stable while later slices land.
+* ``delivery`` exposes the four bounded sub-segments the central
+  delivery-chain card consumes: ``pipeline`` (the latest
+  personal-daily :class:`invest_domain.pipeline.PipelineRun` projected
+  as ``available | empty | running | partial | failed``),
+  ``integration`` (the bounded external health dictionary
+  projected as ``available | empty | failed``),
+  ``archive`` (the bounded per-run artifact slice projected as
+  ``available | empty | failed``) and ``research_runs`` (the
+  dashboard's bounded ``recent_runs`` page projected as
+  ``available | empty | failed``). No artifact URI, payload, host
+  path, logical URI, content hash, report body, evidence bundle,
+  ``error_summary`` or credential is projected so the public
+  response stays a thin pointer to the existing detail pages.
 """
 
 from __future__ import annotations
@@ -150,6 +177,34 @@ surface never has to invent a fourth "no observations yet" token;
 ``failed`` is reserved for the controlled
 :class:`sqlalchemy.exc.SQLAlchemyError` boundary raised by the
 external-workflow reader.
+"""
+
+ResearchCenterDeliveryPipelineState = Literal[
+    "available", "empty", "failed", "running", "partial"
+]
+"""Five-state vocabulary for the ``delivery.pipeline.state`` sub-segment.
+
+The pipeline sub-segment is the only Slice 3A sub-segment that
+exposes the in-flight ``running`` and terminal ``partial`` states
+in addition to the three-state
+``available | empty | failed`` set. ``available`` is the
+terminal ``succeeded`` path; ``running`` is the in-flight path
+(``started_at`` set, ``finished_at`` ``None``); ``partial`` is
+the terminal ``partial`` path; ``empty`` is the
+"no run yet" path; ``failed`` is the controlled
+:class:`invest_api.application.pipeline_runs.PipelineRunQueryError`
+boundary.
+"""
+
+ResearchCenterDeliveryThreeState = Literal["available", "empty", "failed"]
+"""Three-state vocabulary reused by the Slice 3A delivery sub-segments.
+
+``integration``, ``archive`` and ``research_runs`` all use this
+exact three-state vocabulary so the front-end can render the
+three slots with a single switch and so the contract stays a
+thin pointer to the existing detail pages. ``empty`` is the
+real zero / no run / no observation path; ``failed`` is the
+controlled error boundary; ``available`` is the populated path.
 """
 
 
@@ -388,6 +443,183 @@ class ResearchCenterOpportunitySummaryResponse(BaseModel):
     reason: str | None = None
 
 
+class ResearchCenterDeliveryPipelineResponse(BaseModel):
+    """``delivery.pipeline`` sub-segment of the contract response (Slice 3A).
+
+    Mirrors
+    :class:`invest_api.application.research_center.ResearchCenterPipelineSummaryView`
+    field-by-field. The sub-segment exposes only bounded source
+    facts the existing
+    :meth:`invest_api.application.pipeline_runs.PipelineRunQueryService.get_latest_run`
+    already produces — the latest run's ``status`` value, the
+    timezone-aware execution timestamps (``started_at`` and
+    ``finished_at``) and the business completion date (derived
+    from ``finished_at``). ``error_summary`` is **never**
+    projected so a driver-level message can never leak through
+    the response body.
+
+    The five-state vocabulary
+    ``available | empty | running | partial | failed`` is the
+    only Slice 3A sub-segment vocabulary that exposes the
+    in-flight ``running`` and terminal ``partial`` states in
+    addition to the three-state ``available | empty | failed``
+    set so the UI can render an in-flight or partially-completed
+    run without misclassifying it. ``available`` is reserved for
+    terminal ``succeeded`` runs only — ``failed`` /
+    ``cancelled`` runs never borrow the ``available`` vocabulary;
+    ``running`` covers both ``running`` and ``queued`` runs;
+    ``partial`` covers both ``partial`` and ``cancelled`` runs;
+    ``failed`` covers a controlled
+    :class:`invest_api.application.pipeline_runs.PipelineRunQueryError`
+    boundary **or** a terminal ``failed`` run. ``status`` carries
+    the canonical :class:`invest_domain.pipeline.PipelineRunStatus`
+    value; ``reason`` stays ``None`` whenever
+    ``state != "failed"``, and the only legal ``reason`` value
+    (when ``state == "failed"``) is
+    :data:`invest_api.application.research_center.PIPELINE_FAILED_REASON`
+    for the controlled query-error path.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    state: ResearchCenterDeliveryPipelineState
+    status: str | None = None
+    started_at: datetime | None = None
+    finished_at: datetime | None = None
+    business_completion_date: date | None = None
+    reason: str | None = None
+
+
+class ResearchCenterDeliveryIntegrationResponse(BaseModel):
+    """``delivery.integration`` sub-segment of the contract response (Slice 3A).
+
+    Mirrors
+    :class:`invest_api.application.research_center.ResearchCenterIntegrationSummaryView`
+    field-by-field. The sub-segment exposes only bounded source
+    facts the existing
+    :meth:`invest_api.application.external_workflows.ExternalWorkflowQueryService.health`
+    already produces — the bounded ``sample_size`` (always
+    ``<= INTEGRATION_HEALTH_RUN_LIMIT``), the ``status``
+    (``healthy`` / ``degraded``) and the pre-populated
+    ``producer_status_counts`` / ``intake_status_counts``
+    dictionaries — plus the latest ``as_of`` date resolved from
+    the most recent run. No payload blob, source URI, run
+    identifier, host path, producer or producer identifier is
+    projected so the central surface remains a thin pointer to
+    the existing detail page.
+
+    The three-state vocabulary
+    ``available | empty | failed`` mirrors Slice 2A's
+    ``research`` contract so the central surface never has to
+    invent a fourth "no external run yet" token. Every field
+    stays ``None`` whenever ``state == "failed"`` so a
+    fabricated zero cannot masquerade as "data unavailable".
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    state: ResearchCenterDeliveryThreeState
+    status: str | None = None
+    sample_size: int | None = None
+    producer_status_counts: dict[str, int] | None = None
+    intake_status_counts: dict[str, int] | None = None
+    latest_as_of: date | None = None
+    reason: str | None = None
+
+
+class ResearchCenterDeliveryArchiveResponse(BaseModel):
+    """``delivery.archive`` sub-segment of the contract response (Slice 3A).
+
+    Mirrors
+    :class:`invest_api.application.research_center.ResearchCenterArchiveSummaryView`
+    field-by-field. The sub-segment exposes only bounded source
+    facts the existing
+    :meth:`invest_api.application.external_workflows.ExternalWorkflowQueryService.list_artifacts`
+    already produces — the bounded ``artifact_count`` (always
+    ``<= ARCHIVE_ARTIFACT_LIMIT``), the latest run's
+    :attr:`ExternalWorkflowRun.producer_status` value, and the
+    maximum ``created_at.date()`` across the bounded artifact
+    slice. No artifact URI, payload, metadata, host path, logical
+    URI, content hash, run identifier or credential is projected
+    so the central surface remains a thin pointer to the
+    existing detail page.
+
+    The three-state vocabulary
+    ``available | empty | failed`` mirrors Slice 2A's
+    ``research`` contract so the central surface never has to
+    invent a fourth "no artifact yet" token. ``artifact_count``
+    is the real bounded count (or ``None`` under
+    ``state == "failed"``).
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    state: ResearchCenterDeliveryThreeState
+    artifact_count: int | None = None
+    latest_as_of: date | None = None
+    latest_run_status: str | None = None
+    reason: str | None = None
+
+
+class ResearchCenterDeliveryResearchRunsResponse(BaseModel):
+    """``delivery.research_runs`` sub-segment of the contract response (Slice 3A).
+
+    Mirrors
+    :class:`invest_api.application.research_center.ResearchCenterResearchRunsSummaryView`
+    field-by-field. The sub-segment exposes only bounded source
+    facts the dashboard reader's bounded ``recent_runs`` page
+    already produces — the bounded ``run_count`` (always
+    ``<= DASHBOARD_RECENT_RUNS_LIMIT``), the
+    :class:`invest_domain.research.research_run.ResearchRunStatus`
+    -> ``int`` count dictionary, and the most-recent run's
+    status / start / finish timestamps. No report body,
+    evidence bundle, ``error_summary``, ``case_id`` or
+    ``evidence_pack_id`` is projected so the public surface
+    stays a thin pointer to the existing research-runs detail
+    page.
+
+    The three-state vocabulary
+    ``available | empty | failed`` mirrors Slice 2A's
+    ``research`` contract so the central surface never has to
+    invent a fourth "no run yet" token. Every field stays
+    ``None`` whenever ``state == "failed"`` so a fabricated
+    zero cannot masquerade as "data unavailable".
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    state: ResearchCenterDeliveryThreeState
+    run_count: int | None = None
+    status_counts: dict[str, int] | None = None
+    latest_status: str | None = None
+    latest_started_at: datetime | None = None
+    latest_finished_at: datetime | None = None
+    reason: str | None = None
+
+
+class ResearchCenterDeliveryResponse(BaseModel):
+    """``delivery`` sub-segment of the contract response (Slice 3A).
+
+    Mirrors
+    :class:`invest_api.application.research_center.ResearchCenterDeliveryView`
+    field-by-field. The sub-segment bundles the four bounded
+    read-only sub-segments (pipeline, integration, archive,
+    research runs) the central delivery-chain card consumes. Each
+    sub-segment is fetched and translated independently so a
+    single controlled failure on one of the four sources can never
+    bleed into the other three; the front-end renders each slot
+    on its own failure shape.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    schema_version: Literal["1.0.0"]
+    pipeline: ResearchCenterDeliveryPipelineResponse
+    integration: ResearchCenterDeliveryIntegrationResponse
+    archive: ResearchCenterDeliveryArchiveResponse
+    research_runs: ResearchCenterDeliveryResearchRunsResponse
+
+
 class ResearchCenterResponse(BaseModel):
     """Read-only response envelope for the contract endpoint.
 
@@ -400,7 +632,9 @@ class ResearchCenterResponse(BaseModel):
     ``research`` sub-segment alongside the market / capabilities
     bundle without re-shaping any existing field. Slice 2B adds the
     ``candidate_pool`` and ``opportunities`` sub-segments on top of
-    that bundle without re-shaping any existing field either.
+    that bundle without re-shaping any existing field either. Slice
+    3A adds the ``delivery`` sub-segment on top of the same bundle
+    without re-shaping any existing field.
     """
 
     model_config = ConfigDict(frozen=True)
@@ -413,6 +647,7 @@ class ResearchCenterResponse(BaseModel):
     research: ResearchCenterResearchSummaryResponse
     candidate_pool: ResearchCenterCandidatePoolSummaryResponse
     opportunities: ResearchCenterOpportunitySummaryResponse
+    delivery: ResearchCenterDeliveryResponse
 
 
 __all__ = [
@@ -423,6 +658,13 @@ __all__ = [
     "ResearchCenterCapabilityResponse",
     "ResearchCenterCapabilityState",
     "ResearchCenterDataFreshnessResponse",
+    "ResearchCenterDeliveryArchiveResponse",
+    "ResearchCenterDeliveryIntegrationResponse",
+    "ResearchCenterDeliveryPipelineResponse",
+    "ResearchCenterDeliveryPipelineState",
+    "ResearchCenterDeliveryResearchRunsResponse",
+    "ResearchCenterDeliveryResponse",
+    "ResearchCenterDeliveryThreeState",
     "ResearchCenterFreshnessStatus",
     "ResearchCenterLatestCaseResponse",
     "ResearchCenterMarketResponse",
