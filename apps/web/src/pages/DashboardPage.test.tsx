@@ -20,6 +20,7 @@ import type {
   ResearchCenterCapabilities,
   ResearchCenterCapability,
   ResearchCenterDataFreshness,
+  ResearchCenterDelivery,
   ResearchCenterMarket,
   ResearchCenterOpportunitySummary,
   ResearchCenterResearchSummary,
@@ -57,10 +58,16 @@ vi.mock("../api/researchCenter", () => ({
   RESEARCH_CENTER_REFETCH_INTERVAL: 60_000,
 }));
 
+vi.mock("../api/integrationHealth", () => ({
+  fetchIntegrationHealth: vi.fn(),
+  integrationHealthQueryKey: ["integration", "health"],
+}));
+
 import {
   fetchCandidatePoolLatest,
   fetchCandidatePoolLatestDiff,
 } from "../api/candidatePool";
+import { fetchIntegrationHealth } from "../api/integrationHealth";
 import { fetchLatestPipelineRun } from "../api/pipelineRuns";
 import {
   useResearchDashboard,
@@ -78,6 +85,7 @@ import { DashboardPage } from "./DashboardPage";
 const mockFetchLatestPool = vi.mocked(fetchCandidatePoolLatest);
 const mockFetchLatestDiff = vi.mocked(fetchCandidatePoolLatestDiff);
 const mockFetchLatestRun = vi.mocked(fetchLatestPipelineRun);
+const mockFetchIntegrationHealth = vi.mocked(fetchIntegrationHealth);
 const mockUseResearchDashboard = vi.mocked(useResearchDashboard);
 const mockUseResearchCenter = vi.mocked(useResearchCenter);
 
@@ -206,6 +214,48 @@ function makeResearchSummary(
   };
 }
 
+function makeDelivery(
+  overrides: Partial<ResearchCenterDelivery> = {},
+): ResearchCenterDelivery {
+  return {
+    schema_version: "1.0.0",
+    pipeline: {
+      state: "empty",
+      status: null,
+      started_at: null,
+      finished_at: null,
+      business_completion_date: null,
+      reason: null,
+    },
+    integration: {
+      state: "empty",
+      status: null,
+      sample_size: null,
+      producer_status_counts: null,
+      intake_status_counts: null,
+      latest_as_of: null,
+      reason: null,
+    },
+    archive: {
+      state: "empty",
+      artifact_count: null,
+      latest_run_status: null,
+      latest_as_of: null,
+      reason: null,
+    },
+    research_runs: {
+      state: "empty",
+      run_count: null,
+      status_counts: null,
+      latest_status: null,
+      latest_started_at: null,
+      latest_finished_at: null,
+      reason: null,
+    },
+    ...overrides,
+  };
+}
+
 function makeResearchCenter(
   overrides: Partial<ResearchCenterResponse> = {},
 ): ResearchCenterResponse {
@@ -218,6 +268,7 @@ function makeResearchCenter(
     candidate_pool: makeCandidatePoolSummary(),
     opportunities: makeOpportunitySummary(),
     research: makeResearchSummary(),
+    delivery: makeDelivery(),
     ...overrides,
   };
 }
@@ -423,6 +474,9 @@ describe("DashboardPage", () => {
       ).toBeInTheDocument();
       expect(
         screen.getByRole("region", { name: "Research Center 子视图" }),
+      ).toBeInTheDocument();
+      expect(
+        screen.getByRole("region", { name: "Research Center 交付链" }),
       ).toBeInTheDocument();
       expect(
         screen.getByRole("region", { name: "候选池变化" }),
@@ -705,6 +759,159 @@ describe("DashboardPage", () => {
       expect(
         within(region).getByText("正在加载 Research Center 子视图"),
       ).toBeInTheDocument();
+    });
+  });
+
+  describe("research-center delivery section", () => {
+    beforeEach(() => {
+      mockFetchLatestPool.mockResolvedValue(makePoolResponse(5));
+      mockFetchLatestDiff.mockResolvedValue(makeDiffResponse());
+      mockFetchLatestRun.mockResolvedValue(makeRunResponse());
+      configureResearchDashboard(successQuery(makeResearchDashboard()));
+    });
+
+    it("mounts the delivery section that consumes the shared Research Center query", async () => {
+      configureResearchCenter(
+        successQuery(
+          makeResearchCenter({
+            delivery: makeDelivery({
+              pipeline: {
+                state: "available",
+                status: "succeeded",
+                started_at: "2026-08-02T01:00:00Z",
+                finished_at: "2026-08-02T01:30:00Z",
+                business_completion_date: "2026-08-02",
+                reason: null,
+              },
+              integration: {
+                state: "available",
+                status: "healthy",
+                sample_size: 5,
+                producer_status_counts: { ok: 5 },
+                intake_status_counts: { imported: 5 },
+                latest_as_of: "2026-08-02",
+                reason: null,
+              },
+              archive: {
+                state: "available",
+                artifact_count: 12,
+                latest_run_status: "succeeded",
+                latest_as_of: "2026-08-02",
+                reason: null,
+              },
+              research_runs: {
+                state: "available",
+                run_count: 3,
+                status_counts: { succeeded: 3 },
+                latest_status: "succeeded",
+                latest_started_at: "2026-08-02T00:00:00Z",
+                latest_finished_at: "2026-08-02T00:30:00Z",
+                reason: null,
+              },
+            }),
+          }),
+        ),
+      );
+
+      renderWithClient();
+
+      const region = await screen.findByRole("region", {
+        name: "Research Center 交付链",
+      });
+      expect(
+        within(region).getByLabelText("Pipeline 只读摘要"),
+      ).toHaveAttribute("data-state", "available");
+      expect(
+        within(region).getByLabelText("Integration Health 只读摘要"),
+      ).toHaveAttribute("data-state", "available");
+      expect(
+        within(region).getByLabelText("Archive 只读摘要"),
+      ).toHaveAttribute("data-state", "available");
+      expect(
+        within(region).getByLabelText("Research Runs 只读摘要"),
+      ).toHaveAttribute("data-state", "available");
+      expect(
+        within(region).getByRole("link", { name: "查看 Pipeline 运行详情" }),
+      ).toHaveAttribute("href", "/operations");
+      expect(
+        within(region).getByRole("link", {
+          name: "查看 Integration Health 详情",
+        }),
+      ).toHaveAttribute("href", "/automation");
+      expect(
+        within(region).getByRole("link", { name: "查看 Archive 详情" }),
+      ).toHaveAttribute("href", "/automation");
+      expect(
+        within(region).getByRole("link", { name: "查看 Research Run 历史" }),
+      ).toHaveAttribute("href", "/research/history");
+    });
+
+    it("renders the shared loading placeholder while the Research Center query is pending", async () => {
+      configureResearchCenter(pendingQuery());
+
+      renderWithClient();
+
+      const region = await screen.findByRole("region", {
+        name: "Research Center 交付链",
+      });
+      expect(
+        within(region).getByText("正在加载 Research Center 交付链"),
+      ).toBeInTheDocument();
+    });
+
+    it("renders the HTTP error state when the Research Center query fails", async () => {
+      configureResearchCenter(
+        errorQuery(new ApiError("research-center 503", 503)),
+      );
+
+      renderWithClient();
+
+      const region = await screen.findByRole("region", {
+        name: "Research Center 交付链",
+      });
+      const alert = await within(region).findByRole("alert");
+      expect(alert).toHaveTextContent("无法读取 Research Center 交付链");
+      expect(
+        within(region).getByText("research-center 503"),
+      ).toBeInTheDocument();
+    });
+
+    it("does not introduce additional fetches or browser writes when rendering the delivery section", async () => {
+      const fetchSpy = vi.fn();
+      const originalFetch = globalThis.fetch;
+      globalThis.fetch = fetchSpy as unknown as typeof fetch;
+      mockFetchIntegrationHealth.mockReturnValue(neverResolvingPromise());
+
+      try {
+        configureResearchCenter(
+          successQuery(
+            makeResearchCenter({
+              delivery: makeDelivery({
+                pipeline: {
+                  state: "available",
+                  status: "succeeded",
+                  started_at: "2026-08-02T01:00:00Z",
+                  finished_at: "2026-08-02T01:30:00Z",
+                  business_completion_date: "2026-08-02",
+                  reason: null,
+                },
+              }),
+            }),
+          ),
+        );
+
+        renderWithClient();
+
+        const region = await screen.findByRole("region", {
+          name: "Research Center 交付链",
+        });
+        expect(
+          within(region).getByLabelText("Pipeline 只读摘要"),
+        ).toHaveAttribute("data-state", "available");
+        expect(fetchSpy).not.toHaveBeenCalled();
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
     });
   });
 

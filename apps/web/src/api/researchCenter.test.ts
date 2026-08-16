@@ -4,6 +4,7 @@ import type {
   ResearchCenterCapabilities,
   ResearchCenterCapability,
   ResearchCenterDataFreshness,
+  ResearchCenterDelivery,
   ResearchCenterMarket,
   ResearchCenterResponse,
 } from "./types";
@@ -93,6 +94,48 @@ function makeMarket(
   };
 }
 
+function makeDelivery(
+  overrides: Partial<ResearchCenterDelivery> = {},
+): ResearchCenterDelivery {
+  return {
+    schema_version: "1.0.0",
+    pipeline: {
+      state: "empty",
+      status: null,
+      started_at: null,
+      finished_at: null,
+      business_completion_date: null,
+      reason: null,
+    },
+    integration: {
+      state: "empty",
+      status: null,
+      sample_size: null,
+      producer_status_counts: null,
+      intake_status_counts: null,
+      latest_as_of: null,
+      reason: null,
+    },
+    archive: {
+      state: "empty",
+      artifact_count: null,
+      latest_run_status: null,
+      latest_as_of: null,
+      reason: null,
+    },
+    research_runs: {
+      state: "empty",
+      run_count: null,
+      status_counts: null,
+      latest_status: null,
+      latest_started_at: null,
+      latest_finished_at: null,
+      reason: null,
+    },
+    ...overrides,
+  };
+}
+
 const EMPTY_CENTER: ResearchCenterResponse = {
   schema_version: "1.0.0",
   generated_at: "2026-08-15T13:00:00Z",
@@ -128,6 +171,7 @@ const EMPTY_CENTER: ResearchCenterResponse = {
       freshness_status: null,
     },
   },
+  delivery: makeDelivery(),
 };
 
 const UNAVAILABLE_FRESHNESS_MISSING_CENTER: ResearchCenterResponse = {
@@ -180,6 +224,7 @@ const UNAVAILABLE_FRESHNESS_MISSING_CENTER: ResearchCenterResponse = {
       freshness_status: null,
     },
   },
+  delivery: makeDelivery(),
 };
 
 describe("fetchResearchCenter", () => {

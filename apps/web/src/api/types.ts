@@ -143,6 +143,21 @@ export type ResearchCenterOpportunitySummary = RequiredDefined<
 export type ResearchCenterResearchSummary = RequiredDefined<
   components["schemas"]["ResearchCenterResearchSummaryResponse"]
 >;
+export type ResearchCenterDeliveryPipeline = RequiredDefined<
+  components["schemas"]["ResearchCenterDeliveryPipelineResponse"]
+>;
+export type ResearchCenterDeliveryIntegration = RequiredDefined<
+  components["schemas"]["ResearchCenterDeliveryIntegrationResponse"]
+>;
+export type ResearchCenterDeliveryArchive = RequiredDefined<
+  components["schemas"]["ResearchCenterDeliveryArchiveResponse"]
+>;
+export type ResearchCenterDeliveryResearchRuns = RequiredDefined<
+  components["schemas"]["ResearchCenterDeliveryResearchRunsResponse"]
+>;
+export type ResearchCenterDelivery = RequiredDefined<
+  components["schemas"]["ResearchCenterDeliveryResponse"]
+>;
 type ResearchCenterBreadthWire = RequiredDefined<
   components["schemas"]["ResearchCenterBreadthResponse"]
 >;
@@ -172,10 +187,11 @@ export type ResearchCenterMarket = Omit<
 };
 export type ResearchCenterResponse = Omit<
   RequiredDefined<components["schemas"]["ResearchCenterResponse"]>,
-  "market" | "candidate_pool" | "opportunities"
+  "market" | "candidate_pool" | "opportunities" | "delivery"
 > & {
   market: ResearchCenterMarket;
   candidate_pool: ResearchCenterCandidatePoolSummary;
   opportunities: ResearchCenterOpportunitySummary;
   research: ResearchCenterResearchSummary;
+  delivery: ResearchCenterDelivery;
 };

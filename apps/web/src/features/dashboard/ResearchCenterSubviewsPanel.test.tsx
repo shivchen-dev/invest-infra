@@ -15,6 +15,7 @@ import type {
   ResearchCenterCapabilities,
   ResearchCenterCapability,
   ResearchCenterDataFreshness,
+  ResearchCenterDelivery,
   ResearchCenterMarket,
   ResearchCenterOpportunitySummary,
   ResearchCenterResearchSummary,
@@ -193,6 +194,48 @@ function makeResearch(
   };
 }
 
+function makeDelivery(
+  overrides: Partial<ResearchCenterDelivery> = {},
+): ResearchCenterDelivery {
+  return {
+    schema_version: "1.0.0",
+    pipeline: {
+      state: "empty",
+      status: null,
+      started_at: null,
+      finished_at: null,
+      business_completion_date: null,
+      reason: null,
+    },
+    integration: {
+      state: "empty",
+      status: null,
+      sample_size: null,
+      producer_status_counts: null,
+      intake_status_counts: null,
+      latest_as_of: null,
+      reason: null,
+    },
+    archive: {
+      state: "empty",
+      artifact_count: null,
+      latest_run_status: null,
+      latest_as_of: null,
+      reason: null,
+    },
+    research_runs: {
+      state: "empty",
+      run_count: null,
+      status_counts: null,
+      latest_status: null,
+      latest_started_at: null,
+      latest_finished_at: null,
+      reason: null,
+    },
+    ...overrides,
+  };
+}
+
 function makeResponse(
   overrides: Partial<ResearchCenterResponse> = {},
 ): ResearchCenterResponse {
@@ -205,6 +248,7 @@ function makeResponse(
     candidate_pool: makeCandidatePool(),
     opportunities: makeOpportunity(),
     research: makeResearch(),
+    delivery: makeDelivery(),
     ...overrides,
   };
 }

@@ -1282,6 +1282,220 @@ export interface components {
       universe_count?: number | null;
     };
     /**
+     * ResearchCenterDeliveryArchiveResponse
+     * @description ``delivery.archive`` sub-segment of the contract response (Slice 3A).
+     *
+     * Mirrors
+     * :class:`invest_api.application.research_center.ResearchCenterArchiveSummaryView`
+     * field-by-field. The sub-segment exposes only bounded source
+     * facts the existing
+     * :meth:`invest_api.application.external_workflows.ExternalWorkflowQueryService.list_artifacts`
+     * already produces — the bounded ``artifact_count`` (always
+     * ``<= ARCHIVE_ARTIFACT_LIMIT``), the latest run's
+     * :attr:`ExternalWorkflowRun.producer_status` value, and the
+     * maximum ``created_at.date()`` across the bounded artifact
+     * slice. No artifact URI, payload, metadata, host path, logical
+     * URI, content hash, run identifier or credential is projected
+     * so the central surface remains a thin pointer to the
+     * existing detail page.
+     *
+     * The three-state vocabulary
+     * ``available | empty | failed`` mirrors Slice 2A's
+     * ``research`` contract so the central surface never has to
+     * invent a fourth "no artifact yet" token. ``artifact_count``
+     * is the real bounded count (or ``None`` under
+     * ``state == "failed"``).
+     */
+    ResearchCenterDeliveryArchiveResponse: {
+      /** Artifact Count */
+      artifact_count?: number | null;
+      /** Latest As Of */
+      latest_as_of?: string | null;
+      /** Latest Run Status */
+      latest_run_status?: string | null;
+      /** Reason */
+      reason?: string | null;
+      /**
+       * State
+       * @enum {string}
+       */
+      state: "available" | "empty" | "failed";
+    };
+    /**
+     * ResearchCenterDeliveryIntegrationResponse
+     * @description ``delivery.integration`` sub-segment of the contract response (Slice 3A).
+     *
+     * Mirrors
+     * :class:`invest_api.application.research_center.ResearchCenterIntegrationSummaryView`
+     * field-by-field. The sub-segment exposes only bounded source
+     * facts the existing
+     * :meth:`invest_api.application.external_workflows.ExternalWorkflowQueryService.health`
+     * already produces — the bounded ``sample_size`` (always
+     * ``<= INTEGRATION_HEALTH_RUN_LIMIT``), the ``status``
+     * (``healthy`` / ``degraded``) and the pre-populated
+     * ``producer_status_counts`` / ``intake_status_counts``
+     * dictionaries — plus the latest ``as_of`` date resolved from
+     * the most recent run. No payload blob, source URI, run
+     * identifier, host path, producer or producer identifier is
+     * projected so the central surface remains a thin pointer to
+     * the existing detail page.
+     *
+     * The three-state vocabulary
+     * ``available | empty | failed`` mirrors Slice 2A's
+     * ``research`` contract so the central surface never has to
+     * invent a fourth "no external run yet" token. Every field
+     * stays ``None`` whenever ``state == "failed"`` so a
+     * fabricated zero cannot masquerade as "data unavailable".
+     */
+    ResearchCenterDeliveryIntegrationResponse: {
+      /** Intake Status Counts */
+      intake_status_counts?: {
+        [key: string]: number;
+      } | null;
+      /** Latest As Of */
+      latest_as_of?: string | null;
+      /** Producer Status Counts */
+      producer_status_counts?: {
+        [key: string]: number;
+      } | null;
+      /** Reason */
+      reason?: string | null;
+      /** Sample Size */
+      sample_size?: number | null;
+      /**
+       * State
+       * @enum {string}
+       */
+      state: "available" | "empty" | "failed";
+      /** Status */
+      status?: string | null;
+    };
+    /**
+     * ResearchCenterDeliveryPipelineResponse
+     * @description ``delivery.pipeline`` sub-segment of the contract response (Slice 3A).
+     *
+     * Mirrors
+     * :class:`invest_api.application.research_center.ResearchCenterPipelineSummaryView`
+     * field-by-field. The sub-segment exposes only bounded source
+     * facts the existing
+     * :meth:`invest_api.application.pipeline_runs.PipelineRunQueryService.get_latest_run`
+     * already produces — the latest run's ``status`` value, the
+     * timezone-aware execution timestamps (``started_at`` and
+     * ``finished_at``) and the business completion date (derived
+     * from ``finished_at``). ``error_summary`` is **never**
+     * projected so a driver-level message can never leak through
+     * the response body.
+     *
+     * The five-state vocabulary
+     * ``available | empty | running | partial | failed`` is the
+     * only Slice 3A sub-segment vocabulary that exposes the
+     * in-flight ``running`` and terminal ``partial`` states in
+     * addition to the three-state ``available | empty | failed``
+     * set so the UI can render an in-flight or partially-completed
+     * run without misclassifying it. ``available`` is reserved for
+     * terminal ``succeeded`` runs only — ``failed`` /
+     * ``cancelled`` runs never borrow the ``available`` vocabulary;
+     * ``running`` covers both ``running`` and ``queued`` runs;
+     * ``partial`` covers both ``partial`` and ``cancelled`` runs;
+     * ``failed`` covers a controlled
+     * :class:`invest_api.application.pipeline_runs.PipelineRunQueryError`
+     * boundary **or** a terminal ``failed`` run. ``status`` carries
+     * the canonical :class:`invest_domain.pipeline.PipelineRunStatus`
+     * value; ``reason`` stays ``None`` whenever
+     * ``state != "failed"``, and the only legal ``reason`` value
+     * (when ``state == "failed"``) is
+     * :data:`invest_api.application.research_center.PIPELINE_FAILED_REASON`
+     * for the controlled query-error path.
+     */
+    ResearchCenterDeliveryPipelineResponse: {
+      /** Business Completion Date */
+      business_completion_date?: string | null;
+      /** Finished At */
+      finished_at?: string | null;
+      /** Reason */
+      reason?: string | null;
+      /** Started At */
+      started_at?: string | null;
+      /**
+       * State
+       * @enum {string}
+       */
+      state: "available" | "empty" | "failed" | "running" | "partial";
+      /** Status */
+      status?: string | null;
+    };
+    /**
+     * ResearchCenterDeliveryResearchRunsResponse
+     * @description ``delivery.research_runs`` sub-segment of the contract response (Slice 3A).
+     *
+     * Mirrors
+     * :class:`invest_api.application.research_center.ResearchCenterResearchRunsSummaryView`
+     * field-by-field. The sub-segment exposes only bounded source
+     * facts the dashboard reader's bounded ``recent_runs`` page
+     * already produces — the bounded ``run_count`` (always
+     * ``<= DASHBOARD_RECENT_RUNS_LIMIT``), the
+     * :class:`invest_domain.research.research_run.ResearchRunStatus`
+     * -> ``int`` count dictionary, and the most-recent run's
+     * status / start / finish timestamps. No report body,
+     * evidence bundle, ``error_summary``, ``case_id`` or
+     * ``evidence_pack_id`` is projected so the public surface
+     * stays a thin pointer to the existing research-runs detail
+     * page.
+     *
+     * The three-state vocabulary
+     * ``available | empty | failed`` mirrors Slice 2A's
+     * ``research`` contract so the central surface never has to
+     * invent a fourth "no run yet" token. Every field stays
+     * ``None`` whenever ``state == "failed"`` so a fabricated
+     * zero cannot masquerade as "data unavailable".
+     */
+    ResearchCenterDeliveryResearchRunsResponse: {
+      /** Latest Finished At */
+      latest_finished_at?: string | null;
+      /** Latest Started At */
+      latest_started_at?: string | null;
+      /** Latest Status */
+      latest_status?: string | null;
+      /** Reason */
+      reason?: string | null;
+      /** Run Count */
+      run_count?: number | null;
+      /**
+       * State
+       * @enum {string}
+       */
+      state: "available" | "empty" | "failed";
+      /** Status Counts */
+      status_counts?: {
+        [key: string]: number;
+      } | null;
+    };
+    /**
+     * ResearchCenterDeliveryResponse
+     * @description ``delivery`` sub-segment of the contract response (Slice 3A).
+     *
+     * Mirrors
+     * :class:`invest_api.application.research_center.ResearchCenterDeliveryView`
+     * field-by-field. The sub-segment bundles the four bounded
+     * read-only sub-segments (pipeline, integration, archive,
+     * research runs) the central delivery-chain card consumes. Each
+     * sub-segment is fetched and translated independently so a
+     * single controlled failure on one of the four sources can never
+     * bleed into the other three; the front-end renders each slot
+     * on its own failure shape.
+     */
+    ResearchCenterDeliveryResponse: {
+      archive: components["schemas"]["ResearchCenterDeliveryArchiveResponse"];
+      integration: components["schemas"]["ResearchCenterDeliveryIntegrationResponse"];
+      pipeline: components["schemas"]["ResearchCenterDeliveryPipelineResponse"];
+      research_runs: components["schemas"]["ResearchCenterDeliveryResearchRunsResponse"];
+      /**
+       * Schema Version
+       * @constant
+       */
+      schema_version: "1.0.0";
+    };
+    /**
      * ResearchCenterLatestCaseResponse
      * @description Identity-only projection of the dashboard ``research_summary.latest_case``.
      *
@@ -1469,11 +1683,14 @@ export interface components {
      * ``research`` sub-segment alongside the market / capabilities
      * bundle without re-shaping any existing field. Slice 2B adds the
      * ``candidate_pool`` and ``opportunities`` sub-segments on top of
-     * that bundle without re-shaping any existing field either.
+     * that bundle without re-shaping any existing field either. Slice
+     * 3A adds the ``delivery`` sub-segment on top of the same bundle
+     * without re-shaping any existing field.
      */
     ResearchCenterResponse: {
       candidate_pool: components["schemas"]["ResearchCenterCandidatePoolSummaryResponse"];
       capabilities: components["schemas"]["ResearchCenterCapabilitiesResponse"];
+      delivery: components["schemas"]["ResearchCenterDeliveryResponse"];
       /**
        * Generated At
        * Format: date-time

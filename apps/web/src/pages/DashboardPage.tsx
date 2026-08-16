@@ -17,6 +17,7 @@ import { TopCandidatesPanel } from "../features/dashboard/TopCandidatesPanel";
 import { LatestRunPanel } from "../features/dashboard/LatestRunPanel";
 import { ResearchCenterMarketStatusPanel } from "../features/dashboard/ResearchCenterMarketStatusPanel";
 import { ResearchCenterSubviewsPanel } from "../features/dashboard/ResearchCenterSubviewsPanel";
+import { ResearchCenterDeliveryPanel } from "../features/dashboard/ResearchCenterDeliveryPanel";
 import { ResearchCockpitSection } from "../features/research/dashboard/ResearchCockpitSection";
 import { LoadingState } from "../components/LoadingState";
 import { formatCount, formatDate } from "../utils/format";
@@ -91,6 +92,16 @@ export function DashboardPage() {
           </span>
         </header>
         <ResearchCenterSubviewsPanel query={researchCenter} />
+      </section>
+
+      <section className="pageSection" aria-label="Research Center 交付链">
+        <header className="sectionHeader">
+          <h3 className="sectionTitle">Research Center 交付链</h3>
+          <span className="sectionMeta">
+            Pipeline · Integration Health · Archive · Research Runs · 来自同一份 Research Center 响应
+          </span>
+        </header>
+        <ResearchCenterDeliveryPanel query={researchCenter} />
       </section>
 
       <section className="pageSection" aria-label="候选池变化">

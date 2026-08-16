@@ -815,6 +815,81 @@ code.inlineCode {
   .researchCenterSubviewsGrid { grid-template-columns: 1fr; }
 }
 
+/* --- Research Center Delivery (Dashboard Slice 3A-Web) --- */
+.researchCenterDeliveryPanel {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.researchCenterDeliveryGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+.researchCenterDeliveryCard {
+  border: 1px solid var(--color-border);
+  border-radius: 12px;
+  background: var(--color-surface-soft);
+  padding: 16px 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+}
+.researchCenterDeliveryCard[data-state="available"] {
+  border-color: var(--color-success-border);
+  background: #f3faf6;
+}
+.researchCenterDeliveryCard[data-state="failed"] {
+  border-color: var(--color-danger-border);
+  background: #fdf2f0;
+}
+.researchCenterDeliveryCard[data-state="empty"] {
+  border-color: var(--color-border);
+}
+.researchCenterDeliveryCard[data-state="running"] {
+  border-color: var(--color-warning-border);
+  background: var(--color-warning-bg);
+}
+.researchCenterDeliveryCard[data-state="partial"] {
+  border-color: var(--color-stale-border);
+  background: var(--color-stale-bg);
+}
+.researchCenterDeliveryCard .sectionHeader {
+  margin-bottom: 0;
+}
+.researchCenterDeliverySummary {
+  margin: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 10px 18px;
+}
+.researchCenterDeliverySummary > div {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+.researchCenterDeliverySummary dt {
+  margin: 0;
+  font-size: 11px;
+  color: var(--color-text-muted);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  font-weight: 600;
+}
+.researchCenterDeliverySummary dd {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--color-text);
+  font-variant-numeric: tabular-nums;
+  word-break: break-word;
+}
+@media (max-width: 720px) {
+  .researchCenterDeliveryGrid { grid-template-columns: 1fr; }
+}
+
 /* --- Candidate Pool Page --- */
 .candidatePoolPage { padding: 16px 4px 32px; }
 
