@@ -2,34 +2,48 @@
 
 Bypasses the HTTP layer and the storage readers: constructs the real
 :class:`ResearchCenterQueryService` against lightweight mocks of the
-three upstream application services so the Slice 1 contract state
+five upstream application services so the Slice 1 contract state
 machine, observation mapping, capability placeholders, ``as_of_date``
 resolution and narrow per-source error boundary can be asserted in
 isolation; Slice 2A adds parallel coverage for the ``research``
 sub-segment projection driven by
-:meth:`ResearchQueryService.get_dashboard`.
+:meth:`ResearchQueryService.get_dashboard`; Slice 2B adds parallel
+coverage for the ``candidate_pool`` and ``opportunities``
+sub-segments driven by
+:meth:`CandidatePoolQueryService.get_latest` and
+:meth:`ExternalWorkflowQueryService.list_radar`.
 
 Only :class:`MarketBreadthQueryError`,
-:class:`DataFreshnessQueryError` and :class:`ResearchQueryError`
-are translated into a missing or failed sub-segment; any other
-exception must propagate so the router's generic error boundary
-stays in charge of sanitising driver-level detail.
+:class:`DataFreshnessQueryError`, :class:`ResearchQueryError`,
+:class:`CandidatePoolQueryError`,
+:class:`CandidatePoolSnapshotMissingError` and a
+:class:`sqlalchemy.exc.SQLAlchemyError` raised by the external
+workflow reader are translated into a missing or failed sub-segment;
+any other exception must propagate so the router's generic error
+boundary stays in charge of sanitising driver-level detail.
 """
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import UTC, date, datetime
 from decimal import Decimal
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 from uuid import UUID, uuid4
 
 import pytest
+from invest_api.application.candidate_pool import (
+    CandidatePoolQueryError,
+    CandidatePoolQueryService,
+    CandidatePoolSnapshotMissingError,
+    LatestCandidatePoolView,
+)
 from invest_api.application.data_freshness import (
     DataFreshnessQueryError,
     DataFreshnessQueryService,
     DataFreshnessView,
 )
+from invest_api.application.external_workflows import ExternalWorkflowQueryService
 from invest_api.application.market_breadth import (
     MarketBreadthQueryError,
     MarketBreadthQueryService,
@@ -45,11 +59,18 @@ from invest_api.application.research import (
     ResearchQueryService,
 )
 from invest_api.application.research_center import (
+    CANDIDATE_POOL_FAILED_REASON,
+    CANDIDATE_POOL_SNAPSHOT_MISSING_REASON,
+    OPPORTUNITY_EMPTY_REASON,
+    OPPORTUNITY_FAILED_REASON,
+    OPPORTUNITY_RADAR_LIMIT,
     RESEARCH_SCHEMA_VERSION,
     SCHEMA_VERSION,
+    ResearchCenterCandidatePoolSummaryView,
     ResearchCenterCapabilitiesView,
     ResearchCenterCapabilityView,
     ResearchCenterLatestCaseView,
+    ResearchCenterOpportunitySummaryView,
     ResearchCenterQueryService,
     ResearchCenterResearchEvidenceView,
     ResearchCenterResearchSummaryView,
@@ -58,7 +79,13 @@ from invest_domain.analytics.market_observations import (
     MarketObservation,
     MarketObservationSnapshot,
 )
+from invest_domain.candidate_pool.models import (
+    CandidatePoolRun,
+    CandidatePoolStatus,
+)
+from invest_domain.integration.models import AdmissionStatus, ExternalObservation
 from invest_domain.research.models import FreshnessStatus, QualityStatus
+from sqlalchemy.exc import OperationalError
 
 _DEFAULT_SNAPSHOT_INPUT_ID: UUID = UUID("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa")
 _DEFAULT_AS_OF: date = date(2026, 8, 15)
@@ -215,6 +242,82 @@ _DEFAULT_RESEARCH_VIEW: ResearchDashboardView = _dashboard_view(
 )
 
 
+def _candidate_pool_run(
+    *,
+    run_id: UUID | None = None,
+    trade_date: date = _DEFAULT_AS_OF,
+    input_row_count: int = 3,
+    included_count: int = 2,
+) -> CandidatePoolRun:
+    return CandidatePoolRun(
+        id=run_id or uuid4(),
+        trade_date=trade_date,
+        algorithm_key="candidate_pool.v1",
+        algorithm_version="v1.0",
+        parameter_set_key="default",
+        parameter_hash="a" * 64,
+        input_snapshot_id=uuid4(),
+        input_row_count=input_row_count,
+        included_count=included_count,
+        status=CandidatePoolStatus.PUBLISHED,
+        created_at=datetime(2026, 7, 31, 9, tzinfo=UTC),
+        published_at=datetime(2026, 7, 31, 10, tzinfo=UTC),
+    )
+
+
+def _candidate_pool_view(
+    *,
+    run: CandidatePoolRun | None = None,
+) -> LatestCandidatePoolView:
+    effective_run = run or _candidate_pool_run()
+    snapshot = SimpleNamespace(
+        id=effective_run.input_snapshot_id,
+        snapshot_date=effective_run.trade_date,
+        instrument_ids=[],
+        content_hash="f" * 64,
+        row_count=effective_run.input_row_count,
+        created_at=datetime(2026, 7, 31, 8, tzinfo=UTC),
+    )
+    item = SimpleNamespace(
+        instrument_id=SimpleNamespace(value=uuid4()),
+        included=True,
+        rank=1,
+        total_score=Decimal("0.85"),
+    )
+    return LatestCandidatePoolView(
+        run=effective_run,
+        snapshot=snapshot,
+        items=(item,),
+        instruments_by_id={},
+    )
+
+
+_DEFAULT_CANDIDATE_POOL_VIEW: LatestCandidatePoolView | None = _candidate_pool_view()
+
+
+def _observation(
+    *,
+    observation_id: UUID | None = None,
+    as_of: date = _DEFAULT_AS_OF,
+    admission_status: AdmissionStatus = AdmissionStatus.PENDING,
+) -> ExternalObservation:
+    return ExternalObservation(
+        observation_id=observation_id or uuid4(),
+        run_id=uuid4(),
+        observed_at=datetime(2026, 8, 14, 9, tzinfo=UTC),
+        as_of=as_of,
+        source_uri="https://example.com/observation",
+        producer="fixture",
+        payload={},
+        admission_status=admission_status,
+    )
+
+
+_DEFAULT_OPPORTUNITY_OBSERVATIONS: list[ExternalObservation] = (
+    _observation(admission_status=AdmissionStatus.ADMITTED),
+)
+
+
 def _service_with(
     *,
     breadth_return: MarketObservationSnapshot | None | Exception = None,
@@ -222,7 +325,20 @@ def _service_with(
     research_return: (
         ResearchDashboardView | None | Exception
     ) = _DEFAULT_RESEARCH_VIEW,
-) -> tuple[ResearchCenterQueryService, MagicMock, MagicMock, MagicMock]:
+    candidate_pool_return: (
+        LatestCandidatePoolView | None | Exception
+    ) = _DEFAULT_CANDIDATE_POOL_VIEW,
+    opportunity_return: (
+        list[ExternalObservation] | None | Exception
+    ) = _DEFAULT_OPPORTUNITY_OBSERVATIONS,
+) -> tuple[
+    ResearchCenterQueryService,
+    MagicMock,
+    MagicMock,
+    MagicMock,
+    MagicMock,
+    MagicMock,
+]:
     breadth = MagicMock(
         name="MarketBreadthQueryService", spec=MarketBreadthQueryService
     )
@@ -231,6 +347,12 @@ def _service_with(
     )
     research = MagicMock(
         name="ResearchQueryService", spec=ResearchQueryService
+    )
+    candidate_pool = MagicMock(
+        name="CandidatePoolQueryService", spec=CandidatePoolQueryService
+    )
+    external_workflows = MagicMock(
+        name="ExternalWorkflowQueryService", spec=ExternalWorkflowQueryService
     )
     if isinstance(breadth_return, Exception):
         breadth.get_latest.side_effect = breadth_return
@@ -244,11 +366,27 @@ def _service_with(
         research.get_dashboard.side_effect = research_return
     else:
         research.get_dashboard.return_value = research_return
+    if isinstance(candidate_pool_return, Exception):
+        candidate_pool.get_latest.side_effect = candidate_pool_return
+    else:
+        candidate_pool.get_latest.return_value = candidate_pool_return
+    if isinstance(opportunity_return, Exception):
+        external_workflows.list_radar.side_effect = opportunity_return
+    else:
+        external_workflows.list_radar.return_value = opportunity_return
     return (
-        ResearchCenterQueryService(breadth, freshness, research),
+        ResearchCenterQueryService(
+            breadth,
+            freshness,
+            research,
+            candidate_pool,
+            external_workflows,
+        ),
         breadth,
         freshness,
         research,
+        candidate_pool,
+        external_workflows,
     )
 
 
@@ -264,7 +402,7 @@ class TestStateDerivation:
     """Coverage for the four-state vocabulary pinned by the Slice 0 contract."""
 
     def test_both_fresh_and_complete_returns_available(self) -> None:
-        service, _, _, _ = _service_with(
+        service, _, _, _, _, _ = _service_with(
             breadth_return=_snapshot(),
             freshness_return=_freshness_view(status="fresh"),
         )
@@ -275,7 +413,7 @@ class TestStateDerivation:
         assert response.market.state == "available"
 
     def test_breadth_missing_with_usable_freshness_returns_partial(self) -> None:
-        service, _, _, _ = _service_with(
+        service, _, _, _, _, _ = _service_with(
             breadth_return=None,
             freshness_return=_freshness_view(status="fresh"),
         )
@@ -292,7 +430,7 @@ class TestStateDerivation:
     def test_freshness_degraded_status_returns_partial(
         self, freshness_status: str
     ) -> None:
-        service, _, _, _ = _service_with(
+        service, _, _, _, _, _ = _service_with(
             breadth_return=_snapshot(),
             freshness_return=_freshness_view(
                 status=freshness_status,
@@ -320,12 +458,12 @@ class TestStateDerivation:
         self, error_side: str
     ) -> None:
         if error_side == "breadth":
-            service, _, _, _ = _service_with(
+            service, _, _, _, _, _ = _service_with(
                 breadth_return=MarketBreadthQueryError("breadth failed"),
                 freshness_return=_freshness_view(status="fresh"),
             )
         else:
-            service, _, _, _ = _service_with(
+            service, _, _, _, _, _ = _service_with(
                 breadth_return=_snapshot(),
                 freshness_return=DataFreshnessQueryError("freshness failed"),
             )
@@ -346,7 +484,7 @@ class TestStateDerivation:
             assert response.market.data_freshness.universe_count is None
 
     def test_both_sources_absent_returns_unavailable(self) -> None:
-        service, _, _, _ = _service_with(
+        service, _, _, _, _, _ = _service_with(
             breadth_return=None,
             freshness_return=_empty_freshness("missing"),
         )
@@ -361,7 +499,7 @@ class TestStateDerivation:
         assert response.market.data_freshness.state == "unavailable"
 
     def test_both_controlled_errors_returns_failed(self) -> None:
-        service, _, _, _ = _service_with(
+        service, _, _, _, _, _ = _service_with(
             breadth_return=MarketBreadthQueryError("breadth failed"),
             freshness_return=DataFreshnessQueryError("freshness failed"),
         )
@@ -410,7 +548,7 @@ class TestStateDerivation:
         breadth: MarketObservationSnapshot | None | MarketBreadthQueryError,
         freshness: DataFreshnessView | DataFreshnessQueryError,
     ) -> None:
-        service, _, _, _ = _service_with(
+        service, _, _, _, _, _ = _service_with(
             breadth_return=breadth, freshness_return=freshness
         )
 
@@ -429,12 +567,12 @@ class TestUnknownExceptionPropagation:
             "driver-level boom: postgres://user:secret@host/db"
         )
         if error_side == "breadth":
-            service, _, _, _ = _service_with(
+            service, _, _, _, _, _ = _service_with(
                 breadth_return=boom,
                 freshness_return=_freshness_view(status="fresh"),
             )
         else:
-            service, _, _, _ = _service_with(
+            service, _, _, _, _, _ = _service_with(
                 breadth_return=_snapshot(),
                 freshness_return=boom,
             )
@@ -475,7 +613,7 @@ class TestObservationMapping:
                 source_ref="market_breadth:2.0.0",
             ),
         )
-        service, _, _, _ = _service_with(
+        service, _, _, _, _, _ = _service_with(
             breadth_return=_snapshot(
                 observations=observations,
                 algorithm_version="2.1.0",
@@ -543,7 +681,7 @@ class TestAsOfDateResolution:
         breadth_snapshot = (
             _snapshot(as_of_date=breadth_as_of) if breadth_as_of else None
         )
-        service, _, _, _ = _service_with(
+        service, _, _, _, _, _ = _service_with(
             breadth_return=breadth_snapshot,
             freshness_return=_freshness_view(
                 status="fresh",
@@ -560,7 +698,7 @@ class TestCapabilityBundle:
     """The Slice 1 capability bundle is frozen until later slices land."""
 
     def test_capability_bundle_matches_frozen_contract(self) -> None:
-        service, _, _, _ = _service_with(
+        service, _, _, _, _, _ = _service_with(
             breadth_return=_snapshot(),
             freshness_return=_freshness_view(status="fresh"),
         )
@@ -611,7 +749,7 @@ class TestResearchSummaryAvailable:
             latest_case=latest_case,
             evidence=evidence,
         )
-        service, _, _, research = _service_with(
+        service, _, _, research, _, _ = _service_with(
             breadth_return=_snapshot(),
             freshness_return=_freshness_view(status="fresh"),
             research_return=research_view,
@@ -659,7 +797,7 @@ class TestResearchSummaryAvailable:
             latest_case=latest_case,
             evidence=evidence,
         )
-        service, _, _, _ = _service_with(
+        service, _, _, _, _, _ = _service_with(
             breadth_return=_snapshot(),
             freshness_return=_freshness_view(status="fresh"),
             research_return=research_view,
@@ -705,7 +843,7 @@ class TestResearchSummaryEmpty:
                 freshness_status=None,
             ),
         )
-        service, _, _, research = _service_with(
+        service, _, _, research, _, _ = _service_with(
             breadth_return=_snapshot(),
             freshness_return=_freshness_view(status="fresh"),
             research_return=research_view,
@@ -750,7 +888,7 @@ class TestResearchSummaryEmpty:
                 freshness_status=None,
             ),
         )
-        service, _, _, _ = _service_with(
+        service, _, _, _, _, _ = _service_with(
             breadth_return=_snapshot(),
             freshness_return=_freshness_view(status="fresh"),
             research_return=research_view,
@@ -770,7 +908,7 @@ class TestResearchSummaryFailure:
     def test_controlled_query_error_emits_failed_with_null_counts(
         self,
     ) -> None:
-        service, _, _, research = _service_with(
+        service, _, _, research, _, _ = _service_with(
             breadth_return=_snapshot(),
             freshness_return=_freshness_view(status="fresh"),
             research_return=ResearchQueryError("connection string: postgres://user:secret@host/db"),
@@ -813,7 +951,7 @@ class TestResearchSummaryDoNotAffectTopLevelState:
     def test_failed_research_keeps_market_state_machine_intact(
         self, breadth_return
     ) -> None:
-        service, _, _, _ = _service_with(
+        service, _, _, _, _, _ = _service_with(
             breadth_return=breadth_return,
             freshness_return=_freshness_view(status="fresh"),
             research_return=ResearchQueryError("boom"),
@@ -836,7 +974,7 @@ class TestResearchUnknownExceptionPropagation:
         boom = RuntimeError(
             "driver-level boom: postgres://user:secret@host/db"
         )
-        service, _, _, _ = _service_with(
+        service, _, _, _, _, _ = _service_with(
             breadth_return=_snapshot(),
             freshness_return=_freshness_view(status="fresh"),
             research_return=boom,
@@ -848,10 +986,376 @@ class TestResearchUnknownExceptionPropagation:
         assert "postgres://user:secret@host/db" in str(exc_info.value)
 
 
+class TestCandidatePoolSummaryAvailable:
+    """``state == "available"`` projects the published run verbatim."""
+
+    def test_available_state_projects_run_identity_and_counts(self) -> None:
+        run = _candidate_pool_run(
+            run_id=uuid4(),
+            trade_date=date(2026, 8, 14),
+            input_row_count=10,
+            included_count=4,
+        )
+        latest_view = _candidate_pool_view(run=run)
+        service, _, _, _, candidate_pool, _ = _service_with(
+            breadth_return=_snapshot(),
+            freshness_return=_freshness_view(status="fresh"),
+            candidate_pool_return=latest_view,
+        )
+
+        response = service.get_research_center()
+
+        sub_view = response.candidate_pool
+        assert isinstance(sub_view, ResearchCenterCandidatePoolSummaryView)
+        assert sub_view.state == "available"
+        assert sub_view.run_id == run.id
+        assert sub_view.trade_date == date(2026, 8, 14)
+        assert sub_view.input_row_count == 10
+        assert sub_view.included_count == 4
+        # Excluded count is derived from the bounded run summary;
+        # we never re-read the items list to compute it.
+        assert sub_view.excluded_count == 6
+        assert sub_view.reason is None
+        candidate_pool.get_latest.assert_called_once_with()
+
+    def test_available_state_with_full_inclusion_has_zero_excluded(self) -> None:
+        run = _candidate_pool_run(input_row_count=5, included_count=5)
+        service, _, _, _, _, _ = _service_with(
+            breadth_return=_snapshot(),
+            freshness_return=_freshness_view(status="fresh"),
+            candidate_pool_return=_candidate_pool_view(run=run),
+        )
+
+        response = service.get_research_center()
+
+        sub_view = response.candidate_pool
+        assert sub_view.state == "available"
+        assert sub_view.excluded_count == 0
+
+
+class TestCandidatePoolSummaryEmpty:
+    """``state == "empty"`` is the explicit "no published run yet" path."""
+
+    def test_get_latest_returning_none_reports_empty_state(self) -> None:
+        service, _, _, _, candidate_pool, _ = _service_with(
+            breadth_return=_snapshot(),
+            freshness_return=_freshness_view(status="fresh"),
+            candidate_pool_return=None,
+        )
+
+        response = service.get_research_center()
+
+        sub_view = response.candidate_pool
+        assert sub_view.state == "empty"
+        # Counts are absent, not zero: zero would mean "data
+        # unavailable" instead of "no published run yet".
+        assert sub_view.run_id is None
+        assert sub_view.trade_date is None
+        assert sub_view.input_row_count is None
+        assert sub_view.included_count is None
+        assert sub_view.excluded_count is None
+        assert sub_view.reason is None
+        candidate_pool.get_latest.assert_called_once_with()
+
+
+class TestCandidatePoolSummaryFailure:
+    """Controlled errors emit ``failed`` with the matching stable reason."""
+
+    def test_query_error_emits_failed_with_candidate_pool_query_failed_reason(
+        self,
+    ) -> None:
+        service, _, _, _, candidate_pool, _ = _service_with(
+            breadth_return=_snapshot(),
+            freshness_return=_freshness_view(status="fresh"),
+            candidate_pool_return=CandidatePoolQueryError(
+                "driver-level boom: postgres://user:secret@host/db"
+            ),
+        )
+
+        response = service.get_research_center()
+
+        sub_view = response.candidate_pool
+        assert sub_view.state == "failed"
+        assert sub_view.reason == CANDIDATE_POOL_FAILED_REASON
+        # Counts are absent, not zero: zero would mean "data
+        # unavailable" instead of "query failed".
+        assert sub_view.run_id is None
+        assert sub_view.trade_date is None
+        assert sub_view.input_row_count is None
+        assert sub_view.included_count is None
+        assert sub_view.excluded_count is None
+        candidate_pool.get_latest.assert_called_once_with()
+        # Defence-in-depth: the original exception's driver-level
+        # detail never leaks into the public response field.
+        assert "postgres" not in str(sub_view)
+        assert "secret" not in str(sub_view)
+
+    def test_snapshot_missing_emits_failed_with_snapshot_missing_reason(
+        self,
+    ) -> None:
+        run_id = uuid4()
+        snapshot_id = uuid4()
+        service, _, _, _, candidate_pool, _ = _service_with(
+            breadth_return=_snapshot(),
+            freshness_return=_freshness_view(status="fresh"),
+            candidate_pool_return=CandidatePoolSnapshotMissingError(
+                snapshot_id=snapshot_id, run_id=run_id
+            ),
+        )
+
+        response = service.get_research_center()
+
+        sub_view = response.candidate_pool
+        assert sub_view.state == "failed"
+        assert sub_view.reason == CANDIDATE_POOL_SNAPSHOT_MISSING_REASON
+        # The identifier fields stay absent so the public response
+        # never echoes the underlying run / snapshot identifiers.
+        assert sub_view.run_id is None
+        assert sub_view.trade_date is None
+        assert "snapshot_id" not in str(sub_view)
+        assert str(snapshot_id) not in str(sub_view)
+        assert str(run_id) not in str(sub_view)
+        candidate_pool.get_latest.assert_called_once_with()
+
+
+class TestCandidatePoolUnknownExceptionPropagation:
+    """Unknown exceptions from the candidate-pool reader propagate."""
+
+    def test_unknown_exception_propagates_through_candidate_pool_path(
+        self,
+    ) -> None:
+        boom = RuntimeError(
+            "driver-level boom: postgres://user:secret@host/db"
+        )
+        service, _, _, _, _, _ = _service_with(
+            breadth_return=_snapshot(),
+            freshness_return=_freshness_view(status="fresh"),
+            candidate_pool_return=boom,
+        )
+
+        with pytest.raises(RuntimeError) as exc_info:
+            service.get_research_center()
+
+        assert "postgres://user:secret@host/db" in str(exc_info.value)
+
+
+class TestOpportunitySummaryAvailable:
+    """``state == "available"`` exposes the bounded radar slice verbatim."""
+
+    def test_available_state_projects_count_latest_as_of_and_status_mix(
+        self,
+    ) -> None:
+        observations = (
+            _observation(
+                observation_id=uuid4(),
+                as_of=date(2026, 8, 14),
+                admission_status=AdmissionStatus.ADMITTED,
+            ),
+            _observation(
+                observation_id=uuid4(),
+                as_of=date(2026, 8, 13),
+                admission_status=AdmissionStatus.PENDING,
+            ),
+            _observation(
+                observation_id=uuid4(),
+                as_of=date(2026, 8, 12),
+                admission_status=AdmissionStatus.REJECTED,
+            ),
+        )
+        service, _, _, _, _, external_workflows = _service_with(
+            breadth_return=_snapshot(),
+            freshness_return=_freshness_view(status="fresh"),
+            opportunity_return=list(observations),
+        )
+
+        response = service.get_research_center()
+
+        sub_view = response.opportunities
+        assert isinstance(sub_view, ResearchCenterOpportunitySummaryView)
+        assert sub_view.state == "available"
+        assert sub_view.observation_count == 3
+        # ``latest_as_of`` resolves to the maximum across the bounded
+        # slice, independent of the observed_at ordering.
+        assert sub_view.latest_as_of == date(2026, 8, 14)
+        assert sub_view.admission_status_counts == {
+            "pending": 1,
+            "corroborated": 0,
+            "admitted": 1,
+            "rejected": 1,
+            "conflict": 0,
+        }
+        assert sub_view.reason is None
+        # Source wiring: the bounded radar call is issued with the
+        # frozen admission-agnostic contract arguments.
+        external_workflows.list_radar.assert_called_once_with(
+            status=None, limit=OPPORTUNITY_RADAR_LIMIT, offset=0
+        )
+
+    def test_admission_status_counts_use_admission_status_keys_only(
+        self,
+    ) -> None:
+        # All observations fall into a single status: every other
+        # AdmissionStatus key is still zero-defaulted so the
+        # front-end never has to special-case missing keys.
+        observations = [
+            _observation(admission_status=AdmissionStatus.CONFLICT)
+            for _ in range(2)
+        ]
+        service, _, _, _, _, _ = _service_with(
+            breadth_return=_snapshot(),
+            freshness_return=_freshness_view(status="fresh"),
+            opportunity_return=observations,
+        )
+
+        response = service.get_research_center()
+
+        sub_view = response.opportunities
+        assert sub_view.state == "available"
+        assert sub_view.observation_count == 2
+        assert sub_view.admission_status_counts == {
+            "pending": 0,
+            "corroborated": 0,
+            "admitted": 0,
+            "rejected": 0,
+            "conflict": 2,
+        }
+
+
+class TestOpportunitySummaryEmpty:
+    """``state == "empty"`` is the explicit zero-observation path."""
+
+    def test_list_radar_returning_empty_reports_empty_with_stable_reason(
+        self,
+    ) -> None:
+        service, _, _, _, _, external_workflows = _service_with(
+            breadth_return=_snapshot(),
+            freshness_return=_freshness_view(status="fresh"),
+            opportunity_return=[],
+        )
+
+        response = service.get_research_center()
+
+        sub_view = response.opportunities
+        assert sub_view.state == "empty"
+        # Real zero is explicit: the radar reader observed zero rows.
+        assert sub_view.observation_count == 0
+        assert sub_view.latest_as_of is None
+        assert sub_view.admission_status_counts is None
+        assert sub_view.reason == OPPORTUNITY_EMPTY_REASON
+        external_workflows.list_radar.assert_called_once_with(
+            status=None, limit=OPPORTUNITY_RADAR_LIMIT, offset=0
+        )
+
+
+class TestOpportunitySummaryFailure:
+    """``SQLAlchemyError`` from the radar reader is translated to ``failed``."""
+
+    def test_sqlalchemy_error_emits_failed_with_opportunity_failed_reason(
+        self,
+    ) -> None:
+        boom = OperationalError(
+            "SELECT", {}, Exception("postgres://user:secret@host/db")
+        )
+        service, _, _, _, _, external_workflows = _service_with(
+            breadth_return=_snapshot(),
+            freshness_return=_freshness_view(status="fresh"),
+            opportunity_return=boom,
+        )
+
+        response = service.get_research_center()
+
+        sub_view = response.opportunities
+        assert sub_view.state == "failed"
+        assert sub_view.reason == OPPORTUNITY_FAILED_REASON
+        # Counts are absent, not zero: zero would mean "data
+        # unavailable" instead of "query failed".
+        assert sub_view.observation_count is None
+        assert sub_view.latest_as_of is None
+        assert sub_view.admission_status_counts is None
+        external_workflows.list_radar.assert_called_once_with(
+            status=None, limit=OPPORTUNITY_RADAR_LIMIT, offset=0
+        )
+        # Defence-in-depth: the original exception's driver-level
+        # detail never leaks into the public response field.
+        assert "postgres" not in str(sub_view)
+        assert "secret" not in str(sub_view)
+
+
+class TestOpportunityUnknownExceptionPropagation:
+    """Unknown exceptions from the radar reader propagate."""
+
+    def test_unknown_exception_propagates_through_opportunity_path(self) -> None:
+        boom = RuntimeError(
+            "driver-level boom: postgres://user:secret@host/db"
+        )
+        service, _, _, _, _, _ = _service_with(
+            breadth_return=_snapshot(),
+            freshness_return=_freshness_view(status="fresh"),
+            opportunity_return=boom,
+        )
+
+        with pytest.raises(RuntimeError) as exc_info:
+            service.get_research_center()
+
+        assert "postgres://user:secret@host/db" in str(exc_info.value)
+
+
+class TestCandidatePoolAndOpportunityDoNotAffectTopLevelState:
+    """The Slice 2B sub-segments must not perturb the Slice 1 state machine."""
+
+    @pytest.mark.parametrize(
+        "candidate_pool_return",
+        [
+            None,
+            CandidatePoolQueryError("boom"),
+            CandidatePoolSnapshotMissingError(
+                snapshot_id=uuid4(), run_id=uuid4()
+            ),
+        ],
+    )
+    @pytest.mark.parametrize(
+        "opportunity_return",
+        [
+            [],
+            [_observation()],
+            OperationalError("SELECT", {}, Exception("boom")),
+        ],
+    )
+    def test_slice_2b_failures_keep_market_state_machine_intact(
+        self,
+        candidate_pool_return,
+        opportunity_return,
+    ) -> None:
+        service, _, _, _, _, _ = _service_with(
+            breadth_return=_snapshot(),
+            freshness_return=_freshness_view(status="fresh"),
+            candidate_pool_return=candidate_pool_return,
+            opportunity_return=opportunity_return,
+        )
+
+        response = service.get_research_center()
+
+        # The Slice 1 four-state derivation is governed solely by the
+        # breadth / freshness sources; the new sub-segments stay out
+        # of the top-level state machine until a later slice folds
+        # them in.
+        assert response.state == "available"
+        assert response.market.state == "available"
+
+
 __all__ = [
     "TestAsOfDateResolution",
+    "TestCandidatePoolAndOpportunityDoNotAffectTopLevelState",
+    "TestCandidatePoolSummaryAvailable",
+    "TestCandidatePoolSummaryEmpty",
+    "TestCandidatePoolSummaryFailure",
+    "TestCandidatePoolUnknownExceptionPropagation",
     "TestCapabilityBundle",
     "TestObservationMapping",
+    "TestOpportunitySummaryAvailable",
+    "TestOpportunitySummaryEmpty",
+    "TestOpportunitySummaryFailure",
+    "TestOpportunityUnknownExceptionPropagation",
     "TestResearchSummaryAvailable",
     "TestResearchSummaryDoNotAffectTopLevelState",
     "TestResearchSummaryEmpty",

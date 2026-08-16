@@ -4,13 +4,16 @@ The endpoint is exercised through ``fastapi.testclient.TestClient`` with
 the application-level :class:`ResearchCenterQueryService` replaced
 through a ``MagicMock`` so the handler can be driven without a live
 PostgreSQL connection (and without composing the breadth / freshness /
-research underlying services). The router-level tests assert the HTTP
-contract:
+research / candidate-pool / opportunity underlying services). The
+router-level tests assert the HTTP contract:
 
 * the response shape is the frozen ``ResearchCenterResponse`` v1 with
   ``schema_version="1.0.0"``;
 * the new Slice 2A ``research`` sub-segment projects the application
   view onto the public JSON shape with ``schema_version="1.0.0"``;
+* the new Slice 2B ``candidate_pool`` and ``opportunities``
+  sub-segments project the application views onto the public JSON
+  shape with the bounded three-state vocabulary;
 * ``generated_at`` and ``market.data_freshness.checked_at`` are stamped
   from the same UTC wall-clock call so two callers hitting the
   endpoint in the same instant observe the same timestamp pair;
@@ -22,6 +25,10 @@ contract:
   empty | failed``) round-trips with explicit ``case_count`` /
   ``run_count`` / ``latest_case`` / ``evidence`` payloads, never with
   fabricated zero values masquerading as "unavailable";
+* the candidate-pool and opportunity sub-segments round-trip with
+  their three-state vocabulary (``available | empty | failed``) and
+  no driver-level detail (path, connection string, credential text)
+  ever leaks into the response body;
 * the OpenAPI declaration exposes a single GET and the response
   ``$ref`` points at ``ResearchCenterResponse``;
 * raw exception / connection-string / credential text never appears in
@@ -32,9 +39,10 @@ contract:
 
 The application-level tests in
 :mod:`tests.test_research_center_service` exercise the service against
-mock breadth / freshness / research services and own the state
-machine, observation mapping, capability placeholders,
-``as_of_date`` resolution and narrow per-source error boundary.
+mock breadth / freshness / research / candidate-pool / external
+workflow services and own the state machine, observation mapping,
+capability placeholders, ``as_of_date`` resolution and narrow
+per-source error boundary.
 """
 
 from __future__ import annotations
@@ -50,12 +58,14 @@ from invest_api.application.research_center import (
     RESEARCH_SCHEMA_VERSION,
     SCHEMA_VERSION,
     ResearchCenterBreadthView,
+    ResearchCenterCandidatePoolSummaryView,
     ResearchCenterCapabilitiesView,
     ResearchCenterCapabilityView,
     ResearchCenterDataFreshnessView,
     ResearchCenterLatestCaseView,
     ResearchCenterMarketView,
     ResearchCenterObservationView,
+    ResearchCenterOpportunitySummaryView,
     ResearchCenterQueryService,
     ResearchCenterResearchEvidenceView,
     ResearchCenterResearchSummaryView,
@@ -180,6 +190,60 @@ def _research_summary_view(
     )
 
 
+_UNSET: object = object()
+"""Sentinel for distinguishing "argument not supplied" from explicit ``None``."""
+
+
+def _candidate_pool_summary_view(
+    *,
+    state: str = "available",
+    run_id=_UNSET,
+    trade_date: date | None = _AS_OF,
+    input_row_count: int | None = 10,
+    included_count: int | None = 4,
+    excluded_count: int | None = 6,
+    reason: str | None = None,
+) -> ResearchCenterCandidatePoolSummaryView:
+    """Return a populated candidate-pool sub-segment view for endpoint tests."""
+
+    return ResearchCenterCandidatePoolSummaryView(
+        state=state,  # type: ignore[arg-type]
+        run_id=uuid4() if run_id is _UNSET else run_id,
+        trade_date=trade_date,
+        input_row_count=input_row_count,
+        included_count=included_count,
+        excluded_count=excluded_count,
+        reason=reason,
+    )
+
+
+def _opportunity_summary_view(
+    *,
+    state: str = "available",
+    observation_count: int | None = 3,
+    latest_as_of: date | None = _AS_OF,
+    admission_status_counts: dict[str, int] | None | object = _UNSET,
+    reason: str | None = None,
+) -> ResearchCenterOpportunitySummaryView:
+    """Return a populated opportunity sub-segment view for endpoint tests."""
+
+    if admission_status_counts is _UNSET:
+        admission_status_counts = {
+            "pending": 1,
+            "corroborated": 0,
+            "admitted": 2,
+            "rejected": 0,
+            "conflict": 0,
+        }
+    return ResearchCenterOpportunitySummaryView(
+        state=state,  # type: ignore[arg-type]
+        observation_count=observation_count,
+        latest_as_of=latest_as_of,
+        admission_status_counts=admission_status_counts,  # type: ignore[arg-type]
+        reason=reason,
+    )
+
+
 def _response_view(
     *,
     state: str = "available",
@@ -189,11 +253,17 @@ def _response_view(
     quality_status: str | None = "complete",
     freshness_status: str | None = "fresh",
     research: ResearchCenterResearchSummaryView | None = None,
+    candidate_pool: ResearchCenterCandidatePoolSummaryView | None = None,
+    opportunities: ResearchCenterOpportunitySummaryView | None = None,
 ) -> ResearchCenterResponseView:
     """Build a populated :class:`ResearchCenterResponse` view for endpoint tests."""
 
     if research is None:
         research = _research_summary_view()
+    if candidate_pool is None:
+        candidate_pool = _candidate_pool_summary_view()
+    if opportunities is None:
+        opportunities = _opportunity_summary_view()
     return ResearchCenterResponseView(
         schema_version=SCHEMA_VERSION,
         state=state,
@@ -207,6 +277,8 @@ def _response_view(
         ),
         capabilities=_capabilities_view(),
         research=research,
+        candidate_pool=candidate_pool,
+        opportunities=opportunities,
     )
 
 
@@ -967,12 +1039,333 @@ class TestResearchCenterResearchDependencyWiring:
         assert body["research"]["case_count"] == 2
 
 
+class TestResearchCenterCandidatePoolSummarySerialization:
+    """Coverage for the Slice 2B ``candidate_pool`` sub-segment on the wire."""
+
+    def test_available_state_projects_run_identity_and_counts(
+        self,
+        client: TestClient,
+        research_center_service: MagicMock,
+    ) -> None:
+        run_id = uuid4()
+        candidate_pool = _candidate_pool_summary_view(
+            state="available",
+            run_id=run_id,
+            trade_date=date(2026, 8, 14),
+            input_row_count=10,
+            included_count=4,
+            excluded_count=6,
+        )
+        research_center_service.get_research_center.return_value = _response_view(
+            breadth=_breadth_view(),
+            data_freshness=_data_freshness_view(),
+            candidate_pool=candidate_pool,
+        )
+
+        body = client.get(ENDPOINT).json()
+
+        sub_body = body["candidate_pool"]
+        assert sub_body["state"] == "available"
+        assert sub_body["run_id"] == str(run_id)
+        assert sub_body["trade_date"] == "2026-08-14"
+        assert sub_body["input_row_count"] == 10
+        assert sub_body["included_count"] == 4
+        assert sub_body["excluded_count"] == 6
+        assert sub_body["reason"] is None
+
+    def test_empty_state_uses_null_fields_not_zero(
+        self,
+        client: TestClient,
+        research_center_service: MagicMock,
+    ) -> None:
+        candidate_pool = _candidate_pool_summary_view(
+            state="empty",
+            run_id=None,
+            trade_date=None,
+            input_row_count=None,
+            included_count=None,
+            excluded_count=None,
+        )
+        research_center_service.get_research_center.return_value = _response_view(
+            breadth=_breadth_view(),
+            data_freshness=_data_freshness_view(),
+            candidate_pool=candidate_pool,
+        )
+
+        body = client.get(ENDPOINT).json()
+
+        sub_body = body["candidate_pool"]
+        assert sub_body["state"] == "empty"
+        # Null fields must remain ``null`` so the UI cannot mistake a
+        # missing published run for a populated zero total.
+        assert sub_body["run_id"] is None
+        assert sub_body["trade_date"] is None
+        assert sub_body["input_row_count"] is None
+        assert sub_body["included_count"] is None
+        assert sub_body["excluded_count"] is None
+
+    def test_failed_query_error_emits_failed_with_query_failed_reason(
+        self,
+        client: TestClient,
+        research_center_service: MagicMock,
+    ) -> None:
+        candidate_pool = _candidate_pool_summary_view(
+            state="failed",
+            run_id=None,
+            trade_date=None,
+            input_row_count=None,
+            included_count=None,
+            excluded_count=None,
+            reason="candidate_pool_query_failed",
+        )
+        research_center_service.get_research_center.return_value = _response_view(
+            breadth=_breadth_view(),
+            data_freshness=_data_freshness_view(),
+            candidate_pool=candidate_pool,
+        )
+
+        body = client.get(ENDPOINT).json()
+
+        sub_body = body["candidate_pool"]
+        assert sub_body["state"] == "failed"
+        assert sub_body["reason"] == "candidate_pool_query_failed"
+        assert sub_body["run_id"] is None
+        assert sub_body["trade_date"] is None
+        assert sub_body["input_row_count"] is None
+        assert sub_body["included_count"] is None
+        assert sub_body["excluded_count"] is None
+
+    def test_failed_snapshot_missing_emits_distinct_reason(
+        self,
+        client: TestClient,
+        research_center_service: MagicMock,
+    ) -> None:
+        candidate_pool = _candidate_pool_summary_view(
+            state="failed",
+            run_id=None,
+            trade_date=None,
+            input_row_count=None,
+            included_count=None,
+            excluded_count=None,
+            reason="candidate_pool_snapshot_missing",
+        )
+        research_center_service.get_research_center.return_value = _response_view(
+            breadth=_breadth_view(),
+            data_freshness=_data_freshness_view(),
+            candidate_pool=candidate_pool,
+        )
+
+        body = client.get(ENDPOINT).json()
+
+        sub_body = body["candidate_pool"]
+        assert sub_body["state"] == "failed"
+        # Distinct reason so the UI can distinguish a snapshot
+        # integrity violation from a regular query failure without
+        # leaking the underlying identifier.
+        assert sub_body["reason"] == "candidate_pool_snapshot_missing"
+
+    def test_subsegment_keys_match_documented_contract(
+        self,
+        client: TestClient,
+        research_center_service: MagicMock,
+    ) -> None:
+        research_center_service.get_research_center.return_value = _response_view(
+            breadth=_breadth_view(),
+            data_freshness=_data_freshness_view(),
+        )
+
+        body = client.get(ENDPOINT).json()
+
+        assert set(body["candidate_pool"]) == {
+            "state",
+            "run_id",
+            "trade_date",
+            "input_row_count",
+            "included_count",
+            "excluded_count",
+            "reason",
+        }
+
+
+class TestResearchCenterOpportunitySummarySerialization:
+    """Coverage for the Slice 2B ``opportunities`` sub-segment on the wire."""
+
+    def test_available_state_projects_count_latest_as_of_and_status_mix(
+        self,
+        client: TestClient,
+        research_center_service: MagicMock,
+    ) -> None:
+        opportunities = _opportunity_summary_view(
+            state="available",
+            observation_count=3,
+            latest_as_of=date(2026, 8, 14),
+            admission_status_counts={
+                "pending": 1,
+                "corroborated": 0,
+                "admitted": 2,
+                "rejected": 0,
+                "conflict": 0,
+            },
+        )
+        research_center_service.get_research_center.return_value = _response_view(
+            breadth=_breadth_view(),
+            data_freshness=_data_freshness_view(),
+            opportunities=opportunities,
+        )
+
+        body = client.get(ENDPOINT).json()
+
+        sub_body = body["opportunities"]
+        assert sub_body["state"] == "available"
+        assert sub_body["observation_count"] == 3
+        assert sub_body["latest_as_of"] == "2026-08-14"
+        assert sub_body["admission_status_counts"] == {
+            "pending": 1,
+            "corroborated": 0,
+            "admitted": 2,
+            "rejected": 0,
+            "conflict": 0,
+        }
+        assert sub_body["reason"] is None
+
+    def test_empty_state_projects_zero_count_and_stable_reason(
+        self,
+        client: TestClient,
+        research_center_service: MagicMock,
+    ) -> None:
+        opportunities = _opportunity_summary_view(
+            state="empty",
+            observation_count=0,
+            latest_as_of=None,
+            admission_status_counts=None,
+            reason="no_opportunity_observations",
+        )
+        research_center_service.get_research_center.return_value = _response_view(
+            breadth=_breadth_view(),
+            data_freshness=_data_freshness_view(),
+            opportunities=opportunities,
+        )
+
+        body = client.get(ENDPOINT).json()
+
+        sub_body = body["opportunities"]
+        assert sub_body["state"] == "empty"
+        # Real zero is explicit: the radar reader observed zero rows.
+        assert sub_body["observation_count"] == 0
+        assert sub_body["latest_as_of"] is None
+        assert sub_body["admission_status_counts"] is None
+        assert sub_body["reason"] == "no_opportunity_observations"
+
+    def test_failed_state_emits_null_counts_not_zero(
+        self,
+        client: TestClient,
+        research_center_service: MagicMock,
+    ) -> None:
+        opportunities = _opportunity_summary_view(
+            state="failed",
+            observation_count=None,
+            latest_as_of=None,
+            admission_status_counts=None,
+            reason="opportunity_radar_query_failed",
+        )
+        research_center_service.get_research_center.return_value = _response_view(
+            breadth=_breadth_view(),
+            data_freshness=_data_freshness_view(),
+            opportunities=opportunities,
+        )
+
+        body = client.get(ENDPOINT).json()
+
+        sub_body = body["opportunities"]
+        assert sub_body["state"] == "failed"
+        assert sub_body["reason"] == "opportunity_radar_query_failed"
+        # Null counts must remain ``null`` so the UI cannot mistake a
+        # controlled failure for "data unavailable".
+        assert sub_body["observation_count"] is None
+        assert sub_body["latest_as_of"] is None
+        assert sub_body["admission_status_counts"] is None
+
+    def test_subsegment_keys_match_documented_contract(
+        self,
+        client: TestClient,
+        research_center_service: MagicMock,
+    ) -> None:
+        research_center_service.get_research_center.return_value = _response_view(
+            breadth=_breadth_view(),
+            data_freshness=_data_freshness_view(),
+        )
+
+        body = client.get(ENDPOINT).json()
+
+        assert set(body["opportunities"]) == {
+            "state",
+            "observation_count",
+            "latest_as_of",
+            "admission_status_counts",
+            "reason",
+        }
+
+
+class TestResearchCenterSubsegmentFailureLeakage:
+    """The failure sub-segments must never echo driver-level detail."""
+
+    @pytest.mark.parametrize(
+        "subsegment",
+        ["candidate_pool", "opportunities"],
+    )
+    def test_failed_subsegments_never_echo_driver_level_detail(
+        self,
+        client: TestClient,
+        research_center_service: MagicMock,
+        subsegment: str,
+    ) -> None:
+        candidate_pool = _candidate_pool_summary_view(
+            state="failed",
+            run_id=None,
+            trade_date=None,
+            input_row_count=None,
+            included_count=None,
+            excluded_count=None,
+            reason="candidate_pool_query_failed",
+        )
+        opportunities = _opportunity_summary_view(
+            state="failed",
+            observation_count=None,
+            latest_as_of=None,
+            admission_status_counts=None,
+            reason="opportunity_radar_query_failed",
+        )
+        research_center_service.get_research_center.return_value = _response_view(
+            breadth=_breadth_view(),
+            data_freshness=_data_freshness_view(),
+            candidate_pool=candidate_pool,
+            opportunities=opportunities,
+        )
+
+        body_text = client.get(ENDPOINT).text
+
+        for forbidden in (
+            "postgres",
+            "postgresql",
+            "secret",
+            "password",
+            "Traceback",
+            "/home/",
+        ):
+            assert forbidden not in body_text, (
+                f"forbidden token {forbidden!r} leaked via {subsegment}"
+            )
+
+
 __all__ = [
+    "TestResearchCenterCandidatePoolSummarySerialization",
     "TestResearchCenterHappyPath",
     "TestResearchCenterOpenAPI",
+    "TestResearchCenterOpportunitySummarySerialization",
     "TestResearchCenterResearchDependencyWiring",
     "TestResearchCenterResearchSummarySerialization",
     "TestResearchCenterServiceWiring",
     "TestResearchCenterStateSerialization",
+    "TestResearchCenterSubsegmentFailureLeakage",
     "TestResearchCenterUnknownException",
 ]

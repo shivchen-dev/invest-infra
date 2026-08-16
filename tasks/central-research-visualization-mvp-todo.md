@@ -61,9 +61,9 @@
   - 验证：Application/API focused tests。
   - 依赖：Gate A。
   - 预计范围：M，3–5 个文件。
-- [ ] 2.2 聚合内部候选与外部机会摘要
+- [x] 2.2 聚合内部候选与外部机会摘要
   - 验收：Candidate Pool、ExternalObservation、Admission 三类状态不混用。
-  - 验证：Application/API focused tests。
+  - 验证：Application/API focused tests、全量 API tests、Ruff、OpenAPI drift、架构边界检查。
   - 依赖：Gate A。
   - 预计范围：M，3–5 个文件。
 - [ ] 2.3 重组中心首页与详情入口

@@ -27,10 +27,12 @@
 - 验收：count、latest case、run/evidence 状态来自真实 Reader；数据库查询异常转为稳定失败状态；策略/持仓字段不混入。
 - 验证：API application/endpoint focused tests；OpenAPI 生成与 drift check。
 
-## Task 2B：候选与外部机会摘要
+## Task 2B：候选与外部机会摘要（已完成代码交付）
 
-- 结果：中心分别展示内部 Candidate Pool 与外部 Opportunity Radar 的摘要和来源状态。
-- 验收：CandidatePool、ExternalObservation、Admission 三类状态不混用；空/部分/失败可解释。
+- 结果：中心分别返回内部 Candidate Pool 最新发布运行摘要与外部 Opportunity Radar 有界观察摘要；不改变既有 market/research 顶层状态。
+- 验收：Candidate Pool、ExternalObservation、Admission 三类状态不混用；Candidate Pool 与 Opportunity Radar 各自使用 `available | empty | failed`；Opportunity Radar 查询固定 `limit=50`，仅投影数量、最新 `as_of` 和准入状态计数。
+- 异常：Candidate Pool 查询/快照完整性异常与外部 SQLAlchemy 查询异常转换为脱敏失败状态；未知程序异常继续抛出。
+- 验证：Application/API focused tests、全量 API tests、Ruff、OpenAPI drift、架构边界检查。
 - 依赖：2A；复用既有查询服务和 DTO。
 
 ## Task 2C：中心首页整合
@@ -59,6 +61,6 @@
 
 ## 检查点
 
-- Checkpoint 2A：API focused tests、OpenAPI drift、完整 diff 审查通过后再进入 2B。
+- Checkpoint 2A：API focused tests、OpenAPI drift、完整 diff 审查通过后再进入 2B（已通过）。
 - Checkpoint 2：2A–2C 的 API/Web focused tests、typecheck、production build 通过后再进入 3A。
 - Gate B：3A–3C 证据齐全且用户审核通过后才宣称 MVP 完成。

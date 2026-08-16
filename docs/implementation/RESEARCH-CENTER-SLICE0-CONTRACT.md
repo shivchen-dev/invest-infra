@@ -174,3 +174,13 @@ Slice 1 不直接调用已有 HTTP 端点做服务内 fan-out；聚合 Module �
 Slice 2A 在不改变既有 `market`、`capabilities` 和顶层状态语义的前提下，向 `ResearchCenterResponse` 增加必填只读字段 `research`。该字段是既有 `ResearchQueryService.get_dashboard()` 的受限投影，包含 `case_count`、`run_count`、最新 Case 身份/日期和 Evidence 状态；不包含策略、持仓或投资结论。
 
 `research.state` 只允许 `available | empty | failed`：成功读取且 Case 数为零时为 `empty`，受控研究查询失败时为 `failed`，失败状态的计数必须为 `null`。该增量通过独立 schema `schema_version` 和 OpenAPI drift check 管理，Slice 3 及后续切片仍不得借此字段扩张其他业务范围。
+
+## 12. Slice 2B 合同增量
+
+Slice 2B 在不改变既有 `market`、`capabilities`、`research` 和顶层状态语义的前提下，向 `ResearchCenterResponse` 增加必填只读字段 `candidate_pool` 与 `opportunities`。
+
+`candidate_pool` 复用 `CandidatePoolQueryService.get_latest()`，只投影最新已发布运行的身份、交易日和输入/纳入/排除计数；没有已发布运行时为 `empty`，受控查询或快照完整性异常时为 `failed`，失败状态不返回计数或运行身份。
+
+`opportunities` 复用 `ExternalWorkflowQueryService.list_radar(status=None, limit=50, offset=0)`，只投影有界观察数量、最新 `as_of` 和按既有 `AdmissionStatus` 值统计的准入状态计数；零观察为 `empty`，受控 SQLAlchemy 查询异常为 `failed`，失败状态不返回计数。两字段均只允许 `available | empty | failed`，未知程序异常继续交由统一错误边界处理。
+
+该增量不透传 payload、source URI、观察身份、宿主机路径、凭据或原始异常文本；不新增数据库对象、不执行 HTTP fan-out、不引入写操作，并通过 OpenAPI drift check 固定响应形状。

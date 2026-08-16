@@ -7,8 +7,13 @@ segment (Market Breadth + Data Freshness composition) and the
 deterministic capability placeholders; Slice 2A adds the ``research``
 sub-segment driven by the existing
 :meth:`invest_api.application.research.ResearchQueryService.get_dashboard`
-orchestration. Later slices will extend the response without
-re-shaping the existing fields.
+orchestration. Slice 2B adds the ``candidate_pool`` and ``opportunities``
+sub-segments driven by the existing
+:meth:`invest_api.application.candidate_pool.CandidatePoolQueryService.get_latest`
+and
+:meth:`invest_api.application.external_workflows.ExternalWorkflowQueryService.list_radar`
+readers. Later slices will extend the response without re-shaping the
+existing fields.
 
 Field-level invariants worth restating:
 
@@ -37,6 +42,31 @@ Field-level invariants worth restating:
   carries only ``case_id`` (identity) and ``as_of_date`` (date) — the
   front-end can deep-link into the existing case-detail page for the
   full shape.
+* ``candidate_pool`` exposes only bounded source facts the existing
+  :class:`invest_api.application.candidate_pool.LatestCandidatePoolView`
+  already produces: the latest published run identity
+  (``run_id``, ``trade_date``) and the row/included/excluded counts.
+  No investment conclusions, no per-instrument metrics and no
+  policy hash are projected. The sub-segment uses the same
+  three-state vocabulary (``available | empty | failed``) so the
+  UI cannot mistake a populated zero total for "data unavailable";
+  ``failed`` is reserved for the controlled
+  :class:`invest_api.application.candidate_pool.CandidatePoolQueryError`
+  and
+  :class:`invest_api.application.candidate_pool.CandidatePoolSnapshotMissingError`
+  boundaries, while ``empty`` is the explicit "no published run yet"
+  path.
+* ``opportunities`` exposes a bounded observation count (always
+  ``<= OPPORTUNITY_RADAR_LIMIT``), the latest ``as_of`` date when
+  at least one observation exists, and admission-status counts keyed
+  by the existing
+  :class:`invest_domain.integration.AdmissionStatus` values so the
+  front-end can render the admission mix without reaching into the
+  underlying observation list. The sub-segment uses the same
+  three-state vocabulary and ``failed`` is reserved for the
+  controlled
+  :class:`sqlalchemy.exc.SQLAlchemyError` boundary raised by the
+  external-workflow reader.
 * The ``research`` sub-segment uses its own three-state vocabulary
   (``available | empty | failed``) so the dashboard never confuses an
   explicit ``0`` total with "data unavailable"; ``failed`` is reserved
@@ -94,6 +124,32 @@ ResearchCenterResearchEvidenceState = Literal["empty", "available"]
 Mirrors the dashboard ``evidence_status.state`` verbatim; the front
 end can render the same empty / available distinction without a
 second vocabulary.
+"""
+
+ResearchCenterCandidatePoolState = Literal["available", "empty", "failed"]
+"""Three-state vocabulary for the ``candidate_pool.state`` sub-segment.
+
+Mirrors the Slice 2A ``research.state`` vocabulary so the central
+surface never has to invent a fourth "no published run yet" token;
+``available`` means the latest published run was found,
+``empty`` means :meth:`CandidatePoolQueryService.get_latest`
+returned ``None``, and ``failed`` is reserved for the controlled
+:class:`invest_api.application.candidate_pool.CandidatePoolQueryError`
+and
+:class:`invest_api.application.candidate_pool.CandidatePoolSnapshotMissingError`
+boundaries.
+"""
+
+ResearchCenterOpportunityState = Literal["available", "empty", "failed"]
+"""Three-state vocabulary for the ``opportunities.state`` sub-segment.
+
+Mirrors the Slice 2A ``research.state`` vocabulary so the central
+surface never has to invent a fourth "no observations yet" token;
+``available`` means the bounded radar slice is non-empty,
+``empty`` means the radar reader returned an empty sequence, and
+``failed`` is reserved for the controlled
+:class:`sqlalchemy.exc.SQLAlchemyError` boundary raised by the
+external-workflow reader.
 """
 
 
@@ -269,6 +325,69 @@ class ResearchCenterResearchSummaryResponse(BaseModel):
     evidence: ResearchCenterResearchEvidenceResponse
 
 
+class ResearchCenterCandidatePoolSummaryResponse(BaseModel):
+    """``candidate_pool`` sub-segment of the contract response (Slice 2B).
+
+    Mirrors
+    :class:`invest_api.application.research_center.ResearchCenterCandidatePoolSummaryView`
+    field-by-field. The sub-segment exposes only bounded source
+    facts the existing
+    :class:`invest_api.application.candidate_pool.LatestCandidatePoolView`
+    already produces — the latest published run identity and the
+    row/included/excluded counts. No investment conclusions,
+    per-instrument metrics or policy hashes are projected.
+
+    The three-state vocabulary mirrors Slice 2A's ``research``
+    contract so the central surface never has to invent a fourth
+    "no published run yet" token. ``run_id``, ``trade_date``,
+    ``input_row_count``, ``included_count`` and ``excluded_count``
+    stay ``None`` whenever ``state != "available"`` so a fabricated
+    zero cannot masquerade as "data unavailable".
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    state: ResearchCenterCandidatePoolState
+    run_id: UUID | None = None
+    trade_date: date | None = None
+    input_row_count: int | None = None
+    included_count: int | None = None
+    excluded_count: int | None = None
+    reason: str | None = None
+
+
+class ResearchCenterOpportunitySummaryResponse(BaseModel):
+    """``opportunities`` sub-segment of the contract response (Slice 2B).
+
+    Mirrors
+    :class:`invest_api.application.research_center.ResearchCenterOpportunitySummaryView`
+    field-by-field. The sub-segment exposes only bounded source
+    facts the existing
+    :meth:`invest_api.application.external_workflows.ExternalWorkflowQueryService.list_radar`
+    already produces — a bounded observation count, the latest
+    ``as_of`` date when at least one observation exists, and an
+    admission-status count dictionary keyed by the existing
+    :class:`invest_domain.integration.AdmissionStatus` values.
+
+    No payload blobs, source URIs or per-observation identifiers are
+    projected so the central surface remains a thin pointer to the
+    existing detail page. The three-state vocabulary mirrors Slice
+    2A's ``research`` contract so the central surface never has to
+    invent a fourth "no observations yet" token. ``observation_count``,
+    ``latest_as_of`` and ``admission_status_counts`` stay ``None``
+    whenever ``state != "available"`` so a fabricated zero cannot
+    masquerade as "data unavailable".
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    state: ResearchCenterOpportunityState
+    observation_count: int | None = None
+    latest_as_of: date | None = None
+    admission_status_counts: dict[str, int] | None = None
+    reason: str | None = None
+
+
 class ResearchCenterResponse(BaseModel):
     """Read-only response envelope for the contract endpoint.
 
@@ -279,7 +398,9 @@ class ResearchCenterResponse(BaseModel):
     single response always observes identical values; the application
     service intentionally does not own a clock. Slice 2A adds the
     ``research`` sub-segment alongside the market / capabilities
-    bundle without re-shaping any existing field.
+    bundle without re-shaping any existing field. Slice 2B adds the
+    ``candidate_pool`` and ``opportunities`` sub-segments on top of
+    that bundle without re-shaping any existing field either.
     """
 
     model_config = ConfigDict(frozen=True)
@@ -290,10 +411,14 @@ class ResearchCenterResponse(BaseModel):
     market: ResearchCenterMarketResponse
     capabilities: ResearchCenterCapabilitiesResponse
     research: ResearchCenterResearchSummaryResponse
+    candidate_pool: ResearchCenterCandidatePoolSummaryResponse
+    opportunities: ResearchCenterOpportunitySummaryResponse
 
 
 __all__ = [
     "ResearchCenterBreadthResponse",
+    "ResearchCenterCandidatePoolState",
+    "ResearchCenterCandidatePoolSummaryResponse",
     "ResearchCenterCapabilitiesResponse",
     "ResearchCenterCapabilityResponse",
     "ResearchCenterCapabilityState",
@@ -303,6 +428,8 @@ __all__ = [
     "ResearchCenterMarketResponse",
     "ResearchCenterMarketState",
     "ResearchCenterObservationResponse",
+    "ResearchCenterOpportunityState",
+    "ResearchCenterOpportunitySummaryResponse",
     "ResearchCenterResearchEvidenceResponse",
     "ResearchCenterResearchEvidenceState",
     "ResearchCenterResearchState",

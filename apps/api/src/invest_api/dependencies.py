@@ -210,14 +210,16 @@ def get_research_center_query_service(
 ) -> ResearchCenterQueryService:
     """Build the application service that backs ``/api/v1/research-center``.
 
-    Composes the three existing read-only application services —
+    Composes the five existing read-only application services —
     :class:`MarketBreadthQueryService`,
-    :class:`DataFreshnessQueryService` and
-    :class:`ResearchQueryService` — against the FastAPI-provided
-    session. The composition happens in the application layer (no HTTP
-    fan-out, no new repository); tests override this dependency
-    through ``app.dependency_overrides`` to inject a mock service
-    without touching the storage layer.
+    :class:`DataFreshnessQueryService`,
+    :class:`ResearchQueryService`,
+    :class:`CandidatePoolQueryService` and
+    :class:`ExternalWorkflowQueryService` — against the
+    FastAPI-provided session. The composition happens in the
+    application layer (no HTTP fan-out, no new repository); tests
+    override this dependency through ``app.dependency_overrides`` to
+    inject a mock service without touching the storage layer.
     """
 
     return ResearchCenterQueryService(
@@ -230,6 +232,17 @@ def get_research_center_query_service(
             evidence_repository=SqlAlchemyEvidencePackRepository(session),
             run_repository=SqlAlchemyResearchRunRepository(session),
             result_repository=SqlAlchemyResearchResultRepository(session),
+        ),
+        candidate_pool=CandidatePoolQueryService(
+            run_repository=SqlAlchemyCandidatePoolRunRepository(session),
+            item_repository=SqlAlchemyCandidatePoolItemRepository(session),
+            snapshot_repository=InputSnapshotRepository(session),
+            instrument_repository=SqlAlchemyInstrumentRepository(session),
+        ),
+        external_workflows=ExternalWorkflowQueryService(
+            run_repository=SqlAlchemyExternalWorkflowRunRepository(session),
+            artifact_repository=SqlAlchemyExternalArtifactRepository(session),
+            observation_repository=SqlAlchemyExternalObservationRepository(session),
         ),
     )
 

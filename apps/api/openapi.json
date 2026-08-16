@@ -2215,6 +2215,93 @@
         "title": "ResearchCenterBreadthResponse",
         "type": "object"
       },
+      "ResearchCenterCandidatePoolSummaryResponse": {
+        "description": "``candidate_pool`` sub-segment of the contract response (Slice 2B).\n\nMirrors\n:class:`invest_api.application.research_center.ResearchCenterCandidatePoolSummaryView`\nfield-by-field. The sub-segment exposes only bounded source\nfacts the existing\n:class:`invest_api.application.candidate_pool.LatestCandidatePoolView`\nalready produces — the latest published run identity and the\nrow/included/excluded counts. No investment conclusions,\nper-instrument metrics or policy hashes are projected.\n\nThe three-state vocabulary mirrors Slice 2A's ``research``\ncontract so the central surface never has to invent a fourth\n\"no published run yet\" token. ``run_id``, ``trade_date``,\n``input_row_count``, ``included_count`` and ``excluded_count``\nstay ``None`` whenever ``state != \"available\"`` so a fabricated\nzero cannot masquerade as \"data unavailable\".",
+        "properties": {
+          "excluded_count": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Excluded Count"
+          },
+          "included_count": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Included Count"
+          },
+          "input_row_count": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Input Row Count"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          },
+          "run_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Run Id"
+          },
+          "state": {
+            "enum": [
+              "available",
+              "empty",
+              "failed"
+            ],
+            "title": "State",
+            "type": "string"
+          },
+          "trade_date": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Trade Date"
+          }
+        },
+        "required": [
+          "state"
+        ],
+        "title": "ResearchCenterCandidatePoolSummaryResponse",
+        "type": "object"
+      },
       "ResearchCenterCapabilitiesResponse": {
         "description": "Slice 1 capability bundle — frozen until later slices land.",
         "properties": {
@@ -2501,6 +2588,73 @@
         "title": "ResearchCenterObservationResponse",
         "type": "object"
       },
+      "ResearchCenterOpportunitySummaryResponse": {
+        "description": "``opportunities`` sub-segment of the contract response (Slice 2B).\n\nMirrors\n:class:`invest_api.application.research_center.ResearchCenterOpportunitySummaryView`\nfield-by-field. The sub-segment exposes only bounded source\nfacts the existing\n:meth:`invest_api.application.external_workflows.ExternalWorkflowQueryService.list_radar`\nalready produces — a bounded observation count, the latest\n``as_of`` date when at least one observation exists, and an\nadmission-status count dictionary keyed by the existing\n:class:`invest_domain.integration.AdmissionStatus` values.\n\nNo payload blobs, source URIs or per-observation identifiers are\nprojected so the central surface remains a thin pointer to the\nexisting detail page. The three-state vocabulary mirrors Slice\n2A's ``research`` contract so the central surface never has to\ninvent a fourth \"no observations yet\" token. ``observation_count``,\n``latest_as_of`` and ``admission_status_counts`` stay ``None``\nwhenever ``state != \"available\"`` so a fabricated zero cannot\nmasquerade as \"data unavailable\".",
+        "properties": {
+          "admission_status_counts": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "type": "integer"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Admission Status Counts"
+          },
+          "latest_as_of": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Latest As Of"
+          },
+          "observation_count": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Observation Count"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          },
+          "state": {
+            "enum": [
+              "available",
+              "empty",
+              "failed"
+            ],
+            "title": "State",
+            "type": "string"
+          }
+        },
+        "required": [
+          "state"
+        ],
+        "title": "ResearchCenterOpportunitySummaryResponse",
+        "type": "object"
+      },
       "ResearchCenterResearchEvidenceResponse": {
         "description": "Evidence sub-segment of ``research`` mirroring the dashboard verbatim.\n\n``state`` is the dashboard ``empty | available`` vocabulary; the\nthree slot-level fields (``pack_id``, ``quality_status``,\n``freshness_status``) stay ``None`` whenever ``state == \"empty\"``\nso the front-end can render an explicit empty evidence slot\nwithout special-casing ``None`` vs. unset.",
         "properties": {
@@ -2615,8 +2769,11 @@
         "type": "object"
       },
       "ResearchCenterResponse": {
-        "description": "Read-only response envelope for the contract endpoint.\n\nMirrors :class:`invest_api.application.research_center.ResearchCenterResponse`\nfield-by-field and adds the two router-owned timestamps\n(``generated_at`` and the propagated ``market.data_freshness.checked_at``).\nBoth timestamps come from the same ``datetime.now(UTC)`` call so a\nsingle response always observes identical values; the application\nservice intentionally does not own a clock. Slice 2A adds the\n``research`` sub-segment alongside the market / capabilities\nbundle without re-shaping any existing field.",
+        "description": "Read-only response envelope for the contract endpoint.\n\nMirrors :class:`invest_api.application.research_center.ResearchCenterResponse`\nfield-by-field and adds the two router-owned timestamps\n(``generated_at`` and the propagated ``market.data_freshness.checked_at``).\nBoth timestamps come from the same ``datetime.now(UTC)`` call so a\nsingle response always observes identical values; the application\nservice intentionally does not own a clock. Slice 2A adds the\n``research`` sub-segment alongside the market / capabilities\nbundle without re-shaping any existing field. Slice 2B adds the\n``candidate_pool`` and ``opportunities`` sub-segments on top of\nthat bundle without re-shaping any existing field either.",
         "properties": {
+          "candidate_pool": {
+            "$ref": "#/components/schemas/ResearchCenterCandidatePoolSummaryResponse"
+          },
           "capabilities": {
             "$ref": "#/components/schemas/ResearchCenterCapabilitiesResponse"
           },
@@ -2627,6 +2784,9 @@
           },
           "market": {
             "$ref": "#/components/schemas/ResearchCenterMarketResponse"
+          },
+          "opportunities": {
+            "$ref": "#/components/schemas/ResearchCenterOpportunitySummaryResponse"
           },
           "research": {
             "$ref": "#/components/schemas/ResearchCenterResearchSummaryResponse"
@@ -2653,7 +2813,9 @@
           "state",
           "market",
           "capabilities",
-          "research"
+          "research",
+          "candidate_pool",
+          "opportunities"
         ],
         "title": "ResearchCenterResponse",
         "type": "object"

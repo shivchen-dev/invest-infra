@@ -1,11 +1,13 @@
 """Read-only ``GET /api/v1/research-center`` endpoint.
 
 This router is the only public surface of the central Research
-Visualization Slice module. It composes the three existing read-only
+Visualization Slice module. It composes the five existing read-only
 application services — :class:`MarketBreadthQueryService`,
-:class:`DataFreshnessQueryService` and :class:`ResearchQueryService`
-— through the :class:`ResearchCenterQueryService` the application
-layer owns, then maps the resulting dataclass view onto the frozen
+:class:`DataFreshnessQueryService`, :class:`ResearchQueryService`,
+:class:`CandidatePoolQueryService` and
+:class:`ExternalWorkflowQueryService` — through the
+:class:`ResearchCenterQueryService` the application layer owns, then
+maps the resulting dataclass view onto the frozen
 :class:`ResearchCenterResponse` Pydantic shape from
 :mod:`invest_api.schemas.research_center`.
 
@@ -27,10 +29,13 @@ The router is intentionally minimal:
   text in the response body).
 
 Slice 2A adds the ``research`` sub-segment driven by the existing
-``ResearchQueryService.get_dashboard`` orchestrator; the router
-simply projects the application-level
-:class:`ResearchCenterResearchSummaryView` onto the new Pydantic
-fields without re-shaping the existing market / capabilities bundle.
+``ResearchQueryService.get_dashboard`` orchestrator; Slice 2B adds
+the ``candidate_pool`` and ``opportunities`` sub-segments driven by
+the existing ``CandidatePoolQueryService.get_latest`` and
+``ExternalWorkflowQueryService.list_radar`` readers. The router
+simply projects the application-level views onto the new Pydantic
+fields without re-shaping the existing market / capabilities /
+research bundle.
 """
 
 from __future__ import annotations
@@ -43,12 +48,14 @@ from fastapi import APIRouter, Depends
 from invest_api.application.research_center import (
     RESEARCH_SCHEMA_VERSION,
     ResearchCenterBreadthView,
+    ResearchCenterCandidatePoolSummaryView,
     ResearchCenterCapabilitiesView,
     ResearchCenterCapabilityView,
     ResearchCenterDataFreshnessView,
     ResearchCenterLatestCaseView,
     ResearchCenterMarketView,
     ResearchCenterObservationView,
+    ResearchCenterOpportunitySummaryView,
     ResearchCenterQueryService,
     ResearchCenterResearchEvidenceView,
     ResearchCenterResearchSummaryView,
@@ -59,12 +66,14 @@ from invest_api.application.research_center import (
 from invest_api.dependencies import get_research_center_query_service
 from invest_api.schemas.research_center import (
     ResearchCenterBreadthResponse,
+    ResearchCenterCandidatePoolSummaryResponse,
     ResearchCenterCapabilitiesResponse,
     ResearchCenterCapabilityResponse,
     ResearchCenterDataFreshnessResponse,
     ResearchCenterLatestCaseResponse,
     ResearchCenterMarketResponse,
     ResearchCenterObservationResponse,
+    ResearchCenterOpportunitySummaryResponse,
     ResearchCenterResearchEvidenceResponse,
     ResearchCenterResearchSummaryResponse,
     ResearchCenterResponse,
@@ -232,6 +241,55 @@ def _research_summary_from_view(
     )
 
 
+def _candidate_pool_from_view(
+    view: ResearchCenterCandidatePoolSummaryView,
+) -> ResearchCenterCandidatePoolSummaryResponse:
+    """Translate the Slice 2B candidate-pool sub-segment onto the Pydantic shape.
+
+    Mirrors
+    :class:`ResearchCenterCandidatePoolSummaryView` field-by-field;
+    the application-level invariant check is enforced there so this
+    mapper stays a thin pass-through. No investment conclusions,
+    per-instrument metrics or policy hashes are projected so the
+    public contract stays a bounded summary.
+    """
+
+    return ResearchCenterCandidatePoolSummaryResponse(
+        state=view.state,  # type: ignore[arg-type]
+        run_id=view.run_id,
+        trade_date=view.trade_date,
+        input_row_count=view.input_row_count,
+        included_count=view.included_count,
+        excluded_count=view.excluded_count,
+        reason=view.reason,
+    )
+
+
+def _opportunity_from_view(
+    view: ResearchCenterOpportunitySummaryView,
+) -> ResearchCenterOpportunitySummaryResponse:
+    """Translate the Slice 2B opportunity sub-segment onto the Pydantic shape.
+
+    Mirrors
+    :class:`ResearchCenterOpportunitySummaryView` field-by-field;
+    the bounded observation count, the latest ``as_of`` date and the
+    admission-status counts come straight from the application-level
+    view so the public contract stays a bounded summary.
+    """
+
+    return ResearchCenterOpportunitySummaryResponse(
+        state=view.state,  # type: ignore[arg-type]
+        observation_count=view.observation_count,
+        latest_as_of=view.latest_as_of,
+        admission_status_counts=(
+            dict(view.admission_status_counts)
+            if view.admission_status_counts is not None
+            else None
+        ),
+        reason=view.reason,
+    )
+
+
 def _response_from_view(
     view: ResearchCenterResponseView,
     *,
@@ -262,6 +320,8 @@ def _response_from_view(
         market=_market_from_view(view.market, checked_at=checked_at),
         capabilities=_capabilities_from_view(view.capabilities),
         research=_research_summary_from_view(view.research),
+        candidate_pool=_candidate_pool_from_view(view.candidate_pool),
+        opportunities=_opportunity_from_view(view.opportunities),
     )
 
 

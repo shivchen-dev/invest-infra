@@ -4,7 +4,10 @@
   - [x] application read model
   - [x] schema/router/dependency wiring
   - [x] focused tests and OpenAPI drift
-- [ ] 2B Candidate Pool / Opportunity Radar 摘要
+- [x] 2B Candidate Pool / Opportunity Radar 摘要
+  - [x] bounded Candidate Pool latest-run summary
+  - [x] bounded Opportunity Radar observation/admission summary
+  - [x] available/empty/failed states, focused tests, OpenAPI drift
 - [ ] 2C Dashboard 摘要卡片与详情入口
 - [ ] Checkpoint 2：API/Web/typecheck/build
 - [ ] 3A Pipeline / Integration / Archive 摘要
