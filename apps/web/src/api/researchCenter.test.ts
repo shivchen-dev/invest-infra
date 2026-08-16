@@ -99,6 +99,35 @@ const EMPTY_CENTER: ResearchCenterResponse = {
   state: "unavailable",
   market: makeMarket(),
   capabilities: makeCapabilities(),
+  candidate_pool: {
+    state: "empty",
+    run_id: null,
+    trade_date: null,
+    input_row_count: null,
+    included_count: null,
+    excluded_count: null,
+    reason: null,
+  },
+  opportunities: {
+    state: "empty",
+    observation_count: null,
+    latest_as_of: null,
+    admission_status_counts: null,
+    reason: null,
+  },
+  research: {
+    schema_version: "1.0.0",
+    state: "empty",
+    case_count: 0,
+    run_count: 0,
+    latest_case: null,
+    evidence: {
+      state: "empty",
+      pack_id: null,
+      quality_status: null,
+      freshness_status: null,
+    },
+  },
 };
 
 const UNAVAILABLE_FRESHNESS_MISSING_CENTER: ResearchCenterResponse = {
@@ -122,6 +151,35 @@ const UNAVAILABLE_FRESHNESS_MISSING_CENTER: ResearchCenterResponse = {
     state: "unavailable",
   },
   capabilities: makeCapabilities(),
+  candidate_pool: {
+    state: "empty",
+    run_id: null,
+    trade_date: null,
+    input_row_count: null,
+    included_count: null,
+    excluded_count: null,
+    reason: null,
+  },
+  opportunities: {
+    state: "empty",
+    observation_count: null,
+    latest_as_of: null,
+    admission_status_counts: null,
+    reason: null,
+  },
+  research: {
+    schema_version: "1.0.0",
+    state: "empty",
+    case_count: 0,
+    run_count: 0,
+    latest_case: null,
+    evidence: {
+      state: "empty",
+      pack_id: null,
+      quality_status: null,
+      freshness_status: null,
+    },
+  },
 };
 
 describe("fetchResearchCenter", () => {

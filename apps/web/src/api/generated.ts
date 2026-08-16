@@ -1177,6 +1177,45 @@ export interface components {
       state: "available" | "failed";
     };
     /**
+     * ResearchCenterCandidatePoolSummaryResponse
+     * @description ``candidate_pool`` sub-segment of the contract response (Slice 2B).
+     *
+     * Mirrors
+     * :class:`invest_api.application.research_center.ResearchCenterCandidatePoolSummaryView`
+     * field-by-field. The sub-segment exposes only bounded source
+     * facts the existing
+     * :class:`invest_api.application.candidate_pool.LatestCandidatePoolView`
+     * already produces — the latest published run identity and the
+     * row/included/excluded counts. No investment conclusions,
+     * per-instrument metrics or policy hashes are projected.
+     *
+     * The three-state vocabulary mirrors Slice 2A's ``research``
+     * contract so the central surface never has to invent a fourth
+     * "no published run yet" token. ``run_id``, ``trade_date``,
+     * ``input_row_count``, ``included_count`` and ``excluded_count``
+     * stay ``None`` whenever ``state != "available"`` so a fabricated
+     * zero cannot masquerade as "data unavailable".
+     */
+    ResearchCenterCandidatePoolSummaryResponse: {
+      /** Excluded Count */
+      excluded_count?: number | null;
+      /** Included Count */
+      included_count?: number | null;
+      /** Input Row Count */
+      input_row_count?: number | null;
+      /** Reason */
+      reason?: string | null;
+      /** Run Id */
+      run_id?: string | null;
+      /**
+       * State
+       * @enum {string}
+       */
+      state: "available" | "empty" | "failed";
+      /** Trade Date */
+      trade_date?: string | null;
+    };
+    /**
      * ResearchCenterCapabilitiesResponse
      * @description Slice 1 capability bundle — frozen until later slices land.
      */
@@ -1243,6 +1282,28 @@ export interface components {
       universe_count?: number | null;
     };
     /**
+     * ResearchCenterLatestCaseResponse
+     * @description Identity-only projection of the dashboard ``research_summary.latest_case``.
+     *
+     * The contract surfaces only the two fields the central page needs
+     * for a deep-link (``case_id``) and a date label (``as_of_date``);
+     * no additional :class:`ResearchCase` field is exposed here so the
+     * existing case-detail endpoint remains the single source of truth
+     * for the full case shape.
+     */
+    ResearchCenterLatestCaseResponse: {
+      /**
+       * As Of Date
+       * Format: date
+       */
+      as_of_date: string;
+      /**
+       * Case Id
+       * Format: uuid
+       */
+      case_id: string;
+    };
+    /**
      * ResearchCenterMarketResponse
      * @description Market segment of the contract response.
      *
@@ -1304,6 +1365,98 @@ export interface components {
       value: string | null;
     };
     /**
+     * ResearchCenterOpportunitySummaryResponse
+     * @description ``opportunities`` sub-segment of the contract response (Slice 2B).
+     *
+     * Mirrors
+     * :class:`invest_api.application.research_center.ResearchCenterOpportunitySummaryView`
+     * field-by-field. The sub-segment exposes only bounded source
+     * facts the existing
+     * :meth:`invest_api.application.external_workflows.ExternalWorkflowQueryService.list_radar`
+     * already produces — a bounded observation count, the latest
+     * ``as_of`` date when at least one observation exists, and an
+     * admission-status count dictionary keyed by the existing
+     * :class:`invest_domain.integration.AdmissionStatus` values.
+     *
+     * No payload blobs, source URIs or per-observation identifiers are
+     * projected so the central surface remains a thin pointer to the
+     * existing detail page. The three-state vocabulary mirrors Slice
+     * 2A's ``research`` contract so the central surface never has to
+     * invent a fourth "no observations yet" token. ``observation_count``,
+     * ``latest_as_of`` and ``admission_status_counts`` stay ``None``
+     * whenever ``state != "available"`` so a fabricated zero cannot
+     * masquerade as "data unavailable".
+     */
+    ResearchCenterOpportunitySummaryResponse: {
+      /** Admission Status Counts */
+      admission_status_counts?: {
+        [key: string]: number;
+      } | null;
+      /** Latest As Of */
+      latest_as_of?: string | null;
+      /** Observation Count */
+      observation_count?: number | null;
+      /** Reason */
+      reason?: string | null;
+      /**
+       * State
+       * @enum {string}
+       */
+      state: "available" | "empty" | "failed";
+    };
+    /**
+     * ResearchCenterResearchEvidenceResponse
+     * @description Evidence sub-segment of ``research`` mirroring the dashboard verbatim.
+     *
+     * ``state`` is the dashboard ``empty | available`` vocabulary; the
+     * three slot-level fields (``pack_id``, ``quality_status``,
+     * ``freshness_status``) stay ``None`` whenever ``state == "empty"``
+     * so the front-end can render an explicit empty evidence slot
+     * without special-casing ``None`` vs. unset.
+     */
+    ResearchCenterResearchEvidenceResponse: {
+      /** Freshness Status */
+      freshness_status?: string | null;
+      /** Pack Id */
+      pack_id?: string | null;
+      /** Quality Status */
+      quality_status?: string | null;
+      /**
+       * State
+       * @enum {string}
+       */
+      state: "empty" | "available";
+    };
+    /**
+     * ResearchCenterResearchSummaryResponse
+     * @description ``research`` sub-segment of the contract response (Slice 2A).
+     *
+     * Mirrors :class:`invest_api.application.research_center.ResearchCenterResearchSummaryView`
+     * field-by-field and adds the router-owned ``schema_version``.
+     * The ``state`` vocabulary is the three-state
+     * ``available | empty | failed`` set; ``case_count`` /
+     * ``run_count`` are ``None`` only when ``state == "failed"`` so a
+     * fabricated zero can never masquerade as "data unavailable".
+     */
+    ResearchCenterResearchSummaryResponse: {
+      /** Case Count */
+      case_count?: number | null;
+      evidence: components["schemas"]["ResearchCenterResearchEvidenceResponse"];
+      latest_case?: components["schemas"]["ResearchCenterLatestCaseResponse"] | null;
+      /** Run Count */
+      run_count?: number | null;
+      /**
+       * Schema Version
+       * @constant
+       */
+      schema_version: "1.0.0";
+      /**
+       * State
+       * @enum {string}
+       */
+      state: "available" | "empty" | "failed";
+    };
+    /**
      * ResearchCenterResponse
      * @description Read-only response envelope for the contract endpoint.
      *
@@ -1312,9 +1465,14 @@ export interface components {
      * (``generated_at`` and the propagated ``market.data_freshness.checked_at``).
      * Both timestamps come from the same ``datetime.now(UTC)`` call so a
      * single response always observes identical values; the application
-     * service intentionally does not own a clock.
+     * service intentionally does not own a clock. Slice 2A adds the
+     * ``research`` sub-segment alongside the market / capabilities
+     * bundle without re-shaping any existing field. Slice 2B adds the
+     * ``candidate_pool`` and ``opportunities`` sub-segments on top of
+     * that bundle without re-shaping any existing field either.
      */
     ResearchCenterResponse: {
+      candidate_pool: components["schemas"]["ResearchCenterCandidatePoolSummaryResponse"];
       capabilities: components["schemas"]["ResearchCenterCapabilitiesResponse"];
       /**
        * Generated At
@@ -1322,6 +1480,8 @@ export interface components {
        */
       generated_at: string;
       market: components["schemas"]["ResearchCenterMarketResponse"];
+      opportunities: components["schemas"]["ResearchCenterOpportunitySummaryResponse"];
+      research: components["schemas"]["ResearchCenterResearchSummaryResponse"];
       /**
        * Schema Version
        * @constant

@@ -16,10 +16,13 @@ import type {
   CandidatePoolLatestResponse,
   PipelineRunResponse,
   ResearchCenterBreadth,
+  ResearchCenterCandidatePoolSummary,
   ResearchCenterCapabilities,
   ResearchCenterCapability,
   ResearchCenterDataFreshness,
   ResearchCenterMarket,
+  ResearchCenterOpportunitySummary,
+  ResearchCenterResearchSummary,
   ResearchCenterResponse,
   ResearchDashboardResponse,
   ResearchRunResponse,
@@ -156,6 +159,53 @@ function makeMarket(
   };
 }
 
+function makeCandidatePoolSummary(
+  overrides: Partial<ResearchCenterCandidatePoolSummary> = {},
+): ResearchCenterCandidatePoolSummary {
+  return {
+    state: "empty",
+    run_id: null,
+    trade_date: null,
+    input_row_count: null,
+    included_count: null,
+    excluded_count: null,
+    reason: null,
+    ...overrides,
+  };
+}
+
+function makeOpportunitySummary(
+  overrides: Partial<ResearchCenterOpportunitySummary> = {},
+): ResearchCenterOpportunitySummary {
+  return {
+    state: "empty",
+    observation_count: null,
+    latest_as_of: null,
+    admission_status_counts: null,
+    reason: null,
+    ...overrides,
+  };
+}
+
+function makeResearchSummary(
+  overrides: Partial<ResearchCenterResearchSummary> = {},
+): ResearchCenterResearchSummary {
+  return {
+    schema_version: "1.0.0",
+    state: "empty",
+    case_count: 0,
+    run_count: 0,
+    latest_case: null,
+    evidence: {
+      state: "empty",
+      pack_id: null,
+      quality_status: null,
+      freshness_status: null,
+    },
+    ...overrides,
+  };
+}
+
 function makeResearchCenter(
   overrides: Partial<ResearchCenterResponse> = {},
 ): ResearchCenterResponse {
@@ -165,6 +215,9 @@ function makeResearchCenter(
     state: "available",
     market: makeMarket(),
     capabilities: makeCapabilities(),
+    candidate_pool: makeCandidatePoolSummary(),
+    opportunities: makeOpportunitySummary(),
+    research: makeResearchSummary(),
     ...overrides,
   };
 }
@@ -367,6 +420,9 @@ describe("DashboardPage", () => {
       ).toBeInTheDocument();
       expect(
         screen.getByRole("region", { name: "Research Center 市场状态" }),
+      ).toBeInTheDocument();
+      expect(
+        screen.getByRole("region", { name: "Research Center 子视图" }),
       ).toBeInTheDocument();
       expect(
         screen.getByRole("region", { name: "候选池变化" }),
@@ -587,6 +643,68 @@ describe("DashboardPage", () => {
       expect(screen.getByLabelText("最新候选")).toBeInTheDocument();
       expect(screen.getByLabelText("最新运行")).toBeInTheDocument();
       expect(screen.getByLabelText("Research Cockpit")).toBeInTheDocument();
+    });
+  });
+
+  describe("research-center subviews section", () => {
+    beforeEach(() => {
+      mockFetchLatestPool.mockResolvedValue(makePoolResponse(5));
+      mockFetchLatestDiff.mockResolvedValue(makeDiffResponse());
+      mockFetchLatestRun.mockResolvedValue(makeRunResponse());
+      configureResearchDashboard(successQuery(makeResearchDashboard()));
+    });
+
+    it("mounts the subviews section that consumes the shared Research Center query", async () => {
+      configureResearchCenter(
+        successQuery(
+          makeResearchCenter({
+            candidate_pool: makeCandidatePoolSummary({
+              state: "available",
+              trade_date: "2026-08-02",
+              input_row_count: 100,
+              included_count: 80,
+              excluded_count: 20,
+            }),
+            opportunities: makeOpportunitySummary({
+              state: "available",
+              observation_count: 7,
+              latest_as_of: "2026-08-02",
+              admission_status_counts: { admitted: 7 },
+            }),
+          }),
+        ),
+      );
+
+      renderWithClient();
+
+      const region = await screen.findByRole("region", {
+        name: "Research Center 子视图",
+      });
+      const pool = within(region).getByLabelText("Candidate Pool 只读摘要");
+      expect(pool).toHaveAttribute("data-state", "available");
+      const radar = within(region).getByLabelText("Opportunity Radar 只读摘要");
+      expect(radar).toHaveAttribute("data-state", "available");
+      expect(
+        within(region).getByRole("link", { name: "查看 Candidate Pool 详情" }),
+      ).toHaveAttribute("href", "/candidate-pool");
+      expect(
+        within(region).getByRole("link", {
+          name: "查看 Opportunity Radar 详情",
+        }),
+      ).toHaveAttribute("href", "/opportunity-radar");
+    });
+
+    it("renders the shared loading placeholder while the Research Center query is pending", async () => {
+      configureResearchCenter(pendingQuery());
+
+      renderWithClient();
+
+      const region = await screen.findByRole("region", {
+        name: "Research Center 子视图",
+      });
+      expect(
+        within(region).getByText("正在加载 Research Center 子视图"),
+      ).toBeInTheDocument();
     });
   });
 

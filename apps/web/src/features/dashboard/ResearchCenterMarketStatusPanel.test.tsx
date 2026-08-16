@@ -11,11 +11,14 @@ import type { UseQueryResult } from "@tanstack/react-query";
 import { ApiError } from "../../api/client";
 import type {
   ResearchCenterBreadth,
+  ResearchCenterCandidatePoolSummary,
   ResearchCenterCapabilities,
   ResearchCenterCapability,
   ResearchCenterDataFreshness,
   ResearchCenterMarket,
   ResearchCenterObservation,
+  ResearchCenterOpportunitySummary,
+  ResearchCenterResearchSummary,
   ResearchCenterResponse,
 } from "../../api/types";
 import { ResearchCenterMarketStatusPanel } from "./ResearchCenterMarketStatusPanel";
@@ -159,6 +162,53 @@ function makeMarket(
   };
 }
 
+function makeCandidatePoolSummary(
+  overrides: Partial<ResearchCenterCandidatePoolSummary> = {},
+): ResearchCenterCandidatePoolSummary {
+  return {
+    state: "empty",
+    run_id: null,
+    trade_date: null,
+    input_row_count: null,
+    included_count: null,
+    excluded_count: null,
+    reason: null,
+    ...overrides,
+  };
+}
+
+function makeOpportunitySummary(
+  overrides: Partial<ResearchCenterOpportunitySummary> = {},
+): ResearchCenterOpportunitySummary {
+  return {
+    state: "empty",
+    observation_count: null,
+    latest_as_of: null,
+    admission_status_counts: null,
+    reason: null,
+    ...overrides,
+  };
+}
+
+function makeResearchSummary(
+  overrides: Partial<ResearchCenterResearchSummary> = {},
+): ResearchCenterResearchSummary {
+  return {
+    schema_version: "1.0.0",
+    state: "empty",
+    case_count: 0,
+    run_count: 0,
+    latest_case: null,
+    evidence: {
+      state: "empty",
+      pack_id: null,
+      quality_status: null,
+      freshness_status: null,
+    },
+    ...overrides,
+  };
+}
+
 function makeResponse(
   overrides: Partial<ResearchCenterResponse> = {},
 ): ResearchCenterResponse {
@@ -168,6 +218,9 @@ function makeResponse(
     state: "unavailable",
     market: makeMarket(),
     capabilities: makeCapabilities(),
+    candidate_pool: makeCandidatePoolSummary(),
+    opportunities: makeOpportunitySummary(),
+    research: makeResearchSummary(),
     ...overrides,
   };
 }

@@ -8,7 +8,10 @@
   - [x] bounded Candidate Pool latest-run summary
   - [x] bounded Opportunity Radar observation/admission summary
   - [x] available/empty/failed states, focused tests, OpenAPI drift
-- [ ] 2C Dashboard 摘要卡片与详情入口
+- [x] 2C Dashboard 摘要卡片与详情入口
+  - [x] generated API types synchronized with Research Center contract
+  - [x] Candidate Pool / Opportunity Radar read-only summary cards
+  - [x] existing detail links and available/empty/failed UI tests
 - [ ] Checkpoint 2：API/Web/typecheck/build
 - [ ] 3A Pipeline / Integration / Archive 摘要
 - [ ] 3B 可信度、脱敏和异常状态

@@ -66,9 +66,9 @@
   - 验证：Application/API focused tests、全量 API tests、Ruff、OpenAPI drift、架构边界检查。
   - 依赖：Gate A。
   - 预计范围：M，3–5 个文件。
-- [ ] 2.3 重组中心首页与详情入口
+- [x] 2.3 重组中心首页与详情入口
   - 验收：首页只显示摘要；每项进入现有详情页；状态视觉分层。
-  - 验证：Dashboard tests、router tests、人工导航。
+  - 验证：Dashboard tests、router tests、Web typecheck、production build；人工导航待 Checkpoint 2 联合验收记录。
   - 依赖：2.1、2.2。
   - 预计范围：M，3–5 个文件。
 

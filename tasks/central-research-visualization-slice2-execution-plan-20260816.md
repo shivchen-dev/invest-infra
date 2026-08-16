@@ -35,10 +35,11 @@
 - 验证：Application/API focused tests、全量 API tests、Ruff、OpenAPI drift、架构边界检查。
 - 依赖：2A；复用既有查询服务和 DTO。
 
-## Task 2C：中心首页整合
+## Task 2C：中心首页整合（已完成代码交付）
 
-- 结果：Dashboard 仅展示摘要卡片，每项进入现有详情页；Research Center API 成为中心聚合来源。
-- 验收：loading/empty/partial/stale/failed；浏览器无写操作；无宿主机路径；Web focused tests、typecheck、build。
+- 结果：Dashboard 使用同一份 Research Center 查询展示 Candidate Pool 与 Opportunity Radar 只读摘要卡片，并分别进入既有详情页。
+- 验收：两卡片覆盖 loading/empty/failed；Candidate Pool、ExternalObservation、Admission status 分层展示；不新增重复查询、不执行浏览器写操作、不泄漏运行身份或外部来源字段。
+- 验证：Web 全量测试 201 passed（27 files）、typecheck、production build、独立代码审查通过。
 - 依赖：2A、2B。
 
 ## Task 3A：交付链摘要
@@ -62,5 +63,5 @@
 ## 检查点
 
 - Checkpoint 2A：API focused tests、OpenAPI drift、完整 diff 审查通过后再进入 2B（已通过）。
-- Checkpoint 2：2A–2C 的 API/Web focused tests、typecheck、production build 通过后再进入 3A。
+- Checkpoint 2：2A–2C 的 API/Web focused tests、typecheck、production build 通过后再进入 3A（代码检查已通过，联合验收记录仍待收口）。
 - Gate B：3A–3C 证据齐全且用户审核通过后才宣称 MVP 完成。

@@ -134,6 +134,15 @@ export type ResearchDashboardResponse = Omit<
 export type ResearchCenterObservation = RequiredDefined<
   components["schemas"]["ResearchCenterObservationResponse"]
 >;
+export type ResearchCenterCandidatePoolSummary = RequiredDefined<
+  components["schemas"]["ResearchCenterCandidatePoolSummaryResponse"]
+>;
+export type ResearchCenterOpportunitySummary = RequiredDefined<
+  components["schemas"]["ResearchCenterOpportunitySummaryResponse"]
+>;
+export type ResearchCenterResearchSummary = RequiredDefined<
+  components["schemas"]["ResearchCenterResearchSummaryResponse"]
+>;
 type ResearchCenterBreadthWire = RequiredDefined<
   components["schemas"]["ResearchCenterBreadthResponse"]
 >;
@@ -163,7 +172,10 @@ export type ResearchCenterMarket = Omit<
 };
 export type ResearchCenterResponse = Omit<
   RequiredDefined<components["schemas"]["ResearchCenterResponse"]>,
-  "market"
+  "market" | "candidate_pool" | "opportunities"
 > & {
   market: ResearchCenterMarket;
+  candidate_pool: ResearchCenterCandidatePoolSummary;
+  opportunities: ResearchCenterOpportunitySummary;
+  research: ResearchCenterResearchSummary;
 };

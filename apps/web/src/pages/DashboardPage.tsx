@@ -16,6 +16,7 @@ import { CandidateDiffPanel } from "../features/dashboard/CandidateDiffPanel";
 import { TopCandidatesPanel } from "../features/dashboard/TopCandidatesPanel";
 import { LatestRunPanel } from "../features/dashboard/LatestRunPanel";
 import { ResearchCenterMarketStatusPanel } from "../features/dashboard/ResearchCenterMarketStatusPanel";
+import { ResearchCenterSubviewsPanel } from "../features/dashboard/ResearchCenterSubviewsPanel";
 import { ResearchCockpitSection } from "../features/research/dashboard/ResearchCockpitSection";
 import { LoadingState } from "../components/LoadingState";
 import { formatCount, formatDate } from "../utils/format";
@@ -80,6 +81,16 @@ export function DashboardPage() {
 
       <section className="pageSection" aria-label="Research Center 市场状态">
         <ResearchCenterMarketStatusPanel query={researchCenter} />
+      </section>
+
+      <section className="pageSection" aria-label="Research Center 子视图">
+        <header className="sectionHeader">
+          <h3 className="sectionTitle">Research Center 子视图</h3>
+          <span className="sectionMeta">
+            Candidate Pool · Opportunity Radar · 来自同一份 Research Center 响应
+          </span>
+        </header>
+        <ResearchCenterSubviewsPanel query={researchCenter} />
       </section>
 
       <section className="pageSection" aria-label="候选池变化">
