@@ -91,9 +91,9 @@
 `state` 只允许：
 
 - `available`：市场广度与数据新鲜度均成功读取；
-- `partial`：两者仅有一个成功，或任一成功来源自身为 `partial/stale/missing/failed`；
+- `partial`：两者仅有一个成功（包括另一个来源缺失或受控失败），或任一成功来源自身为 `partial/stale/missing/failed`；
 - `unavailable`：两个市场来源都没有可展示结果；
-- `failed`：聚合读取发生受控查询错误，响应不得包含内部异常、连接信息或路径。
+- `failed`：两个市场来源均发生受控查询错误；响应不得包含内部异常、连接信息或路径。
 
 顶层状态不表示市场好坏、研究结论或交易建议。
 
@@ -101,10 +101,14 @@
 
 `market.state` 只允许 `available | partial | unavailable | failed`。缺失 Market Breadth 快照必须表示为 `unavailable`，不得生成零值。某一子来源失败时，另一子来源仍可返回，区段状态为 `partial`。
 
+Slice 1 的 Web 卡片替换首页现有的 Data Freshness/Metrics 重复展示，但不删除其资源端点或其他详情页消费者。HTTP 请求失败与成功响应中的 `state="failed"` 都呈现失败语义，但前者使用通用 Error State，后者仍展示可用的受控响应信息。
+
 Market Breadth 只透传已注册 observation；Slice 1 不重新计算指标，不改变单位，不创建评分。合法 key 以快照内容为准，当前实现包括：
 
 - `advancing_ratio`、`declining_ratio`、`above_ma20_ratio`；
 - v2 快照可增加 `above_ma60_ratio`、`new_high_ratio`、`new_low_ratio`。
+
+新响应将既有 `observation_key` 映射为合同字段 `key`，`source_ref` 原值透传。`checked_at` 与本次聚合响应的 `generated_at` 使用同一 UTC 生成时刻。市场广度和数据新鲜度各保留一个详情链接；能力区段在 Slice 1 响应中保留，但不在市场卡片中渲染。
 
 ### 4.3 能力区段
 

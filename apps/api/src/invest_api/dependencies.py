@@ -36,6 +36,7 @@ from invest_api.application.market_breadth import MarketBreadthQueryService
 from invest_api.application.market_temperature import MarketTemperatureQueryService
 from invest_api.application.pipeline_runs import PipelineRunQueryService
 from invest_api.application.research import ResearchQueryService
+from invest_api.application.research_center import ResearchCenterQueryService
 from invest_api.application.research_external_evidence import ResearchExternalEvidenceService
 from invest_api.application.research_run_command import ResearchRunCommandService
 from invest_api.config import get_settings
@@ -204,6 +205,28 @@ def get_market_breadth_query_service(
     return MarketBreadthQueryService(SqlAlchemyMarketObservationSnapshotRepository(session))
 
 
+def get_research_center_query_service(
+    session: Annotated[Session, Depends(get_db_session)],
+) -> ResearchCenterQueryService:
+    """Build the application service that backs ``/api/v1/research-center``.
+
+    Composes the two existing read-only application services —
+    :class:`MarketBreadthQueryService` and
+    :class:`DataFreshnessQueryService` — against the FastAPI-provided
+    session. The composition happens in the application layer (no HTTP
+    fan-out, no new repository); tests override this dependency
+    through ``app.dependency_overrides`` to inject a mock service
+    without touching the storage layer.
+    """
+
+    return ResearchCenterQueryService(
+        breadth=MarketBreadthQueryService(
+            SqlAlchemyMarketObservationSnapshotRepository(session)
+        ),
+        freshness=DataFreshnessQueryService(SqlAlchemyDataFreshnessReader(session)),
+    )
+
+
 __all__ = [
     "get_candidate_pool_query_service",
     "get_data_freshness_query_service",
@@ -214,6 +237,7 @@ __all__ = [
     "get_observation_admission_command_service",
     "get_market_breadth_query_service",
     "get_pipeline_run_query_service",
+    "get_research_center_query_service",
     "get_research_query_service",
     "get_session_factory",
 ]

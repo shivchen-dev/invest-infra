@@ -15,6 +15,7 @@ from invest_api.routers.market_temperature import router as market_temperature_r
 from invest_api.routers.opportunity_radar import router as opportunity_radar_router
 from invest_api.routers.pipeline_runs import router as pipeline_runs_router
 from invest_api.routers.research import router as research_router
+from invest_api.routers.research_center import router as research_center_router
 from invest_api.routers.research_external_evidence import (
     router as research_external_evidence_router,
 )
@@ -42,3 +43,4 @@ app.include_router(research_router)
 app.include_router(research_external_evidence_router)
 app.include_router(market_temperature_router)
 app.include_router(market_breadth_router)
+app.include_router(research_center_router)

@@ -30,6 +30,7 @@ from invest_api.dependencies import (
     get_etf_query_service,
     get_market_breadth_query_service,
     get_pipeline_run_query_service,
+    get_research_center_query_service,
     get_research_query_service,
 )
 from invest_api.main import app
@@ -190,6 +191,30 @@ def market_breadth_service(monkeypatch: pytest.MonkeyPatch) -> MagicMock:
         yield mock
     finally:
         app.dependency_overrides.pop(get_market_breadth_query_service, None)
+
+
+@pytest.fixture()
+def research_center_service(monkeypatch: pytest.MonkeyPatch) -> MagicMock:
+    """Inject a mock :class:`ResearchCenterQueryService` into the research-center router.
+
+    Overrides :func:`invest_api.dependencies.get_research_center_query_service`
+    so the research-center router receives a ``MagicMock`` that quacks
+    like the composed application service. Endpoint tests configure
+    return values and side effects on
+    ``research_center_service.get_research_center.return_value`` (a
+    :class:`invest_api.application.research_center.ResearchCenterResponse`
+    dataclass) without touching the underlying breadth / freshness
+    services; the service-level tests bypass the HTTP layer and
+    construct the real service against mock breadth / freshness
+    services instead.
+    """
+
+    mock = MagicMock(name="ResearchCenterQueryService")
+    app.dependency_overrides[get_research_center_query_service] = lambda: mock
+    try:
+        yield mock
+    finally:
+        app.dependency_overrides.pop(get_research_center_query_service, None)
 
 
 def make_instrument(
@@ -424,5 +449,6 @@ __all__ = [
     "market_breadth_service",
     "mock_session",
     "pipeline_run_service",
+    "research_center_service",
     "research_service",
 ]

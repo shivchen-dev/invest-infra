@@ -2139,6 +2139,387 @@
         "title": "ResearchCaseWorkspaceResponse",
         "type": "object"
       },
+      "ResearchCenterBreadthResponse": {
+        "description": "Market Breadth sub-segment of the contract response.\n\nMirrors :class:`invest_api.application.research_center.ResearchCenterBreadthView`\nfield-by-field. A controlled error is an explicit ``failed``\nobject whose payload fields are null; a genuinely missing snapshot\nremains ``None``. No identity, scope or observation is fabricated.",
+        "properties": {
+          "algorithm_version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Algorithm Version"
+          },
+          "observations": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/ResearchCenterObservationResponse"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Observations"
+          },
+          "scope_key": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Scope Key"
+          },
+          "scope_type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Scope Type"
+          },
+          "snapshot_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Snapshot Id"
+          },
+          "state": {
+            "enum": [
+              "available",
+              "failed"
+            ],
+            "title": "State",
+            "type": "string"
+          }
+        },
+        "required": [
+          "state"
+        ],
+        "title": "ResearchCenterBreadthResponse",
+        "type": "object"
+      },
+      "ResearchCenterCapabilitiesResponse": {
+        "description": "Slice 1 capability bundle — frozen until later slices land.",
+        "properties": {
+          "delivery": {
+            "$ref": "#/components/schemas/ResearchCenterCapabilityResponse"
+          },
+          "discipline": {
+            "$ref": "#/components/schemas/ResearchCenterCapabilityResponse"
+          },
+          "opportunities": {
+            "$ref": "#/components/schemas/ResearchCenterCapabilityResponse"
+          },
+          "research": {
+            "$ref": "#/components/schemas/ResearchCenterCapabilityResponse"
+          },
+          "strategy": {
+            "$ref": "#/components/schemas/ResearchCenterCapabilityResponse"
+          }
+        },
+        "required": [
+          "opportunities",
+          "research",
+          "delivery",
+          "strategy",
+          "discipline"
+        ],
+        "title": "ResearchCenterCapabilitiesResponse",
+        "type": "object"
+      },
+      "ResearchCenterCapabilityResponse": {
+        "description": "One capability entry on the contract response shape.\n\nSlice 1 pins every capability to a deterministic placeholder so\nthe response shape is stable and later slices can replace\nindividual entries without re-shaping the application layer.",
+        "properties": {
+          "reason": {
+            "title": "Reason",
+            "type": "string"
+          },
+          "state": {
+            "enum": [
+              "deferred",
+              "unavailable"
+            ],
+            "title": "State",
+            "type": "string"
+          }
+        },
+        "required": [
+          "state",
+          "reason"
+        ],
+        "title": "ResearchCenterCapabilityResponse",
+        "type": "object"
+      },
+      "ResearchCenterDataFreshnessResponse": {
+        "description": "Data Freshness sub-segment of the contract response.\n\n``checked_at`` is the router-stamped UTC wall-clock value the\napplication service intentionally omits; the router reuses the\nsame ``datetime.now(UTC)`` value it stamps on the top-level\n``generated_at`` so the two timestamps are always identical for a\ngiven response. ``state`` is the four-state substate derived from\n``status`` so the UI can render without re-reading the underlying\nfive-state vocabulary; ``status`` carries the original\n``fresh | partial | stale | missing | failed`` value verbatim.",
+        "properties": {
+          "checked_at": {
+            "format": "date-time",
+            "title": "Checked At",
+            "type": "string"
+          },
+          "daily_bar_count": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Daily Bar Count"
+          },
+          "latest_published_trade_date": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Latest Published Trade Date"
+          },
+          "missing_count": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Missing Count"
+          },
+          "state": {
+            "enum": [
+              "available",
+              "partial",
+              "unavailable",
+              "failed"
+            ],
+            "title": "State",
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "fresh",
+              "partial",
+              "stale",
+              "missing",
+              "failed"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "universe_count": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Universe Count"
+          }
+        },
+        "required": [
+          "state",
+          "checked_at",
+          "status"
+        ],
+        "title": "ResearchCenterDataFreshnessResponse",
+        "type": "object"
+      },
+      "ResearchCenterMarketResponse": {
+        "description": "Market segment of the contract response.\n\n``state`` mirrors the top-level ``state`` for Slice 1 (the\ncontract makes the two equivalent). ``as_of_date`` prefers the\nbreadth snapshot date, falls back to the freshness latest\npublished trade date, and is ``None`` when neither source has a\ndate. ``quality_status`` and ``freshness_status`` carry the\nbreadth domain values verbatim, or ``None`` when no breadth\nsnapshot is available. ``breadth`` and ``data_freshness`` are the\nper-source sub-segments. Genuine absence is ``None`` while a\ncontrolled error is represented by an explicit failed object.",
+        "properties": {
+          "as_of_date": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "As Of Date"
+          },
+          "breadth": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ResearchCenterBreadthResponse"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "data_freshness": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ResearchCenterDataFreshnessResponse"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "freshness_status": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Freshness Status"
+          },
+          "quality_status": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Quality Status"
+          },
+          "state": {
+            "enum": [
+              "available",
+              "partial",
+              "unavailable",
+              "failed"
+            ],
+            "title": "State",
+            "type": "string"
+          }
+        },
+        "required": [
+          "state"
+        ],
+        "title": "ResearchCenterMarketResponse",
+        "type": "object"
+      },
+      "ResearchCenterObservationResponse": {
+        "description": "One Market Breadth observation on the contract response shape.\n\nMaps the application-level\n:class:`invest_api.application.research_center.ResearchCenterObservationView`\nonto the public JSON field names: ``observation_key`` is renamed\nto ``key``; every other observation field is preserved verbatim.\n``value`` keeps its native ``Decimal | str | None`` type so\nPydantic renders ``Decimal`` as a string (matching the existing\nMarket Breadth endpoint) while a plain textual value stays a\nstring and ``None`` stays ``null``.",
+        "properties": {
+          "key": {
+            "title": "Key",
+            "type": "string"
+          },
+          "observed_date": {
+            "format": "date",
+            "title": "Observed Date",
+            "type": "string"
+          },
+          "quality_status": {
+            "title": "Quality Status",
+            "type": "string"
+          },
+          "source_kind": {
+            "title": "Source Kind",
+            "type": "string"
+          },
+          "source_ref": {
+            "title": "Source Ref",
+            "type": "string"
+          },
+          "unit": {
+            "title": "Unit",
+            "type": "string"
+          },
+          "value": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Value"
+          }
+        },
+        "required": [
+          "key",
+          "value",
+          "unit",
+          "observed_date",
+          "source_kind",
+          "source_ref",
+          "quality_status"
+        ],
+        "title": "ResearchCenterObservationResponse",
+        "type": "object"
+      },
+      "ResearchCenterResponse": {
+        "description": "Read-only response envelope for the contract endpoint.\n\nMirrors :class:`invest_api.application.research_center.ResearchCenterResponse`\nfield-by-field and adds the two router-owned timestamps\n(``generated_at`` and the propagated ``market.data_freshness.checked_at``).\nBoth timestamps come from the same ``datetime.now(UTC)`` call so a\nsingle response always observes identical values; the application\nservice intentionally does not own a clock.",
+        "properties": {
+          "capabilities": {
+            "$ref": "#/components/schemas/ResearchCenterCapabilitiesResponse"
+          },
+          "generated_at": {
+            "format": "date-time",
+            "title": "Generated At",
+            "type": "string"
+          },
+          "market": {
+            "$ref": "#/components/schemas/ResearchCenterMarketResponse"
+          },
+          "schema_version": {
+            "const": "1.0.0",
+            "title": "Schema Version",
+            "type": "string"
+          },
+          "state": {
+            "enum": [
+              "available",
+              "partial",
+              "unavailable",
+              "failed"
+            ],
+            "title": "State",
+            "type": "string"
+          }
+        },
+        "required": [
+          "schema_version",
+          "generated_at",
+          "state",
+          "market",
+          "capabilities"
+        ],
+        "title": "ResearchCenterResponse",
+        "type": "object"
+      },
       "ResearchDashboardEvidenceStatus": {
         "description": "Explicit empty / available state for the latest-case evidence slot.\n\nThe dashboard always reports one of two states:\n\n- ``\"empty\"`` — no cases exist, or the latest case exists but has\n  no bound ``EvidencePack`` rows. ``case_id`` echoes the case\n  being reported (when available) so the front-end can deep-link\n  to it; ``pack_id`` is ``None``.\n- ``\"available\"`` — the latest case has at least one bound pack\n  and the surface carries the pack-level identifiers and quality\n  metadata. Only the **first** bound pack is summarised; the full\n  pack list is intentionally not enumerated on the dashboard.",
         "properties": {
@@ -4112,6 +4493,28 @@
         "summary": "Get Research Case Workspace",
         "tags": [
           "research"
+        ]
+      }
+    },
+    "/api/v1/research-center": {
+      "get": {
+        "description": "Return the Slice 1 Research Center contract response.\n\nThe handler owns a single UTC wall-clock value and reuses it for\nboth ``generated_at`` and ``market.data_freshness.checked_at`` so\nthe two timestamps are always identical. The application service\nconverts the two underlying sources' controlled errors into\nexplicit failed sub-segments before this router sees them; any\nother exception is intentionally allowed to propagate so FastAPI's\ngeneric error boundary (and not this router) sanitises the\nresponse. The endpoint is intentionally GET-only — no POST, PUT,\nPATCH or DELETE handlers exist on this router and the OpenAPI\nspec reflects that.",
+        "operationId": "get_research_center_api_v1_research_center_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResearchCenterResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Get Research Center",
+        "tags": [
+          "research-center"
         ]
       }
     },
