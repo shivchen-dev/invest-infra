@@ -12,9 +12,6 @@ import type { ReactNode } from "react";
 import { ApiError } from "../api/client";
 import type {
   CandidatePoolDiffResponse,
-  CandidatePoolItem,
-  CandidatePoolLatestResponse,
-  PipelineRunResponse,
   ResearchCenterBreadth,
   ResearchCenterCandidatePoolSummary,
   ResearchCenterCapabilities,
@@ -25,15 +22,11 @@ import type {
   ResearchCenterOpportunitySummary,
   ResearchCenterResearchSummary,
   ResearchCenterResponse,
-  ResearchDashboardResponse,
-  ResearchRunResponse,
 } from "../api/types";
 import { Router } from "../router";
 
 vi.mock("../api/candidatePool", () => ({
-  fetchCandidatePoolLatest: vi.fn(),
   fetchCandidatePoolLatestDiff: vi.fn(),
-  latestCandidatePoolQueryKey: ["candidate-pool", "latest"],
   latestCandidateDiffQueryKey: ["candidate-pool", "latest", "diff"],
 }));
 
@@ -42,13 +35,6 @@ vi.mock("../api/pipelineRuns", () => ({
   fetchPipelineRuns: vi.fn(),
   latestPipelineRunQueryKey: ["pipeline-runs", "latest"],
   pipelineRunsQueryKey: vi.fn(),
-}));
-
-vi.mock("../api/researchDashboard", () => ({
-  fetchResearchDashboard: vi.fn(),
-  useResearchDashboard: vi.fn(),
-  researchDashboardQueryKey: ["research-dashboard"],
-  RESEARCH_DASHBOARD_REFETCH_INTERVAL: 60_000,
 }));
 
 vi.mock("../api/researchCenter", () => ({
@@ -63,18 +49,10 @@ vi.mock("../api/integrationHealth", () => ({
   integrationHealthQueryKey: ["integration", "health"],
 }));
 
-import {
-  fetchCandidatePoolLatest,
-  fetchCandidatePoolLatestDiff,
-} from "../api/candidatePool";
+import { fetchCandidatePoolLatestDiff } from "../api/candidatePool";
 import { fetchIntegrationHealth } from "../api/integrationHealth";
 import { fetchLatestPipelineRun } from "../api/pipelineRuns";
-import {
-  useResearchDashboard,
-} from "../api/researchDashboard";
-import {
-  useResearchCenter,
-} from "../api/researchCenter";
+import { useResearchCenter } from "../api/researchCenter";
 import {
   errorQuery,
   pendingQuery,
@@ -82,18 +60,10 @@ import {
 } from "../features/research/dashboard/test-helpers";
 import { DashboardPage } from "./DashboardPage";
 
-const mockFetchLatestPool = vi.mocked(fetchCandidatePoolLatest);
 const mockFetchLatestDiff = vi.mocked(fetchCandidatePoolLatestDiff);
 const mockFetchLatestRun = vi.mocked(fetchLatestPipelineRun);
 const mockFetchIntegrationHealth = vi.mocked(fetchIntegrationHealth);
-const mockUseResearchDashboard = vi.mocked(useResearchDashboard);
 const mockUseResearchCenter = vi.mocked(useResearchCenter);
-
-function neverResolvingPromise<T>(): Promise<T> {
-  return new Promise<T>(() => {
-    /* intentionally never resolves */
-  });
-}
 
 function makeCapability(
   overrides: Partial<ResearchCenterCapability> = {},
@@ -273,50 +243,6 @@ function makeResearchCenter(
   };
 }
 
-function makePoolItem(
-  rank: number,
-  symbol: string,
-  options: Partial<CandidatePoolItem> = {},
-): CandidatePoolItem {
-  return {
-    exchange: "SH",
-    exclusion_reasons: [],
-    included: true,
-    instrument_id: `${rank.toString().padStart(3, "0")}-${symbol}`,
-    metrics: { turnover: "1234567.89" },
-    name: `名称 ${symbol}`,
-    rank,
-    rule_results: [],
-    symbol,
-    total_score: "0.85",
-    ...options,
-  };
-}
-
-function makePoolResponse(
-  itemCount: number,
-  options: { includedCount?: number; rowCount?: number } = {},
-): CandidatePoolLatestResponse {
-  const items: CandidatePoolItem[] = [];
-  for (let i = 1; i <= itemCount; i += 1) {
-    items.push(makePoolItem(i, `E${i.toString().padStart(3, "0")}`));
-  }
-  return {
-    algorithm_key: "personal-etf-default",
-    algorithm_version: "1.0.0",
-    content_hash: "deadbeef",
-    excluded_count: 0,
-    included_count: options.includedCount ?? itemCount,
-    items,
-    parameter_set_key: "default-params",
-    published_at: "2026-08-03T12:00:00Z",
-    row_count: options.rowCount ?? itemCount,
-    run_id: "33333333-3333-3333-3333-333333333333",
-    snapshot_id: "44444444-4444-4444-4444-444444444444",
-    trade_date: "2026-08-02",
-  };
-}
-
 function makeDiffResponse(
   overrides: Partial<CandidatePoolDiffResponse> = {},
 ): CandidatePoolDiffResponse {
@@ -326,74 +252,6 @@ function makeDiffResponse(
     removed: [],
     retained: [],
     trade_date: "2026-08-02",
-    ...overrides,
-  };
-}
-
-function makeRunResponse(
-  overrides: Partial<PipelineRunResponse> = {},
-): PipelineRunResponse {
-  return {
-    error_code: null,
-    error_summary: null,
-    finished_at: "2026-08-03T12:30:00Z",
-    id: "55555555-5555-5555-5555-555555555555",
-    job_key: "personal_etf_daily_job",
-    partition_key: "2026-08-02",
-    started_at: "2026-08-03T12:00:00Z",
-    status: "success",
-    trigger_type: "manual",
-    ...overrides,
-  };
-}
-
-function makeResearchDashboard(
-  overrides: Partial<ResearchDashboardResponse> = {},
-): ResearchDashboardResponse {
-  return {
-    schema_version: "1.0.0",
-    generated_at: "2026-08-03T12:00:00Z",
-    as_of_date: null,
-    data_quality: "empty",
-    freshness: "unknown",
-    market_status: {
-      state: "unavailable",
-      reason: "no market dashboard source registered",
-    },
-    research_summary: {
-      case_count: 0,
-      run_count: 0,
-      latest_case: null,
-    },
-    evidence_status: {
-      state: "empty",
-      case_id: null,
-      pack_id: null,
-      schema_version: null,
-      factor_set_key: null,
-      factor_set_version: null,
-      quality_status: null,
-      freshness_status: null,
-    },
-    recent_runs: [],
-    ...overrides,
-  };
-}
-
-function makeResearchRun(
-  overrides: Partial<ResearchRunResponse> = {},
-): ResearchRunResponse {
-  return {
-    attempt: 1,
-    case_id: "case-001",
-    error_summary: null,
-    evidence_pack_id: "pack-001",
-    finished_at: "2026-08-03T12:30:00Z",
-    playbook_key: "playbook.default",
-    run_id: "run-001",
-    runner_key: "runner.default",
-    started_at: "2026-08-03T12:00:00Z",
-    status: "succeeded",
     ...overrides,
   };
 }
@@ -417,12 +275,6 @@ function renderWithClient() {
   return render(<DashboardPage />, { wrapper: Wrapper });
 }
 
-function configureResearchDashboard(
-  result: ReturnType<typeof successQuery<ResearchDashboardResponse>>,
-) {
-  mockUseResearchDashboard.mockReturnValue(result);
-}
-
 function configureResearchCenter(
   result: ReturnType<typeof successQuery<ResearchCenterResponse>>,
 ) {
@@ -436,11 +288,7 @@ afterEach(() => {
 
 describe("DashboardPage", () => {
   describe("initial loading", () => {
-    it("renders the loading state when all queries are pending", () => {
-      mockFetchLatestPool.mockReturnValue(neverResolvingPromise());
-      mockFetchLatestDiff.mockReturnValue(neverResolvingPromise());
-      mockFetchLatestRun.mockReturnValue(neverResolvingPromise());
-      mockUseResearchDashboard.mockReturnValue(pendingQuery());
+    it("renders the loading state when the Research Center query is pending", () => {
       mockUseResearchCenter.mockReturnValue(pendingQuery());
 
       renderWithClient();
@@ -456,10 +304,7 @@ describe("DashboardPage", () => {
 
   describe("successful render", () => {
     beforeEach(() => {
-      mockFetchLatestPool.mockResolvedValue(makePoolResponse(15));
       mockFetchLatestDiff.mockResolvedValue(makeDiffResponse());
-      mockFetchLatestRun.mockResolvedValue(makeRunResponse());
-      configureResearchDashboard(successQuery(makeResearchDashboard()));
       configureResearchCenter(successQuery(makeResearchCenter()));
     });
 
@@ -481,22 +326,19 @@ describe("DashboardPage", () => {
       expect(
         screen.getByRole("region", { name: "候选池变化" }),
       ).toBeInTheDocument();
-      expect(
-        screen.getByRole("region", { name: "最新候选" }),
-      ).toBeInTheDocument();
-      expect(
-        screen.getByRole("region", { name: "最新运行" }),
-      ).toBeInTheDocument();
-      expect(
-        screen.getByRole("region", { name: "Research Cockpit" }),
-      ).toBeInTheDocument();
 
       // The duplicate sections must be gone now that the center panel takes over.
       expect(
-        screen.queryByRole("region", { name: "数据状态" }),
+        screen.queryByRole("region", { name: "最新候选" }),
       ).not.toBeInTheDocument();
       expect(
-        screen.queryByRole("region", { name: "关键指标" }),
+        screen.queryByRole("region", { name: "最新运行" }),
+      ).not.toBeInTheDocument();
+      expect(
+        screen.queryByRole("region", { name: "外部集成状态" }),
+      ).not.toBeInTheDocument();
+      expect(
+        screen.queryByRole("region", { name: "Research Cockpit" }),
       ).not.toBeInTheDocument();
     });
 
@@ -517,61 +359,35 @@ describe("DashboardPage", () => {
       expect(within(region).getAllByText("2026-08-02").length).toBeGreaterThanOrEqual(1);
     });
 
-    it("only displays the top 10 included candidates sorted by rank", async () => {
+    it("preserves the candidate-pool diff panel that is not in the Research Center response", async () => {
+      configureResearchCenter(
+        successQuery(
+          makeResearchCenter({
+            candidate_pool: makeCandidatePoolSummary({
+              state: "available",
+              trade_date: "2026-08-02",
+              input_row_count: 100,
+              included_count: 80,
+              excluded_count: 20,
+            }),
+          }),
+        ),
+      );
+
       renderWithClient();
 
-      const region = await screen.findByRole("region", { name: "最新候选" });
-
+      const region = await screen.findByRole("region", { name: "候选池变化" });
       await waitFor(() => {
-        const rows = within(region).getAllByRole("row");
-        expect(rows).toHaveLength(11);
+        expect(
+          within(region).getByText("对比 2026-08-01 → 2026-08-02"),
+        ).toBeInTheDocument();
       });
-
-      const table = within(region).getByRole("table");
-
-      for (let i = 1; i <= 10; i += 1) {
-        expect(within(table).getByText(String(i))).toBeInTheDocument();
-      }
-      for (let i = 11; i <= 15; i += 1) {
-        expect(within(table).queryByText(String(i))).not.toBeInTheDocument();
-      }
-
-      expect(
-        within(region).getByText(/共\s*15\s*只\s*·\s*入选\s*15/),
-      ).toBeInTheDocument();
-    });
-
-    it("displays the pipeline run with its status pill and metadata", async () => {
-      renderWithClient();
-
-      const region = await screen.findByRole("region", { name: "最新运行" });
-
-      await waitFor(() => {
-        expect(within(region).getByText("success")).toBeInTheDocument();
-      });
-      expect(within(region).getByText("manual")).toBeInTheDocument();
     });
   });
 
   describe("research-center section", () => {
     beforeEach(() => {
-      mockFetchLatestPool.mockResolvedValue(makePoolResponse(5));
       mockFetchLatestDiff.mockResolvedValue(makeDiffResponse());
-      mockFetchLatestRun.mockResolvedValue(makeRunResponse());
-      configureResearchDashboard(successQuery(makeResearchDashboard()));
-    });
-
-    it("renders the loading placeholder while the Research Center query is pending", async () => {
-      configureResearchCenter(pendingQuery());
-
-      renderWithClient();
-
-      const region = await screen.findByRole("region", {
-        name: "Research Center 市场状态",
-      });
-      expect(
-        within(region).getByText("正在加载 Research Center 市场状态"),
-      ).toBeInTheDocument();
     });
 
     it("renders the HTTP error state when the Research Center query fails", async () => {
@@ -692,20 +508,12 @@ describe("DashboardPage", () => {
       expect(
         within(freshness).queryByText("0 只"),
       ).not.toBeInTheDocument();
-
-      expect(screen.getByLabelText("候选池变化")).toBeInTheDocument();
-      expect(screen.getByLabelText("最新候选")).toBeInTheDocument();
-      expect(screen.getByLabelText("最新运行")).toBeInTheDocument();
-      expect(screen.getByLabelText("Research Cockpit")).toBeInTheDocument();
     });
   });
 
   describe("research-center subviews section", () => {
     beforeEach(() => {
-      mockFetchLatestPool.mockResolvedValue(makePoolResponse(5));
       mockFetchLatestDiff.mockResolvedValue(makeDiffResponse());
-      mockFetchLatestRun.mockResolvedValue(makeRunResponse());
-      configureResearchDashboard(successQuery(makeResearchDashboard()));
     });
 
     it("mounts the subviews section that consumes the shared Research Center query", async () => {
@@ -725,6 +533,15 @@ describe("DashboardPage", () => {
               latest_as_of: "2026-08-02",
               admission_status_counts: { admitted: 7 },
             }),
+            research: makeResearchSummary({
+              state: "available",
+              case_count: 2,
+              run_count: 3,
+              latest_case: {
+                case_id: "case-001",
+                as_of_date: "2026-08-02",
+              },
+            }),
           }),
         ),
       );
@@ -738,6 +555,8 @@ describe("DashboardPage", () => {
       expect(pool).toHaveAttribute("data-state", "available");
       const radar = within(region).getByLabelText("Opportunity Radar 只读摘要");
       expect(radar).toHaveAttribute("data-state", "available");
+      const research = within(region).getByLabelText("Research 只读摘要");
+      expect(research).toHaveAttribute("data-state", "available");
       expect(
         within(region).getByRole("link", { name: "查看 Candidate Pool 详情" }),
       ).toHaveAttribute("href", "/candidate-pool");
@@ -746,28 +565,59 @@ describe("DashboardPage", () => {
           name: "查看 Opportunity Radar 详情",
         }),
       ).toHaveAttribute("href", "/opportunity-radar");
+      expect(
+        within(region).getByRole("link", { name: "查看 Research 历史" }),
+      ).toHaveAttribute("href", "/research/history");
     });
 
-    it("renders the shared loading placeholder while the Research Center query is pending", async () => {
-      configureResearchCenter(pendingQuery());
+    it("isolates a failed Research summary from the Candidate Pool and Opportunity Radar summaries", async () => {
+      configureResearchCenter(
+        successQuery(
+          makeResearchCenter({
+            state: "partial",
+            candidate_pool: makeCandidatePoolSummary({
+              state: "available",
+              trade_date: "2026-08-02",
+              input_row_count: 12,
+              included_count: 9,
+              excluded_count: 3,
+            }),
+            opportunities: makeOpportunitySummary({
+              state: "available",
+              observation_count: 4,
+              latest_as_of: "2026-08-02",
+              admission_status_counts: { admitted: 4 },
+            }),
+            research: makeResearchSummary({
+              state: "failed",
+              case_count: null,
+              run_count: null,
+              latest_case: null,
+            }),
+          }),
+        ),
+      );
 
       renderWithClient();
 
       const region = await screen.findByRole("region", {
         name: "Research Center 子视图",
       });
+      const research = within(region).getByLabelText("Research 只读摘要");
+      expect(research).toHaveAttribute("data-state", "failed");
       expect(
-        within(region).getByText("正在加载 Research Center 子视图"),
+        within(research).getByText("Research · failed"),
       ).toBeInTheDocument();
+      const pool = within(region).getByLabelText("Candidate Pool 只读摘要");
+      expect(pool).toHaveAttribute("data-state", "available");
+      const radar = within(region).getByLabelText("Opportunity Radar 只读摘要");
+      expect(radar).toHaveAttribute("data-state", "available");
     });
   });
 
   describe("research-center delivery section", () => {
     beforeEach(() => {
-      mockFetchLatestPool.mockResolvedValue(makePoolResponse(5));
       mockFetchLatestDiff.mockResolvedValue(makeDiffResponse());
-      mockFetchLatestRun.mockResolvedValue(makeRunResponse());
-      configureResearchDashboard(successQuery(makeResearchDashboard()));
     });
 
     it("mounts the delivery section that consumes the shared Research Center query", async () => {
@@ -846,19 +696,6 @@ describe("DashboardPage", () => {
       ).toHaveAttribute("href", "/research/history");
     });
 
-    it("renders the shared loading placeholder while the Research Center query is pending", async () => {
-      configureResearchCenter(pendingQuery());
-
-      renderWithClient();
-
-      const region = await screen.findByRole("region", {
-        name: "Research Center 交付链",
-      });
-      expect(
-        within(region).getByText("正在加载 Research Center 交付链"),
-      ).toBeInTheDocument();
-    });
-
     it("renders the HTTP error state when the Research Center query fails", async () => {
       configureResearchCenter(
         errorQuery(new ApiError("research-center 503", 503)),
@@ -880,7 +717,7 @@ describe("DashboardPage", () => {
       const fetchSpy = vi.fn();
       const originalFetch = globalThis.fetch;
       globalThis.fetch = fetchSpy as unknown as typeof fetch;
-      mockFetchIntegrationHealth.mockReturnValue(neverResolvingPromise());
+      mockFetchIntegrationHealth.mockReturnValue(new Promise(() => {}));
 
       try {
         configureResearchCenter(
@@ -909,244 +746,50 @@ describe("DashboardPage", () => {
           within(region).getByLabelText("Pipeline 只读摘要"),
         ).toHaveAttribute("data-state", "available");
         expect(fetchSpy).not.toHaveBeenCalled();
+        expect(mockFetchIntegrationHealth).not.toHaveBeenCalled();
       } finally {
         globalThis.fetch = originalFetch;
       }
     });
   });
 
-  describe("other panels", () => {
+  describe("legacy homepage fetches", () => {
     beforeEach(() => {
-      mockFetchLatestPool.mockResolvedValue(makePoolResponse(5));
       mockFetchLatestDiff.mockResolvedValue(makeDiffResponse());
-      mockFetchLatestRun.mockResolvedValue(makeRunResponse());
-      configureResearchDashboard(successQuery(makeResearchDashboard()));
       configureResearchCenter(successQuery(makeResearchCenter()));
+      mockFetchLatestRun.mockReturnValue(new Promise(() => {}));
+      mockFetchIntegrationHealth.mockReturnValue(new Promise(() => {}));
     });
 
-    it("renders the empty state in TopCandidatesPanel when the candidate pool returns 404", async () => {
-      mockFetchLatestPool.mockRejectedValue(
-        new ApiError("Candidate pool not found", 404),
-      );
-
+    it("never invokes the legacy latest pipeline-run fetch", async () => {
       renderWithClient();
 
-      const region = await screen.findByRole("region", { name: "最新候选" });
+      await screen.findByRole("heading", { name: "个人 ETF 数据工作台" });
 
-      await waitFor(() => {
-        expect(within(region).getByText("尚无候选结果")).toBeInTheDocument();
-      });
-      expect(within(region).queryByRole("alert")).not.toBeInTheDocument();
-    });
-
-    it("renders the error state in LatestRunPanel when the pipeline run fails with a non-404 status", async () => {
-      mockFetchLatestRun.mockRejectedValue(
-        new ApiError("Pipeline service unavailable", 503),
-      );
-
-      renderWithClient();
-
-      const region = await screen.findByRole("region", { name: "最新运行" });
-
-      await waitFor(() => {
-        const alert = within(region).getByRole("alert");
-        expect(alert).toHaveTextContent("无法读取最新运行");
-      });
+      expect(mockFetchLatestRun).not.toHaveBeenCalled();
       expect(
-        within(region).getByText("Pipeline service unavailable"),
-      ).toBeInTheDocument();
-    });
-  });
-
-  describe("research cockpit section", () => {
-    beforeEach(() => {
-      mockFetchLatestPool.mockResolvedValue(makePoolResponse(5));
-      mockFetchLatestDiff.mockResolvedValue(makeDiffResponse());
-      mockFetchLatestRun.mockResolvedValue(makeRunResponse());
-      configureResearchCenter(successQuery(makeResearchCenter()));
-    });
-
-    it("renders six research cockpit widgets with empty default state", async () => {
-      configureResearchDashboard(successQuery(makeResearchDashboard()));
-
-      renderWithClient();
-
-      const section = await screen.findByRole("region", {
-        name: "Research Cockpit",
-      });
-
-      expect(within(section).getByText("Market Status")).toBeInTheDocument();
-      expect(
-        within(section).getByText("Research Summary"),
-      ).toBeInTheDocument();
-      expect(within(section).getByText("Evidence Pack")).toBeInTheDocument();
-      expect(
-        within(section).getByText("Factor Snapshot"),
-      ).toBeInTheDocument();
-      expect(
-        within(section).getByText("Research Run Timeline"),
-      ).toBeInTheDocument();
-      expect(within(section).getByText("Risk Monitor")).toBeInTheDocument();
-
-      const market = await within(section).findByText(
-        "reason: no market dashboard source registered",
-      );
-      expect(market).toBeInTheDocument();
-      const factor = section.querySelector(
-        '[data-widget-id="factor-snapshot"]',
-      ) as HTMLElement;
-      const risk = section.querySelector(
-        '[data-widget-id="risk-monitor"]',
-      ) as HTMLElement;
-      expect(factor).toHaveTextContent("Factor Snapshot · unavailable");
-      expect(risk).toHaveTextContent("Risk Monitor · unavailable");
-      expect(factor.textContent ?? "").not.toMatch(/buy|sell|position/i);
-      expect(risk.textContent ?? "").not.toMatch(/buy|sell|position/i);
-    });
-
-    it("renders available summary, evidence and recent runs when the dashboard is populated", async () => {
-      configureResearchDashboard(
-        successQuery(
-          makeResearchDashboard({
-            as_of_date: "2026-08-08",
-            data_quality: "partial",
-            freshness: "current",
-            research_summary: {
-              case_count: 2,
-              run_count: 4,
-              latest_case: {
-                case_id: "case-1",
-                instrument_id: "inst-1",
-                as_of_date: "2026-08-08",
-                question: "趋势通道判断",
-                horizon: "30d",
-                status: "open",
-                created_at: "2026-08-09T00:00:00Z",
-                candidate_pool_run_id: null,
-                closed_at: null,
-              },
-            },
-            evidence_status: {
-              state: "available",
-              case_id: "case-1",
-              pack_id: "pack-1",
-              schema_version: "1.0.0",
-              factor_set_key: "factor.basic",
-              factor_set_version: "1",
-              quality_status: "ok",
-              freshness_status: "current",
-            },
-            recent_runs: [
-              makeResearchRun({
-                run_id: "run-1",
-                status: "succeeded",
-              }),
-              makeResearchRun({
-                run_id: "run-2",
-                status: "failed",
-              }),
-            ],
-          }),
-        ),
-      );
-
-      renderWithClient();
-
-      const section = await screen.findByRole("region", {
-        name: "Research Cockpit",
-      });
-
-      const caseId = await within(section).findByText("case-1");
-      expect(caseId).toBeInTheDocument();
-      expect(
-        within(section).getByText("趋势通道判断"),
-      ).toBeInTheDocument();
-      expect(within(section).getByText("pack-1")).toBeInTheDocument();
-      const table = within(section).getByRole("table");
-      expect(within(table).getByText("run-1")).toBeInTheDocument();
-      expect(within(table).getByText("run-2")).toBeInTheDocument();
-      expect(within(table).getByText("succeeded")).toBeInTheDocument();
-      expect(within(table).getByText("failed")).toBeInTheDocument();
-      expect(within(section).queryByText("Stance")).not.toBeInTheDocument();
-      expect(
-        within(section).queryByText("Confidence"),
+        screen.queryByRole("region", { name: "最新运行" }),
       ).not.toBeInTheDocument();
     });
 
-    it("renders explicit unavailable states for factor-snapshot and risk-monitor widgets regardless of payload", async () => {
-      configureResearchDashboard(
-        successQuery(
-          makeResearchDashboard({
-            data_quality: "complete",
-            freshness: "current",
-            research_summary: {
-              case_count: 5,
-              run_count: 9,
-              latest_case: null,
-            },
-          }),
-        ),
-      );
-
+    it("never invokes the legacy integration-health fetch", async () => {
       renderWithClient();
 
-      const section = await screen.findByRole("region", {
-        name: "Research Cockpit",
-      });
-      await waitFor(() => {
-        const factor = section.querySelector(
-          '[data-widget-id="factor-snapshot"]',
-        ) as HTMLElement;
-        expect(factor).toHaveTextContent("Factor Snapshot · unavailable");
-      });
-      const risk = section.querySelector(
-        '[data-widget-id="risk-monitor"]',
-      ) as HTMLElement;
-      expect(risk).toHaveTextContent("Risk Monitor · unavailable");
-    });
+      await screen.findByRole("heading", { name: "个人 ETF 数据工作台" });
 
-    it("renders an empty recent-runs placeholder when the dashboard returns no runs", async () => {
-      configureResearchDashboard(successQuery(makeResearchDashboard()));
-
-      renderWithClient();
-
-      const section = await screen.findByRole("region", {
-        name: "Research Cockpit",
-      });
+      expect(mockFetchIntegrationHealth).not.toHaveBeenCalled();
       expect(
-        await within(section).findByText("Recent Runs · 空"),
-      ).toBeInTheDocument();
+        screen.queryByRole("region", { name: "外部集成状态" }),
+      ).not.toBeInTheDocument();
     });
 
-    it("renders a failed state in every research widget when the dashboard query fails with a non-404 status", async () => {
-      configureResearchDashboard(
-        errorQuery(new Error("Research query failed")),
-      );
-
+    it("only fetches the Research Center query and the candidate-pool diff", async () => {
       renderWithClient();
 
-      const section = await screen.findByRole("region", {
-        name: "Research Cockpit",
-      });
-      await waitFor(() => {
-        expect(
-          within(section).getAllByText("Research query failed").length,
-        ).toBeGreaterThan(0);
-      });
-      const widgetIds = [
-        "market-status",
-        "research-summary",
-        "evidence-pack",
-        "factor-snapshot",
-        "research-run-timeline",
-        "risk-monitor",
-      ];
-      for (const id of widgetIds) {
-        const widget = section.querySelector(
-          `[data-widget-id="${id}"]`,
-        ) as HTMLElement;
-        expect(widget).toHaveAttribute("data-widget-state", "failed");
-      }
+      await screen.findByRole("heading", { name: "个人 ETF 数据工作台" });
+
+      expect(mockUseResearchCenter).toHaveBeenCalled();
+      expect(mockFetchLatestDiff).toHaveBeenCalled();
     });
   });
 });

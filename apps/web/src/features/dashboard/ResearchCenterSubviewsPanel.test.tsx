@@ -270,6 +270,9 @@ describe("ResearchCenterSubviewsPanel", () => {
     expect(
       screen.queryByLabelText("Opportunity Radar 只读摘要"),
     ).not.toBeInTheDocument();
+    expect(
+      screen.queryByLabelText("Research 只读摘要"),
+    ).not.toBeInTheDocument();
   });
 
   it("renders an HTTP error state when the source query fails", () => {
@@ -309,6 +312,21 @@ describe("ResearchCenterSubviewsPanel", () => {
                 admitted: 2,
                 rejected: 1,
                 conflict: 0,
+              },
+            }),
+            research: makeResearch({
+              state: "available",
+              case_count: 5,
+              run_count: 9,
+              latest_case: {
+                case_id: "case-001",
+                as_of_date: "2026-08-15",
+              },
+              evidence: {
+                state: "available",
+                pack_id: "pack-001",
+                quality_status: "ok",
+                freshness_status: "current",
               },
             }),
           }),
@@ -357,6 +375,25 @@ describe("ResearchCenterSubviewsPanel", () => {
       "href",
       "/opportunity-radar",
     );
+
+    const research = screen.getByLabelText("Research 只读摘要");
+    expect(research).toHaveAttribute("data-state", "available");
+    const researchState = within(research).getByRole("status", {
+      name: "Research 状态 available",
+    });
+    expect(researchState.textContent ?? "").toContain("已发布研究案例");
+    expect(within(research).getByText("case_count")).toBeInTheDocument();
+    expect(within(research).getByText("5")).toBeInTheDocument();
+    expect(within(research).getByText("run_count")).toBeInTheDocument();
+    expect(within(research).getByText("9")).toBeInTheDocument();
+    expect(within(research).getByText("latest_case.case_id")).toBeInTheDocument();
+    expect(within(research).getByText("case-001")).toBeInTheDocument();
+    expect(within(research).getByText("latest_case.as_of_date")).toBeInTheDocument();
+    expect(within(research).getByText("evidence.pack_id")).toBeInTheDocument();
+    expect(within(research).getByText("pack-001")).toBeInTheDocument();
+    expect(
+      within(research).getByRole("link", { name: "查看 Research 历史" }),
+    ).toHaveAttribute("href", "/research/history");
   });
 
   it("renders empty subviews with the no-published-run / no-observations wording", () => {
@@ -367,6 +404,7 @@ describe("ResearchCenterSubviewsPanel", () => {
             state: "unavailable",
             candidate_pool: makeCandidatePool({ state: "empty" }),
             opportunities: makeOpportunity({ state: "empty" }),
+            research: makeResearch({ state: "empty" }),
           }),
         )}
       />,
@@ -398,6 +436,70 @@ describe("ResearchCenterSubviewsPanel", () => {
       "href",
       "/opportunity-radar",
     );
+
+    const research = screen.getByLabelText("Research 只读摘要");
+    expect(research).toHaveAttribute("data-state", "empty");
+    expect(
+      within(research).getByRole("status", { name: "Research 状态 empty" }),
+    ).toHaveTextContent("暂无已发布的研究案例");
+    expect(
+      within(research).getByText("Research · empty"),
+    ).toBeInTheDocument();
+    expect(within(research).queryByText("0")).not.toBeInTheDocument();
+    expect(
+      within(research).queryByText("case_count"),
+    ).not.toBeInTheDocument();
+    expect(
+      within(research).queryByText("latest_case.case_id"),
+    ).not.toBeInTheDocument();
+    expect(
+      within(research).getByRole("link", { name: "查看 Research 历史" }),
+    ).toHaveAttribute("href", "/research/history");
+  });
+
+  it("renders failed Research subview with sanitized reason and never exposes run ids", () => {
+    render(
+      <ResearchCenterSubviewsPanel
+        query={successQuery(
+          makeResponse({
+            state: "failed",
+            candidate_pool: makeCandidatePool({ state: "failed" }),
+            opportunities: makeOpportunity({ state: "failed" }),
+            research: makeResearch({
+              state: "failed",
+              case_count: null,
+              run_count: null,
+              latest_case: null,
+            }),
+          }),
+        )}
+      />,
+    );
+
+    const research = screen.getByLabelText("Research 只读摘要");
+    expect(research).toHaveAttribute("data-state", "failed");
+    expect(
+      within(research).getByRole("status", { name: "Research 状态 failed" }),
+    ).toHaveTextContent("受控查询失败");
+    expect(
+      within(research).queryByText("case_count"),
+    ).not.toBeInTheDocument();
+    expect(
+      within(research).queryByText("run_count"),
+    ).not.toBeInTheDocument();
+    expect(
+      within(research).queryByText("latest_case.case_id"),
+    ).not.toBeInTheDocument();
+    expect(
+      within(research).getByRole("link", { name: "查看 Research 历史" }),
+    ).toHaveAttribute("href", "/research/history");
+
+    expect(
+      screen.getByLabelText("Candidate Pool 只读摘要"),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByLabelText("Opportunity Radar 只读摘要"),
+    ).toBeInTheDocument();
   });
 
   it("renders failed subviews with the sanitized reason, never the run_id", () => {
@@ -538,7 +640,7 @@ describe("ResearchCenterSubviewsPanel", () => {
     ).toBeInTheDocument();
   });
 
-  it("uses the same query source for both cards and does not fetch radar data separately", () => {
+  it("uses the same query source for all three cards and does not fetch research data separately", () => {
     const response = makeResponse({
       state: "available",
       market: makeMarket({ state: "available" }),
@@ -555,6 +657,12 @@ describe("ResearchCenterSubviewsPanel", () => {
         latest_as_of: "2026-08-15",
         admission_status_counts: { admitted: 5 },
       }),
+      research: makeResearch({
+        state: "available",
+        case_count: 2,
+        run_count: 3,
+        latest_case: { case_id: "case-001", as_of_date: "2026-08-15" },
+      }),
     });
     const refetch = vi.fn(() => Promise.resolve({} as never));
     const query = {
@@ -566,6 +674,7 @@ describe("ResearchCenterSubviewsPanel", () => {
 
     expect(screen.getByLabelText("Candidate Pool 只读摘要")).toBeInTheDocument();
     expect(screen.getByLabelText("Opportunity Radar 只读摘要")).toBeInTheDocument();
+    expect(screen.getByLabelText("Research 只读摘要")).toBeInTheDocument();
     expect(refetch).not.toHaveBeenCalled();
   });
 });

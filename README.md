@@ -124,4 +124,4 @@ systemctl --user enable --now invest-infra-dagster.service
 
 ## 验证状态
 
-当前已具备 ETF 主数据、行情、候选池、ETF Profile、指数成分与持仓 Exposure、Evidence Pack/Context Pack 基础能力。Stage 4A 的 Research Case、Research Run、Research Result、JiuwenSwarm Adapter、只读 API 和 Web Research Cockpit 已完成代码级验收；生产风格的 API/Web 联调仍以 Final Acceptance 报告中的明确状态为准。
+当前已具备 ETF 主数据、行情、候选池、ETF Profile、指数成分与持仓 Exposure、Evidence Pack/Context Pack 基础能力。Stage 4A 的 Research Case、Research Run、Research Result、只读 API 和 Web Research Cockpit 已完成代码级验收；生产风格的 API/Web 联调仍以 Final Acceptance 报告中的明确状态为准。既有 JiuwenSwarm Adapter 仅作为历史兼容实现保留，JiuwenSwarm 已停止采用，不再属于活动计划或验收依赖。

@@ -17,10 +17,10 @@
 |---|---|---|---|
 | 数据截至何时，是否缺失？ | `market.data_freshness` | `DataFreshnessQueryService` | `/operations` |
 | 市场有哪些可验证事实？ | `market.breadth` | `MarketBreadthQueryService` | `/market` |
-| 候选与外部观察处于什么状态？ | `capabilities.opportunities` | Slice 2 前为 `deferred` | `/candidate-pool`、`/opportunity-radar` |
-| 研究事项处于什么状态？ | `capabilities.research` | Slice 2 前为 `deferred` | `/research/history` |
+| 候选与外部观察处于什么状态？ | `candidate_pool`、`opportunities`、`capabilities.opportunities` | Slice 2B 只读摘要 | `/candidate-pool`、`/opportunity-radar` |
+| 研究事项处于什么状态？ | `research`、`capabilities.research` | Slice 2A 只读摘要 | `/research/history` |
 | 策略或纪律是否发生变化？ | `capabilities.strategy`、`capabilities.discipline` | 合同未冻结时为 `unavailable` | `/strategy`、`/discipline` |
-| 交付链是否正常？ | `capabilities.delivery` | Slice 3 前为 `deferred` | `/automation` |
+| 交付链是否正常？ | `delivery`、`capabilities.delivery` | Slice 3A/3B 只读摘要 | `/automation` |
 
 首页只显示摘要和单一详情链接。现有详情页继续持有完整列表、历史和诊断信息。
 
@@ -76,9 +76,9 @@
     }
   },
   "capabilities": {
-    "opportunities": {"state": "deferred", "reason": "slice_2_not_implemented"},
-    "research": {"state": "deferred", "reason": "slice_2_not_implemented"},
-    "delivery": {"state": "deferred", "reason": "slice_3_not_implemented"},
+    "opportunities": {"state": "available", "reason": "slice_2b_opportunity_summary_available"},
+    "research": {"state": "available", "reason": "slice_2a_research_summary_available"},
+    "delivery": {"state": "available", "reason": "slice_3b_delivery_summary_available"},
     "strategy": {"state": "unavailable", "reason": "strategy_iteration_contract_not_frozen"},
     "discipline": {"state": "unavailable", "reason": "position_discipline_contract_not_frozen"}
   }
@@ -111,7 +111,7 @@ Market Breadth 只透传已注册 observation；Slice 1 不重新计算指标，
 
 ### 4.3 能力区段
 
-`deferred` 表示已有承接 Slice，但尚未进入本响应；`unavailable` 表示业务合同或权威来源尚未冻结。两者都不得附带模拟 payload。能力区段不参与 Slice 1 顶层 `state` 计算。
+`available` 表示对应有界只读摘要已经进入响应；`deferred` 表示已有承接 Slice，但尚未进入响应；`unavailable` 表示业务合同或权威来源尚未冻结。后两者不得附带模拟 payload。能力区段不参与顶层 `state` 计算；当前 `research`、`opportunities`、`delivery` 为 `available`，`strategy`、`discipline` 继续为 `unavailable`。
 
 ## 5. 来源映射
 
@@ -170,13 +170,13 @@ Slice 1 不直接调用已有 HTTP 端点做服务内 fan-out；聚合 Module �
 
 ## 11. Slice 2A 合同增量
 
-Slice 2A 在不改变既有 `market`、`capabilities` 和顶层状态语义的前提下，向 `ResearchCenterResponse` 增加必填只读字段 `research`。该字段是既有 `ResearchQueryService.get_dashboard()` 的受限投影，包含 `case_count`、`run_count`、最新 Case 身份/日期和 Evidence 状态；不包含策略、持仓或投资结论。
+Slice 2A 在不改变既有 `market` 和顶层状态语义的前提下，向 `ResearchCenterResponse` 增加必填只读字段 `research`，并将 `capabilities.research` 提升为 `available`。该字段是既有 `ResearchQueryService.get_dashboard()` 的受限投影，包含 `case_count`、`run_count`、最新 Case 身份/日期和 Evidence 状态；不包含策略、持仓或投资结论。
 
 `research.state` 只允许 `available | empty | failed`：成功读取且 Case 数为零时为 `empty`，受控研究查询失败时为 `failed`，失败状态的计数必须为 `null`。该增量通过独立 schema `schema_version` 和 OpenAPI drift check 管理，Slice 3 及后续切片仍不得借此字段扩张其他业务范围。
 
 ## 12. Slice 2B 合同增量
 
-Slice 2B 在不改变既有 `market`、`capabilities`、`research` 和顶层状态语义的前提下，向 `ResearchCenterResponse` 增加必填只读字段 `candidate_pool` 与 `opportunities`。
+Slice 2B 在不改变既有 `market`、`research` 和顶层状态语义的前提下，向 `ResearchCenterResponse` 增加必填只读字段 `candidate_pool` 与 `opportunities`，并将 `capabilities.opportunities` 提升为 `available`。
 
 `candidate_pool` 复用 `CandidatePoolQueryService.get_latest()`，只投影最新已发布运行的身份、交易日和输入/纳入/排除计数；没有已发布运行时为 `empty`，受控查询或快照完整性异常时为 `failed`，失败状态不返回计数或运行身份。
 
@@ -186,7 +186,7 @@ Slice 2B 在不改变既有 `market`、`capabilities`、`research` 和顶层状�
 
 ## 13. Slice 3A API 合同增量
 
-Slice 3A 在不改变既有 `market`、`capabilities`、`research`、`candidate_pool` 和 `opportunities` 语义以及顶层 `state` 机器的前提下，向 `ResearchCenterResponse` 增加必填只读字段 `delivery`。该字段是四个独立子状态的有界投影（`pipeline`、`integration`、`archive`、`research_runs`），单来源受控失败不得污染其他子状态，不透传 artifact URI、payload、logical_uri、宿主机路径、凭据或原始异常文本；不新增数据库对象、不执行 HTTP fan-out、不引入写操作。
+Slice 3A 在不改变既有 `market`、`research`、`candidate_pool` 和 `opportunities` 语义以及顶层 `state` 机器的前提下，向 `ResearchCenterResponse` 增加必填只读字段 `delivery`；Slice 3B 完成 Web 展示后将 `capabilities.delivery` 提升为 `available`。该字段是四个独立子状态的有界投影（`pipeline`、`integration`、`archive`、`research_runs`），单来源受控失败不得污染其他子状态，不透传 artifact URI、payload、logical_uri、宿主机路径、凭据或原始异常文本；不新增数据库对象、不执行 HTTP fan-out、不引入写操作。
 
 `delivery.pipeline` 复用 `PipelineRunQueryService.get_latest_run()`，只投影 `status`、`started_at`、`finished_at`、派生自 `finished_at.date()` 的业务完成日期；`state` 词汇为 `available | empty | running | partial | failed`：`succeeded` 终态为 `available`，`running` 在飞为 `running`，`partial` 终态为 `partial`，无匹配运行时为 `empty`，受控 `PipelineRunQueryError` 为 `failed`（不返回 `error_summary`）。
 

@@ -298,6 +298,32 @@ public response can only carry the constant. Distinct from
 dashboard summary and the recent-runs slot independently.
 """
 
+
+RESEARCH_CAPABILITY_REASON: str = "slice_2a_research_summary_available"
+"""Stable reason emitted for the ``capabilities.research.state == "available"`` slot.
+
+Slice 2A promotes the ``research`` capability from the Slice 1
+``deferred`` placeholder to ``available`` because the bounded
+``research`` sub-segment now renders end-to-end (case count,
+run count, latest-case identity, evidence slot, schema
+version). The reason is the only legal string the capability
+slot emits and is opaque to clients; it does not leak
+slice-version internals or driver detail.
+"""
+
+
+OPPORTUNITIES_CAPABILITY_REASON: str = "slice_2b_opportunity_summary_available"
+"""Stable reason emitted for the ``capabilities.opportunities.state == "available"`` slot.
+
+Slice 2B promotes the ``opportunities`` capability from the
+Slice 1 ``deferred`` placeholder to ``available`` because the
+bounded ``opportunities`` sub-segment now renders end-to-end
+(observation count, latest ``as_of``, admission-status mix).
+The reason is the only legal string the capability slot
+emits and is opaque to clients; it does not leak
+slice-version internals or driver detail.
+"""
+
 RESEARCH_RUNS_EMPTY_REASON: str = "no_research_runs"
 """Stable reason emitted when the research-runs projection observed zero runs.
 
@@ -448,7 +474,16 @@ class ResearchCenterCapabilityView:
 
 @dataclass(frozen=True, slots=True)
 class ResearchCenterCapabilitiesView:
-    """Slice 1 capability bundle — frozen until later slices land."""
+    """Frozen capability bundle — resolved per-slice as sub-segments render.
+
+    Every capability slot surfaces the truthful availability of the
+    underlying sub-segment: ``research`` / ``opportunities`` /
+    ``delivery`` report ``available`` once their respective slices
+    render end-to-end; ``strategy`` / ``discipline`` stay
+    ``unavailable`` until their contracts freeze. Each slot carries
+    a stable opaque reason so clients can branch on slot-level
+    state without re-reading sub-segment payloads.
+    """
 
     opportunities: ResearchCenterCapabilityView
     research: ResearchCenterCapabilityView
@@ -1155,10 +1190,10 @@ both sides of the boundary.
 
 _DEFAULT_CAPABILITIES: ResearchCenterCapabilitiesView = ResearchCenterCapabilitiesView(
     opportunities=ResearchCenterCapabilityView(
-        state="deferred", reason="slice_2_not_implemented"
+        state="available", reason=OPPORTUNITIES_CAPABILITY_REASON
     ),
     research=ResearchCenterCapabilityView(
-        state="deferred", reason="slice_2_not_implemented"
+        state="available", reason=RESEARCH_CAPABILITY_REASON
     ),
     delivery=ResearchCenterCapabilityView(
         state="available", reason=DELIVERY_CAPABILITY_REASON
@@ -1172,13 +1207,13 @@ _DEFAULT_CAPABILITIES: ResearchCenterCapabilitiesView = ResearchCenterCapabiliti
 )
 """Frozen capability bundle.
 
-``delivery`` flips to ``available`` once Slice 3B lands because
-the bounded ``delivery`` sub-segment now renders end-to-end;
-``opportunities`` / ``research`` stay ``deferred`` because
-those slices ship their data on the ``opportunities`` /
-``research`` sub-segments directly and never expose a separate
-capability card; ``strategy`` / ``discipline`` stay
-``unavailable`` because their contracts are not yet frozen.
+Slice 2A promotes ``research`` and Slice 2B promotes
+``opportunities`` from the Slice 1 ``deferred`` placeholder
+to ``available`` because the bounded ``research`` /
+``opportunities`` sub-segments now render end-to-end; Slice
+3B likewise promotes ``delivery``. ``strategy`` / ``discipline``
+stay ``unavailable`` because their contracts are not yet
+frozen.
 """
 
 
@@ -2301,11 +2336,13 @@ __all__ = [
     "INTEGRATION_FAILED_REASON",
     "INTEGRATION_HEALTH_RUN_LIMIT",
     "INTEGRATION_PRODUCER_WHITELIST",
+    "OPPORTUNITIES_CAPABILITY_REASON",
     "OPPORTUNITY_EMPTY_REASON",
     "OPPORTUNITY_FAILED_REASON",
     "OPPORTUNITY_RADAR_LIMIT",
     "PIPELINE_FAILED_REASON",
     "PIPELINE_TRIGGER_TYPE_WHITELIST",
+    "RESEARCH_CAPABILITY_REASON",
     "RESEARCH_EMPTY_REASON",
     "RESEARCH_FAILED_REASON",
     "RESEARCH_RUNS_EMPTY_REASON",

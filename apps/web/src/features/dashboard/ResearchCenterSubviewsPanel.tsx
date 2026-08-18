@@ -3,6 +3,7 @@ import { ApiError } from "../../api/client";
 import type {
   ResearchCenterCandidatePoolSummary,
   ResearchCenterOpportunitySummary,
+  ResearchCenterResearchSummary,
   ResearchCenterResponse,
 } from "../../api/types";
 import { EmptyState } from "../../components/EmptyState";
@@ -282,6 +283,107 @@ function OpportunityRadarCard({
   );
 }
 
+function ResearchCard({
+  summary,
+}: {
+  summary: ResearchCenterResearchSummary;
+}) {
+  const detailLink = <NavLink to="/research/history">查看 Research 历史</NavLink>;
+  if (summary.state === "empty") {
+    return (
+      <article
+        className="researchCenterSubviewCard"
+        data-state="empty"
+        aria-label="Research 只读摘要"
+      >
+        <header className="sectionHeader">
+          <h4 className="sectionTitle">Research</h4>
+          <span className="sectionMeta">empty</span>
+        </header>
+        <p role="status" aria-label="Research 状态 empty">
+          <strong>empty</strong> · 暂无已发布的研究案例
+        </p>
+        <EmptyState
+          title="Research · empty"
+          description="当前没有已发布的研究案例可展示。"
+        />
+        {detailLink}
+      </article>
+    );
+  }
+  if (summary.state === "failed") {
+    return (
+      <article
+        className="researchCenterSubviewCard"
+        data-state="failed"
+        aria-label="Research 只读摘要"
+      >
+        <header className="sectionHeader">
+          <h4 className="sectionTitle">Research</h4>
+          <span className="sectionMeta">failed</span>
+        </header>
+        <p role="status" aria-label="Research 状态 failed">
+          <strong>failed</strong> · 受控查询失败
+        </p>
+        <ErrorState
+          title="Research · failed"
+          message="未在响应中返回具体原因（已受控失败）。"
+        />
+        {detailLink}
+      </article>
+    );
+  }
+  return (
+    <article
+      className="researchCenterSubviewCard"
+      data-state="available"
+      aria-label="Research 只读摘要"
+    >
+      <header className="sectionHeader">
+        <h4 className="sectionTitle">Research</h4>
+        <span className="sectionMeta">available</span>
+      </header>
+      <p role="status" aria-label="Research 状态 available">
+        <strong>available</strong> · 已发布研究案例可展示
+      </p>
+      <dl
+        className="researchCenterSubviewSummary"
+        aria-label="Research 摘要指标"
+      >
+        <div>
+          <dt>case_count</dt>
+          <dd>{formatCount(summary.case_count)}</dd>
+        </div>
+        <div>
+          <dt>run_count</dt>
+          <dd>{formatCount(summary.run_count)}</dd>
+        </div>
+        <div>
+          <dt>latest_case.case_id</dt>
+          <dd>{summary.latest_case?.case_id ?? "—"}</dd>
+        </div>
+        <div>
+          <dt>latest_case.as_of_date</dt>
+          <dd>{formatDate(summary.latest_case?.as_of_date)}</dd>
+        </div>
+        <div>
+          <dt>evidence.pack_id</dt>
+          <dd>{summary.evidence.pack_id ?? "—"}</dd>
+        </div>
+        <div>
+          <dt>evidence.quality_status</dt>
+          <dd>{summary.evidence.quality_status ?? "—"}</dd>
+        </div>
+        <div>
+          <dt>evidence.freshness_status</dt>
+          <dd>{summary.evidence.freshness_status ?? "—"}</dd>
+        </div>
+      </dl>
+      {detailLink}
+    </article>
+  );
+}
+
 export function ResearchCenterSubviewsPanel({
   query,
 }: {
@@ -314,6 +416,7 @@ export function ResearchCenterSubviewsPanel({
       aria-label="Research Center 子视图摘要"
     >
       <div className="researchCenterSubviewsGrid">
+        <ResearchCard summary={data.research} />
         <CandidatePoolCard summary={data.candidate_pool} />
         <OpportunityRadarCard summary={data.opportunities} />
       </div>

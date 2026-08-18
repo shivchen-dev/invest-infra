@@ -68,7 +68,7 @@ test-storage:
 	cd packages/storage && PYTHONPATH=../domain/src:../../tests uv run --with pytest --with testcontainers pytest ../../tests/storage --ignore=../../tests/storage/integration -q
 
 test-storage-integration:
-	PYTHONPATH=apps/pipeline/src:packages/domain/src uv run --project packages/storage --with pytest --with testcontainers --with psycopg2-binary pytest tests/storage/integration -q
+	PYTHONPATH=apps/pipeline/src:packages/domain/src:packages/storage/src:packages/domain/tests:tests uv run --project packages/storage --with pytest --with testcontainers --with psycopg2-binary python -m pytest tests/storage/integration -q
 
 test-migrations:
 	cd apps/migrations && uv sync
@@ -91,6 +91,7 @@ test-api:
 test-web:
 	cd apps/web && pnpm install --frozen-lockfile
 	cd apps/web && pnpm typecheck
+	cd apps/web && pnpm test:run
 	cd apps/web && pnpm build
 
 lint:

@@ -56,7 +56,7 @@ jobs:
         with:
           python-version: "3.12"
       - run: pip install sqlalchemy "psycopg[binary]" pytest testcontainers
-      - run: PYTHONPATH=packages/domain/src:packages/storage/src:tests python -m pytest tests/storage/integration -q
+      - run: PYTHONPATH=apps/pipeline/src:packages/domain/src:packages/storage/src:packages/domain/tests:tests python -m pytest tests/storage/integration -q
         env:
           DATABASE_URL: postgresql+psycopg://invest:invest_dev_password@localhost:5432/invest
 

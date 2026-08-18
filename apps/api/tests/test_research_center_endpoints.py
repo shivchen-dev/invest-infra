@@ -55,7 +55,10 @@ from uuid import uuid4
 import pytest
 from fastapi.testclient import TestClient
 from invest_api.application.research_center import (
+    DELIVERY_CAPABILITY_REASON,
     DELIVERY_SCHEMA_VERSION,
+    OPPORTUNITIES_CAPABILITY_REASON,
+    RESEARCH_CAPABILITY_REASON,
     RESEARCH_SCHEMA_VERSION,
     SCHEMA_VERSION,
     ResearchCenterArchiveSummaryView,
@@ -149,23 +152,21 @@ def _data_freshness_view(
 def _capabilities_view() -> ResearchCenterCapabilitiesView:
     """Return the frozen capability bundle.
 
-    Slice 3B promotes the ``delivery`` capability from the
+    Slice 2A promotes the ``research`` capability from the
     Slice 1 ``deferred`` placeholder to ``available`` because
-    the bounded ``delivery`` sub-segment now renders
-    end-to-end; the other capability entries stay on the
-    frozen ``deferred`` / ``unavailable`` vocabulary.
+    the bounded ``research`` sub-segment now renders
+    end-to-end; Slice 2B does the same for ``opportunities``;
+    Slice 3B does the same for ``delivery``. ``strategy`` /
+    ``discipline`` stay ``unavailable`` because their
+    contracts are still frozen.
     """
-
-    from invest_api.application.research_center import (
-        DELIVERY_CAPABILITY_REASON,
-    )
 
     return ResearchCenterCapabilitiesView(
         opportunities=ResearchCenterCapabilityView(
-            state="deferred", reason="slice_2_not_implemented"
+            state="available", reason=OPPORTUNITIES_CAPABILITY_REASON
         ),
         research=ResearchCenterCapabilityView(
-            state="deferred", reason="slice_2_not_implemented"
+            state="available", reason=RESEARCH_CAPABILITY_REASON
         ),
         delivery=ResearchCenterCapabilityView(
             state="available", reason=DELIVERY_CAPABILITY_REASON
@@ -565,18 +566,14 @@ class TestResearchCenterHappyPath:
 
         assert response.status_code == 200
         capabilities = response.json()["capabilities"]
-        from invest_api.application.research_center import (
-            DELIVERY_CAPABILITY_REASON,
-        )
-
         assert capabilities == {
             "opportunities": {
-                "state": "deferred",
-                "reason": "slice_2_not_implemented",
+                "state": "available",
+                "reason": OPPORTUNITIES_CAPABILITY_REASON,
             },
             "research": {
-                "state": "deferred",
-                "reason": "slice_2_not_implemented",
+                "state": "available",
+                "reason": RESEARCH_CAPABILITY_REASON,
             },
             "delivery": {
                 "state": "available",
@@ -781,8 +778,14 @@ class TestResearchCenterStateSerialization:
         assert freshness["missing_count"] is None
         # The capability section is still emitted so the dashboard can
         # surface the future-segment placeholder set even when the
-        # market segment has nothing to show.
-        assert body["capabilities"]["opportunities"]["state"] == "deferred"
+        # market segment has nothing to show. The ``research`` /
+        # ``opportunities`` slots report ``available`` because the
+        # underlying sub-segments render independent of the market
+        # state machine.
+        assert body["capabilities"]["opportunities"]["state"] == "available"
+        assert body["capabilities"]["opportunities"]["reason"] == (
+            OPPORTUNITIES_CAPABILITY_REASON
+        )
 
     @pytest.mark.parametrize("failed_source", ["breadth", "freshness"])
     def test_partial_state_marks_only_controlled_error_source_failed(
@@ -1725,14 +1728,12 @@ class TestResearchCenterDeliveryEndpointSerialization:
 
         Slice 3B removes the Slice 1 ``slice_3_not_implemented``
         placeholder because the bounded ``delivery`` sub-segment
-        now renders end-to-end; the other capability entries
-        stay on ``deferred`` / ``unavailable`` because their
-        contracts are still frozen.
+        now renders end-to-end; the ``research`` / ``opportunities``
+        slots likewise report ``available`` now that Slice 2A /
+        Slice 2B render end-to-end; ``strategy`` / ``discipline``
+        stay ``unavailable`` because their contracts are still
+        frozen.
         """
-
-        from invest_api.application.research_center import (
-            DELIVERY_CAPABILITY_REASON,
-        )
 
         research_center_service.get_research_center.return_value = _response_view(
             breadth=_breadth_view(),
@@ -1745,10 +1746,19 @@ class TestResearchCenterDeliveryEndpointSerialization:
             "state": "available",
             "reason": DELIVERY_CAPABILITY_REASON,
         }
-        # Other capabilities stay frozen on their slice 1
+        # Research / opportunities now report the truthful
+        # ``available`` state — the Slice 2 sub-segments render
+        # end-to-end and the capability bundle surfaces that.
+        assert body["capabilities"]["research"] == {
+            "state": "available",
+            "reason": RESEARCH_CAPABILITY_REASON,
+        }
+        assert body["capabilities"]["opportunities"] == {
+            "state": "available",
+            "reason": OPPORTUNITIES_CAPABILITY_REASON,
+        }
+        # Strategy / discipline stay frozen on their slice 1
         # placeholders.
-        assert body["capabilities"]["opportunities"]["state"] == "deferred"
-        assert body["capabilities"]["research"]["state"] == "deferred"
         assert body["capabilities"]["strategy"]["state"] == "unavailable"
         assert body["capabilities"]["discipline"]["state"] == "unavailable"
 

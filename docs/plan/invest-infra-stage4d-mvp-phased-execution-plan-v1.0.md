@@ -37,7 +37,7 @@ WorkBuddy candidates JSON / legacy 三件套
 → Opportunity Radar / Automation Center
 → Observation Admission
 → Research Case / Evidence
-→ JiuwenSwarm
+→ Research Run / Result
 → Research Case 统一时间线
 ```
 
@@ -68,7 +68,7 @@ WorkBuddy candidates JSON / legacy 三件套
                  └─ Query API + Artifact Preview + Integration Health
                       └─ Dashboard + Opportunity Radar + Automation Center
                            └─ Observation Admission
-                                └─ Research Case + Evidence + JiuwenSwarm
+                                └─ Research Case + Evidence + Research Run / Result
                                      └─ Research Workspace 统一时间线
 ```
 
@@ -84,7 +84,7 @@ WorkBuddy candidates JSON / legacy 三件套
 
 验收标准：
 
-- WorkBuddy、invest-infra、JiuwenSwarm 的数据所有权无冲突；
+- WorkBuddy 与 invest-infra 的数据所有权无冲突；
 - ExternalObservation 与 Evidence 生命周期明确分离；
 - 共享目录不可变、逻辑 URI、hash 和审计规则明确；
 - D6 被标记为独立可选阶段。
@@ -227,7 +227,7 @@ WorkBuddy candidates JSON / legacy 三件套
 
 ## 7. 阶段 3：正式验证与研究闭环
 
-对应原蓝图：D7–D8。目标是完成 `Observation → Admission → Evidence → Research Case → JiuwenSwarm → 统一时间线`。
+对应原蓝图：D7–D8。目标是完成 `Observation → Admission → Evidence → Research Case → Research Run/Result → 统一时间线`。JiuwenSwarm 已停止采用，不再作为本阶段依赖或验收对象。
 
 ### 7.1 交付任务
 
@@ -246,29 +246,29 @@ WorkBuddy candidates JSON / legacy 三件套
 
 依赖：Gate 2。
 
-#### 任务 3.2：连接 Research Case、Evidence 与 JiuwenSwarm
+#### 任务 3.2：连接 Research Case、Evidence 与 Research Run
 
-从已准入 Observation 创建/关联 Research Case，构建有效 Evidence，并复用现有 JiuwenSwarm 研究路径。
+从已准入 Observation 创建/关联 Research Case，构建有效 Evidence，并复用现有 ResearchRunner 领域端口和 Research Run/Result 生命周期；不依赖 JiuwenSwarm。
 
 验收标准：
 
 - 无效或未准入 Evidence 引用被拒绝；
-- JiuwenSwarm 成功/失败均可追溯到 Research Case 和源 run；
+- Research Run 成功/失败均可追溯到 Research Case 和源 run；
 - WorkBuddy 内容只作为受治理的 Evidence/Context 输入，不修改正式事实。
 
-验证：Fake Jiuwen E2E 与现有 Research focused tests 通过。
+验证：Fake ResearchRunner E2E 与现有 Research focused tests 通过。
 
 依赖：任务 3.1。
 
 #### 任务 3.3：交付 Research Workspace 统一时间线
 
-扩展 Research Case 页面，展示 External Discovery、Admission、Artifact、Evidence、JiuwenSwarm 结果和 provenance 跳转。
+扩展 Research Case 页面，展示 External Discovery、Admission、Artifact、Evidence、Research Result 和 provenance 跳转。
 
 验收标准：
 
 - 一页可追溯发现、验证、Evidence 和深研全过程；
-- WorkBuddy 观察、正式事实和 AI interpretation 有明确视觉标签；
-- artifact unavailable、JiuwenSwarm failed 和无效引用有可理解错误态。
+- WorkBuddy 观察、正式事实和研究解释有明确视觉标签；
+- artifact unavailable、Research Run failed 和无效引用有可理解错误态。
 
 验证：Web tests 与完整验收演示通过。
 
@@ -278,8 +278,8 @@ WorkBuddy candidates JSON / legacy 三件套
 
 - [ ] 正常主链路端到端通过；
 - [ ] 蓝图第 25.10 节异常场景全部有测试或手工验收证据；
-- [ ] Fake WorkBuddy、Fake Jiuwen E2E 通过；
-- [ ] 真实 WorkBuddy、真实 JiuwenSwarm 手工验收通过；
+- [ ] Fake WorkBuddy、Fake ResearchRunner E2E 通过；
+- [ ] 真实 WorkBuddy 手工验收通过；
 - [ ] 现有全量测试无回归；
 - [ ] 运行手册、架构文档和 OpenAPI client 已同步。
 

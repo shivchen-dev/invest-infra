@@ -70,13 +70,16 @@ from invest_api.application.research_center import (
     ARCHIVE_RUN_LIMIT,
     CANDIDATE_POOL_FAILED_REASON,
     CANDIDATE_POOL_SNAPSHOT_MISSING_REASON,
+    DELIVERY_CAPABILITY_REASON,
     DELIVERY_SCHEMA_VERSION,
     INTEGRATION_EMPTY_REASON,
     INTEGRATION_FAILED_REASON,
+    OPPORTUNITIES_CAPABILITY_REASON,
     OPPORTUNITY_EMPTY_REASON,
     OPPORTUNITY_FAILED_REASON,
     OPPORTUNITY_RADAR_LIMIT,
     PIPELINE_FAILED_REASON,
+    RESEARCH_CAPABILITY_REASON,
     RESEARCH_RUNS_EMPTY_REASON,
     RESEARCH_RUNS_FAILED_REASON,
     RESEARCH_SCHEMA_VERSION,
@@ -755,14 +758,19 @@ class TestAsOfDateResolution:
 class TestCapabilityBundle:
     """The capability bundle stays deterministic and stable across slices.
 
-    Slice 3B promotes ``capabilities.delivery`` from the Slice 1
-    ``deferred`` placeholder to ``available`` because the bounded
-    ``delivery`` sub-segment now renders end-to-end; the other
-    capability entries stay on the frozen ``deferred`` /
-    ``unavailable`` vocabulary. The capability section is
-    decoupled from any specific source read so a single delivery
-    sub-segment failure can never poison the capability bundle;
-    each call is a fresh materialisation.
+    Slice 2A promotes ``capabilities.research`` and Slice 2B
+    promotes ``capabilities.opportunities`` from the Slice 1
+    ``deferred`` placeholder to ``available`` because the
+    bounded ``research`` and ``opportunities`` sub-segments now
+    render end-to-end; ``capabilities.delivery`` likewise sits
+    on ``available`` because the bounded ``delivery``
+    sub-segment renders end-to-end (Slice 3B); ``strategy`` /
+    ``discipline`` stay ``unavailable`` because their contracts
+    are not yet frozen. The capability section is decoupled
+    from any specific source read so a single delivery /
+    research / opportunity sub-segment failure can never
+    poison the capability bundle; each call is a fresh
+    materialisation.
     """
 
     def test_capability_bundle_matches_frozen_contract(self) -> None:
@@ -773,16 +781,12 @@ class TestCapabilityBundle:
 
         response = service.get_research_center()
 
-        from invest_api.application.research_center import (
-            DELIVERY_CAPABILITY_REASON,
-        )
-
         assert response.capabilities == ResearchCenterCapabilitiesView(
             opportunities=ResearchCenterCapabilityView(
-                state="deferred", reason="slice_2_not_implemented"
+                state="available", reason=OPPORTUNITIES_CAPABILITY_REASON
             ),
             research=ResearchCenterCapabilityView(
-                state="deferred", reason="slice_2_not_implemented"
+                state="available", reason=RESEARCH_CAPABILITY_REASON
             ),
             delivery=ResearchCenterCapabilityView(
                 state="available", reason=DELIVERY_CAPABILITY_REASON
@@ -796,6 +800,127 @@ class TestCapabilityBundle:
                 reason="position_discipline_contract_not_frozen",
             ),
         )
+
+    def test_research_capability_is_available_with_truthful_reason(self) -> None:
+        """``capabilities.research`` reports ``available`` now that the
+        Slice 2A research summary renders end-to-end."""
+
+        service, _, _, _, _, _, _ = _service_with(
+            breadth_return=_snapshot(),
+            freshness_return=_freshness_view(status="fresh"),
+        )
+
+        response = service.get_research_center()
+
+        assert response.capabilities.research.state == "available"
+        assert response.capabilities.research.reason == (
+            RESEARCH_CAPABILITY_REASON
+        )
+        assert RESEARCH_CAPABILITY_REASON != "slice_2_not_implemented"
+
+    def test_opportunities_capability_is_available_with_truthful_reason(
+        self,
+    ) -> None:
+        """``capabilities.opportunities`` reports ``available`` now that
+        the Slice 2B opportunity radar summary renders end-to-end."""
+
+        service, _, _, _, _, _, _ = _service_with(
+            breadth_return=_snapshot(),
+            freshness_return=_freshness_view(status="fresh"),
+        )
+
+        response = service.get_research_center()
+
+        assert response.capabilities.opportunities.state == "available"
+        assert response.capabilities.opportunities.reason == (
+            OPPORTUNITIES_CAPABILITY_REASON
+        )
+        assert OPPORTUNITIES_CAPABILITY_REASON != (
+            "slice_2_not_implemented"
+        )
+
+    def test_delivery_capability_stays_available_with_truthful_reason(
+        self,
+    ) -> None:
+        """``capabilities.delivery`` keeps its Slice 3B ``available``
+        slot — the semantic repair is research / opportunities
+        only, never delivery."""
+
+        service, _, _, _, _, _, _ = _service_with(
+            breadth_return=_snapshot(),
+            freshness_return=_freshness_view(status="fresh"),
+        )
+
+        response = service.get_research_center()
+
+        assert response.capabilities.delivery.state == "available"
+        assert response.capabilities.delivery.reason == (
+            DELIVERY_CAPABILITY_REASON
+        )
+
+    def test_strategy_and_discipline_capabilities_remain_unavailable(
+        self,
+    ) -> None:
+        """``strategy`` / ``discipline`` stay ``unavailable`` because
+        their contracts are not yet frozen — the semantic repair
+        must not perturb them."""
+
+        service, _, _, _, _, _, _ = _service_with(
+            breadth_return=_snapshot(),
+            freshness_return=_freshness_view(status="fresh"),
+        )
+
+        response = service.get_research_center()
+
+        assert response.capabilities.strategy.state == "unavailable"
+        assert response.capabilities.strategy.reason == (
+            "strategy_iteration_contract_not_frozen"
+        )
+        assert response.capabilities.discipline.state == "unavailable"
+        assert response.capabilities.discipline.reason == (
+            "position_discipline_contract_not_frozen"
+        )
+
+    @pytest.mark.parametrize(
+        ("capability_attribute", "expected_reason_constant"),
+        [
+            pytest.param(
+                "research", "RESEARCH_CAPABILITY_REASON", id="research"
+            ),
+            pytest.param(
+                "opportunities",
+                "OPPORTUNITIES_CAPABILITY_REASON",
+                id="opportunities",
+            ),
+        ],
+    )
+    def test_promoted_capability_reasons_are_stable_module_constants(
+        self, capability_attribute: str, expected_reason_constant: str
+    ) -> None:
+        """The new ``available`` reason values are stable module-level
+        constants exported from ``research_center`` so downstream
+        callers and routers cannot drift onto arbitrary strings."""
+
+        from invest_api.application import research_center as rc_module
+
+        service, _, _, _, _, _, _ = _service_with(
+            breadth_return=_snapshot(),
+            freshness_return=_freshness_view(status="fresh"),
+        )
+
+        response = service.get_research_center()
+
+        capability = getattr(response.capabilities, capability_attribute)
+        assert capability.state == "available"
+        # The reason field is the literal module-level constant the
+        # ``research_center`` module exports; pinning the attribute
+        # name prevents a silent renaming that would silently break
+        # downstream routers / clients.
+        exported_value = getattr(
+            rc_module, expected_reason_constant
+        )
+        assert capability.reason == exported_value
+        assert expected_reason_constant in rc_module.__all__
 
 
 class TestResearchSummaryAvailable:
