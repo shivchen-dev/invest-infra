@@ -1,12 +1,11 @@
 # 中心投研可视化平台 MVP 实施计划
 
 > 文档版本：v1.0
-> 文档状态：ACTIVE_PLAN（计划已形成，代码开发待用户显性授权）
+> 文档状态：ACTIVE（本文件是中心可视化主线唯一权威实施计划）
 > 计划治理：`docs/plan/README.md`
 > 制定日期：2026-08-15
 > 上位蓝图：`docs/plan/archive/reference-blueprints/invest-infra-stage4d-unified-investment-workbench-integration-plan-v1.0.md`
 > 既有执行基线：`docs/plan/invest-infra-stage4d-mvp-phased-execution-plan-v1.0.md`
-> 执行清单：`tasks/central-research-visualization-mvp-todo.md`
 
 ## 1. 决策摘要
 
@@ -267,5 +266,5 @@ Slice 4、5 不阻塞中心平台 MVP；不得为了页面完整度提前创建�
 - 不包含回测、自动交易和自动策略批准；
 - OpenAPI、Web、API 和全量回归通过；
 - 真实环境验收记录可复现；
-- 文档、执行清单和页面语义一致；
+- 计划、代码和验收证据的范围与页面语义一致；
 - 用户审核通过后，中心只读平台 MVP 才标记完成。

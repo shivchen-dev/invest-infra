@@ -119,7 +119,7 @@ systemctl --user enable --now invest-infra-dagster.service
 `docs/adr/` 和
 `docs/plan/invest-infra-stage4a-final-closure-sprint-plan-v1.1.md`。
 
-当前计划权威、完成/延期状态和任务承接关系统一见
+当前计划入口与治理规则统一见
 [`docs/plan/README.md`](docs/plan/README.md)；不得仅根据旧 Todo 的未勾选项恢复派工。
 
 ## 验证状态

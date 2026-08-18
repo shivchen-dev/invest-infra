@@ -4,7 +4,6 @@
 > 状态：FROZEN_FOR_SLICE_1
 > 冻结日期：2026-08-15
 > 上位计划：`docs/plan/invest-infra-central-research-visualization-mvp-plan-v1.0.md`
-> 执行清单：`tasks/central-research-visualization-mvp-todo.md`
 
 ## 1. 冻结范围
 

@@ -1,11 +1,10 @@
 # Stage 4D MVP 分阶段执行计划
 
 > 文档版本：v1.0
-> 文档状态：ACTIVE_CLOSEOUT
+> 文档状态：ACTIVE（当前范围为 Stage 4D 收口）
 > 计划治理：`docs/plan/README.md`
 > 制定日期：2026-08-14
 > 上位蓝图：`docs/plan/archive/reference-blueprints/invest-infra-stage4d-unified-investment-workbench-integration-plan-v1.0.md`
-> 执行清单：`tasks/stage4d-mvp-phased-execution-todo.md`
 > 当前范围：Stage 4D MVP（D0–D5 + D7–D8）
 > 后续承接：中心投研可视化平台的业务定位、信息架构与新增实施任务，以 `docs/plan/invest-infra-central-research-visualization-mvp-plan-v1.0.md` 为准；本计划已完成的只读工作台事实继续有效，不再扩展为回测、自动交易或通用流程平台。
 
@@ -323,13 +322,10 @@ WorkBuddy candidates JSON / legacy 三件套
 |---|---|
 | `docs/plan/archive/reference-blueprints/invest-infra-stage4d-unified-investment-workbench-integration-plan-v1.0.md` | Stage 4D–4G 总蓝图、领域和架构设计基线 |
 | `docs/plan/invest-infra-stage4d-mvp-phased-execution-plan-v1.0.md` | Stage 4D 当前阶段、依赖、Gate 和验收权威 |
-| `tasks/stage4d-mvp-phased-execution-todo.md` | 日常执行与勾选状态权威 |
 | `docs/implementation/WORKBUDDY-CANDIDATE-INTAKE-M0-CONTRACT.md` | Candidate Intake 已冻结合同 |
 
 ## 11. 开始实施前检查
 
-- [ ] 用户已审核并批准本执行计划；
-- [ ] Todo 中只有一个阶段标记为进行中；
-- [ ] 每个实现任务拆到单次聚焦会话可完成；
-- [ ] 每 2–3 个任务执行一次阶段检查；
-- [ ] 未经单独批准不启动 D6、4E、4F 或 4G。
+- 用户授权、代码实现、自动验证和真实验收分别记录，不通过 Todo 维护；
+- 每个实现切片必须关联本计划的阶段和 Gate；
+- 未经单独批准不启动 D6、4E、4F 或 4G。

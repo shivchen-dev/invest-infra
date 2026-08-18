@@ -872,4 +872,5 @@ off.
   `python -m invest_pipeline.integrations …` for the shared-directory
   gateway, both tracked in
   [`docs/plan/invest-infra-stage4d-mvp-phased-execution-plan-v1.0.md`](../docs/plan/invest-infra-stage4d-mvp-phased-execution-plan-v1.0.md)
-  + [`tasks/stage4d-mvp-phased-execution-todo.md`](../tasks/stage4d-mvp-phased-execution-todo.md).
+  + the authoritative Stage 4D plan
+  [`docs/plan/invest-infra-stage4d-mvp-phased-execution-plan-v1.0.md`](../docs/plan/invest-infra-stage4d-mvp-phased-execution-plan-v1.0.md).

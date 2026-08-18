@@ -1,23 +1,24 @@
-# invest-infra 计划治理索引
+# invest-infra 计划目录与轻量治理规则
 
-> 索引版本：v1.0
-> 生效日期：2026-08-15
-> 适用范围：`docs/plan/` 与 `tasks/`
-> 状态权威：当旧文档页首状态、正文顺序或 Todo 与本索引冲突时，以本索引为准。
+> 生效日期：2026-08-18
+> 适用范围：`docs/plan/`
+
+本目录是计划入口，不是动态进度表。每条活动主线只保留一份权威实施计划；计划定义目标、边界、依赖和验收标准，Git、CI 与真实验收记录定义实际完成事实。
+
+`tasks/` 下的 Todo 和执行拆分文件均为历史执行记录，不再作为派工、进度或完成状态权威，也不再要求维护。
 
 ## 1. 当前执行权威
 
 同时只保留两条实施主线，未经用户明确授权不得从其他蓝图恢复派工：
 
-| 优先级 | 主线 | 状态 | 计划 | 执行清单 |
+| 优先级 | 主线 | 状态 | 唯一权威实施计划 |
 |---|---|---|---|---|
-| P0 | Stage 4D 研究交付收口 | `ACTIVE_CLOSEOUT` | `invest-infra-stage4d-mvp-phased-execution-plan-v1.0.md` | `tasks/stage4d-mvp-phased-execution-todo.md` |
-| P1 | 中心投研可视化平台 MVP | `ACTIVE_PLAN` | `invest-infra-central-research-visualization-mvp-plan-v1.0.md` | `tasks/central-research-visualization-mvp-todo.md` |
+| P0 | Stage 4D 研究交付收口 | `ACTIVE` | `invest-infra-stage4d-mvp-phased-execution-plan-v1.0.md` |
+| P1 | 中心投研可视化平台 MVP | `ACTIVE` | `invest-infra-central-research-visualization-mvp-plan-v1.0.md` |
 
 状态解释：
 
-- `ACTIVE_CLOSEOUT`：只完成已定义链路的剩余联调、验收和文档收口，不扩张范围；
-- `ACTIVE_PLAN`：计划已形成，代码开发仍须用户显性授权；
+- `ACTIVE`：计划是当前有效实施边界；是否已授权、已实现或已验收，以对应证据为准；
 - 两条主线共享现有只读查询能力，但不得在同一任务中混合开发。
 
 ## 2. 业务定位冻结
@@ -45,27 +46,29 @@
 
 | 文档 | 治理状态 | 处理结论 |
 |---|---|---|
-| `invest-infra-central-research-visualization-mvp-plan-v1.0.md` | `ACTIVE_PLAN` | 当前可视化执行方案；Slice 0–3 为 MVP，Slice 4–5 独立冻结合同和授权 |
-| `invest-infra-stage4d-mvp-phased-execution-plan-v1.0.md` | `ACTIVE_CLOSEOUT` | 当前 Stage 4D 收口权威；只处理真实联调、剩余 Research Workspace 和最终验收 |
+| `invest-infra-central-research-visualization-mvp-plan-v1.0.md` | `ACTIVE` | 当前可视化实施方案；Slice 0–3 为 MVP，Slice 4–5 独立冻结合同和授权 |
+| `invest-infra-stage4d-mvp-phased-execution-plan-v1.0.md` | `ACTIVE` | 当前 Stage 4D 收口权威；只处理真实联调、剩余 Research Workspace 和最终验收 |
 | `invest-infra-strategy-source-to-automation-workflow.md` | `CONTRACT_AUTHORITY` | 策略交付物和来源追溯的合同权威，不作为当前开发排期 |
 | `archive/reference-blueprints/invest-infra-stage4d-unified-investment-workbench-integration-plan-v1.0.md` | `REFERENCE_BLUEPRINT` | Stage 4D–4G 长期蓝图；保留原文件名和完整内容，不得直接从正文派工 |
 | `invest-infra-data-collection-enhancement-plan-v1.0.md` | `REFERENCE_BLUEPRINT` | 数据采集架构参考；不作为当前全量建设承诺 |
 | `invest-infra-investment-context-provider-integration-plan.md` | `REFERENCE_BLUEPRINT` | Provider/Evidence 参考；新数据源按独立授权切片实施 |
 | `invest-infra-stage4a-final-closure-sprint-plan-v1.1.md` | `REFERENCE_HISTORY` | Stage 4A 历史收口依据，不再派工 |
 | `invest-infra-stage4a0-multi-channel-dynamic-candidate-routing-plan.md` | `DEFERRED` | 候选策略合同重新冻结前不实施 |
-| `invest-infra-stage4b-market-intelligence-foundation-plan.md` | `COMPLETED` | Todo 已全部完成；保留为实现依据 |
+| `invest-infra-stage4b-market-intelligence-foundation-plan.md` | `COMPLETED` | 既有实现和验收记录已完成；保留为实现依据 |
 | `invest-infra-stage4c-core-data-layer-integration-plan.md` | `COMPLETED_WITH_DEFERRED_ITEMS` | MVP 已验收；延期项不自动进入当前主线 |
 | `invest-infra-v2-all-data-sources-integration-plan.md` | `DEFERRED` | 不执行“大而全”数据源接入；按真实研究问题单独授权 |
 | `invest-infra-workbuddy-daily-report-governance-mvp-plan-v1.0.md` | `MERGED_REFERENCE` | 已完成合同和实现事实保留；剩余接入并入 Stage 4D 收口 |
 
-## 4. 任务包状态
+## 4. 动态事实来源
 
-所有任务包的具体状态以 `tasks/README.md` 为准。旧 Todo 中未勾选项目不自动代表当前待办；必须同时满足：
+本索引不维护开发进度。动态事实按以下来源判断：
 
-1. 所属计划状态允许派工；
-2. 未被更高层计划合并、延期或替代；
-3. 有当前用户授权；
-4. 代码、测试、提交和真实环境验收尚未证明完成。
+- 代码实现：Git commit 和工作树；
+- 自动验证：CI、测试、构建、类型和架构检查结果；
+- 真实验收：独立验收记录；
+- 授权与范围变化：用户明确决定或治理决策记录。
+
+提交代码或测试通过，不自动等于阶段验收完成；计划状态也不因某个 Todo 被勾选而改变。
 
 ## 5. 文档变更规则
 
@@ -75,7 +78,6 @@
 
 - 不能作为现有两条主线的垂直切片；
 - 有清晰输入、输出、非目标和验收 Gate；
-- 同时建立一份 Todo；
 - 在本索引登记治理状态；
 - 明确它替代、合并或依赖哪些旧计划。
 
@@ -83,11 +85,10 @@
 
 ```text
 DRAFT
-→ ACTIVE_PLAN
-→ ACTIVE / ACTIVE_CLOSEOUT
-→ COMPLETED
+→ ACTIVE
+→ CLOSED
 
-ACTIVE_PLAN / ACTIVE
+ACTIVE
 → DEFERRED
 → ACTIVE（重新授权后）
 
@@ -95,7 +96,7 @@ ACTIVE_PLAN / ACTIVE
 → MERGED_REFERENCE / REFERENCE_HISTORY
 ```
 
-`COMPLETED` 必须有测试、构建、真实验收或明确关闭记录；不能只因 Todo 被勾选而完成。
+活动计划完成必须有测试、构建、真实验收或明确关闭记录；不能只因 Todo 被勾选而完成。
 
 ### 5.3 归档规则
 
@@ -113,12 +114,14 @@ ACTIVE_PLAN / ACTIVE
 | `strategy-iteration` | `OPEN_CONTRACT` | 中心平台 Slice 0–3 验收后，用户独立授权 |
 | `position-discipline` | `OPEN_CONTRACT` | 确认实际持仓事实权威源后，用户独立授权 |
 
-## 7. 维护检查
+## 7. OpenWiki 与计划治理
+
+OpenWiki 是展示层，不是计划或派工权威。它可以展示计划、代码、测试和验收事实，但不自行决定计划状态，也不产生第二份执行计划。
+
+## 8. 维护检查
 
 每次计划变化必须同步检查：
 
-- 本索引与 `tasks/README.md`；
 - 当前执行计划页首状态；
 - 被合并/延期计划是否仍被其他文档称为执行权威；
-- Todo 是否把历史未勾选项误报为当前任务；
 - README 是否仍指向有效计划索引。
