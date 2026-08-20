@@ -14,7 +14,7 @@
 > 归档状态：`REFERENCE_BLUEPRINT`；不得直接从正文派工。
 > 当前治理权威：`docs/plan/README.md`。
 > Stage 4D 当前执行权威：`docs/plan/invest-infra-stage4d-mvp-phased-execution-plan-v1.0.md`。
-> Stage 4D 当前任务清单：`tasks/stage4d-mvp-phased-execution-todo.md`。
+> Stage 4D 当前执行权威：`docs/plan/invest-infra-stage4d-mvp-phased-execution-plan-v1.0.md`。
 > 投研协作职责与权威边界：`docs/adr/0014-investment-collaboration-responsibility-boundaries.md`。
 
 > 拆分说明：本文件第 25、33–37 节保留为原始设计基线；若其任务顺序、阶段边界或验收口径与 Stage 4D 当前执行权威冲突，以分阶段执行计划为准。

@@ -59,7 +59,7 @@ adding API endpoints.
 |---|---|---|
 | Slice 1: migration + row contracts | Done | `apps/migrations/migrations/versions/20260807_0014_research_runs.py`; `tests/test_migration_chain.py` 11 passed. |
 | Slice 2: repository round trips | Done | `tests/storage/test_research_run_repository_mock.py` (14), `tests/storage/test_research_result_repository_mock.py` (13), and the focused PostgreSQL integration `tests/storage/integration/test_research_run_result_repositories.py` (9 passed). |
-| Slice 3: UoW + documentation status | Done | `tests/storage/test_unit_of_work_mock.py` PR-5.5 blocks green; storage mocks (mock tests under `tests/storage/`, excluding integration) 205 passed; pipeline suite 1461 passed; this plan + `tasks/research-run-persistence-todo.md` updated. |
+| Slice 3: UoW + documentation status | Done | `tests/storage/test_unit_of_work_mock.py` PR-5.5 blocks green; storage mocks (mock tests under `tests/storage/`, excluding integration) 205 passed; pipeline suite 1461 passed. |
 
 Lifecycle beyond PR-5.5 remains pending: the JiuwenSwarm Adapter (PR-6) and the read-only Research API (PR-7) are **not** delivered by this slice and must not be claimed as such.
 

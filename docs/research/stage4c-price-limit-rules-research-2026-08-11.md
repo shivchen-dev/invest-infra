@@ -107,7 +107,6 @@ PriceLimitResult =
 ## 仓库复用核查
 
 - `docs/plan/invest-infra-stage4c-core-data-layer-integration-plan.md` §3.3、§4.3、§7：已有 `stock_price_limits` 候选 dataset、`prev_close`/限制价/命中字段和 `rule_version/source_refs` 设计。
-- `tasks/stage4c-core-data-layer-integration-todo.md` “Phase 1：日频市场状态”：已有“冻结 A 股价格限制规则与版本”“建设 `stock_price_limits` Raw/Core 事实”。
 - `docs/adr/0004-etf-market-calendar-timezone-range.md`、`docs/adr/0005-etf-daily-bars-adjustment-contract.md`、`docs/adr/0006-daily-bar-revision-latest-policy.md`：可复用交易日、Decimal/日线 revision/provenance 的治理方向，但没有价格限制规则。
 - 已落地 `limit_up_price`、`limit_down_price`、`regime_id` 和 fail-closed 结果语义；Provider catalog/dataset 只冻结能力名称与映射，尚未声明可路由 Provider。
 

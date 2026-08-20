@@ -84,7 +84,7 @@
 
 ## Task 3C：真实环境收口
 
-- 结果：保留真实、stale/unavailable、外部交付异常三种验收证据并校准 Todo/Gate B。
+- 结果：保留真实、stale/unavailable、外部交付异常三种验收证据并校准 Gate B。
 - 阻碍：需要真实环境数据/WorkBuddy + JiuwenSwarm 组合根，代码本身不应伪造通过。
 - 依赖：3B。
 

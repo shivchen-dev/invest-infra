@@ -234,6 +234,6 @@ DC-3 已于 `57ff5af` 标记完成并推送。Research 生命周期现在可以�
 
 **本地已实现 / 未提交（uncommitted）**
 
-- **PR-7** 只读 Research API 已在本工作树实现，但尚未 commit / push；`main` 上最新事实仍是 PR-6（`7cc8da8`）已合并。落地切片对应 `apps/api/src/invest_api/{application,routers,schemas}/research.py`、`apps/api/tests/test_research_endpoints.py`、`apps/api/tests/test_research_service.py`、`apps/api/tests/test_research_detail_serialization.py`、`packages/storage/src/invest_storage/{repositories,unit_of_work}.py`、`tests/storage/test_research_run_repository_mock.py`、`apps/api/openapi.json`、`docs/plan/invest-infra-evidence-driven-research-lifecycle-implementation-plan.md`（本文件）、`tasks/pr7-research-api-{plan,todo}.md`。
+- **PR-7** 只读 Research API 已在本工作树实现，但尚未 commit / push；`main` 上最新事实仍是 PR-6（`7cc8da8`）已合并。落地切片对应 `apps/api/src/invest_api/{application,routers,schemas}/research.py`、`apps/api/tests/test_research_endpoints.py`、`apps/api/tests/test_research_service.py`、`apps/api/tests/test_research_detail_serialization.py`、`packages/storage/src/invest_storage/{repositories,unit_of_work}.py`、`tests/storage/test_research_run_repository_mock.py`、`apps/api/openapi.json`、`docs/plan/invest-infra-evidence-driven-research-lifecycle-implementation-plan.md`（本文件）。
 
 声明：以上状态准确区分了"已推送并合并"（PR-6，commit `7cc8da8`）与"本地已实现但未提交"（PR-7）。Research 生命周期在 `main` 上的最新事实是 PR-6 已合并，read-only API 仅在本地 working tree 落地；尚未存在 PR-7 commit / push，不得在文档、ADR 或 review 描述中暗示 PR-7 已交付到 `main`。
