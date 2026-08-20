@@ -45,20 +45,31 @@ AI Research（规划中的受控消费方）
 
 正式接入真实数据源时，只新增 Provider 适配器，不能让领域层直接导入数据源 SDK。
 
+## 运行端口
+
+端口权威统一见 [`docs/runbooks/runtime-ports.md`](docs/runbooks/runtime-ports.md)：
+
+| 服务 | 权威端口 | 本机入口 |
+|---|---:|---|
+| Web | `3001` | http://localhost:3001 |
+| API | `8000` | http://localhost:8000 |
+| PostgreSQL | `5432` | `localhost:5432` |
+| Dagster | `3000` | http://localhost:3000 |
+
+`5173/5174` 仅是 Web 内部开发/测试端口；`5433` 和 `9000/9001` 不属于当前投研系统业务入口。
+
 ## 启动
 
 前置要求：Docker、Docker Compose。
+
+完整 Compose 和用户级 systemd 是两种互斥的进程托管方式。若本机已运行 `invest-infra-api.service` 或 `invest-infra-dagster.service`，先停止对应服务，避免与 Compose 的 `8000` 或 `3000` 冲突。
 
 ```bash
 cp .env.example .env
 docker compose up --build
 ```
 
-然后访问：
-
-- Web: http://localhost:3001
-- API 文档: http://localhost:8000/docs
-- Dagster: http://localhost:3000
+启动后按上表访问；API 文档固定为 http://localhost:8000/docs。
 
 首次启动后执行迁移：
 
@@ -105,22 +116,28 @@ make test
 - 不在第一阶段引入 Redis、MinIO、消息队列和微服务。
 - 不把 Notebook 或 `vectorbt[full]` 装进 API 镜像。
 
-自动调度的用户级 systemd unit 位于
-`deploy/invest-infra-dagster.service`，安装后使用：
+用户级 systemd unit 位于 `deploy/`。只需常驻 API 时安装
+`invest-infra-api.service`；需要自动调度时再安装
+`invest-infra-dagster.service`：
 
 ```bash
 mkdir -p ~/.config/systemd/user
+cp deploy/invest-infra-api.service ~/.config/systemd/user/
 cp deploy/invest-infra-dagster.service ~/.config/systemd/user/
 systemctl --user daemon-reload
+systemctl --user enable --now invest-infra-api.service
 systemctl --user enable --now invest-infra-dagster.service
 ```
 
+systemd 托管的服务不得再由 Compose 重复启动，具体冲突规则见端口权威文档。
+
 详细决策见 `docs/ARCHITECTURE.md`、`docs/ARCHITECTURE-GOVERNANCE.md`、
+[`docs/runbooks/runtime-ports.md`](docs/runbooks/runtime-ports.md)、
 `docs/adr/` 和
 `docs/plan/invest-infra-stage4a-final-closure-sprint-plan-v1.1.md`。
 
 当前计划入口与治理规则统一见
-[`docs/plan/README.md`](docs/plan/README.md)；不得仅根据旧 Todo 的未勾选项恢复派工。
+[`docs/plan/README.md`](docs/plan/README.md)；不得根据历史任务包恢复派工。
 
 ## 验证状态
 

@@ -35,6 +35,7 @@ services:
     environment:
       VITE_API_BASE_URL: http://localhost:8000
     ports:
+      # 3001 是浏览器业务入口；5173 仅为容器内部 Vite 端口。
       - "3001:5173"
     depends_on:
       - api
