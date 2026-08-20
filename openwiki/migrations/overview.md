@@ -3,7 +3,7 @@ type: Concept
 title: Migrations overview
 description: How apps/migrations owns the PostgreSQL schema as an independent Alembic app, the twenty-revision chain under apps/migrations/migrations/versions (baseline + provider evidence + candidate pool + daily bars + input snapshots + DC-2 etf_profiles + PR-ETF-PROFILE-04 etf_profile_fields + Stage 4A research_context_packs + DC-3 exposure + research_cases + evidence-pack case FK + research_runs/results + Stage 4B market_observation_snapshots + research_evidence_bundles + research_result evidence FK + Stage 4C stock_price_limits + Stage 4D external_integration + research_external_evidence), and the schema-ownership rules across raw/core/analytics/ops/integration.
 resource: /openwiki/migrations/overview.md
-tags: [migrations, alembic, postgres, schemas, etf-profile, research-context, exposure, research-lifecycle, market-observations, evidence-bundle, stage4c, stock-price-limits, stage4d, external-integration, research-external-evidence]
+tags: [migrations, alembic, postgres, schemas, etf-profile, research-context, exposure, research-lifecycle, market-observations, evidence-bundle, stage4c, stock-price-limits, stage4d, external-integration, research-external-evidence, plan-governance]
 ---
 
 # Migrations overview

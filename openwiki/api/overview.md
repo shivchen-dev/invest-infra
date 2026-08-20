@@ -1,9 +1,10 @@
 ---
 type: Concept
 title: API overview
-description: FastAPI routers, Pydantic response shapes and the endpoint surface for ETF data, candidate-pool results and diffs, personal pipeline-run status and paginated history, data freshness, the PR-7 research-case / evidence / run / result lifecycle queries, the PR-W03 research dashboard aggregate and PR-W05 case workspace read models, the Stage 4B market-temperature and market-breadth latest endpoints, the Stage 4D External Integration Workbench (external-workflow / artifact / observation read routes, integration health, opportunity radar, the gated admission-decision command, and the Research-Case ↔ External-Observation evidence-link command), and the PR-MCP-MINIMAL Model Context Protocol server, including the legacy /v1/instruments endpoint and the architecture-governance application-service split. The Stage 4C Core Data Layer Integration and the ADR-0013 Provider–Engine–Event seam change the pipeline and storage surfaces without changing the API surface in this slice.
+description: >-
+  FastAPI routers, Pydantic response shapes and the endpoint surface for ETF data, candidate-pool results and diffs, personal pipeline-run status and paginated history, data freshness, the PR-7 research-case / evidence / run / result lifecycle queries, the PR-W03 research dashboard aggregate and PR-W05 case workspace read models, the Stage 4B market-temperature and market-breadth latest endpoints, the Stage 4D External Integration Workbench (external-workflow / artifact / observation read routes, integration health, opportunity radar, the gated admission-decision command, the Research-Case ↔ External-Observation evidence-link command, and the Research-Case creation from admitted observation), the Central Research Center visualization (GET /api/v1/research-center Slice 0/1/2/3 envelope composed from the existing reader services with the truthful capabilities bundle — research / opportunities / delivery slots report available via the module-level *_CAPABILITY_REASON constants and strategy / discipline stay unavailable until their contracts freeze), the controlled Research Run command (POST /api/v1/research-cases/{case_id}/runs queueing a JiuwenSwarm run from an admitted Case — the JiuwenSwarm runner remains a historical compatibility adapter and is no longer an active plan or acceptance dependency per docs/plan/README.md), and the PR-MCP-MINIMAL Model Context Protocol server, including the legacy /v1/instruments endpoint and the architecture-governance application-service split. The Stage 4C Core Data Layer Integration and the ADR-0013 Provider–Engine–Event seam change the pipeline and storage surfaces without changing the API surface in this slice.
 resource: /openwiki/api/overview.md
-tags: [api, fastapi, routers, pydantic, etf, candidate-pool, research, research-dashboard, research-workspace, mcp, application-service, governance, stage4b, market-breadth, market-temperature, stage4d, external-workflows, opportunity-radar, integration-health, observation-admission]
+tags: [api, fastapi, routers, pydantic, etf, candidate-pool, research, research-dashboard, research-workspace, mcp, application-service, governance, stage4b, market-breadth, market-temperature, stage4d, external-workflows, opportunity-radar, integration-health, observation-admission, research-center, research-run-command, central-research-visualization]
 ---
 
 # API overview
@@ -35,19 +36,23 @@ apps/api/src/invest_api/
 │   ├── pipeline_runs.py   # personal daily pipeline-run status + history
 │   ├── data_freshness.py  # personal daily data-freshness summary
 │   ├── research.py        # PR-7 read-only research lifecycle queries
+│   │                       # plus the controlled queue_research_run POST (ResearchRunCommandRequest)
 │   ├── market_temperature.py  # Stage 4B market-temperature latest snapshot
 │   ├── market_breadth.py  # Stage 4B market-breadth latest snapshot
 │   ├── external_workflows.py  # Stage 4D external-workflow / artifact / observation list endpoints
 │   ├── integration_health.py  # Stage 4D /api/v1/integration/health + safe artifact preview
 │   ├── opportunity_radar.py   # Stage 4D /api/v1/opportunity-radar read surface
 │   ├── admission.py            # Stage 4D gated POST admission-decision command
-│   └── research_external_evidence.py  # Stage 4D Research-Case ↔ External-Observation evidence link
+│   ├── research_external_evidence.py  # Stage 4D Research-Case ↔ External-Observation evidence link
+│   └── research_center.py      # Central Research Center /api/v1/research-center Slice 0/1/2/3 envelope
 ├── application/
 │   ├── etf.py             # EtfQueryService
 │   ├── candidate_pool.py  # CandidatePoolQueryService
 │   ├── pipeline_runs.py   # PipelineRunQueryService
 │   ├── data_freshness.py  # DataFreshnessQueryService
 │   ├── research.py        # ResearchQueryService (PR-7)
+│   ├── research_run_command.py    # ResearchRunCommandService — controlled queue
+│   ├── research_center.py         # ResearchCenterQueryService — Central Research Center composer
 │   ├── market_temperature.py  # MarketTemperatureQueryService (Stage 4B)
 │   ├── market_breadth.py  # MarketBreadthQueryService (Stage 4B)
 │   ├── external_workflows.py  # Stage 4D ExternalWorkflowQueryService
@@ -62,6 +67,8 @@ apps/api/src/invest_api/
     ├── pipeline_runs.py   # PipelineRunResponse + PipelineRunListResponse
     ├── data_freshness.py  # DataFreshnessResponse + status vocabulary
     ├── research.py        # ResearchCase / EvidencePack / Run / Result + lists
+    ├── research_run_command.py    # ResearchRunCommandRequest / Response
+    ├── research_center.py         # ResearchCenterResponse (Slice 0/1/2/3 frozen envelope)
     ├── market_temperature.py  # MarketTemperatureResponse (Stage 4B)
     ├── market_breadth.py  # MarketBreadthResponse (Stage 4B)
     ├── external_workflows.py  # Stage 4D run / artifact / observation shapes
@@ -112,6 +119,8 @@ and application service
 | `GET /api/v1/integration/artifacts/{artifact_id}` | `routers/integration_health.py` | Stage 4D safe artifact preview. Returns `ArtifactPreviewResponse` (logical URI + `content_hash` / `media_type` / `size_bytes` / metadata). 404 when the artifact is missing — no byte payload is exposed. |
 | `POST /api/v1/external-observations/{observation_id}/admission-decisions` | `routers/admission.py` | Stage 4D **gated** admission-decision command. Disabled by default; the router returns 404 unless `Settings.stage4d_admission_commands_enabled=True`. Carries an `Idempotency-Key` header that must match the body's `idempotency_key` (409 otherwise) and an `AdmissionDecisionRequest` payload mapping 1-1 to `invest_domain.integration.AdmissionVerification`. Repeated idempotency keys short-circuit with `idempotent=True`; non-pending observations raise 409, missing observations raise 404. |
 | `POST /api/v1/research-cases/{case_id}/external-observations/{observation_id}/evidence` | `routers/research_external_evidence.py` | Stage 4D Research-Case ↔ External-Observation evidence link. Returns 201 with `ResearchExternalEvidenceResponse`. Rejects with 404 if the case or observation is missing, with 409 if the observation's `instrument_id` does not match the case's `instrument_id`, with 409 if the observation's `artifact_id` is set but the artifact row is missing, and with 409 if the observation is not in `AdmissionStatus.ADMITTED`. Idempotent on `(case_id, observation_id)` — re-linking the same pair returns the existing `evidence_id` unless the content hash diverges (which raises 409). |
+| `GET /api/v1/research-center` | `routers/research_center.py` | Central Research Center visualization. Composes a frozen `ResearchCenterResponse` envelope (`schema_version="1.0.0"`) from the existing readers: Slice 1 `market` (Market Breadth + Data Freshness), Slice 2A `research` (ResearchQueryService.get_dashboard), Slice 2B `candidate_pool` (CandidatePoolQueryService.get_latest) + `opportunities` (ExternalWorkflowQueryService.list_radar), Slice 3A `delivery` (pipeline + integration + archive + research_runs sub-segments). The `capabilities` bundle now reports `research` / `opportunities` / `delivery` as `available` (each with its slice-specific module-level `*_CAPABILITY_REASON` constant exported from `application/research_center.py`) and `strategy` / `discipline` as `unavailable`; the capability section is decoupled from any single sub-segment read so one failed reader cannot poison the bundle. Every `view.source` projection runs through `sanitize_source_value(...)` against the four whitelist constants (`PIPELINE_TRIGGER_TYPE_WHITELIST` / `INTEGRATION_PRODUCER_WHITELIST` / `ARCHIVE_MEDIA_TYPE_WHITELIST` / `RESEARCH_RUNS_RUNNER_KEY_WHITELIST`). `generated_at` and `market.data_freshness.checked_at` share one router-stamped UTC wall-clock value. |
+| `POST /api/v1/research-cases/{case_id}/runs` | `routers/research.py` | Controlled `queue_research_run` command. Body is a `ResearchRunCommandRequest` (`evidence_pack_id` UUID, `playbook_key` 1..128 chars, `playbook_version` 1..64 chars). `ResearchRunCommandService.queue` resolves the case, requires at least one admitted external evidence item bound to it, validates the bound `EvidencePack`, transitions `DRAFT` cases to `READY`, and otherwise persists a new `ResearchRun` with `JIUWENSWARM_RUNNER_KEY="jiuwenswarm-runner-v1"`. An existing queued/running/succeeded run for the same `(evidence_pack_id, runner_key, playbook_key)` triple is returned with `idempotent=True`. Errors: 404 (`Research Case not found` / `EvidencePack not found`), 409 (`Research Case has no admitted external evidence` / case status not draft/ready), 422 (malformed UUID / out-of-range length). Response is a `ResearchRunCommandResponse(run, idempotent)` with status 201. |
 
 All endpoints accept the `get_db_session` FastAPI dependency; tests
 override it with a `MagicMock` `Session` and patch the relevant
@@ -332,6 +341,86 @@ research state.
   `producer`, `payload`, `admission`, `content_hash`); built via
   `from_domain(item)` and serialised by
   `routers/research_external_evidence.py`.
+
+### `schemas/research_run_command.py` (Stage 4D controlled write)
+
+- `ResearchRunCommandRequest` — the request body for
+  `POST /api/v1/research-cases/{case_id}/runs`: an `evidence_pack_id`
+  UUID plus a `playbook_key` (1..128 chars) and `playbook_version`
+  (1..64 chars) pair. The pair is wrapped into the domain
+  `ResearchPlaybook` value object on the application side.
+- `ResearchRunCommandResponse` — the response envelope
+  (`run: ResearchRunResponse`, `idempotent: bool`). The `run`
+  member is built via `ResearchRunResponse.from_domain(run)`; the
+  `idempotent` flag is `True` when the application service
+  short-circuited with an existing queued/running/succeeded run
+  for the same `(evidence_pack_id, runner_key, playbook_key)`
+  triple.
+
+### `schemas/research_center.py` (Central Research Center Slice 0/1/2/3)
+
+The Pydantic envelope is the contract-pinned
+`ResearchCenterResponse` defined in
+[`docs/implementation/RESEARCH-CENTER-SLICE0-CONTRACT.md`](../../docs/implementation/RESEARCH-CENTER-SLICE0-CONTRACT.md).
+Every field is fixed by the contract; later slices add new
+segments without reshaping the existing ones.
+
+- `ResearchCenterResponse` — the top-level envelope
+  (`schema_version="1.0.0"`, `generated_at`, `state`, `market`,
+  `capabilities`, `candidate_pool`, `opportunities`, `research`,
+  `delivery`). Top-level `state` is the closed
+  `Literal["available", "partial", "unavailable", "failed"]`.
+- `ResearchCenterMarketResponse` / `ResearchCenterBreadthResponse`
+  / `ResearchCenterDataFreshnessResponse` — Slice 1. Breadth
+  renames the domain `observation_key` to the contract `key` and
+  preserves every other field
+  (`value: Decimal | str | None`, `unit`, `observed_date`,
+  `source_kind`, `source_ref`, `quality_status`) verbatim; the
+  freshness envelope is the existing
+  `DataFreshnessResponse` shape re-projected with `state` and
+  `checked_at`. The four-state vocabulary is
+  `available | partial | unavailable | failed` so a populated
+  zero total is never confused with a missing source.
+- `ResearchCenterCapabilitiesResponse` / `ResearchCenterCapabilityResponse`
+  — frozen capability bundle that mirrors the truthfulness of every
+  bounded sub-segment. Slice 1 originally reserved
+  `strategy` / `discipline` for the explicit
+  `{"state": "unavailable", "reason": "contract_not_frozen"}` shape
+  (and the docstring of `ResearchCenterCapabilitiesView` in
+  [`application/research_center.py`](../../apps/api/src/invest_api/application/research_center.py)
+  still calls out that contract). Slice 2A promoted
+  `research` to `available` with the stable module-level constant
+  `RESEARCH_CAPABILITY_REASON="slice_2a_research_summary_available"`,
+  Slice 2B promoted `opportunities` to `available` with
+  `OPPORTUNITIES_CAPABILITY_REASON="slice_2b_opportunity_summary_available"`,
+  and Slice 3B promoted `delivery` to `available` with
+  `DELIVERY_CAPABILITY_REASON="slice_3b_delivery_summary_available"`.
+  All three constants are exported from `__all__` in
+  [`application/research_center.py`](../../apps/api/src/invest_api/application/research_center.py)
+  and the reason strings are the only legal values the
+  corresponding capability slots emit — clients branch on
+  `state` only and treat `reason` as opaque. A single
+  sub-segment failure never poisons the bundle because each
+  response is a fresh materialisation, and `strategy` /
+  `discipline` stay `unavailable` until their contracts freeze.
+- `ResearchCenterCandidatePoolSummaryResponse` /
+  `ResearchCenterOpportunitySummaryResponse` /
+  `ResearchCenterResearchSummaryResponse` — Slice 2A / 2B. Each
+  sub-segment uses the three-state
+  `available | empty | failed` vocabulary. `failed` is reserved
+  for the controlled query-error boundary; `empty` is the exact
+  `0`-count path.
+- `ResearchCenterDeliveryResponse` /
+  `ResearchCenterDeliveryPipelineResponse` /
+  `ResearchCenterDeliveryIntegrationResponse` /
+  `ResearchCenterDeliveryArchiveResponse` /
+  `ResearchCenterDeliveryResearchRunsResponse` — Slice 3A. The
+  delivery envelope's `state` uses the closed
+  `Literal["available", "empty", "running", "partial", "failed"]`
+  vocabulary for the personal-daily pipeline card and
+  `Literal["available", "empty", "failed"]` for the
+  integration / archive / research-runs cards. `schema_version`
+  mirrors the contract (`"1.0.0"`).
 
 ## 4. Endpoint contracts
 
@@ -590,6 +679,65 @@ application services and reuse the same sanitized 500-detail pattern.
   Evidence Item. Requires a resolved `instrument_id`; repeated calls
   return the existing Case/Evidence pair with `created_case=false`.
 
+### Central Research Center endpoint
+
+- `GET /api/v1/research-center` — the deep, contract-pinned
+  Central Research Center envelope. The route delegates every
+  segment to the existing reader services
+  ([`MarketBreadthQueryService.get_latest`](../architecture/overview.md#6-architecture-governance-convergence) /
+  [`DataFreshnessQueryService.get_freshness`](../architecture/overview.md#6-architecture-governance-convergence) /
+  [`ResearchQueryService.get_dashboard`](../api/overview.md#central-research-center-endpoint) /
+  [`CandidatePoolQueryService.get_latest`](../api/overview.md#2-routing-surface) /
+  [`ExternalWorkflowQueryService.list_radar`](../api/overview.md#2-routing-surface)) plus the personal-daily
+  pipeline reader; no HTTP fan-out, no duplicate projection.
+  The four `_delivery_*_from_view` mappers feed every
+  `view.source` value through
+  [`sanitize_source_value`](../api/overview.md#central-research-center-endpoint)
+  against the matching whitelist
+  (`PIPELINE_TRIGGER_TYPE_WHITELIST` /
+  `INTEGRATION_PRODUCER_WHITELIST` /
+  `ARCHIVE_MEDIA_TYPE_WHITELIST` /
+  `RESEARCH_RUNS_RUNNER_KEY_WHITELIST`) so a rogue upstream
+  caller who bypasses `ResearchCenterQueryService` cannot echo
+  a credential, host path, control character or connection
+  string through the response body even when the bounded view
+  already carries the malicious text. The router does **not**
+  catch unknown exceptions — only the controlled per-source
+  failures are explicitly represented in the 200 response; any
+  other error propagates so FastAPI's generic error boundary
+  sanitises driver-level detail.
+
+### Controlled Research Run command
+
+- `POST /api/v1/research-cases/{case_id}/runs` — the queueing
+  command for a controlled Research Run. The endpoint accepts
+  the historical `JIUWENSWARM_RUNNER_KEY="jiuwenswarm-runner-v1"`
+  runner key today (the JiuwenSwarm adapter is preserved for
+  historical compatibility only and is not an active
+  plan / acceptance dependency per [`docs/plan/README.md`](../../docs/plan/README.md);
+  any future runner swap must keep the request shape and the
+  idempotency contract stable). Body is a
+  `ResearchRunCommandRequest` (`evidence_pack_id` UUID,
+  `playbook_key` 1..128 chars, `playbook_version` 1..64 chars).
+  [`ResearchRunCommandService.queue`](../api/overview.md#controlled-research-run-command)
+  resolves the case (404 `Research Case not found`),
+  requires at least one admitted external evidence item
+  (`uow.research_external_evidence.list_by_case(case_id)`)
+  otherwise 409 `Research Case has no admitted external evidence`,
+  validates the bound `EvidencePack` against the case (404
+  `EvidencePack not found`), transitions `DRAFT` cases to
+  `READY` (otherwise 409 `Research Case must be draft or ready`),
+  and otherwise persists a new `ResearchRun` via
+  `uow.research_runs.add` with
+  `JIUWENSWARM_RUNNER_KEY="jiuwenswarm-runner-v1"`. If a
+  queued/running/succeeded run already exists for the same
+  `(evidence_pack_id, runner_key, playbook_key)` triple, the
+  existing row is returned with `idempotent=True`. The worker
+  side
+  ([`apps/pipeline/src/invest_pipeline/research_run_worker.py`](../../apps/pipeline/src/invest_pipeline/research_run_worker.py))
+  is the only path that drives those rows through the
+  [`ResearchOrchestrationService`](../pipeline/overview.md#5g-research-orchestration-service-pr-7--adr-0012).
+
 ### Application services (architecture governance §6 convergence)
 
 Per the GOV-05..GOV-07 convergence landed by the architecture
@@ -668,7 +816,36 @@ tests override those service dependencies.
   `AdmissionVerification`, and persists the new admission metadata
   through `ObservationRepository.save_admission`. The router adds
   the `stage4d_admission_commands_enabled` gate on top.
-- [`application/res...(argument truncated)
+- [`application/research_run_command.py`](../../apps/api/src/invest_api/application/research_run_command.py) —
+  `ResearchRunCommandService` is the controlled command side
+  behind `POST /api/v1/research-cases/{case_id}/runs`. The
+  service depends on four structural Protocols (`_CaseRepository`,
+  `_EvidencePackRepository`, `_ExternalEvidenceRepository`,
+  `_ResearchRunRepository`); the storage repositories wired
+  through `get_research_run_command_service` satisfy all four.
+  `queue(case_id, evidence_pack_id, playbook)` walks
+  `DRAFT → READY` if needed, persists the new run with
+  `JIUWENSWARM_RUNNER_KEY="jiuwenswarm-runner-v1"`, and is
+  idempotent on `(evidence_pack_id, runner_key, playbook_key)`
+  for queued/running/succeeded rows.
+- [`application/research_center.py`](../../apps/api/src/invest_api/application/research_center.py) —
+  `ResearchCenterQueryService` is the deep composer behind
+  `GET /api/v1/research-center`. It depends on the existing
+  reader services
+  (`MarketBreadthQueryService` / `DataFreshnessQueryService` /
+  `ResearchQueryService` / `CandidatePoolQueryService` /
+  `ExternalWorkflowQueryService` / `PipelineRunQueryService`)
+  and never reaches the storage layer itself. The module owns
+  the frozen `SCHEMA_VERSION` / `RESEARCH_SCHEMA_VERSION` /
+  `DELIVERY_SCHEMA_VERSION` constants, the four whitelist
+  constants, the `sanitize_source_value(...)` defence-in-depth
+  filter, and the controlled per-source error boundaries that
+  translate `ResearchQueryError` /
+  `CandidatePoolQueryError` / `MarketTemperatureQueryError` /
+  `MarketBreadthQueryError` / `SQLAlchemyError` into the
+  segment-level `state="failed"` shape.
+
+The application services live under `apps/api/src/invest_api/application/`
 
 The application services live under `apps/api/src/invest_api/application/`
 so the API depends only on `domain` + `storage`, but the storage calls

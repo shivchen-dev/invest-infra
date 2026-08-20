@@ -1,9 +1,9 @@
 ---
 type: Concept
 title: Storage overview
-description: SQLAlchemy 2 ORM models, repositories, the SqlAlchemyUnitOfWork + SessionProvider, Provider evidence, candidate-pool and job-history contracts, ETF profile/context persistence, research lifecycle persistence (case + run + result + evidence bundle + research-external-evidence link), the Stage 4B market observation snapshot persistence, the Stage 4C stock price-limit revision-aware persistence, the Stage 4D External Integration Workbench persistence (integration.external_workflow_runs / external_artifacts / external_observations + analytics.research_external_evidence), and DC-3 index/ETF exposure repositories under packages/storage/src/invest_storage.
+description: SQLAlchemy 2 ORM models, repositories, the SqlAlchemyUnitOfWork + SessionProvider, Provider evidence, candidate-pool and job-history contracts, ETF profile/context persistence, research lifecycle persistence (case + run + result + evidence bundle + research-external-evidence link + reverse observation lookup), the Stage 4B market observation snapshot persistence, the Stage 4C stock price-limit revision-aware persistence, the Stage 4D External Integration Workbench persistence (integration.external_workflow_runs / external_artifacts / external_observations + analytics.research_external_evidence), and DC-3 index/ETF exposure repositories under packages/storage/src/invest_storage.
 resource: /openwiki/storage/overview.md
-tags: [storage, sqlalchemy, repository, unit-of-work, provider-evidence, etf-profile, research-context, research-lifecycle, exposure, market-observations, evidence-bundle, stage4b, stage4c, stock-price-limits, stage4d, external-integration, research-external-evidence]
+tags: [storage, sqlalchemy, repository, unit-of-work, provider-evidence, etf-profile, research-context, research-lifecycle, exposure, market-observations, evidence-bundle, stage4b, stage4c, stock-price-limits, stage4d, external-integration, research-external-evidence, research-run-command, observation-lookup]
 ---
 
 # Storage overview
@@ -257,7 +257,13 @@ Examples:
   `content_hash` raises `ValueError` so an existing evidence
   row is never overwritten with a different admission audit
   trail. `list_by_case(case_id)` is the ordered-by-`created_at`
-  reader used by future case-workspace surfaces.
+  reader used by future case-workspace surfaces, and the
+  `get_by_observation(observation_id)` lookup is the canonical
+  reverse lookup the controlled Research Run queue
+  (`ResearchRunCommandService.queue` /
+  `ExternalResearchHandoffService.queue`) uses to confirm an
+  admitted observation is already linked before opening a new
+  `ResearchRun` row.
 - `InputSnapshotRepository`: `add`, `get_by_date_and_hash`,
   `list_by_date`.
 
@@ -384,4 +390,12 @@ SQLAlchemy classes above.
   [`tests/storage/`](../../tests/storage/INCREMENT3-RESULTS.md)
   spins up a disposable PostgreSQL container, runs migrations, and
   exercises the same repositories end-to-end. CI runs them under the
-  `storage-integration` job.
+  `storage-integration` job. The session-level conftest
+  ([`tests/storage/integration/conftest.py`](../../tests/storage/integration/conftest.py))
+  declares the full six-schema set (`raw` / `core` / `ops` / `app` /
+  `analytics` / `integration`) in its `_create_schemas_and_tables`
+  autouse fixture and the matching `app` / `analytics` /
+  `integration` truncations in `_truncate_between_tests`, so the
+  Stage 4D `integration.*` repositories resolve their ORM tables
+  through `Base.metadata.create_all` without manual migration
+  preflight.

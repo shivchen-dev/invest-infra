@@ -1,9 +1,9 @@
 ---
 type: Concept
 title: Testing & operations
-description: "CI jobs (architecture, domain, storage unit/integration, migrations, pipeline, API, personal-daily PostgreSQL e2e, web vitest + Playwright e2e), the AST-based architecture and migration-chain gates, mock vs integration tests, the DC-2 / Stage 4A evidence + context unit suites, the PR-6 JiuwenSwarm adapter and research orchestration unit suites, the PR-7 research API / MCP server unit suites, the PR-W03 research dashboard / PR-W05 case workspace unit suites, the DC-3 exposure collection unit suites, the Stage 4C stock price-limit + Limit Sentiment + Market Breadth v2 unit suites, the ADR-0013 Provider–Engine–Event Phase 0 unit suites (provider runtime registry + stock daily bars engine / application + provider health + provider publishability gate), the WorkBuddy daily-report governance unit suites (validator + archive + latest-accepted pointer), the WorkBuddy candidate intake unit suites (parser + archive + projection), the Stage 4D External Integration Workbench unit suites (bridge ingest path-safety + manifest verification + idempotent re-import, shared-directory gateway atomic moves + failure path, observation-admission API + service), the Stage 4C seeded replay + Tushare/TDX consistency golden suite, compose runtime, and the Cifang/replay/shadow-run operating procedures."
+description: "CI jobs (architecture, domain, storage unit/integration, migrations, pipeline, API, personal-daily PostgreSQL e2e, web vitest + Playwright e2e), the AST-based architecture and migration-chain gates, mock vs integration tests, the DC-2 / Stage 4A evidence + context unit suites, the PR-6 JiuwenSwarm adapter and research orchestration unit suites, the PR-7 research API / MCP server unit suites, the PR-W03 research dashboard / PR-W05 case workspace unit suites, the DC-3 exposure collection unit suites, the Stage 4C stock price-limit + Limit Sentiment + Market Breadth v2 unit suites, the ADR-0013 Provider–Engine–Event Phase 0 unit suites (provider runtime registry + stock daily bars engine / application + provider health + provider publishability gate), the WorkBuddy daily-report governance unit suites (validator + archive + latest-accepted pointer), the WorkBuddy candidate intake unit suites (parser + archive + projection), the WorkBuddy atomic stage worker + research-artifact intake + strategy archive MVP + bridge CLI unit suites, the Stage 4D External Integration Workbench unit suites (bridge ingest path-safety + manifest verification + idempotent re-import, shared-directory gateway atomic moves + failure path, observation-admission API + service, controlled Research Run queue + queued worker + manual CLI driver), the Central Research Center visualization MVP unit suites (`/api/v1/research-center` endpoint + `ResearchCenterQueryService` deep composition), the Stage 4C seeded replay + Tushare/TDX consistency golden suite, compose runtime, and the Cifang/replay/shadow-run operating procedures."
 resource: /openwiki/testing-and-ops/overview.md
-tags: [ci, testing, alembic, compose, openwiki, etf-profile, research-context, research-lifecycle, research-cockpit, jiuwenswarm, mcp, exposure, stage4c, stock-price-limits, limit-sentiment, market-breadth-v2, provider-engine-event, workbuddy, workbuddy-reports, workbuddy-candidates, stage4d, bridge-ingestor, shared-directory, observation-admission]
+tags: [ci, testing, alembic, compose, openwiki, etf-profile, research-context, research-lifecycle, research-cockpit, jiuwenswarm, mcp, exposure, stage4c, stock-price-limits, limit-sentiment, market-breadth-v2, provider-engine-event, workbuddy, workbuddy-reports, workbuddy-candidates, stage4d, bridge-ingestor, shared-directory, observation-admission, research-center, central-research-visualization, research-run-command, research-run-worker, jiuwenswarm-runtime, workbuddy-bridge-dagster, workbuddy-stage-worker, workbuddy-strategy-archive]
 ---
 
 # Testing & operations
@@ -23,7 +23,7 @@ The CI workflow is fan-out by domain so failures are easy to triage:
 | `architecture` | `python scripts/check_architecture.py` against Python 3.12. Fails on any forbidden cross-layer import or on a co-existing `providers.py` + `providers/` directory. |
 | `domain-tests` | `pytest packages/domain/tests -q` with `PYTHONPATH=packages/domain/src`. |
 | `storage-unit` | `pip install sqlalchemy psycopg[binary] pytest`, then `pytest tests/storage --ignore=tests/storage/integration -q` against the mock repositories. |
-| `storage-integration` | Spins up a `postgres:16` service, `pip install`s `testcontainers`, runs `pytest tests/storage/integration -q` with `DATABASE_URL` pointed at the container. |
+| `storage-integration` | Spins up a `postgres:16` service, `pip install`s `testcontainers`, runs `pytest tests/storage/integration -q` with `DATABASE_URL` pointed at the container. The CI step uses `PYTHONPATH=apps/pipeline/src:packages/domain/src:packages/storage/src:packages/domain/tests:tests` so the Stage 4C / Stage 4D repositories under `tests/storage/integration` resolve their fixtures against the application-layer UoW factory and the full ORM metadata (including the new `integration` schema). |
 | `migrations` | `astral-sh/setup-uv@v6`, `cd apps/migrations && uv sync`, then `upgrade head → downgrade base → upgrade head` round-trip. |
 | `pipeline-tests` | `uv sync` + `ruff check` + `pytest -q` for `apps/pipeline` (the `Makefile` target uses `uv run --no-env-file pytest` so a local `apps/pipeline/.env` cannot mask the real `DATABASE_URL` in CI). |
 | `pipeline-import-smoke` | Imports `invest_pipeline.definitions.defs` after `uv sync`. |
@@ -38,11 +38,20 @@ The job name overrides in the `Makefile` (`make test` etc.) cover the
 main test slices, but the workflow also has separate import-smoke,
 personal-daily-e2e, and openapi-contract jobs. The `web-check` job
 type-checks, runs the vitest unit-test suite, and builds; the local
-`test-web` target mirrors the same three commands. The Playwright
+`test-web` target now drives the same four commands
+(`pnpm install --frozen-lockfile` + `pnpm typecheck` +
+`pnpm test:run` + `pnpm build`) so a `make test-web` invocation
+exercises the Research Center panel test suites (`ResearchCenterDeliveryPanel.test.tsx`,
+`ResearchCenterSubviewsPanel.test.tsx`,
+`ResearchCenterMarketStatusPanel.test.tsx`,
+`DashboardPage.test.tsx`) without the local Playwright boot. The Playwright
 Research Cockpit e2e (`apps/web/e2e/research-cockpit.e2e.ts`) is
 local-only today (`pnpm test:e2e`); it boots Vite at `127.0.0.1:5174`
 through the Playwright `webServer` config and is the canonical cockpit
-smoke for future operators.
+smoke for future operators. The new Research Center web smoke lives
+under `pnpm test:run` instead, which the GitHub Actions `web-check`
+job (and `make test-web`) both execute against the `apps/web`
+tree.
 
 ### Migration-chain AST gate
 
@@ -98,7 +107,7 @@ Tests in `tests/storage` split into two halves:
 | Sub-tree | Style |
 |----------|-------|
 | `tests/storage/test_*_mock.py` | Uses `MagicMock` sessions and the storage-layer DTOs to exercise every repository branch without touching a database. |
-| `tests/storage/integration/test_*.py` | Uses `testcontainers.PostgreContainer` to spin up a disposable 16.x container; fixtures create the relevant schema via `Base.metadata.create_all` and roll back the transaction at the end of each test via savepoints. |
+| `tests/storage/integration/test_*.py` | Uses `testcontainers.PostgreContainer` to spin up a disposable 16.x container; the session-scoped conftest fixture (`_create_schemas_and_tables`) declares the full six-schema set (`raw` / `core` / `ops` / `app` / `analytics` / `integration`) so `Base.metadata.create_all` covers the Stage 4D `integration.*` tables too, and the per-test `_truncate_between_tests` fixture truncates each schema's tables in `sorted_tables` order to keep the bounded fixtures cheap. Each test rolls back its transaction at the end via savepoints. |
 
 The CI matrix keeps the two halves on separate jobs (`storage-unit`,
 `storage-integration`) so the fast mock suite does not pay for the
@@ -435,8 +444,77 @@ the asset-level integration paths against fixture data:
   archive reuses `tempfile.mkdtemp` / `os.replace`, and the
   pointer writer reuses `fcntl.flock` so the unit tests stay
   deterministic on any POSIX host.
+- The WorkBuddy atomic stage worker, research-artifact intake,
+  strategy archive MVP, and shared-directory bridge CLI add four
+  focused suites:
+  `apps/pipeline/tests/unit/test_workbuddy_stage_worker.py`
+  (the four `("strategy", "candidate", "research", "observation")`
+  stages, the `renameat2(RENAME_NOREPLACE)` claim path, the
+  `recover_once()` resume path, the `failed/` move on handler
+  exception, symlinked-root rejection),
+  `apps/pipeline/tests/unit/test_workbuddy_research_artifacts.py`
+  (the `workbuddy.invest-result/1.0` schema enforcement, the
+  `result_hash` / `artifacts[0].sha256` re-computation, the
+  16 MiB / 32 MiB size caps, the byte-identical re-import
+  short-circuit and the divergent-bytes rejection),
+  `apps/pipeline/tests/unit/test_workbuddy_strategy_archive.py`
+  (the phase-A capability and phase-B engineering preflight
+  routing, the 60-second validator timeout, the 64 KiB
+  evidence cap, the path-redaction of `<bridge-root>` /
+  `<repository-root>`, the manifest re-hash on the recover
+  path), and
+  `apps/pipeline/tests/unit/test_workbuddy_bridge_cli.py` plus
+  `apps/pipeline/tests/unit/test_workbuddy_research_ingest_cli.py`
+  (the manual one-shot CLI drivers, exit-code contracts, and
+  the stage-specific handler dispatch). The companion
+  `apps/pipeline/tests/unit/test_strategy_archive_cli.py` pins
+  the `python -m invest_pipeline.strategy_archive_cli` driver's
+  per-outcome JSON line and exit-code contract.
+- The Central Research Center visualization MVP adds two API
+  suites — `apps/api/tests/test_research_center_endpoints.py`
+  (the frozen `SCHEMA_VERSION` / `RESEARCH_SCHEMA_VERSION` /
+  `DELIVERY_SCHEMA_VERSION` constants, the `state` machine, the
+  capability whitelists, the four `_delivery_*_from_view`
+  mappers' defence-in-depth sanitisation against credential
+  paths / control characters / connection strings) and
+  `apps/api/tests/test_research_center_service.py`
+  (the `ResearchCenterQueryService` deep composition — Slice 1
+  market + data freshness, Slice 2A research summary, Slice 2B
+  candidate-pool / opportunities summary, Slice 3A delivery
+  chain — and the controlled per-source error boundaries).
+  The capability bundle's truthful-state promotion is pinned by
+  `TestCapabilityBundle.test_research_capability_is_available_with_truthful_reason`
+  / `test_opportunities_capability_is_available_with_truthful_reason`
+  / `test_delivery_capability_stays_available_with_truthful_reason`
+  / `test_strategy_and_discipline_capabilities_remain_unavailable`
+  / `test_promoted_capability_reasons_are_stable_module_constants`
+  inside `test_research_center_service.py` and the matching
+  `TestResearchCenterStateSerialization` /
+  `TestResearchCenterDeliveryEndpointSerialization` assertions in
+  `test_research_center_endpoints.py`, so a regression that flips
+  the slots back to `deferred` or to an arbitrary reason string
+  breaks the focused suite immediately.
+- The Stage 4D controlled Research Run queue adds
+  `apps/api/tests/test_research_run_command.py` (the
+  `ResearchRunCommandService.queue` 404 / 409 contract on missing
+  case / missing evidence pack / non-`READY` case, the
+  idempotent re-queue on `(evidence_pack_id, runner_key,
+  playbook_key)`, the `JIUWENSWARM_RUNNER_KEY` rejection),
+  `apps/pipeline/tests/unit/test_research_run_worker.py`
+  (the `ResearchRunWorker.run_once` / `run_next` CAS guard,
+  the `ResearchRunWorkerInputError` matrix), and
+  `apps/pipeline/tests/unit/test_research_run_worker_cli.py`
+  (the manual CLI single-line summary and exit-code contract).
+  The fake-research handoff e2e in
+  `apps/pipeline/tests/unit/test_external_research_handoff.py`
+  covers the full queue → execute → result lifecycle against an
+  in-memory fake runner.
 
 ## 6. Deployment and runtime
+
+The authoritative endpoint and port contract is [`docs/runbooks/runtime-ports.md`](../../docs/runbooks/runtime-ports.md): API `8000`, Web `3001`, PostgreSQL `5432`, and Dagster `3000`. In particular, the Web mapping is `3001:5173`; `5173` is only the container's Vite port, while `5174` is reserved for Playwright. The old `5433` and `9000/9001` endpoints are not part of this application's runtime contract.
+
+Choose one process owner for API and Dagster. Full Compose owns PostgreSQL, API, Web, and Dagster; the host-managed alternative uses user-level systemd for API/Dagster and Docker only for PostgreSQL. Running both alternatives creates direct conflicts on ports `8000` and `3000`. Use `docker compose ps`, `systemctl --user status invest-infra-api.service`, and `systemctl --user status invest-infra-dagster.service` to identify the active owner before troubleshooting.
 
 [`/compose.yaml`](../../compose.yaml) defines the development stack:
 

@@ -1,9 +1,9 @@
 ---
 type: Concept
 title: Pipeline overview
-description: "Dagster assets, the guarded personal daily schedule, ETL services, provider adapters, JiuwenSwarm research execution, MCP research transports, research orchestration, DC-3 index/ETF exposure collection, ETF profile/context builders, provider routing, the Stage 4B Stock Daily Bars + Market Intelligence Foundation (dynamic stock universe, Tushare by-date daily batches, tdx_offline adapter, market observation snapshot services, market-breadth bundle binding), the Stage 4C Core Data Layer Integration (versioned price-limit domain policy, fixture-dev stock price-limit provider, Stock Price-Limit raw/core persistence, Market Breadth v2 + Limit Sentiment publish services), the Stage 4D External Integration Workbench (bridge ingest of the immutable WorkBuddy candidate archive into integration.external_workflow_runs / external_artifacts / external_observations, shared-directory gateway with inbox/processing/archive/failed atomic directory moves, observation-admission service behind the gated `stage4d_admission_commands_enabled` flag), the Provider–Engine–Event Phase 0 seam (ProviderRuntimeRegistry, StockDailyBarsEngine, StockDailyBarsApplication, ProviderHealthSnapshot, ProviderPublishDecision gate), the WorkBuddy daily-report governance (M0/M1/M2: validator + immutable archive + accepted-only latest-accepted.json pointer, path-safe run identity, validate / import CLI subcommands), the WorkBuddy candidate intake (M0 contract-aligned: parser + immutable archive + symbol/projection dedupe + `needs_symbol_resolution` tagging), and replay/backfill operations."
+description: "Dagster assets, ETL services, provider adapters, research orchestration, WorkBuddy integration, replay/backfill operations, and retired JiuwenSwarm compatibility code. JiuwenSwarm is not a current production path or acceptance dependency."
 resource: /openwiki/pipeline/overview.md
-tags: [pipeline, dagster, adapters, etl, fixture_dev, cifang, akshare, tushare, provider-catalog, provider-routing, coverage, historical-backfill, etf-profile, research-context, jiuwenswarm, research-lifecycle, exposure, stage4b, stage4c, stock-universe, market-breadth, market-observations, evidence-bundle, tdx-offline, hithink, provider-engine-event, price-limits, limit-sentiment, provider-runtime-registry, workbuddy, workbuddy-reports, workbuddy-candidates, stage4d, external-integration, bridge-ingestor, observation-admission, shared-directory]
+tags: [pipeline, dagster, adapters, etl, fixture_dev, cifang, akshare, tushare, provider-catalog, provider-routing, coverage, historical-backfill, etf-profile, research-context, jiuwenswarm, research-lifecycle, exposure, stage4b, stage4c, stock-universe, market-breadth, market-observations, evidence-bundle, tdx-offline, hithink, provider-engine-event, price-limits, limit-sentiment, provider-runtime-registry, workbuddy, workbuddy-reports, workbuddy-candidates, stage4d, external-integration, bridge-ingestor, observation-admission, shared-directory, research-run-worker, research-run-command, external-research-handoff, workbuddy-bridge-dagster, workbuddy-stage-worker, workbuddy-strategy-archive, strategy-contracts]
 ---
 
 # Pipeline overview
@@ -131,6 +131,9 @@ apps/pipeline/src/invest_pipeline/
 │   ├── __init__.py                  # re-exports import_archived_candidate_run + SharedDirectoryWorkBuddyGateway
 │   ├── bridge_ingestor.py           # import_archived_candidate_run (immutable WorkBuddy archive → integration.*)
 │   ├── workbuddy_shared_directory.py # SharedDirectoryWorkBuddyGateway (inbox/processing/archive/failed atomic moves)
+│   ├── workbuddy_stage_worker.py    # StagePackageWorker (renameat2-backed atomic claim for all WorkBuddy stages)
+│   ├── workbuddy_research_artifacts.py  # ingest_research_artifact — safe local intake of `result.json`/`report.md` packages
+│   ├── workbuddy_strategy_archive.py   # StrategyCombinedArchive — phase-A capability / phase-B proposal archive MVP
 │   └── admission.py                 # ObservationAdmissionService — evaluate + persist admission in one UoW
 ├── workbuddy_reports/               # WorkBuddy legacy M0/M1/M2 daily-report governance surface
 │   ├── __init__.py                  # re-exports validate_triplet, archive_run, ImportOutcome
@@ -141,6 +144,14 @@ apps/pipeline/src/invest_pipeline/
 │   ├── __init__.py                  # parse_candidates_payload / extract_legacy_candidates / CandidateIntakeResult
 │   ├── archive.py                   # archive_candidates / ArchiveOutcome (idempotent, conflict-safe)
 │   └── projection.py                # project_candidates / ProjectionResult (symbol resolution + dedupe)
+├── external_research_handoff.py     # ExternalResearchHandoffService — admitted observation → ResearchRun queue
+├── jiuwenswarm_runtime.py           # build_jiuwenswarm_orchestration_service + build_jiuwenswarm_worker
+├── research_run_worker.py           # ResearchRunWorker — consumes queued ResearchRun rows
+├── research_run_worker_cli.py       # `python -m invest_pipeline.research_run_worker_cli` manual driver
+├── workbuddy_bridge_cli.py          # `python -m invest_pipeline.workbuddy_bridge_cli` shared-directory importer
+├── workbuddy_research_ingest_cli.py # `python -m invest_pipeline.workbuddy_research_ingest_cli` research-stage manual driver
+├── strategy_archive_cli.py          # `python -m invest_pipeline.strategy_archive_cli` single-run archive driver
+├── workbuddy_dagster.py             # Dagster `workbuddy_import_job` + `workbuddy_result_import_schedule`
 └── input_snapshot.py      # create_input_snapshot (PR-07)
 ```
 
@@ -577,7 +588,21 @@ AkShare aggregator (`fund_etf_hist_sina` / `fund_etf_hist_em`)
 and surface only as `source_key` values on `BarSource` rows
 produced by the AkShare adapter.
 
-## 5e. `jiuwenswarm` research-runner adapter (PR-6 Slice 1-3)
+## 5e. `jiuwenswarm` research-runner adapter (PR-6 Slice 1-3, historical compatibility)
+
+> **Historical-compatibility note.** The JiuwenSwarm adapter,
+> runtime composition root, and queued `ResearchRunWorker` are
+> preserved in the codebase for historical compatibility only. Per
+> [`docs/plan/README.md`](../../docs/plan/README.md) the external
+> research platform is "已停止采用" (no longer adopted); current
+> active plans must not depend on JiuwenSwarm for integration,
+> upgrades, or acceptance gates. The Stage 4D controlled
+> `ResearchRun` queue still defaults to
+> `JIUWENSWARM_RUNNER_KEY="jiuwenswarm-runner-v1"` because that
+> is the single runner key the existing pipeline handoff service
+> admits — see [§5k](#5k-stage-4d-external-integration-workbench-bridge-ingest--shared-directory-gateway) —
+> but the runner key is the only operational link, not a forward
+> integration commitment.
 
 [`apps/pipeline/src/invest_pipeline/adapters/jiuwenswarm/`](../../apps/pipeline/src/invest_pipeline/adapters/jiuwenswarm/)
 is the research-runner adapter behind the
@@ -919,6 +944,27 @@ lands in three focused slices:
   transition through `SqlAlchemyExternalObservationRepository.save_admission`.
   No DAG asset / schedule / sensor today — admission is driven
   from the gated HTTP command endpoint per [API overview §5k](../api/overview.md).
+- **External research handoff — `external_research_handoff.ExternalResearchHandoffService`.**
+  Stage 4D controlled bridge from an admitted external observation
+  to the ADR-0012 Research lifecycle. `queue(case_id, evidence_pack_id, playbook, runner_key)`
+  runs inside a short `SqlAlchemyUnitOfWork`: it resolves the
+  `ResearchCase`, requires at least one linked
+  `uow.research_external_evidence.list_by_case(case_id)` row
+  (`ExternalResearchHandoffInputError` otherwise), validates the
+  bound `EvidencePack`, and refuses a `runner_key` outside the
+  frozen `JIUWENSWARM_RUNNER_KEY="jiuwenswarm-runner-v1"`. Existing
+  queued/running/succeeded runs for the same
+  `(evidence_pack_id, runner_key, playbook_key)` triple return
+  the existing row idempotently; `DRAFT` cases are transitioned
+  to `READY` through `case_repository.save_transition`. The
+  companion `execute(...)` re-uses
+  [`ResearchOrchestrationService.execute`](../pipeline/overview.md#5g-research-orchestration-service-pr-7--adr-0012)
+  for the long-running external gateway boundary, so the handoff
+  service is a pure seam between the WorkBuddy intake and the
+  ADR-0012 lifecycle. The API's
+  [`ResearchRunCommandService`](../api/overview.md#stage-4d-external-workflow--opportunity-radar--admission--evidence-link-endpoints)
+  and the production `ResearchRunWorker` are the two upstream
+  callers.
 
 ```mermaid
 flowchart LR
@@ -927,22 +973,31 @@ flowchart LR
     SD --> BI[bridge_ingestor.import_archived_candidate_run]
     AR --> AC[(runs/trade_date/workflow_run_id/)]
     BI --> UoW[uow.external_workflow_runs / external_artifacts / external_observations]
-    UoW --> API[/api/v1/external-workflows, /opportunity-radar, /integration/health/]
+    UoW --> API_R[ /api/v1/external-workflows, /opportunity-radar, /integration/health/]
     OA[ObservationAdmissionCommandService] --> UoW
     OA --> API2[POST /api/v1/external-observations/observation_id/admission-decisions]
     UoW --> LINK[ResearchExternalEvidenceService.link]
     LINK --> RC[(analytics.research_external_evidence)]
+    LINK --> HC[ExternalResearchHandoffService.queue]
+    HC --> RR[ResearchRunWorker]
+    RR --> ORCH[ResearchOrchestrationService]
 ```
 
 Focused tests live in
 [`tests/pipeline/test_bridge_ingestor.py`](../../tests/pipeline/test_bridge_ingestor.py)
 (path-safety rejection, manifest hash mismatch, idempotent
-re-import, symbol/projection tagging) and
+re-import, symbol/projection tagging),
 [`tests/pipeline/test_workbuddy_shared_directory.py`](../../tests/pipeline/test_workbuddy_shared_directory.py)
 (claim-then-move atomicity, success → archive, failure → failed,
 legacy-fallback when `candidates.json` is absent, 16 MiB size
-cap, package-path-escape rejection). The pure-domain admission
-suite is in
+cap, package-path-escape rejection),
+[`apps/pipeline/tests/unit/test_external_research_handoff.py`](../../apps/pipeline/tests/unit/test_external_research_handoff.py)
+(missing case / missing evidence / missing pack / cross-runner-key
+rejection, idempotent re-queue, DRAFT → READY transition, fake
+research handoff e2e), and the matching API suites
+[`apps/api/tests/test_research_external_evidence.py`](../../apps/api/tests/test_research_external_evidence.py),
+[`apps/api/tests/test_research_run_command.py`](../../apps/api/tests/test_research_run_command.py).
+The pure-domain admission suite lives in
 [`packages/domain/tests/test_integration.py`](../../packages/domain/tests/test_integration.py).
 
 ## 5l. Provider–Engine–Event Phase 0 seam
@@ -1230,6 +1285,197 @@ cd apps/pipeline && uv run pytest -q \
     tests/unit/test_workbuddy_candidates_archive.py \
     tests/unit/test_workbuddy_candidates_projection.py
 ```
+
+## 5o. Stage 4D WorkBuddy stage worker — strategy, candidate, research, observation
+
+Stage 4D extends WorkBuddy beyond candidate intake with a
+shared atomic stage worker and a research-result intake surface:
+
+- **Stage worker — `integrations/workbuddy_stage_worker.StagePackageWorker`.**
+  The four canonical WorkBuddy stages are
+  `("strategy", "candidate", "research", "observation")`. For
+  every stage the worker creates
+  `<bridge_root>/workbuddy/<stage>/{inbox,processing,results,archive,failed}`
+  and refuses symlinked roots. Claiming a `<task_id>.ready`
+  package uses `renameat2(RENAME_NOREPLACE)` when the libc
+  symbol is present (so the inbox rename into `processing/`
+  is atomic) and falls back to `os.replace` elsewhere. The
+  `recover_once(handler)` entry-point resumes any safe residue
+  left in `processing/` so a crashed run can be retried without
+  re-claiming the inbox. `discover_ready()` / `discover_processing()`
+  return sorted-by-`name` tuples so the suite is deterministic.
+- **Research artifact intake — `integrations/workbuddy_research_artifacts.ingest_research_artifact`.**
+  Validates one `result.json` + `report.md` pair (the
+  `workbuddy.invest-result/1.0` schema, hard-bounded to
+  16 MiB / 32 MiB per file). `result_hash` is recomputed against
+  the canonical JSON (`sort_keys=True`, `separators=(",", ":")`)
+  and `artifacts[0].sha256` is recomputed against the on-disk
+  `report.md`; mismatch is a `ValueError` so a tampered pair
+  never reaches the archive. The archive lives under
+  `<archive_root>/<task_id>/<schema_version>/<content_hash>/`,
+  where `content_hash` is the SHA-256 over the
+  length-prefixed `result.json + report.md` bytes; a re-import
+  with the same `content_hash` returns
+  `ResearchArtifactImport(idempotent=True)`, a re-import with
+  different bytes raises `ValueError("duplicate delivery has
+  different ... bytes")`. `discover_research_artifact_packages(results_root)`
+  is the deterministic pre-flight list used by
+  `StagePackageWorker` and the focused tests.
+- **Strategy archive MVP — `integrations/workbuddy_strategy_archive.StrategyCombinedArchive`.**
+  Paired `task` + `result` archive for the strategy stage. Both
+  sources (`<bridge_root>/workbuddy/strategy/inbox/<task_id>.ready/`
+  and `…/results/<task_id>.ready/`) are claimed into
+  `processing/<task_id>/{task,result}`, validated for identity,
+  and routed through one of two preflight validators:
+
+  - `phase-a` capability-assessment (`strategy-capability-assessment-task/1.0`,
+    `scripts/validate_strategy_delivery.py` → `validation-report.json`).
+  - `phase-b` strategy-engineering (`strategy-engineering-task/1.0`,
+    `scripts/validate_strategy_proposal.py` → `proposal-preflight-report.json`).
+
+  The router table `_ROUTING` is the single source of truth for
+  the `(schema_version, task_type) → (validator_path, report_name)`
+  mapping; an unknown pair raises `TaskJsonError` and the
+  worker moves the package to `failed/<task_id>`. The validator
+  is invoked with a bounded 60-second default timeout
+  (`DEFAULT_VALIDATOR_TIMEOUT`) and a 64 KiB evidence cap
+  (`DEFAULT_EVIDENCE_MAX_BYTES`); output and error paths are
+  redacted against `<bridge-root>` / `<repository-root>` so
+  filesystem text never leaks to the operator. `manifest.json`
+  is written under
+  `MANIFEST_SCHEMA_VERSION="strategy-archive-manifest/1.0"`
+  and re-verified on the `recover_once` path so a tampered
+  archive cannot pass identity checks. The companion
+  [`strategy_archive_cli.py`](../../apps/pipeline/src/invest_pipeline/strategy_archive_cli.py)
+  is the `python -m invest_pipeline.strategy_archive_cli
+  --bridge-root PATH [--recover]` driver — it runs one
+  `process_once()` / `recover_once()` and emits a redacted
+  JSON line per `StrategyPackageOutcome`. Exit code 0 covers
+  `success` / `validated` / `already_archived`; exit code 1
+  covers every other outcome.
+- **WorkBuddy research-ingest CLI — `workbuddy_research_ingest_cli`.**
+  `python -m invest_pipeline.workbuddy_research_ingest_cli
+  --archive-root PATH [--bridge-root PATH] [--recover]` is the
+  manual one-shot driver for the research stage. It composes
+  `StagePackageWorker(..., "research")` +
+  `ingest_research_artifact(...)`; failure on a single package
+  yields exit code 1 but the remaining packages continue.
+
+## 5p. Stage 4D WorkBuddy bridge Dagster schedule
+
+[`apps/pipeline/src/invest_pipeline/workbuddy_dagster.py`](../../apps/pipeline/src/invest_pipeline/workbuddy_dagster.py)
+is the DAG surface for the shared-directory gateway. It defines:
+
+- `workbuddy_import_op` (`@dg.op`) — invokes the existing
+  `workbuddy_bridge_cli.run_import` entry-point, logs the
+  return code, and raises `RuntimeError("WorkBuddy import failed")`
+  for any non-zero code so the DAG run surfaces the failure.
+- `workbuddy_import_job` (`@dg.job`) — single-op job; the only
+  consumer of the op today.
+- `workbuddy_result_import_schedule` (`@dg.schedule`,
+  `*/5 * * * 1-5`, `Asia/Shanghai`) — five-minute weekday schedule
+  with `dg.DefaultScheduleStatus.STOPPED` by default. When
+  `INVEST_PIPELINE_WORKBUDDY_AUTO_SCHEDULE_ENABLED=true`, the
+  default flips to `RUNNING`. The skip predicate walks
+  `settings.workbuddy_source_dir` for `candidates_*.json` and
+  returns `dg.SkipReason("no candidates_*.json under ...")` when
+  none are visible, so a quiet day never opens a DAG run. Each
+  emission tags `trigger_type=schedule`, the resolved
+  `bridge_root`, and `pending_source="candidates_json"`.
+
+```mermaid
+flowchart LR
+    WB[WorkBuddy results/*.ready] --> SD[SharedDirectoryWorkBuddyGateway]
+    SD --> AR[workbuddy_candidates.archive_candidates]
+    SD --> BI[bridge_ingestor.import_archived_candidate_run]
+    AR --> AC[(runs/trade_date/workflow_run_id/)]
+    BI --> UoW[uow.external_workflow_runs / external_artifacts / external_observations]
+    UoW --> API[/api/v1/external-workflows, /opportunity-radar, /integration/health/]
+    OA[ObservationAdmissionCommandService] --> UoW
+    OA --> API2[POST /api/v1/external-observations/observation_id/admission-decisions]
+    UoW --> LINK[ResearchExternalEvidenceService.link]
+    LINK --> RC[(analytics.research_external_evidence)]
+```
+
+Focused tests live in
+[`tests/pipeline/test_bridge_ingestor.py`](../../tests/pipeline/test_bridge_ingestor.py)
+(path-safety rejection, manifest hash mismatch, idempotent
+re-import, symbol/projection tagging) and
+[`tests/pipeline/test_workbuddy_shared_directory.py`](../../tests/pipeline/test_workbuddy_shared_directory.py)
+(claim-then-move atomicity, success → archive, failure → failed,
+legacy-fallback when `candidates.json` is absent, 16 MiB size
+cap, package-path-escape rejection). The pure-domain admission
+suite is in
+[`packages/domain/tests/test_integration.py`](../../packages/domain/tests/test_integration.py).
+
+## 5q. Historical Research Run queue and retired JiuwenSwarm compatibility
+
+The Stage 4D "controlled research handoff" slice adds three
+focused modules on top of the existing JiuwenSwarm adapter and
+[`ResearchOrchestrationService`](../pipeline/overview.md#5g-research-orchestration-service-pr-7--adr-0012):
+
+- [`apps/pipeline/src/invest_pipeline/external_research_handoff.py`](../../apps/pipeline/src/invest_pipeline/external_research_handoff.py)
+  is the pipeline-side mirror of
+  [`ResearchRunCommandService`](../api/overview.md#stage-4d-external-workflow--opportunity-radar--admission--evidence-link-endpoints).
+  `ExternalResearchHandoffService.queue(case_id, evidence_pack_id, playbook, runner_key)`
+  opens a short UoW to persist the queued run (with
+  `JIUWENSWARM_RUNNER_KEY` pinned); `execute(...)` then drives
+  the queued row through `ResearchOrchestrationService.execute(...)`
+  so the long-running JiuwenSwarm boundary stays outside the
+  initial database transaction. The service is the producer side
+  of the controlled-research slice.
+- [`apps/pipeline/src/invest_pipeline/jiuwenswarm_runtime.py`](../../apps/pipeline/src/invest_pipeline/jiuwenswarm_runtime.py)
+  is the retained **compatibility root** for the retired JiuwenSwarm
+  orchestrator and worker. It is not a current production route.
+  `build_jiuwenswarm_orchestration_service(...)`
+  wires the SQLAlchemy engine / session-factory / UoW together
+  with the validated CLI transport (`JiuwenSwarmCliGatewayTransport`),
+  the configured playbook, the lifecycle clock, and the
+  orchestrator; `build_jiuwenswarm_worker(...)` wraps the same
+  components inside a `ResearchRunWorker`. Both factories honour
+  the `transport` injection seam so deterministic tests can swap
+  in a fake without spinning up the CLI helper. The module never
+  imports `os.environ` directly — every parameter is explicit
+  and `get_settings()` is the only external dependency. The
+  default playbook key / version pair
+  (`"etf_medium_term_assessment"` / `"v0.1.0"`) lives in the
+  manual CLI driver.
+- [`apps/pipeline/src/invest_pipeline/research_run_worker.py`](../../apps/pipeline/src/invest_pipeline/research_run_worker.py)
+  defines `ResearchRunWorker(uow_factory, orchestration)` with
+  two entry points: `run_once(run_id)` validates the run's
+  status (`QUEUED` only, otherwise `ResearchRunWorkerInputError`),
+  commits the UoW so the orchestrator sees the queued row, and
+  then delegates to `orchestration.execute(run_id)`; `run_next(limit)`
+  pulls the oldest queued `ResearchRun` from
+  `uow.research_runs.list_recent(limit=limit, offset=0)` and
+  feeds it to `run_once`. Both methods keep the
+  compare-and-swap lifecycle CAS in the orchestrator — the
+  worker never bypasses the existing transition guards.
+- [`apps/pipeline/src/invest_pipeline/research_run_worker_cli.py`](../../apps/pipeline/src/invest_pipeline/research_run_worker_cli.py)
+  is the manual `python -m
+  invest_pipeline.research_run_worker_cli` driver. It accepts
+  `--run-id UUID` (single-run mode) or `--limit N` (next-queued
+  mode), wires the worker through `build_jiuwenswarm_worker`,
+  and prints a single-line `{"status": ..., "run_id": ...,
+  "case_id": ..., "replay": ...}` summary on stdout. Errors
+  emit `error: <ExceptionClass>` on stderr and exit 1; the
+  CLI never echoes the database URL, the workspace, or the
+  artifact root.
+
+The companion contract gates the slice end-to-end:
+
+- `ResearchRun` rows are persisted through
+  `uow.research_runs.add(...)` (the existing CAS-guarded
+  `SqlAlchemyResearchRunRepository`); status transitions remain
+  the orchestrator's responsibility.
+- `JIUWENSWARM_RUNNER_KEY="jiuwenswarm-runner-v1"` is the only
+  `runner_key` accepted by both the API command service and
+  the pipeline handoff service; anything else raises 409
+  (`unsupported external research runner ...`).
+- `E2E` proof lives in
+  [`apps/pipeline/tests/unit/test_external_research_handoff.py`](../../apps/pipeline/tests/unit/test_external_research_handoff.py)
+  (the `FakeResearchHandoffE2ETest` covers queue → execute →
+  result lifecycle end-to-end against an in-memory fake runner).
 
 ## 6. ETL service modules
 

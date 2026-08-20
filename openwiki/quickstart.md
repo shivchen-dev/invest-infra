@@ -1,9 +1,9 @@
 ---
 type: Reference
 title: OpenWiki Quickstart
-description: "Entry point for the invest-infra OpenWiki knowledge base. Describes the modular-monolith layout, links every major concept page, and summarizes local startup, migrations, personal daily scheduling and replay/backfill operations, testing, opt-in CifangQuant / Tushare / JiuwenSwarm validation, the DC-2 ETF profile and Stage 4A evidence / context slices, the ADR-0012 evidence-driven Research lifecycle (PR-7 API + JiuwenSwarm adapter + orchestration service + context-projection loader + PR-W03 dashboard / PR-W05 case workspace read models), the PR-MCP-MINIMAL read-only MCP server, the DC-3 exposure collection slice, the Research Cockpit web workbench (widget runtime + dashboard widgets + safe markdown renderer), the centralized provider credential store, the Stage 4B Market Intelligence foundation (Market Observation / Temperature / Breadth read slices + Tushare-stock by-date pipeline + TDX offline fallback + Research Evidence Bundle chain), the Stage 4C Core Data Layer Integration (versioned price-limit domain policy + Stock Price-Limit raw/core persistence + Market Breadth v2 + Limit Sentiment + 18-revision chain), the ADR-0013 Provider–Engine–Event Phase 0 seam (ProviderRuntimeRegistry + StockDailyBars Engine/Application + provider publishability gate), the HiThink reserved provider catalog entry, the WorkBuddy daily-report governance (M0/M1/M2: validator + immutable archive + accepted-only latest-pointer) plus WorkBuddy candidate intake (M0 contract: parser + immutable archive + symbol/projection dedupe + shared-directory gateway), and the Stage 4D External Integration Workbench (Bridge ingest + `integration` schema + External Workflow Run / Artifact / Observation read API + Opportunity Radar + Integration Health + Research-Case evidence link + gated admission-decision command). Two independently-evolving pipelines that share the strict `YYYY-MM-DD` / safe-path-segment identity contract."
+description: "Entry point for invest-infra: authoritative runtime ports, local startup, architecture navigation, focused validation, and current governance boundaries. JiuwenSwarm appears only as retired historical compatibility."
 resource: /openwiki/quickstart.md
-tags: [quickstart, navigation, invest-infra, etf-profile, research-context, research-lifecycle, research-cockpit, jiuwenswarm, mcp, exposure, governance, stage4b, stage4c, market-breadth, market-temperature, market-observations, stock-universe, tdx-offline, evidence-bundle, hithink, provider-engine-event, price-limits, limit-sentiment, workbuddy, workbuddy-reports, workbuddy-candidates, stage4d, external-workflows, opportunity-radar, integration-health, admission-decisions, bridge-ingest]
+tags: [quickstart, navigation, invest-infra, etf-profile, research-context, research-lifecycle, research-cockpit, jiuwenswarm, mcp, exposure, governance, stage4b, stage4c, market-breadth, market-temperature, market-observations, stock-universe, tdx-offline, evidence-bundle, hithink, provider-engine-event, price-limits, limit-sentiment, workbuddy, workbuddy-reports, workbuddy-candidates, stage4d, external-workflows, opportunity-radar, integration-health, admission-decisions, bridge-ingest, research-center, central-research-visualization, research-run-command, research-run-worker, workbuddy-bridge-dagster, workbuddy-stage-worker, workbuddy-strategy-archive, strategy-contracts, adr-0014, plan-governance]
 ---
 
 # OpenWiki quickstart — invest-infra v2
@@ -30,7 +30,7 @@ own `pyproject.toml`; the application projects maintain their own
 | `packages/domain` | Pure domain models, value objects, ports — SQLAlchemy- and FastAPI-free. |
 | `packages/storage` | SQLAlchemy 2 ORM models, repositories, `UnitOfWork`, and the `SessionProvider` protocol. |
 | `scripts/check_architecture.py` | Custom AST-based boundary checker. |
-| `docs/adr/0001..0012` | Architecture decisions; ADR-0011 remains Proposed, while ADR-0012 freezes the evidence-driven Research lifecycle boundary (see [Architecture overview](architecture/overview.md)). |
+| `docs/adr/0001..0014` | Architecture decisions; ADR-0011 remains Proposed, ADR-0012 freezes the evidence-driven Research lifecycle boundary, ADR-0013 freezes the Provider–Engine–Event Phase 0 seam, and ADR-0014 freezes the investment-collaboration responsibility boundaries (see [Architecture overview](architecture/overview.md)). |
 
 The runtime topology is defined by [`/compose.yaml`](../compose.yaml):
 
@@ -135,13 +135,19 @@ the [WorkBuddy daily-report governance](pipeline/overview.md#5m-workbuddy-daily-
 | Parse or archive a WorkBuddy candidate intake payload (production rules 2.0.0 / legacy 1.1.1 / 1.1.2 extraction) | [Pipeline overview §5n](pipeline/overview.md#5n-workbuddy-candidate-intake-m0-contract-aligned-slice) | `apps/pipeline/src/invest_pipeline/workbuddy_candidates/__init__.py`; `apps/pipeline/src/invest_pipeline/workbuddy_candidates/archive.py`; `apps/pipeline/src/invest_pipeline/workbuddy_candidates/projection.py` | `parse_candidates_payload`; `extract_legacy_candidates`; `CandidateIntakeResult`; `archive_candidates`; `ArchiveOutcome`; `project_candidates`; `ProjectionResult` | `apps/pipeline/tests/unit/test_workbuddy_candidates.py`; `test_workbuddy_candidates_archive.py`; `test_workbuddy_candidates_projection.py` | `cd apps/pipeline && uv run pytest -q tests/unit/test_workbuddy_candidates.py tests/unit/test_workbuddy_candidates_archive.py tests/unit/test_workbuddy_candidates_projection.py` |
 | Bridge a WorkBuddy `candidates.json` archive into External Workflow Run / Artifact / Observation rows | [Pipeline overview §5k](pipeline/overview.md#5k-stage-4d-external-integration-workbench-bridge-ingest--shared-directory-gateway) | `apps/pipeline/src/invest_pipeline/integrations/bridge_ingestor.py`; `apps/pipeline/src/invest_pipeline/integrations/workbuddy_shared_directory.py`; `apps/pipeline/src/invest_pipeline/integrations/admission.py` | `import_archived_candidate_run`; `BridgeImportResult`; `SharedDirectoryWorkBuddyGateway`; `SharedDirectoryImport`; `ObservationAdmissionService` | `tests/pipeline/test_bridge_ingestor.py`; `tests/pipeline/test_workbuddy_shared_directory.py`; `apps/pipeline/tests/unit/test_observation_admission.py` | `cd apps/pipeline && uv run pytest -q tests/unit/test_observation_admission.py ../../tests/pipeline/test_bridge_ingestor.py ../../tests/pipeline/test_workbuddy_shared_directory.py` |
 | Read external-workflow integration data through the read-only Stage 4D endpoints | [API overview §1](api/overview.md#1-modules), [§2](api/overview.md#2-routing-surface) | `apps/api/src/invest_api/routers/external_workflows.py`; `routers/integration_health.py`; `routers/opportunity_radar.py` | `list_external_workflows`; `get_external_workflow`; `list_external_artifacts`; `list_external_observations`; `get_integration_health`; `preview_artifact`; `list_opportunity_radar` | `apps/api/tests/test_external_workflow_service.py`; `test_admission_endpoints.py` | `cd apps/api && uv run pytest -q tests/test_external_workflow_service.py tests/test_admission_endpoints.py` |
-| Issue or audit a gated `AdmissionDecision` for an external observation | [API overview §4 admission](api/overview.md#stage-4d-external-workflow-opportunity-radar-admission-evidence-link-endpoints) | `apps/api/src/invest_api/routers/admission.py`; `apps/api/src/invest_api/application/admission.py`; `apps/api/src/invest_api/config.py` | `ObservationAdmissionCommandService`; `decide`; `evaluate_admission`; `stage4d_admission_commands_enabled` | `apps/api/tests/test_admission_endpoints.py` | `cd apps/api && uv run pytest -q tests/test_admission_endpoints.py` |
-| Link an admitted external observation to a Research Case as immutable evidence | [API overview §4 research-evidence](api/overview.md#stage-4d-external-workflow-opportunity-radar-admission-evidence-link-endpoints) | `apps/api/src/invest_api/routers/research_external_evidence.py`; `apps/api/src/invest_api/application/research_external_evidence.py` | `ResearchExternalEvidenceService`; `link`; `observation_to_evidence_item` | `apps/api/tests/test_research_external_evidence.py` | `cd apps/api && uv run pytest -q tests/test_research_external_evidence.py` |
-| Create a Research Case from an admitted observation and bind its Evidence | [API overview §4 research-evidence](api/overview.md#stage-4d-external-workflow-opportunity-radar-admission-evidence-link-endpoints) | `apps/api/src/invest_api/routers/research_external_evidence.py`; `apps/api/src/invest_api/application/research_external_evidence.py` | `ResearchExternalEvidenceService`; `create_case_and_link` | `apps/api/tests/test_research_external_evidence.py` | `cd apps/api && uv run pytest -q tests/test_research_external_evidence.py` |
+| Issue or audit a gated `AdmissionDecision` for an external observation | [API overview — Stage 4D endpoints](api/overview.md#stage-4d-external-workflow--opportunity-radar--admission--evidence-link-endpoints) | `apps/api/src/invest_api/routers/admission.py`; `apps/api/src/invest_api/application/admission.py`; `apps/api/src/invest_api/config.py` | `ObservationAdmissionCommandService`; `decide`; `evaluate_admission`; `stage4d_admission_commands_enabled` | `apps/api/tests/test_admission_endpoints.py` | `cd apps/api && uv run pytest -q tests/test_admission_endpoints.py` |
+| Link an admitted external observation to a Research Case as immutable evidence | [API overview — Stage 4D endpoints](api/overview.md#stage-4d-external-workflow--opportunity-radar--admission--evidence-link-endpoints) | `apps/api/src/invest_api/routers/research_external_evidence.py`; `apps/api/src/invest_api/application/research_external_evidence.py` | `ResearchExternalEvidenceService`; `link`; `observation_to_evidence_item` | `apps/api/tests/test_research_external_evidence.py` | `cd apps/api && uv run pytest -q tests/test_research_external_evidence.py` |
+| Create a Research Case from an admitted observation and bind its Evidence | [API overview — Stage 4D endpoints](api/overview.md#stage-4d-external-workflow--opportunity-radar--admission--evidence-link-endpoints) | `apps/api/src/invest_api/routers/research_external_evidence.py`; `apps/api/src/invest_api/application/research_external_evidence.py` | `ResearchExternalEvidenceService`; `create_case_and_link` | `apps/api/tests/test_research_external_evidence.py` | `cd apps/api && uv run pytest -q tests/test_research_external_evidence.py` |
+| Compose the central `/dashboard` Research Center snapshot (market / candidate-pool / opportunity / research / delivery sub-segments) | [API overview §2 research-center](api/overview.md#2-routing-surface); [Architecture overview §4 integration schemas](architecture/overview.md#3-the-five-postgresql-schemas) | `apps/api/src/invest_api/routers/research_center.py`; `apps/api/src/invest_api/application/research_center.py`; `apps/web/src/pages/DashboardPage.tsx`; `apps/web/src/features/dashboard/{ResearchCenterMarketStatusPanel,ResearchCenterSubviewsPanel,ResearchCenterDeliveryPanel}.tsx` | `ResearchCenterQueryService`; `ResearchCenterResponse`; `sanitize_source_value`; `RESEARCH_SCHEMA_VERSION`; `DELIVERY_SCHEMA_VERSION`; `RESEARCH_CAPABILITY_REASON`; `OPPORTUNITIES_CAPABILITY_REASON`; `DELIVERY_CAPABILITY_REASON` | `apps/api/tests/test_research_center_endpoints.py`; `apps/api/tests/test_research_center_service.py`; `apps/web/src/features/dashboard/ResearchCenterDeliveryPanel.test.tsx`; `apps/web/src/features/dashboard/ResearchCenterSubviewsPanel.test.tsx`; `apps/web/src/pages/DashboardPage.test.tsx` | `cd apps/api && uv run pytest -q tests/test_research_center_endpoints.py tests/test_research_center_service.py && cd ../../web && pnpm test:run -- ResearchCenterDeliveryPanel ResearchCenterSubviewsPanel DashboardPage` |
+| Inspect the retired Research Run compatibility path | [API overview — Controlled Research Run](api/overview.md#controlled-research-run-command); [Pipeline overview — historical compatibility](pipeline/overview.md) | `apps/api/src/invest_api/application/research_run_command.py`; `apps/pipeline/src/invest_pipeline/jiuwenswarm_runtime.py` | `ResearchRunCommandService.queue`; legacy `JIUWENSWARM_RUNNER_KEY` | Focused API and pipeline compatibility tests | JiuwenSwarm is retired; do not use this path for current production execution or acceptance. |
+| Drive the WorkBuddy shared-directory import through Dagster | [Pipeline overview §5p](pipeline/overview.md#5p-stage-4d-workbuddy-bridge-dagster-schedule) | `apps/pipeline/src/invest_pipeline/workbuddy_dagster.py`; `workbuddy_bridge_cli.py`; `integrations/workbuddy_shared_directory.py`; `integrations/workbuddy_stage_worker.py` | `workbuddy_result_import_job`; `workbuddy_result_import_schedule`; `SharedDirectoryWorkBuddyGateway.process_once`; `StagePackageWorker.process_once` | `apps/pipeline/tests/unit/test_workbuddy_dagster.py`; `test_workbuddy_bridge_cli.py`; `test_workbuddy_stage_worker.py`; `apps/pipeline/tests/unit/test_workbuddy_research_artifacts.py`; `test_workbuddy_research_ingest_cli.py` | `cd apps/pipeline && uv run pytest -q tests/unit/test_workbuddy_dagster.py tests/unit/test_workbuddy_bridge_cli.py tests/unit/test_workbuddy_stage_worker.py tests/unit/test_workbuddy_research_artifacts.py tests/unit/test_workbuddy_research_ingest_cli.py` |
+| Archive a WorkBuddy strategy task + result pair through the combined archive MVP | [Pipeline overview §5o](pipeline/overview.md#5o-stage-4d-workbuddy-stage-worker--strategy-candidate-research-observation) | `apps/pipeline/src/invest_pipeline/integrations/workbuddy_strategy_archive.py`; `strategy_archive_cli.py`; `scripts/validate_strategy_delivery.py`; `scripts/validate_strategy_proposal.py` | `StrategyCombinedArchive.process_once`; `StrategyPackageOutcome`; `PHASE_A_TASK_SCHEMA`; `PHASE_B_TASK_SCHEMA`; `MANIFEST_SCHEMA_VERSION` | `apps/pipeline/tests/unit/test_workbuddy_strategy_archive.py`; `test_strategy_archive_cli.py`; `test_strategy_proposal_preflight.py`; `test_strategy_capability_preflight.py` | `cd apps/pipeline && uv run pytest -q tests/unit/test_workbuddy_strategy_archive.py tests/unit/test_strategy_archive_cli.py tests/unit/test_strategy_proposal_preflight.py tests/unit/test_strategy_capability_preflight.py` |
 
 ## 3. Running locally
 
 Pre-requisites: Docker, Docker Compose.
+
+The authoritative local runtime contract is [`docs/runbooks/runtime-ports.md`](../docs/runbooks/runtime-ports.md). The public endpoints are Web `3001`, API `8000`, PostgreSQL `5432`, and Dagster `3000`; `5173`/`5174` are development or test ports, not user-facing services. Choose one process owner for API and Dagster: full Compose, or user-level systemd for those services with Docker used only for PostgreSQL. Do not run both modes concurrently.
 
 ```bash
 cp .env.example .env
@@ -154,13 +160,13 @@ Then visit:
 - API docs (Swagger UI) — `http://localhost:8000/docs`
 - Dagster UI — `http://localhost:3000`
 
-For a host-managed Dagster process, install the user-level unit instead:
+For host-managed API and Dagster processes, install the user-level units instead of the corresponding Compose services:
 
 ```bash
 mkdir -p ~/.config/systemd/user
-cp deploy/invest-infra-dagster.service ~/.config/systemd/user/
+cp deploy/invest-infra-api.service deploy/invest-infra-dagster.service ~/.config/systemd/user/
 systemctl --user daemon-reload
-systemctl --user enable --now invest-infra-dagster.service
+systemctl --user enable --now invest-infra-api.service invest-infra-dagster.service
 ```
 
 Apply database migrations separately:
@@ -338,7 +344,7 @@ ADR-0012 freezes the evidence-driven Research lifecycle:
 playbook, attempts, external session identity) → `ResearchResult`
 (only when a run has succeeded, references only valid evidence IDs).
 The pipeline ships the `JiuwenSwarmResearchRunner` adapter behind
-the domain `ResearchRunner` port ([Pipeline overview §5e](pipeline/overview.md#5e-jiuwenswarm-research-runner-adapter-pr-6-slice-1-3))
+the domain `ResearchRunner` port ([Pipeline overview §5e](pipeline/overview.md))
 plus the `research_orchestration_service` ([Pipeline overview §5g](pipeline/overview.md#5g-research-orchestration-service-pr-7--adr-0012))
 that drives one attempt through the storage `UnitOfWork` and
 persists `analytics.research_cases` / `research_evidence_packs` /
@@ -596,6 +602,182 @@ the `workbuddy_reports` CLI; the candidate-intake CLI is **not**
 wired today and is the next integration step listed in [§8 Backlog](#8-backlog).
 
 The Stage 4D commit `5603b87` lands the **External Integration
+Workbench** that bridges WorkBuddy into the Research lifecycle. The
+follow-up commits extend the workbench and the Research lifecycle with:
+
+- The **Central Research Center visualization** (`GET /api/v1/research-center`)
+  composes the central `/dashboard` panel. Slice 1 fills the `market`
+  segment from `MarketBreadthQueryService` + `DataFreshnessQueryService`;
+  Slice 2A adds the `research` sub-segment through
+  `ResearchQueryService.get_dashboard`; Slice 2B adds the `candidate_pool`
+  sub-segment through `CandidatePoolQueryService.get_latest` and the
+  `opportunities` sub-segment through
+  `ExternalWorkflowQueryService.list_radar`; Slice 3A adds the
+  `delivery` chain (`pipeline` from `PipelineRunQueryService.get_latest_run`,
+  `integration` from `ExternalWorkflowQueryService.health`, `archive`
+  from `ExternalWorkflowQueryService.list_artifacts`, and
+  `research_runs` from `ResearchQueryService.get_dashboard().recent_runs`).
+  Each slice's `capabilities.*` slot is promoted from
+  `deferred` to `available` via the matching
+  `*_CAPABILITY_REASON` module-level constant exported from
+  [`apps/api/src/invest_api/application/research_center.py`](../apps/api/src/invest_api/application/research_center.py)
+  (`RESEARCH_CAPABILITY_REASON` for Slice 2A,
+  `OPPORTUNITIES_CAPABILITY_REASON` for Slice 2B,
+  `DELIVERY_CAPABILITY_REASON` for Slice 3B); `strategy` /
+  `discipline` stay `unavailable` until their contracts freeze.
+  The contract freezes `schema_version="1.0.0"` for both the
+  top-level envelope and the nested `research` / `delivery` segments
+  via `RESEARCH_SCHEMA_VERSION` / `DELIVERY_SCHEMA_VERSION`. The
+  router runs every `view.source` projection through the
+  application-layer `sanitize_source_value(...)` filter against
+  `PIPELINE_TRIGGER_TYPE_WHITELIST` /
+  `INTEGRATION_PRODUCER_WHITELIST` /
+  `ARCHIVE_MEDIA_TYPE_WHITELIST` /
+  `RESEARCH_RUNS_RUNNER_KEY_WHITELIST` so a rogue upstream caller
+  cannot echo credentials, host paths or control characters through
+  the response body. The single endpoint is the only public surface
+  of the central visualization MVP (the underlying readers, schemas
+  and database tables stay unchanged). See the dedicated
+  [`/api/v1/research-center` route contract](api/overview.md#2-routing-surface)
+  for the response shape, the whitelist guards, and the focused
+  test layout.
+
+- The **controlled Research Run command** (`POST
+  /api/v1/research-cases/{case_id}/runs`) is the first controlled
+  write on the Research lifecycle. [`ResearchRunCommandService.queue`](../apps/api/src/invest_api/application/research_run_command.py)
+  resolves the case, refuses cases that have no admitted external
+  evidence (`ResearchExternalEvidenceService.list_by_case`),
+  validates the bound `EvidencePack`, transitions `DRAFT` cases to
+  `READY`, and otherwise persists a new `ResearchRun` with
+  `JIUWENSWARM_RUNNER_KEY="jiuwenswarm-runner-v1"` and the requested
+  playbook. An existing queued/running/succeeded run for the same
+  `(evidence_pack_id, runner_key, playbook_key)` triple is
+  returned with `idempotent=True` so the API never queues a
+  duplicate. The request body is a `ResearchRunCommandRequest`
+  (`evidence_pack_id` UUID, `playbook_key` 1..128 chars,
+  `playbook_version` 1..64 chars); the response is a
+  `ResearchRunCommandResponse(run, idempotent)`. The
+  `ResearchRunCommandError` mapping differentiates 404 ("not
+  found") from 409 (no admitted evidence / wrong case status).
+
+- The **retired JiuwenSwarm compatibility root** ([`jiuwenswarm_runtime.py`](../apps/pipeline/src/invest_pipeline/jiuwenswarm_runtime.py))
+  is preserved only for historical compatibility. It is not a
+  current production path, task route, or acceptance dependency per
+  [`docs/plan/README.md`](../docs/plan/README.md); see the
+  historical-compatibility note at
+  [Pipeline overview §5e](pipeline/overview.md)).
+  It wires the SQLAlchemy UoW factory, the
+  `JiuwenSwarmCliGatewayTransport` (Slice 2), the
+  `JiuwenSwarmResearchRunner`, the supplied `ResearchPlaybook` and
+  the lifecycle clock into a `ResearchOrchestrationService` (or a
+  `ResearchRunWorker` that consumes queued runs). The
+  [`research_run_worker_cli.py`](../apps/pipeline/src/invest_pipeline/research_run_worker_cli.py)
+  is the manual CLI driver for the worker (`--run-id` to drain one
+  row, `--limit` for `run_next`). The
+  [`external_research_handoff.py`](../apps/pipeline/src/invest_pipeline/external_research_handoff.py)
+  module is the controlled seam that turns an admitted
+  external observation into a queued `ResearchRun` for an existing
+  Research Case (`ExternalResearchHandoffService.queue` /
+  `execute`), and refuses any `runner_key` other than
+  `JIUWENSWARM_RUNNER_KEY="jiuwenswarm-runner-v1"`.
+
+- The **WorkBuddy bridge Dagster schedule**
+  ([`workbuddy_dagster.py`](../apps/pipeline/src/invest_pipeline/workbuddy_dagster.py))
+  registers `workbuddy_result_import_job` (the
+  `import_workbuddy_candidates_op` that delegates to
+  `workbuddy_bridge_cli.run_import`) plus a `*/5 * * * 1-5`
+  `Asia/Shanghai` `workbuddy_result_import_schedule` that only
+  fires when `_has_pending_candidates(source_dir)` returns `True`
+  (i.e. at least one `candidates_*.json` is visible). The schedule
+  is `STOPPED` by default; it flips to `RUNNING` when
+  `INVEST_PIPELINE_WORKBUDDY_AUTO_SCHEDULE_ENABLED=true`. The
+  [`workbuddy_bridge_cli.py`](../apps/pipeline/src/invest_pipeline/workbuddy_bridge_cli.py)
+  is the manual CLI driver (`--bridge-root` / `--source-dir`) and
+  the unit-tested entry point of the Job's `@op`.
+
+- The **WorkBuddy stage worker**
+  ([`integrations/workbuddy_stage_worker.py`](../apps/pipeline/src/invest_pipeline/integrations/workbuddy_stage_worker.py))
+  is the atomic filesystem worker shared by every WorkBuddy stage
+  (`strategy` / `candidate` / `research` / `observation`): it
+  enforces the `STAGES = ("strategy", "candidate", "research",
+  "observation")` set, owns the per-stage
+  `inbox` / `processing` / `results` / `archive` / `failed` /
+  `.workbuddy.lock` directories, discovers ready packages in
+  deterministic order, and moves them with `renameat2`'s
+  `RENAME_NOREPLACE` so two concurrent workers cannot claim the
+  same package. The legacy `SharedDirectoryWorkBuddyGateway`
+  (WorkBuddy candidate shared-directory bridge) is refactored on
+  top of the new worker.
+
+- The **WorkBuddy research-artifact intake**
+  ([`integrations/workbuddy_research_artifacts.py`](../apps/pipeline/src/invest_pipeline/integrations/workbuddy_research_artifacts.py))
+  validates and immutably archives one
+  `<root>/<task_id>.ready/{result.json,report.md}` pair under
+  `<archive_root>/<task_id>/<schema_version>/<content_hash>/`.
+  Schema version is frozen to
+  `SUPPORTED_SCHEMA_VERSION = "workbuddy.invest-result/1.0"`;
+  status is constrained to `success / partial / failed /
+  blocked_no_data`; the `result.json` `result_hash` is recomputed
+  against the canonical (sorted-key, no-`result_hash`) payload and
+  the on-disk `report.md` SHA-256 is matched against
+  `artifacts[0].sha256`. Re-imports of an unchanged `(task_id,
+  schema_version, content_hash)` triple are idempotent; a
+  conflicting delivery raises a `ValueError`. The CLI
+  [`workbuddy_research_ingest_cli.py`](../apps/pipeline/src/invest_pipeline/workbuddy_research_ingest_cli.py)
+  is the manual one-shot runner; `--recover` resumes safe
+  `processing/` residues instead of claiming new pairs.
+
+- The **WorkBuddy strategy archive MVP**
+  ([`integrations/workbuddy_strategy_archive.py`](../apps/pipeline/src/invest_pipeline/integrations/workbuddy_strategy_archive.py))
+  ships the combined `task` + `result` lifecycle for the strategy
+  stage. `StrategyCombinedArchive.process_once` claims one pair
+  (`inbox/<task_id>.ready` + `results/<task_id>.ready`) with
+  `os.replace`, validates identity on
+  `processing/<task_id>/task/task.json`'s `task_id`, and dispatches
+  one of two Phase validators based on the `task.json`
+  `schema_version` + `task_type` pair: Phase A
+  (`strategy-capability-assessment-task/1.0` →
+  `capability_assessment`) runs
+  `scripts/validate_strategy_delivery.py` and stores
+  `validation-report.json`; Phase B
+  (`strategy-engineering-task/1.0` → `strategy_engineering`) runs
+  `scripts/validate_strategy_proposal.py` and stores
+  `proposal-preflight-report.json`. Successful pairs are
+  `os.replace`-renamed into `archive/<task_id>/` with a
+  `manifest.json` (`strategy-archive-manifest/1.0`) re-hashed from
+  the merged file list; failed pairs are moved into
+  `failed/<task_id>/` with the redacted error message. The CLI
+  [`strategy_archive_cli.py`](../apps/pipeline/src/invest_pipeline/strategy_archive_cli.py)
+  runs one pass (`--recover` to resume a `processing/<task_id>`
+  residue) and emits redacted JSON-lines per outcome; the validator
+  scripts [`scripts/validate_strategy_delivery.py`](../scripts/validate_strategy_delivery.py)
+  + [`scripts/validate_strategy_proposal.py`](../scripts/validate_strategy_proposal.py)
+  carry the Phase-A / Phase-B preflight contracts documented under
+  [`docs/contracts/strategy/phase-a/README.md`](../docs/contracts/strategy/phase-a/README.md)
+  and
+  [`docs/contracts/strategy/phase-b/README.md`](../docs/contracts/strategy/phase-b/README.md).
+
+- **ADR-0014** ([`docs/adr/0014-investment-collaboration-responsibility-boundaries.md`](../docs/adr/0014-investment-collaboration-responsibility-boundaries.md))
+  freezes the responsibility split between `CIA` (direction and
+  formal decisions), `ARC` (system construction and technical
+  interpretation), `WorkBuddy` (research, candidate discovery and
+  observation), `invest-infra` (data, process, version and audit
+  authority), `RAA` (independent audit) and `Ops` (runtime /
+  scheduling / monitoring). No single party may simultaneously
+  propose, execute, evaluate and approve; external agents
+  (including WorkBuddy) never write directly to the database or
+  flip a `StrategyVersion` lifecycle. `invest-infra` is the
+  authoritative store for `StrategyProposal`,
+  `StrategyChangeProposal`, `StrategyVersion`, `ResearchResult`,
+  `Watchlist` and `InvestmentProposal` records. The two active
+  execution threads — Stage 4D research delivery closure and the
+  Central Research Visualization MVP — are governed by the
+  [`docs/plan/README.md`](../docs/plan/README.md) index, which
+  freezes the only authoritative plan per execution thread and
+  demotes every archived blueprint to
+  [`docs/plan/archive/`](../docs/plan/archive/README.md).
+
+The Stage 4D commit `5603b87` lands the **External Integration
 Workbench** that bridges WorkBuddy into the Research lifecycle:
 
 - [`apps/pipeline/src/invest_pipeline/integrations/bridge_ingestor.py`](../apps/pipeline/src/invest_pipeline/integrations/bridge_ingestor.py)
@@ -656,13 +838,69 @@ that owns the data widgets, filters, status badges, and chart helpers
 `DailyBarsTable`, `ClosePriceChart`, `RunStatusBadge`, and
 `LatestRunPanel`. The main routes are:
 
-- `/dashboard` — freshness, candidate summary, diff and latest run, plus
-  the **Research Cockpit** widget grid (`MarketStatusWidget` /
-  `ResearchSummaryWidget` / `EvidencePackWidget` /
-  `FactorSnapshotWidget` / `RiskMonitorWidget` /
-  `ResearchRunTimelineWidget`) composed by
-  [`features/research/dashboard/ResearchCockpitSection.tsx`](../apps/web/src/features/research/dashboard/ResearchCockpitSection.tsx)
-  and driven by [`GET /api/v1/research-dashboard`](api/overview.md);
+- `/dashboard` — the Central Research Center visualization entry point.
+  It composes three typed panels driven by the single
+  [`GET /api/v1/research-center`](api/overview.md#2-routing-surface)
+  endpoint, plus the existing
+  [`candidate-pool/latest/diff`](../apps/api/src/invest_api/routers/candidate_pool.py)
+  endpoint for the latest-day inclusion/exclusion diff (the only
+  read-only slice that does not yet live inside the Research Center
+  envelope):
+
+  - **Market Status** —
+    [`ResearchCenterMarketStatusPanel.tsx`](../apps/web/src/features/dashboard/ResearchCenterMarketStatusPanel.tsx)
+    renders the Market Breadth observations (with `key` / `value` /
+    `unit` / `observed_date` / `source_kind` / `source_ref` /
+    `quality_status` columns) and the Data Freshness envelope
+    (with `latest_published_trade_date` / `universe_count` /
+    `daily_bar_count` / `missing_count` / `status`); every panel
+    state carries the explicit
+    `available / partial / unavailable / failed` vocabulary so a
+    populated zero total is never confused with a missing source.
+    Sub-states (`fresh` / `partial` / `stale` / `missing` /
+    `failed` for freshness;
+    `complete` / `partial` / `failed` / `unknown` for quality) are
+    rendered with their own dedicated labels.
+  - **Subviews** —
+    [`ResearchCenterSubviewsPanel.tsx`](../apps/web/src/features/dashboard/ResearchCenterSubviewsPanel.tsx)
+    surfaces the `research` sub-segment (case / run counts plus the
+    `latest_case` identity, the evidence slot identity / quality /
+    freshness, and a deep link to `/research/history`), the
+    `candidate_pool` sub-segment (latest published
+    run identity + row / included / excluded counts) and the
+    `opportunities` sub-segment (bounded observation count and
+    admission-status breakdown keyed on the
+    `AdmissionStatus` enum).
+    Each sub-segment uses the same three-state
+    `available / empty / failed` vocabulary as the contract.
+  - **Delivery** —
+    [`ResearchCenterDeliveryPanel.tsx`](../apps/web/src/features/dashboard/ResearchCenterDeliveryPanel.tsx)
+    renders the four bounded delivery sub-segments: `pipeline`
+    (the latest `personal_etf_daily_job` run,
+    `available / empty / running / partial / failed`), `integration`
+    (the bounded external-workflow health banner,
+    `available / empty / failed`), `archive` (the bounded
+    per-run artifact slice, `available / empty / failed`) and
+    `research_runs` (the dashboard's bounded `recent_runs` page,
+    `available / empty / failed`). Each card carries
+    `generated_at` / `as_of_date` provenance plus a deep link
+    into the existing detail page
+    (`/operations`, `/api/v1/integration/health`,
+    `/api/v1/external-workflows/{run_id}/artifacts`,
+    `/api/v1/research-runs/{run_id}`).
+
+  The page no longer renders the older `TopCandidatesPanel` /
+  `LatestRunPanel` / `IntegrationHealthPanel` /
+  `ResearchCockpitSection` widgets or fetches
+  `GET /api/v1/research-dashboard` from the dashboard route — the
+  same bounded facts are exposed through the Research Center
+  envelope (and the case workspace page
+  [`/research/:caseId`](#7-web-data-workbench) still owns the
+  per-case Research Cockpit widgets). The single Research Center
+  query plus the candidate-pool diff query are the only fetches
+  the `/dashboard` page issues; the `DashboardPage` test suite
+  pins that contract via `expect(refetch).not.toHaveBeenCalled()`
+  and `expect(mockFetchIntegrationHealth).not.toHaveBeenCalled()`.
 - `/candidate-pool` — included/excluded/all tabs, filters, exclusion reasons
   and expandable rule details;
 - `/etf/:instrumentId` — instrument metadata, 30/60/120-day daily bars and a
@@ -693,17 +931,21 @@ that owns the data widgets, filters, status badges, and chart helpers
   `GET /api/v1/external-workflows/{run_id}/artifacts`. The page is a
   read-only dashboard over WorkBuddy runs; no buttons trigger a
   task.
-- The `/dashboard` page now hosts an
-  [`IntegrationHealthPanel`](../apps/web/src/features/dashboard/IntegrationHealthPanel.tsx)
-  widget that polls
+- The `/dashboard` page hosts the bounded delivery panel
+  ([`ResearchCenterDeliveryPanel.tsx`](../apps/web/src/features/dashboard/ResearchCenterDeliveryPanel.tsx))
+  whose `integration` card polls the same
   [`GET /api/v1/integration/health`](api/overview.md#2-routing-surface)
-  so operators see external-workflow producer / intake status next to
-  the freshness and candidate-pool panels.
+  endpoint via the Research Center envelope; the dashboard no longer
+  renders the standalone
+  [`IntegrationHealthPanel.tsx`](../apps/web/src/features/dashboard/IntegrationHealthPanel.tsx)
+  widget — it shares the bounded producer / intake banner the
+  Research Center already exposes.
 
 ### 7a. Research Cockpit widget runtime
 
-The `/dashboard` and `/research/:caseId` pages render widgets through a
-small deterministic runtime under
+The `/research/:caseId` case-workspace page (no longer the central
+`/dashboard`) renders the cockpit widgets through a small deterministic
+runtime under
 [`apps/web/src/research-workspace/runtime/`](../apps/web/src/research-workspace/runtime/index.ts):
 
 - `WidgetFrame` is the shared shell: title, description, provenance, state
@@ -718,10 +960,12 @@ small deterministic runtime under
   `cockpitRunDiagnostic` panel that quotes `error_summary` verbatim.
 - `registry.ts` is the typed registry that maps widget `id`s to their
   metadata; `layout.ts` derives the responsive 12-column grid placement
-  from a single source of truth so `/dashboard` and the case workspace
-  share the same shape. The registry deliberately omits market data
-  discovery / write controls — every widget is a read-only projection
-  of the PR-W03 dashboard endpoint.
+  from a single source of truth so the case workspace and the
+  Research Center panels share the same structural shape. The
+  registry deliberately omits market data discovery / write controls
+  — every widget is a read-only projection of the PR-W03 dashboard
+  endpoint. The central `/dashboard` route does not import this
+  runtime today; it composes the Research Center panels directly.
 
 The browser has no write controls and does not trigger Pipeline runs.
 The Web's API client is auto-generated from the FastAPI OpenAPI surface
@@ -763,7 +1007,7 @@ archive or runs a workbuddy pipeline job.
 |------|-------------------|-------------|-----------|
 | `/opportunity-radar` | [`apps/web/src/pages/OpportunityRadarPage.tsx`](../apps/web/src/pages/OpportunityRadarPage.tsx) | `GET /api/v1/opportunity-radar?admission_status=…&limit=…&offset=…` | 60-second polling. Status filter (`待验证` / `已交叉验证` / `已准入` / `已拒绝` / `冲突`) re-fetches with `opportunityRadarQueryKey`; radar rows show symbol / status / `as_of` / producer / `observed_at`. |
 | `/automation` | [`apps/web/src/pages/AutomationCenterPage.tsx`](../apps/web/src/pages/AutomationCenterPage.tsx) | `GET /api/v1/external-workflows?limit=…&offset=…` + `GET /api/v1/external-workflows/{run_id}/artifacts` | Lists recent external workflow runs; per-run card shows producer / schema / status pills / started_at / artifact count. |
-| `/dashboard` (panel only) | [`apps/web/src/features/dashboard/IntegrationHealthPanel.tsx`](../apps/web/src/features/dashboard/IntegrationHealthPanel.tsx) | `GET /api/v1/integration/health` | Lightweight health banner showing `status` (`healthy` / `degraded`), `sample_size`, `producer_statuses`, `intake_statuses`. |
+| `/dashboard` (delivery panel only) | [`apps/web/src/features/dashboard/ResearchCenterDeliveryPanel.tsx`](../apps/web/src/features/dashboard/ResearchCenterDeliveryPanel.tsx) | `GET /api/v1/research-center` (envelope) | Bounded delivery card — the `integration` sub-segment reuses the `/api/v1/integration/health` read on the Research Center envelope; `status` (`available` / `empty` / `failed`), `sample_size`, `producer_statuses`, `intake_statuses`. The standalone `IntegrationHealthPanel.tsx` widget is no longer mounted on `/dashboard`; it lives in the Research Center delivery card. |
 
 The admission-decision command lives at
 `POST /api/v1/external-observations/{observation_id}/admission-decisions`
@@ -785,12 +1029,16 @@ off.
   / low_volume / low_amount) exists today, plus the PR-5 declarative
   `candidate_pool.{baseline,institutional,custom_strategy}` channels
   the architecture-governance slice added.
-- **JiuwenSwarm go-live.** The
-  [JiuwenSwarm adapter](pipeline/overview.md#5e-jiuwenswarm-research-runner-adapter-pr-6-slice-1-3)
+- **JiuwenSwarm go-live (closed as a build commitment).** The
+  [retired JiuwenSwarm compatibility adapter](pipeline/overview.md)
   is wired and tested against an in-memory fake runner; the
-  Slice 1 / 2 / 3 boundaries hold, but production traffic still
-  depends on a real helper CLI binary and ADR-0012 ongoing
-  graduation criteria.
+  Slice 1 / 2 / 3 boundaries hold, but
+  [`docs/plan/README.md`](../docs/plan/README.md) has retired
+  JiuwenSwarm as an active plan dependency (`JiuwenSwarm 因成熟度不足
+  且更新缓慢，已停止采用`). The adapter, tests and history
+  remain in the tree for historical compatibility only; any future
+  Research-execution capability must be evaluated and authorised
+  separately rather than rebuilt on top of JiuwenSwarm.
 - **Remaining operational runbooks.** The checked-in
   [`cifang-auth-failure.md`](../docs/runbooks/cifang-auth-failure.md) and
   [`reprocess-trade-date.md`](../docs/runbooks/reprocess-trade-date.md)
@@ -806,16 +1054,25 @@ off.
   `ResearchOrchestrationReconciliationRequiredError`, is not part
   of this slice.
 - **Research Cockpit market / factor slots.** The PR-W03 dashboard
-  exposes an explicit `{"state": "unavailable", "reason": ...}` shape
-  for the `market_status` slot and renders only structural placeholders
-  for `FactorSnapshot` / `RiskMonitor`; a real market / factor source
-  must be wired in before those widgets can move out of the empty
-  state.
+  endpoint
+  ([`GET /api/v1/research-dashboard`](api/overview.md#2-routing-surface))
+  still exposes the explicit
+  `{"state": "unavailable", "reason": ...}` shape for the
+  `market_status` slot and only structural placeholders for
+  `FactorSnapshot` / `RiskMonitor`; the cockpit widgets that
+  consume it now live on the `/research/:caseId` case workspace
+  page only — the `/dashboard` route consumes the Research Center
+  envelope instead.
 - **Web e2e in CI.** The Playwright cockpit e2e
   (`apps/web/e2e/research-cockpit.e2e.ts`) ships as a local
   `pnpm test:e2e` script; the GitHub Actions workflow still runs the
   vitest + jsdom suite under `web-check` only, so the cockpit smoke
-  is not gated by CI today.
+  is not gated by CI today. The `Makefile` `test-web` target now
+  also drives the vitest + jsdom suite
+  (`pnpm install --frozen-lockfile` + `pnpm typecheck` +
+  `pnpm test:run` + `pnpm build`) so a `make test-web` invocation
+  catches dashboard / panel regressions without the local Playwright
+  boot.
 - **Stage 4C Dagster asset wiring.** The
   `stock_price_limits_raw` / `stock_price_limits` / `limit_sentiment_snapshot`
   / `market_breadth_v2_snapshot` Dagster assets are **not** registered
@@ -861,16 +1118,81 @@ off.
   asset / schedule consumes
   `project_candidates`'s output. The candidate-pool writer and the
   Dagster sensor are explicitly deferred per
-  [`docs/plan/invest-infra-workbuddy-daily-report-governance-mvp-plan-v1.0.md`](../docs/plan/invest-infra-workbuddy-daily-report-governance-mvp-plan-v1.0.md) §7.
+  [`docs/plan/invest-infra-workbuddy-daily-report-governance-mvp-plan-v1.0.md`](../docs/plan/invest-infra-workbuddy-daily-report-governance-mvp-plan-v1.0.md) §7. The
+  [`workbuddy_bridge_cli.py`](../apps/pipeline/src/invest_pipeline/workbuddy_bridge_cli.py)
+  driver and the `workbuddy_result_import_schedule` Dagster schedule
+  close the WorkBuddy shared-directory loop today, but the
+  candidate-pool writer (and the consumer of
+  `project_candidates`) remains deferred.
+- **Research API write surface.** The PR-7 API exposes read-only
+  lifecycle queries (cases, runs, evidence, results); the
+  `POST /api/v1/research-cases/{case_id}/runs` queueing command is
+  the first controlled write on the lifecycle, but it is bounded
+  to the JiuwenSwarm `runner_key`. A controller surface that opens
+  new `ResearchCase` rows through HTTP, plus the
+  replay / reconciliation endpoint for
+  `ResearchOrchestrationReconciliationRequiredError`, remains a
+  backlog item tracked under the Stage 4D closure plan.
+- **Web e2e in CI.** The Playwright cockpit e2e
+  (`apps/web/e2e/research-cockpit.e2e.ts`) and the new
+  `apps/web/src/features/dashboard/ResearchCenterDeliveryPanel.test.tsx`
+  /
+  `ResearchCenterSubviewsPanel.test.tsx` /
+  `ResearchCenterMarketStatusPanel.test.tsx` vitest suites ship as
+  local / `pnpm test:run` scripts; the GitHub Actions workflow still
+  runs the vitest + jsdom suite under `web-check` only, so the
+  Research Center smoke path is not gated by a dedicated
+  Playwright e2e today.
+- **Central Research Center capability slots.** Slice 1 / 2A / 2B
+  / 3A / 3B fill the `market` / `research` / `candidate_pool` /
+  `opportunities` / `delivery` sub-segments, and each slice
+  promotes the matching `capabilities.*` slot from the
+  `deferred` placeholder to `available` with its own
+  module-level `*_CAPABILITY_REASON` constant
+  ([`application/research_center.py`](../apps/api/src/invest_api/application/research_center.py)):
+  `RESEARCH_CAPABILITY_REASON` (Slice 2A),
+  `OPPORTUNITIES_CAPABILITY_REASON` (Slice 2B),
+  `DELIVERY_CAPABILITY_REASON` (Slice 3B). The reason values are
+  the only legal strings the corresponding slots emit, exported
+  in `__all__` so downstream callers / routers cannot drift onto
+  arbitrary strings. The `strategy` and `discipline` capabilities
+  remain the explicit
+  `{"state": "unavailable", "reason": "contract_not_frozen"}`
+  shape ([`docs/implementation/RESEARCH-CENTER-SLICE0-CONTRACT.md`](../docs/implementation/RESEARCH-CENTER-SLICE0-CONTRACT.md))
+  until their source contracts are frozen; subsequent slices will
+  extend the response without reshaping the existing fields.
+- **WorkBuddy bridge CLI / schedule activation.** The
+  [`workbuddy_bridge_cli.py`](../apps/pipeline/src/invest_pipeline/workbuddy_bridge_cli.py)
+  manual driver and the `workbuddy_result_import_schedule`
+  (`*/5 * * * 1-5` weekdays, default `STOPPED`) wire the shared-directory
+  import, but the schedule stays manual until the Stage 4D operator
+  acceptance checklist signs off on the
+  `INVEST_PIPELINE_WORKBUDDY_AUTO_SCHEDULE_ENABLED` switch
+  (see [`tasks/stage4d-workbuddy-research-delivery-plan.md`](../tasks/stage4d-workbuddy-research-delivery-plan.md)).
+- **Strategy archive MVP next steps.** The
+  [`StrategyCombinedArchive`](../apps/pipeline/src/invest_pipeline/integrations/workbuddy_strategy_archive.py)
+  + [`strategy_archive_cli.py`](../apps/pipeline/src/invest_pipeline/strategy_archive_cli.py)
+  pair archives Phase-A capability-assessment and Phase-B
+  strategy-engineering task/result pairs under
+  `workbuddy/strategy/{inbox,processing,results,archive,failed}`,
+  but the archive is not yet wired to `StrategyProposal` /
+  `StrategyChangeProposal` persistence — that domain migration and
+  repository layer is intentionally deferred to a later Strategy
+  Library slice per
+  [`docs/plan/invest-infra-strategy-source-to-automation-workflow.md`](../docs/plan/invest-infra-strategy-source-to-automation-workflow.md).
 - **Stage 4D unified investment workbench integration.** The MVP
-  slice has landed in commit `5603b87` (the Bridge ingest, the
+  slice landed in commit `5603b87` (the Bridge ingest, the
   External Workflow / Artifact / Observation read API, the
   Opportunity Radar, the Integration Health panel, the gated
-  admission-decision command, and the Research-Case evidence link
-  are wired end-to-end). The next backlog step is the operator-side
-  acceptance checklist plus the production CLI
-  `python -m invest_pipeline.integrations …` for the shared-directory
-  gateway, both tracked in
-  [`docs/plan/invest-infra-stage4d-mvp-phased-execution-plan-v1.0.md`](../docs/plan/invest-infra-stage4d-mvp-phased-execution-plan-v1.0.md)
-  + the authoritative Stage 4D plan
+  admission-decision command, and the Research-Case evidence link)
+  and the follow-up commits now also cover the Research-Case
+  creation from admitted observation, the controlled Research Run
+  command + JiuwenSwarm runtime + queued Research Run worker, the
+  WorkBuddy shared-directory bridge Dagster schedule, the WorkBuddy
+  atomic stage worker + research-artifact intake, the WorkBuddy
+  strategy archive MVP, and the Central Research Center
+  visualization MVP. The remaining backlog steps are the operator
+  acceptance checklist for the shared-directory production CLI, the
+  CI smoke against the new Research Center endpoints, and the
+  Research Workspace closure tracked in
   [`docs/plan/invest-infra-stage4d-mvp-phased-execution-plan-v1.0.md`](../docs/plan/invest-infra-stage4d-mvp-phased-execution-plan-v1.0.md).
