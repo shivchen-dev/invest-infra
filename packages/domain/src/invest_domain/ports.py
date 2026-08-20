@@ -33,10 +33,8 @@ InstrumentProvider = _CanonicalInstrumentProvider
 __all__ = ["InstrumentProvider", "InstrumentRepository"]
 
 
-# TODO(storage-cleanup): replace with a dedicated Protocol in
-# ``invest_storage.repositories.protocols`` once M1 storage migrations
-# land. Do not extend this Protocol in place; new repositories should
-# implement the storage-side Protocol instead.
+# This compatibility Protocol remains intentionally narrow; new repositories
+# should implement the storage-side Protocol instead.
 class InstrumentRepository(Protocol):
     def upsert_many(self, instruments: Sequence[Instrument]) -> int: ...
 

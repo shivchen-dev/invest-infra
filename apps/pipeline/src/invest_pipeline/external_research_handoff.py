@@ -2,9 +2,10 @@
 
 Stage 4D deliberately keeps the WorkBuddy payload outside the formal
 ``EvidencePack`` contract.  This service is the narrow seam between the two:
-it only creates a JiuwenSwarm ``ResearchRun`` when the case already has an
+it only creates a legacy-keyed ``ResearchRun`` when the case already has an
 immutable, complete EvidencePack and at least one admitted external evidence
-item linked to it.
+item linked to it. The JiuwenSwarm key is retained for data compatibility and
+does not identify a current production dependency.
 """
 
 from __future__ import annotations

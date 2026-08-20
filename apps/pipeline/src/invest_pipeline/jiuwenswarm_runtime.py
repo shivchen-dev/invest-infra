@@ -1,9 +1,8 @@
-"""Composition root for the production JiuwenSwarm research runner.
+"""Historical compatibility root for the retired JiuwenSwarm runner.
 
 The adapter and orchestration services remain dependency-injected and easy to
-test.  This module is the one explicit production assembly point: SQLAlchemy
-UoW, CLI transport, JiuwenSwarm runner, playbook, and lifecycle clock are
-wired together here.
+test. Current plans must not depend on this module for production execution or
+acceptance; it remains only to preserve the existing integration boundary.
 """
 
 from __future__ import annotations
@@ -49,7 +48,7 @@ def build_jiuwenswarm_orchestration_service(
     transport: JiuwenSwarmGatewayTransport | None = None,
     clock: Callable[[], datetime] | None = None,
 ) -> ResearchOrchestrationService:
-    """Build a production Research orchestrator with a real Jiuwen runner.
+    """Build the retired Jiuwen compatibility orchestrator.
 
     ``transport`` is an explicit injection seam for deterministic tests.  When
     omitted, the validated CLI transport is constructed and remains the only
@@ -76,7 +75,7 @@ def build_jiuwenswarm_orchestration_service(
 def build_jiuwenswarm_worker(
     **kwargs,
 ) -> ResearchRunWorker:
-    """Build the production worker that consumes queued ResearchRun rows."""
+    """Build the historical compatibility worker for queued ResearchRun rows."""
 
     orchestration, uow_factory = _build_components(**kwargs)
     return ResearchRunWorker(uow_factory=uow_factory, orchestration=orchestration)
