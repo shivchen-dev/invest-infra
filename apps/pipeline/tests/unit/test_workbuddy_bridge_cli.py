@@ -64,8 +64,9 @@ def test_run_import_emits_redacted_summary_with_fake_dependencies(
             assert bridge_root == Path("/shared")
             assert source_dir == Path("/shared/选股报告")
 
-        def process_once(self, *, uow):
+        def process_once(self, *, uow, resolver):
             assert uow == "uow"
+            assert resolver(" 600000 ") is None
             return outcomes
 
     class _Uow:
@@ -202,3 +203,32 @@ def test_main_returns_nonzero_without_printing_exception_details(
     assert captured.out == ""
     assert captured.err == "error: WorkBuddy import failed\n"
     assert "secret payload" not in captured.err
+
+
+def test_instrument_resolver_maps_exchange_and_caches_results() -> None:
+    calls: list[tuple[str, str]] = []
+
+    class _Repository:
+        def get_by_business_key(self, *, exchange, symbol):
+            calls.append((exchange, symbol))
+            return SimpleNamespace(symbol=symbol, is_active=True)
+
+    resolver = cli._build_instrument_resolver(SimpleNamespace(instruments=_Repository()))
+
+    assert resolver(" 600000 ") == "600000"
+    assert resolver("600000") == "600000"
+    assert resolver("200001") == "200001"
+    assert resolver("300001") is None
+    assert resolver("ABC") is None
+    assert calls == [("SSE", "600000"), ("SZSE", "200001")]
+
+
+def test_instrument_resolver_rejects_inactive_and_missing_repository() -> None:
+    class _Repository:
+        def get_by_business_key(self, *, exchange, symbol):
+            return SimpleNamespace(symbol=symbol, is_active=False)
+
+    assert (
+        cli._build_instrument_resolver(SimpleNamespace(instruments=_Repository()))("600000") is None
+    )
+    assert cli._build_instrument_resolver(SimpleNamespace())("600000") is None

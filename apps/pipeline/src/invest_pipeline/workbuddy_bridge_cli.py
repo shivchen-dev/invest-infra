@@ -31,6 +31,38 @@ def resolve_paths(settings: Settings, args: argparse.Namespace) -> tuple[Path, P
     return bridge_root, source_dir
 
 
+def _build_instrument_resolver(uow: Any) -> Callable[[str], str | None]:
+    cache: dict[str, str | None] = {}
+    repository = getattr(uow, "instruments", None)
+
+    def resolve(symbol: str) -> str | None:
+        normalized = symbol.strip()
+        if normalized in cache:
+            return cache[normalized]
+        if repository is None or len(normalized) != 6 or not normalized.isdigit():
+            cache[normalized] = None
+            return None
+
+        prefix = normalized[0]
+        exchange = "SSE" if prefix in {"5", "6"} else "SZSE" if prefix in {"1", "2"} else None
+        if exchange is None:
+            cache[normalized] = None
+            return None
+        instrument = repository.get_by_business_key(
+            exchange=exchange,
+            symbol=normalized,
+        )
+        resolved = (
+            instrument.symbol
+            if instrument is not None and getattr(instrument, "is_active", True)
+            else None
+        )
+        cache[normalized] = resolved
+        return resolved
+
+    return resolve
+
+
 def _summary(outcomes: tuple[Any, ...]) -> dict[str, list[dict[str, Any]]]:
     summary: list[dict[str, Any]] = []
     for outcome in outcomes:
@@ -72,7 +104,8 @@ def run_import(
         sessions = session_factory_builder(engine)
         gateway = gateway_factory(bridge_root, source_dir)
         with uow_factory(sessions) as uow:
-            outcomes = gateway.process_once(uow=uow)
+            resolver = _build_instrument_resolver(uow)
+            outcomes = gateway.process_once(uow=uow, resolver=resolver)
         print(json.dumps(_summary(outcomes), ensure_ascii=False, separators=(",", ":")))
         return 0
     finally:
