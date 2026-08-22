@@ -102,13 +102,35 @@ export type EvidenceSourceReferenceResponse = RequiredDefined<
 export type ResearchCaseWorkspaceEvidencePack = EvidencePackResponse;
 export type ResearchCaseWorkspaceRun = ResearchRunResponse;
 export type ResearchCaseWorkspaceResult = ResearchResultResponse;
+export type ResearchCaseWorkspaceArtifactView = {
+  logical_uri: string;
+  content_hash: string;
+  media_type: string;
+  size_bytes: number;
+  run_id: string;
+  created_at: string;
+};
+export type ResearchCaseWorkspaceDiscoveryView = {
+  evidence_id: string;
+  observation_id: string;
+  run_id: string;
+  producer: string;
+  as_of: string;
+  observed_at: string;
+  source_uri: string;
+  content_hash: string;
+  admission_status: string;
+  admission: Record<string, unknown>;
+  artifact: ResearchCaseWorkspaceArtifactView | null;
+};
 export type ResearchCaseWorkspaceResponse = Omit<
   RequiredDefined<components["schemas"]["ResearchCaseWorkspaceResponse"]>,
-  "evidence_packs" | "runs" | "results"
+  "evidence_packs" | "runs" | "results" | "external_discovery"
 > & {
   evidence_packs: ResearchCaseWorkspaceEvidencePack[];
   runs: ResearchCaseWorkspaceRun[];
   results: (ResearchCaseWorkspaceResult | null)[];
+  external_discovery: ResearchCaseWorkspaceDiscoveryView[];
 };
 export type ResearchDashboardDataQuality = components["schemas"]["ResearchDashboardResponse"]["data_quality"];
 export type ResearchDashboardFreshness = components["schemas"]["ResearchDashboardResponse"]["freshness"];

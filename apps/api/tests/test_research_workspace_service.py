@@ -15,8 +15,14 @@ that the service itself owns the workspace orchestration:
   carries ``None`` for runs without a result,
 - empty branches (no evidence, no runs, both empty) without inventing
   data,
+- the Stage 4D Task 3.3 ``external_discovery`` slot: case-scoped
+  list of admitted external-evidence items, missing source
+  observations skipped, missing artifacts projected as ``None``,
+  and the optional readers defaulting to an empty list when the
+  service is built without them,
 - the :class:`sqlalchemy.exc.SQLAlchemyError` translation to
-  :class:`ResearchQueryError` for every reader call site.
+  :class:`ResearchQueryError` for every reader call site, including
+  the new external-chain readers.
 """
 
 from __future__ import annotations
@@ -27,10 +33,13 @@ from uuid import uuid4
 
 import pytest
 from invest_api.application.research import (
+    ResearchCaseWorkspaceArtifactView,
+    ResearchCaseWorkspaceDiscoveryView,
     ResearchCaseWorkspaceView,
     ResearchQueryError,
     ResearchQueryService,
 )
+from invest_domain.integration import AdmissionStatus
 from sqlalchemy.exc import OperationalError
 
 
@@ -121,6 +130,122 @@ def _build_repositories(
     results.get_by_run_id.side_effect = lambda run_id: results_map.get(run_id)
 
     return cases, evidence, runs, results
+
+
+def _observation_shim(
+    *,
+    observation_id,
+    run_id,
+    source_uri="archive://run/a.json",
+    producer="workbuddy",
+    admission_status=AdmissionStatus.ADMITTED,
+    admission_metadata=None,
+    as_of_date=None,
+):
+    """Return a structurally-compatible ``ExternalObservation`` shim."""
+
+    return SimpleNamespace(
+        observation_id=observation_id,
+        run_id=run_id,
+        observed_at="2026-08-14T09:00:00Z",
+        as_of=as_of_date or "2026-08-14",
+        source_uri=source_uri,
+        producer=producer,
+        payload={},
+        artifact_id=None,
+        symbol=None,
+        instrument_id=None,
+        admission_status=SimpleNamespace(value=admission_status.value),
+        metadata=(
+            {"admission": dict(admission_metadata)}
+            if admission_metadata is not None
+            else {}
+        ),
+    )
+
+
+def _evidence_item_shim(
+    *,
+    evidence_id,
+    observation_id,
+    run_id,
+    artifact_id=None,
+    content_hash="a" * 64,
+    admission=None,
+):
+    """Return a structurally-compatible ``ExternalEvidenceItem`` shim."""
+
+    return SimpleNamespace(
+        evidence_id=evidence_id,
+        observation_id=observation_id,
+        run_id=run_id,
+        artifact_id=artifact_id,
+        artifact_content_hash="a" * 64 if artifact_id is not None else None,
+        observed_at="2026-08-14T09:00:00Z",
+        as_of="2026-08-14",
+        source_uri="archive://run/a.json",
+        producer="workbuddy",
+        payload={},
+        admission=dict(admission) if admission is not None else {},
+        content_hash=content_hash,
+    )
+
+
+def _artifact_shim(
+    *,
+    artifact_id,
+    run_id,
+    logical_uri="archive://run/a.json",
+    content_hash="a" * 64,
+    media_type="application/json",
+    size_bytes=128,
+):
+    """Return a structurally-compatible ``ExternalArtifact`` shim."""
+
+    return SimpleNamespace(
+        artifact_id=artifact_id,
+        run_id=run_id,
+        logical_uri=logical_uri,
+        content_hash=content_hash,
+        media_type=media_type,
+        size_bytes=size_bytes,
+        created_at="2026-08-14T08:30:00Z",
+        metadata={},
+    )
+
+
+def _build_external_repositories(
+    *,
+    external_by_case=None,
+    observations_by_id=None,
+    artifacts_by_id=None,
+):
+    """Return a tuple of mock external-chain repositories.
+
+    ``external_by_case`` maps ``case_id -> [ExternalEvidenceItem, ...]``;
+    cases absent from the mapping resolve to ``[]`` so the empty
+    branch is trivially driveable. ``observations_by_id`` and
+    ``artifacts_by_id`` map id -> row; missing IDs resolve to ``None``
+    so the missing-source / missing-artifact branches are driveable
+    without explicit None checks.
+    """
+
+    external = external_by_case or {}
+    obs_map = observations_by_id or {}
+    art_map = artifacts_by_id or {}
+
+    ext_evidence = MagicMock(name="ResearchExternalEvidenceRepository")
+    ext_evidence.list_by_case.side_effect = lambda case_id: list(
+        external.get(case_id, [])
+    )
+
+    observations = MagicMock(name="ExternalObservationRepository")
+    observations.get_by_id.side_effect = lambda obs_id: obs_map.get(obs_id)
+
+    artifacts = MagicMock(name="ExternalArtifactRepository")
+    artifacts.get_by_id.side_effect = lambda art_id: art_map.get(art_id)
+
+    return ext_evidence, observations, artifacts
 
 
 class TestWorkspaceHappyPath:
@@ -296,7 +421,330 @@ class TestWorkspaceProtocolSurface:
         assert "list_by_case" in dir(ResearchRunReader)
 
 
+class TestWorkspaceExternalDiscoveryHappyPath:
+    """Coverage for the populated external-chain branch (Stage 4D Task 3.3)."""
+
+    def test_composes_external_discovery_with_observation_and_artifact(
+        self,
+    ) -> None:
+        case_id = uuid4()
+        case = _case_shim(case_id=case_id)
+        run_id = uuid4()
+        observation_id = uuid4()
+        artifact_id = uuid4()
+        observation = _observation_shim(
+            observation_id=observation_id,
+            run_id=run_id,
+            source_uri="archive://run/a.json",
+            producer="workbuddy",
+            admission_status=AdmissionStatus.ADMITTED,
+            admission_metadata={
+                "status": "admitted",
+                "reason": "all admission checks passed",
+                "rules_version": "observation-admission/1.0",
+                "decided_by": "system",
+                "checks": {
+                    "identity_ok": True,
+                    "freshness_ok": True,
+                    "unit_ok": True,
+                    "internal_cross_check_ok": True,
+                    "conflict_detected": False,
+                },
+            },
+        )
+        artifact = _artifact_shim(artifact_id=artifact_id, run_id=run_id)
+        evidence_item = _evidence_item_shim(
+            evidence_id="ext-evi:aaaaaaaa",
+            observation_id=observation_id,
+            run_id=run_id,
+            artifact_id=artifact_id,
+            admission=observation.metadata["admission"],
+        )
+        cases, evidence, runs, results = _build_repositories(case=case)
+        ext_evidence, observations, artifacts = _build_external_repositories(
+            external_by_case={case_id: [evidence_item]},
+            observations_by_id={observation_id: observation},
+            artifacts_by_id={artifact_id: artifact},
+        )
+
+        service = ResearchQueryService(
+            cases,
+            evidence,
+            runs,
+            results,
+            external_evidence_repository=ext_evidence,
+            observation_repository=observations,
+            artifact_repository=artifacts,
+        )
+        view = service.get_workspace(case_id)
+
+        assert isinstance(view, ResearchCaseWorkspaceView)
+        assert len(view.external_discovery) == 1
+        item = view.external_discovery[0]
+        assert isinstance(item, ResearchCaseWorkspaceDiscoveryView)
+        assert item.evidence_id == "ext-evi:aaaaaaaa"
+        assert item.observation_id == observation_id
+        assert item.run_id == run_id
+        assert item.producer == "workbuddy"
+        assert item.source_uri == "archive://run/a.json"
+        assert item.admission_status == "admitted"
+        # The admission decision metadata is projected verbatim from
+        # the bound evidence row; the service does not invent or
+        # rewrite it.
+        assert item.admission["status"] == "admitted"
+        assert item.admission["rules_version"] == "observation-admission/1.0"
+        # Artifact is projected into the safe view (logical_uri +
+        # hash + media_type + size + run_id + created_at). Host
+        # paths / shared-directory paths are never surfaced.
+        assert item.artifact is not None
+        assert isinstance(item.artifact, ResearchCaseWorkspaceArtifactView)
+        assert item.artifact.logical_uri == "archive://run/a.json"
+        assert item.artifact.media_type == "application/json"
+        assert item.artifact.size_bytes == 128
+        assert item.artifact.run_id == run_id
+
+        # Bounded repository lookups: one list_by_case + one
+        # observation get_by_id + one artifact get_by_id. The service
+        # never falls back to a global scan.
+        ext_evidence.list_by_case.assert_called_once_with(case_id)
+        observations.get_by_id.assert_called_once_with(observation_id)
+        artifacts.get_by_id.assert_called_once_with(artifact_id)
+
+    def test_external_discovery_is_empty_when_no_evidence_bound(
+        self,
+    ) -> None:
+        case_id = uuid4()
+        case = _case_shim(case_id=case_id)
+        cases, evidence, runs, results = _build_repositories(case=case)
+        ext_evidence, observations, artifacts = _build_external_repositories()
+
+        service = ResearchQueryService(
+            cases,
+            evidence,
+            runs,
+            results,
+            external_evidence_repository=ext_evidence,
+            observation_repository=observations,
+            artifact_repository=artifacts,
+        )
+        view = service.get_workspace(case_id)
+
+        assert view is not None
+        # Explicit empty list: the workspace never projects ``None``
+        # for the external-discovery slot.
+        assert view.external_discovery == []
+        ext_evidence.list_by_case.assert_called_once_with(case_id)
+        # No items -> no observation / artifact lookups; the service
+        # short-circuits before issuing nested reads.
+        observations.get_by_id.assert_not_called()
+        artifacts.get_by_id.assert_not_called()
+
+
+class TestWorkspaceExternalDiscoveryUnavailability:
+    """Coverage for the artifact / observation unavailable branches."""
+
+    def test_artifact_unavailable_is_projected_as_none(self) -> None:
+        case_id = uuid4()
+        case = _case_shim(case_id=case_id)
+        run_id = uuid4()
+        observation_id = uuid4()
+        artifact_id = uuid4()
+        observation = _observation_shim(
+            observation_id=observation_id,
+            run_id=run_id,
+            admission_status=AdmissionStatus.ADMITTED,
+        )
+        evidence_item = _evidence_item_shim(
+            evidence_id="ext-evi:bbbbbbbb",
+            observation_id=observation_id,
+            run_id=run_id,
+            artifact_id=artifact_id,
+        )
+        cases, evidence, runs, results = _build_repositories(case=case)
+        ext_evidence, observations, artifacts = _build_external_repositories(
+            external_by_case={case_id: [evidence_item]},
+            observations_by_id={observation_id: observation},
+            # No artifact row registered -> lookup returns ``None``
+            artifacts_by_id={},
+        )
+
+        service = ResearchQueryService(
+            cases,
+            evidence,
+            runs,
+            results,
+            external_evidence_repository=ext_evidence,
+            observation_repository=observations,
+            artifact_repository=artifacts,
+        )
+        view = service.get_workspace(case_id)
+
+        assert view is not None
+        assert len(view.external_discovery) == 1
+        # The service must not fabricate artifact data when the
+        # bounded lookup misses: the workspace exposes ``None`` so
+        # the front-end can render an understandable unavailable
+        # state.
+        assert view.external_discovery[0].artifact is None
+        # Producer / admission metadata still surface from the
+        # source observation so the WorkBuddy provenance is visible.
+        assert view.external_discovery[0].producer == "workbuddy"
+        assert view.external_discovery[0].admission_status == "admitted"
+        artifacts.get_by_id.assert_called_once_with(artifact_id)
+
+    def test_missing_source_observation_skips_the_row(self) -> None:
+        case_id = uuid4()
+        case = _case_shim(case_id=case_id)
+        run_id = uuid4()
+        present_observation_id = uuid4()
+        missing_observation_id = uuid4()
+        present_artifact_id = uuid4()
+        present_observation = _observation_shim(
+            observation_id=present_observation_id,
+            run_id=run_id,
+        )
+        present_artifact = _artifact_shim(
+            artifact_id=present_artifact_id, run_id=run_id
+        )
+        present_item = _evidence_item_shim(
+            evidence_id="ext-evi:cccccccc",
+            observation_id=present_observation_id,
+            run_id=run_id,
+            artifact_id=present_artifact_id,
+        )
+        # The ``missing`` evidence row has no resolvable source
+        # observation in storage; the service must skip it rather
+        # than emit a dangling row.
+        missing_item = _evidence_item_shim(
+            evidence_id="ext-evi:dddddddd",
+            observation_id=missing_observation_id,
+            run_id=run_id,
+        )
+        cases, evidence, runs, results = _build_repositories(case=case)
+        ext_evidence, observations, artifacts = _build_external_repositories(
+            external_by_case={case_id: [present_item, missing_item]},
+            observations_by_id={present_observation_id: present_observation},
+            artifacts_by_id={present_artifact_id: present_artifact},
+        )
+
+        service = ResearchQueryService(
+            cases,
+            evidence,
+            runs,
+            results,
+            external_evidence_repository=ext_evidence,
+            observation_repository=observations,
+            artifact_repository=artifacts,
+        )
+        view = service.get_workspace(case_id)
+
+        assert view is not None
+        assert len(view.external_discovery) == 1
+        assert view.external_discovery[0].evidence_id == "ext-evi:cccccccc"
+        observations.get_by_id.assert_any_call(present_observation_id)
+        observations.get_by_id.assert_any_call(missing_observation_id)
+        assert observations.get_by_id.call_count == 2
+
+    def test_external_discovery_defaults_to_empty_without_readers(self) -> None:
+        """When the service is built without external-chain readers,
+        the workspace surfaces an explicit empty ``external_discovery``
+        list rather than fabricating the slot."""
+        case_id = uuid4()
+        case = _case_shim(case_id=case_id)
+        cases, evidence, runs, results = _build_repositories(case=case)
+
+        service = ResearchQueryService(cases, evidence, runs, results)
+        view = service.get_workspace(case_id)
+
+        assert view is not None
+        assert view.external_discovery == []
+
+
+class TestWorkspaceExternalDiscoverySqlAlchemyError:
+    """``SQLAlchemyError`` from the external-chain readers must be translated."""
+
+    @pytest.mark.parametrize(
+        "configure",
+        [
+            lambda ext, obs, art: setattr(
+                ext.list_by_case, "side_effect",
+                OperationalError("SELECT ext", {}, Exception("password=secret")),
+            ),
+            lambda ext, obs, art: setattr(
+                obs.get_by_id, "side_effect",
+                OperationalError("SELECT obs", {}, Exception("password=secret")),
+            ),
+            lambda ext, obs, art: setattr(
+                art.get_by_id, "side_effect",
+                OperationalError("SELECT art", {}, Exception("password=secret")),
+            ),
+        ],
+    )
+    def test_translates_sqlalchemy_errors_without_details(self, configure) -> None:
+        case_id = uuid4()
+        case = _case_shim(case_id=case_id)
+        run_id = uuid4()
+        observation_id = uuid4()
+        artifact_id = uuid4()
+        observation = _observation_shim(
+            observation_id=observation_id, run_id=run_id
+        )
+        artifact = _artifact_shim(artifact_id=artifact_id, run_id=run_id)
+        evidence_item = _evidence_item_shim(
+            evidence_id="ext-evi:eeeeeeee",
+            observation_id=observation_id,
+            run_id=run_id,
+            artifact_id=artifact_id,
+        )
+        cases, evidence, runs, results = _build_repositories(case=case)
+        ext_evidence, observations, artifacts = _build_external_repositories(
+            external_by_case={case_id: [evidence_item]},
+            observations_by_id={observation_id: observation},
+            artifacts_by_id={artifact_id: artifact},
+        )
+        configure(ext_evidence, observations, artifacts)
+
+        with pytest.raises(ResearchQueryError) as exc_info:
+            ResearchQueryService(
+                cases,
+                evidence,
+                runs,
+                results,
+                external_evidence_repository=ext_evidence,
+                observation_repository=observations,
+                artifact_repository=artifacts,
+            ).get_workspace(case_id)
+
+        assert str(exc_info.value) == "research query failed"
+        # Sanitized: no driver-level detail leaks.
+        assert "password" not in str(exc_info.value)
+        assert "secret" not in str(exc_info.value)
+
+
+class TestWorkspaceExternalDiscoveryProtocolSurface:
+    """The new reader protocols must expose the read methods the workspace uses."""
+
+    def test_external_evidence_reader_protocol_exposes_list_by_case(self) -> None:
+        from invest_api.application.research import ResearchExternalEvidenceReader
+
+        assert "list_by_case" in dir(ResearchExternalEvidenceReader)
+
+    def test_observation_reader_protocol_exposes_get_by_id(self) -> None:
+        from invest_api.application.research import ExternalObservationReader
+
+        assert "get_by_id" in dir(ExternalObservationReader)
+
+    def test_artifact_reader_protocol_exposes_get_by_id(self) -> None:
+        from invest_api.application.research import ExternalArtifactReader
+
+        assert "get_by_id" in dir(ExternalArtifactReader)
+
+
 __all__ = [
+    "TestWorkspaceExternalDiscoveryHappyPath",
+    "TestWorkspaceExternalDiscoveryProtocolSurface",
+    "TestWorkspaceExternalDiscoverySqlAlchemyError",
+    "TestWorkspaceExternalDiscoveryUnavailability",
     "TestWorkspaceHappyPath",
     "TestWorkspaceMissingCase",
     "TestWorkspaceMissingResult",

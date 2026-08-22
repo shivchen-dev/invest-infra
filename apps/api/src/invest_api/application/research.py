@@ -1,10 +1,11 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
-from datetime import date
-from typing import Literal, Protocol
+from dataclasses import dataclass, field
+from datetime import date, datetime
+from typing import Any, Literal, Protocol
 from uuid import UUID
 
+from invest_domain.integration import ExternalArtifact, ExternalEvidenceItem, ExternalObservation
 from invest_domain.research import EvidencePack, ResearchCase
 from invest_domain.research.research_run import ResearchResult, ResearchRun
 from sqlalchemy.exc import SQLAlchemyError
@@ -79,6 +80,48 @@ class ResearchRunReader(Protocol):
 
 class ResearchResultReader(Protocol):
     def get_by_run_id(self, run_id: UUID) -> ResearchResult | None: ...
+
+
+class ResearchExternalEvidenceReader(Protocol):
+    """Read-side port for the case-scoped ``ExternalEvidenceItem`` list.
+
+    The Stage 4D workspace only needs ``list_by_case``: the case ID
+    identifies the bounded set of admitted evidence bound to the case;
+    the ``observation_id`` on each row is then resolved through the
+    existing :class:`ExternalObservationReader` to surface admission
+    metadata and the bound artifact. No write path is exposed on the
+    workspace service — the existing
+    :class:`invest_api.application.research_external_evidence.ResearchExternalEvidenceService`
+    owns the link / admit commands and is intentionally not wired in
+    here.
+    """
+
+    def list_by_case(self, case_id: UUID) -> list[ExternalEvidenceItem]: ...
+
+
+class ExternalObservationReader(Protocol):
+    """Read-side port that resolves a single observation by ID.
+
+    The workspace service issues bounded lookups (one per admitted
+    evidence item on the case); the bound case list is the only fan-out
+    surface, and the :class:`ExternalObservationReader` is the
+    observation-side counterpart so the same ID resolution matches the
+    storage layer's primary-key lookup.
+    """
+
+    def get_by_id(self, observation_id: UUID) -> ExternalObservation | None: ...
+
+
+class ExternalArtifactReader(Protocol):
+    """Read-side port that resolves a single artifact by ID.
+
+    Used only when an admitted evidence row carries an
+    ``artifact_id``. The workspace surfaces a ``None`` artifact when
+    the lookup misses rather than fabricating data; this matches the
+    contract that artifact unavailable has an explicit empty state.
+    """
+
+    def get_by_id(self, artifact_id: UUID) -> ExternalArtifact | None: ...
 
 
 class ResearchQueryError(RuntimeError):
@@ -158,6 +201,72 @@ class ResearchDashboardView:
 
 
 @dataclass(frozen=True, slots=True)
+class ResearchCaseWorkspaceArtifactView:
+    """Safe provenance summary of a bound :class:`ExternalArtifact`.
+
+    Stage 4D Task 3.3 keeps the workspace read-only and refuses to
+    surface host paths or shared-directory paths. Only the explicitly
+    safe fields — ``logical_uri``, ``content_hash``, ``media_type``,
+    ``size_bytes``, ``run_id`` and ``created_at`` — are projected.
+    The router translates this view into the
+    :class:`invest_api.schemas.research.ResearchCaseWorkspaceArtifactResponse`
+    Pydantic shape; the front-end consumes the response, not this
+    dataclass.
+    """
+
+    logical_uri: str
+    content_hash: str
+    media_type: str
+    size_bytes: int
+    run_id: UUID
+    created_at: datetime
+
+
+@dataclass(frozen=True, slots=True)
+class ResearchCaseWorkspaceDiscoveryView:
+    """One external-evidence item projected onto the workspace page.
+
+    The view composes the admitted :class:`ExternalEvidenceItem`
+    (already bound to the case) with the source
+    :class:`ExternalObservation` so the front-end can render the
+    WorkBuddy observation, the formal admission decision and the
+    bound artifact as a single traceable chain.
+
+    Field invariants:
+
+    - ``evidence_id`` is the canonical
+      ``"ext-evi:{observation_id}:{hash_prefix}"`` identifier computed
+      in :class:`invest_domain.integration.ExternalEvidenceItem`; it
+      echoes the formal fact identity.
+    - ``producer`` and ``source_uri`` are projected from the source
+      observation so the WorkBuddy observation is visibly distinct
+      from the formal admission metadata.
+    - ``admission_status`` carries the upstream
+      :class:`invest_domain.integration.AdmissionStatus` string so the
+      UI can render pending / corroborated / admitted / rejected /
+      conflict states.
+    - ``admission`` is the verbatim admission decision metadata the
+      pipeline stored at link time (rules version, decided_by,
+      checks, reason); the front-end reads but does not mutate it.
+    - ``artifact`` is the safe artifact summary, or ``None`` when the
+      observation has no bound artifact or the bounded lookup misses
+      in storage; the workspace never fabricates artifact data.
+    """
+
+    evidence_id: str
+    observation_id: UUID
+    run_id: UUID
+    producer: str
+    as_of: date
+    observed_at: datetime
+    source_uri: str
+    content_hash: str
+    admission_status: str
+    admission: dict[str, Any]
+    artifact: ResearchCaseWorkspaceArtifactView | None
+
+
+@dataclass(frozen=True, slots=True)
 class ResearchCaseWorkspaceView:
     """Small domain view backing the PR-W05 workspace response envelope.
 
@@ -183,6 +292,14 @@ class ResearchCaseWorkspaceView:
       corresponds to ``runs[i]`` and is ``None`` when the run has
       not produced a result. The pairing is positional and the list
       always carries exactly one entry per run, never a subset.
+    - ``external_discovery`` is the case-scoped list of admitted
+      external-evidence items, projected into a safe
+      :class:`ResearchCaseWorkspaceDiscoveryView` shape; it is the
+      only Stage 4D Task 3.3 addition. The list is always present
+      (``[]`` when the case has no bound external evidence) so the
+      workspace page can render an explicit empty external-discovery
+      slot. Artifact lookups that miss are projected as ``None``;
+      no fabricated artifact data is ever returned.
 
     The service returns ``None`` (rather than raising) when the case
     does not exist; the router translates that to the standard 404.
@@ -192,6 +309,9 @@ class ResearchCaseWorkspaceView:
     evidence_packs: list[EvidencePack]
     runs: list[ResearchRun]
     results: list[ResearchResult | None]
+    external_discovery: list[ResearchCaseWorkspaceDiscoveryView] = field(
+        default_factory=list
+    )
 
 
 class ResearchQueryService:
@@ -201,11 +321,18 @@ class ResearchQueryService:
         evidence_repository: ResearchEvidenceReader,
         run_repository: ResearchRunReader,
         result_repository: ResearchResultReader,
+        *,
+        external_evidence_repository: ResearchExternalEvidenceReader | None = None,
+        observation_repository: ExternalObservationReader | None = None,
+        artifact_repository: ExternalArtifactReader | None = None,
     ) -> None:
         self._cases = case_repository
         self._evidence = evidence_repository
         self._runs = run_repository
         self._results = result_repository
+        self._external_evidence = external_evidence_repository
+        self._observations = observation_repository
+        self._artifacts = artifact_repository
 
     def list_cases(self, *, limit: int, offset: int) -> tuple[list[ResearchCase], int]:
         try:
@@ -272,6 +399,17 @@ class ResearchQueryService:
            lookup returns ``None`` when the run has not produced a
            result and the workspace view carries ``None`` rather
            than fabricating one.
+        5. ``external_evidence.list_by_case(case_id)`` to enumerate
+           the admitted external-evidence rows bound to the case
+           (Stage 4D Task 3.3). For each row, ``observations.get_by_id``
+           resolves the source observation; when the row carries an
+           ``artifact_id``, ``artifacts.get_by_id`` resolves the bound
+           artifact. A missing observation skips the row (the
+           evidence identity would otherwise dangle); a missing
+           artifact projects ``None`` rather than fabricating data.
+           The case-scoped list is the only fan-out surface; the
+           observation / artifact reads are bounded by the size of
+           that list and never regress to a global scan.
 
         ``SQLAlchemyError`` from any reader call is translated to
         :class:`ResearchQueryError`; the error boundary wraps the
@@ -279,7 +417,8 @@ class ResearchQueryService:
         sanitized 500 detail the resource-level endpoints do. Reads
         happen in this deterministic order so the workspace is
         stable across replay: case first, evidence and runs in
-        parallel next, then one result lookup per run.
+        parallel next, then one result lookup per run, then the
+        external-chain composition.
         """
 
         try:
@@ -292,15 +431,76 @@ class ResearchQueryService:
             results: list[ResearchResult | None] = [
                 self._results.get_by_run_id(run.run_id) for run in runs
             ]
+            external_discovery = self._build_external_discovery(case_id)
 
             return ResearchCaseWorkspaceView(
                 case=case,
                 evidence_packs=list(packs),
                 runs=list(runs),
                 results=results,
+                external_discovery=external_discovery,
             )
         except SQLAlchemyError as exc:
             raise ResearchQueryError("research query failed") from exc
+
+    def _build_external_discovery(
+        self, case_id: UUID
+    ) -> list[ResearchCaseWorkspaceDiscoveryView]:
+        """Compose the case-scoped external chain.
+
+        Returns ``[]`` when the optional external-chain readers were
+        not wired in (so the workspace can be constructed without the
+        Stage 4D repositories in tests that only care about the
+        resource-level surface). Returns ``[]`` when the case has no
+        bound external evidence. Missing source observations skip
+        their row; missing artifacts project ``None`` so the
+        workspace exposes an explicit ``artifact unavailable`` state
+        rather than fabricating data.
+        """
+
+        if (
+            self._external_evidence is None
+            or self._observations is None
+        ):
+            return []
+        items = self._external_evidence.list_by_case(case_id)
+        if not items:
+            return []
+        discovery: list[ResearchCaseWorkspaceDiscoveryView] = []
+        for item in items:
+            observation = self._observations.get_by_id(item.observation_id)
+            if observation is None:
+                continue
+            artifact: ExternalArtifact | None = None
+            if item.artifact_id is not None and self._artifacts is not None:
+                artifact = self._artifacts.get_by_id(item.artifact_id)
+            discovery.append(
+                ResearchCaseWorkspaceDiscoveryView(
+                    evidence_id=item.evidence_id,
+                    observation_id=item.observation_id,
+                    run_id=item.run_id,
+                    producer=observation.producer,
+                    as_of=observation.as_of,
+                    observed_at=observation.observed_at,
+                    source_uri=observation.source_uri,
+                    content_hash=item.content_hash,
+                    admission_status=observation.admission_status.value,
+                    admission=dict(item.admission),
+                    artifact=(
+                        ResearchCaseWorkspaceArtifactView(
+                            logical_uri=artifact.logical_uri,
+                            content_hash=artifact.content_hash,
+                            media_type=artifact.media_type,
+                            size_bytes=artifact.size_bytes,
+                            run_id=artifact.run_id,
+                            created_at=artifact.created_at,
+                        )
+                        if artifact is not None
+                        else None
+                    ),
+                )
+            )
+        return discovery
 
     def get_dashboard(self) -> ResearchDashboardView:
         """Return the read-only dashboard view.
@@ -443,7 +643,11 @@ __all__ = [
     "DASHBOARD_MARKET_UNAVAILABLE_REASON",
     "DASHBOARD_RECENT_RUNS_LIMIT",
     "DASHBOARD_SCHEMA_VERSION",
+    "ExternalArtifactReader",
+    "ExternalObservationReader",
     "ResearchCaseReader",
+    "ResearchCaseWorkspaceArtifactView",
+    "ResearchCaseWorkspaceDiscoveryView",
     "ResearchCaseWorkspaceView",
     "ResearchDashboardDataQuality",
     "ResearchDashboardEvidenceStatusView",
@@ -452,6 +656,7 @@ __all__ = [
     "ResearchDashboardResearchSummaryView",
     "ResearchDashboardView",
     "ResearchEvidenceReader",
+    "ResearchExternalEvidenceReader",
     "ResearchQueryError",
     "ResearchQueryService",
     "ResearchResultReader",

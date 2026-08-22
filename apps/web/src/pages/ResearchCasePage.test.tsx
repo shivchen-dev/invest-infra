@@ -162,6 +162,7 @@ function makeWorkspace(
     evidence_packs: [],
     runs: [],
     results: [],
+    external_discovery: [],
     ...overrides,
   };
 }
@@ -202,7 +203,7 @@ describe("ResearchCasePage", () => {
       ).toBeInTheDocument();
     });
 
-    it("preserves the six-section layout and the read-only hint", () => {
+    it("preserves the seven-section layout and the read-only hint", () => {
       renderCasePage("/research/case-x");
 
       const subnav = screen.getByLabelText("Case 工作区导航");
@@ -212,6 +213,7 @@ describe("ResearchCasePage", () => {
       expect(labels).toEqual([
         "Case 概览",
         "Evidence Pack",
+        "External Discovery",
         "Factor Snapshot",
         "Research Result",
         "Risk Monitor",
@@ -288,6 +290,12 @@ describe("ResearchCasePage", () => {
       ) as HTMLElement;
       expect(evidence).toHaveTextContent("暂无 Evidence Pack");
 
+      // External Discovery renders the explicit empty placeholder.
+      const discovery = widgetGrid.querySelector(
+        '[data-widget-id="external-discovery"]',
+      ) as HTMLElement;
+      expect(discovery).toHaveTextContent("暂无 External Discovery");
+
       // Research Result renders the explicit empty placeholder.
       const result = widgetGrid.querySelector(
         '[data-widget-id="research-result"]',
@@ -316,7 +324,7 @@ describe("ResearchCasePage", () => {
       const statusBadges = within(caseMeta).getAllByText("Ready");
       expect(statusBadges.length).toBeGreaterThanOrEqual(1);
       expect(
-        within(caseMeta).getByText("PR-W05 Workspace Read API"),
+        within(caseMeta).getByText("Stage 4D Task 3.3 Workspace Read API"),
       ).toBeInTheDocument();
     });
   });
@@ -403,8 +411,8 @@ describe("ResearchCasePage", () => {
       // No fabricated stance / confidence language.
       expect(widgetGrid.textContent ?? "").not.toMatch(/buy|sell/i);
 
-      // Subnav meta reflects the PR-W05 milestone copy.
-      const meta = screen.getByText(/PR-W05 · Workspace Read API 已接入/);
+      // Subnav meta reflects the Stage 4D Task 3.3 milestone copy.
+      const meta = screen.getByText(/Stage 4D Task 3.3 · 统一时间线已接入/);
       expect(meta).toBeInTheDocument();
     });
 
@@ -829,6 +837,212 @@ describe("ResearchCasePage", () => {
       expect(report.querySelector("[data-evidence-ref]")).toBeNull();
       expect(report.querySelector(".cockpitReportEvidenceList")).toBeNull();
       expect(getMarkdownView()).toHaveTextContent("No evidence");
+    });
+  });
+
+  describe("External Discovery section", () => {
+    function makeDiscoveryItem(
+      overrides: Partial<
+        NonNullable<
+          ResearchCaseWorkspaceResponse["external_discovery"]
+        >[number]
+      > = {},
+    ): NonNullable<
+      ResearchCaseWorkspaceResponse["external_discovery"]
+    >[number] {
+      return {
+        evidence_id: "ext-evi:11111111",
+        observation_id: "22222222-2222-2222-2222-222222222222",
+        run_id: "33333333-3333-3333-3333-333333333333",
+        producer: "workbuddy",
+        as_of: "2026-08-14",
+        observed_at: "2026-08-14T09:00:00Z",
+        source_uri: "archive://run/a.json",
+        content_hash: "a".repeat(64),
+        admission_status: "admitted",
+        admission: {
+          status: "admitted",
+          reason: "all admission checks passed",
+          rules_version: "observation-admission/1.0",
+          decided_by: "system",
+          checks: {
+            identity_ok: true,
+            freshness_ok: true,
+            unit_ok: true,
+            internal_cross_check_ok: true,
+            conflict_detected: false,
+          },
+        },
+        artifact: {
+          logical_uri: "archive://run/a.json",
+          content_hash: "a".repeat(64),
+          media_type: "application/json",
+          size_bytes: 256,
+          run_id: "33333333-3333-3333-3333-333333333333",
+          created_at: "2026-08-14T08:30:00Z",
+        },
+        ...overrides,
+      };
+    }
+
+    function getDiscoveryWidget(): HTMLElement {
+      const widgetGrid = screen.getByLabelText("Research Case widgets");
+      const node = widgetGrid.querySelector(
+        '[data-widget-id="external-discovery"]',
+      );
+      if (!node) throw new Error("external-discovery widget not found");
+      return node as HTMLElement;
+    }
+
+    it("renders the explicit empty placeholder when no external evidence is bound", async () => {
+      mockUseWorkspace.mockReturnValue(
+        successQuery(makeWorkspace({ external_discovery: [] })),
+      );
+
+      renderCasePage("/research/case-discovery-empty");
+
+      const discovery = getDiscoveryWidget();
+      expect(discovery).toHaveTextContent("暂无 External Discovery");
+      expect(
+        discovery.querySelector(".cockpitExternalDiscoveryList"),
+      ).toBeNull();
+    });
+
+    it("renders the discovery chain with distinct WorkBuddy / Admission / Artifact badges", async () => {
+      mockUseWorkspace.mockReturnValue(
+        successQuery(
+          makeWorkspace({
+            external_discovery: [
+              makeDiscoveryItem({
+                evidence_id: "ext-evi:workbuddy-1",
+                admission_status: "admitted",
+              }),
+            ],
+          }),
+        ),
+      );
+
+      renderCasePage("/research/case-discovery-populated");
+
+      const discovery = getDiscoveryWidget();
+      // The chain row is keyed by ``evidence_id`` so the front-end
+      // can deep-link to a specific provenance slot.
+      const item = discovery.querySelector(
+        '[data-external-discovery-id="ext-evi:workbuddy-1"]',
+      ) as HTMLElement;
+      expect(item).toBeInTheDocument();
+      // WorkBuddy observation badge: distinct visual label so the
+      // external observation is not mistaken for a formal fact or a
+      // research interpretation.
+      const observationKind = item.querySelector(
+        "[data-discovery-observation-kind]",
+      );
+      expect(observationKind?.textContent ?? "").toMatch(/WorkBuddy 观察/);
+      // Admission status badge: keeps the formal decision visible.
+      const admissionBadge = item.querySelector(
+        "[data-discovery-admission-status]",
+      );
+      expect(admissionBadge?.textContent ?? "").toMatch(/Admission: admitted/);
+      // Provenance metadata surfaces the rule-set identity and
+      // decision reason so a reviewer can audit the chain.
+      expect(item).toHaveTextContent("observation-admission/1.0");
+      expect(item).toHaveTextContent("all admission checks passed");
+      // The artifact summary carries only safe provenance fields
+      // (logical URI, hash, media type, size, run id, created_at).
+      expect(item).toHaveTextContent("archive://run/a.json");
+      expect(item).toHaveTextContent("application/json");
+      const artifactBlock = item.querySelector(
+        '[data-discovery-artifact-state="available"]',
+      );
+      expect(artifactBlock).not.toBeNull();
+      // Host paths and shared-directory paths must never appear in
+      // the rendered HTML.
+      expect(discovery.textContent ?? "").not.toMatch(/\/mnt\/|C:\\|\\\\host/);
+    });
+
+    it("renders an understandable unavailable state when artifact is null", async () => {
+      mockUseWorkspace.mockReturnValue(
+        successQuery(
+          makeWorkspace({
+            external_discovery: [
+              makeDiscoveryItem({
+                evidence_id: "ext-evi:no-artifact",
+                artifact: null,
+              }),
+            ],
+          }),
+        ),
+      );
+
+      renderCasePage("/research/case-discovery-no-artifact");
+
+      const discovery = getDiscoveryWidget();
+      const item = discovery.querySelector(
+        '[data-external-discovery-id="ext-evi:no-artifact"]',
+      ) as HTMLElement;
+      // The unavailable block is the only artifact summary so the
+      // front-end never fabricates size_bytes / media_type / hash.
+      const unavailable = item.querySelector(
+        '[data-discovery-artifact-state="unavailable"]',
+      );
+      expect(unavailable).not.toBeNull();
+      expect(item.querySelector('[data-discovery-artifact-state="available"]'))
+        .toBeNull();
+      expect(unavailable).toHaveTextContent("Artifact 暂不可用");
+      // Producer / admission metadata still surfaces so the
+      // WorkBuddy observation is visible even when artifact is null.
+      expect(item).toHaveTextContent("WorkBuddy 观察");
+      expect(item).toHaveTextContent("Admission: admitted");
+    });
+
+    it("keeps WorkBuddy observation, formal admission, and research interpretation visibly distinct", async () => {
+      const runId = "33333333-3333-3333-3333-333333333333";
+      mockUseWorkspace.mockReturnValue(
+        successQuery(
+          makeWorkspace({
+            external_discovery: [
+              makeDiscoveryItem({
+                evidence_id: "ext-evi:distinct",
+                admission_status: "corroborated",
+              }),
+            ],
+            runs: [
+              makeRun({ run_id: runId, status: "succeeded" }),
+            ],
+            results: [
+              makeResult({
+                run_id: runId,
+                conclusion: "趋势向上",
+              }),
+            ],
+          }),
+        ),
+      );
+
+      renderCasePage("/research/case-discovery-distinct");
+
+      const widgetGrid = screen.getByLabelText("Research Case widgets");
+      const discovery = widgetGrid.querySelector(
+        '[data-widget-id="external-discovery"]',
+      ) as HTMLElement;
+      const result = widgetGrid.querySelector(
+        '[data-widget-id="research-result"]',
+      ) as HTMLElement;
+      // WorkBuddy observation: appears under the discovery widget.
+      expect(discovery.textContent ?? "").toMatch(/WorkBuddy 观察/);
+      // Formal admission: appears under the discovery widget too
+      // but with a different badge ("Admission: corroborated"),
+      // distinct from the run status badge ("succeeded") under the
+      // research result widget.
+      expect(discovery.textContent ?? "").toMatch(
+        /Admission: corroborated/,
+      );
+      expect(result.textContent ?? "").not.toMatch(/Admission: corroborated/);
+      expect(result.textContent ?? "").toMatch(/已完成/);
+      // Research interpretation: the result widget carries the
+      // conclusion text, never the discovery widget.
+      expect(discovery.textContent ?? "").not.toMatch(/趋势向上/);
+      expect(result.textContent ?? "").toMatch(/趋势向上/);
     });
   });
 

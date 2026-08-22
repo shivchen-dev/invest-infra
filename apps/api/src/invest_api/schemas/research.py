@@ -2,9 +2,10 @@ from __future__ import annotations
 
 from datetime import date, datetime
 from decimal import Decimal
-from typing import Literal
+from typing import Any, Literal
 from uuid import UUID
 
+from invest_domain.integration import ExternalArtifact, ExternalEvidenceItem, ExternalObservation
 from invest_domain.research import EvidencePack, ResearchCase
 from invest_domain.research.research_run import ResearchResult, ResearchRun
 from pydantic import BaseModel, Field
@@ -358,6 +359,106 @@ class ResearchDashboardResponse(BaseModel):
     recent_runs: list[ResearchRunResponse] = Field(default_factory=list)
 
 
+class ResearchCaseWorkspaceArtifactResponse(BaseModel):
+    """Safe provenance summary of a bound ``ExternalArtifact``.
+
+    The Stage 4D Task 3.3 workspace surfaces only the explicitly safe
+    artifact fields — ``logical_uri``, ``content_hash``,
+    ``media_type``, ``size_bytes``, ``run_id`` and ``created_at``.
+    Host paths and shared-directory paths are never projected onto
+    this response so the front-end cannot display them.
+    """
+
+    logical_uri: str
+    content_hash: str
+    media_type: str
+    size_bytes: int = Field(ge=0)
+    run_id: UUID
+    created_at: datetime
+
+    @classmethod
+    def from_domain(
+        cls, artifact: ExternalArtifact
+    ) -> ResearchCaseWorkspaceArtifactResponse:
+        return cls(
+            logical_uri=artifact.logical_uri,
+            content_hash=artifact.content_hash,
+            media_type=artifact.media_type,
+            size_bytes=int(artifact.size_bytes),
+            run_id=artifact.run_id,
+            created_at=artifact.created_at,
+        )
+
+
+class ResearchCaseWorkspaceDiscoveryResponse(BaseModel):
+    """One external-evidence item projected onto the workspace page.
+
+    The shape composes the admitted ``ExternalEvidenceItem`` (already
+    bound to the case) with the source ``ExternalObservation`` so the
+    front-end can render the WorkBuddy observation, the formal
+    admission decision and the bound artifact as a single traceable
+    chain.
+
+    Field invariants:
+
+    - ``evidence_id`` is the canonical
+      ``"ext-evi:{observation_id}:{hash_prefix}"`` identifier
+      computed in :class:`invest_domain.integration.ExternalEvidenceItem`.
+    - ``producer`` and ``source_uri`` come from the source observation
+      so the WorkBuddy observation is visibly distinct from the
+      formal admission metadata in the UI.
+    - ``admission_status`` carries the upstream
+      :class:`invest_domain.integration.AdmissionStatus` string so
+      the UI can render pending / corroborated / admitted / rejected
+      / conflict states.
+    - ``admission`` is the verbatim admission decision metadata the
+      pipeline stored at link time (rules version, decided_by,
+      checks, reason); the front-end reads but does not mutate it.
+    - ``artifact`` is the safe artifact summary, or ``null`` when
+      the observation has no bound artifact or the bounded lookup
+      misses in storage; the workspace never fabricates artifact
+      data.
+    """
+
+    evidence_id: str
+    observation_id: UUID
+    run_id: UUID
+    producer: str
+    as_of: date
+    observed_at: datetime
+    source_uri: str
+    content_hash: str
+    admission_status: str
+    admission: dict[str, Any]
+    artifact: ResearchCaseWorkspaceArtifactResponse | None
+
+    @classmethod
+    def from_evidence_and_observation(
+        cls,
+        *,
+        item: ExternalEvidenceItem,
+        observation: ExternalObservation,
+        artifact: ExternalArtifact | None,
+    ) -> ResearchCaseWorkspaceDiscoveryResponse:
+        return cls(
+            evidence_id=item.evidence_id,
+            observation_id=item.observation_id,
+            run_id=item.run_id,
+            producer=observation.producer,
+            as_of=observation.as_of,
+            observed_at=observation.observed_at,
+            source_uri=observation.source_uri,
+            content_hash=item.content_hash,
+            admission_status=observation.admission_status.value,
+            admission=dict(item.admission),
+            artifact=(
+                ResearchCaseWorkspaceArtifactResponse.from_domain(artifact)
+                if artifact is not None
+                else None
+            ),
+        )
+
+
 class ResearchCaseWorkspaceResponse(BaseModel):
     """Composite read-only envelope for the Research Case workspace page.
 
@@ -388,6 +489,16 @@ class ResearchCaseWorkspaceResponse(BaseModel):
       server-side so the front-end can rely on positional pairing.
       The list always carries exactly one entry per run, never an
       arbitrary subset.
+    - ``external_discovery`` is the Stage 4D Task 3.3 addition: a
+      list of :class:`ResearchCaseWorkspaceDiscoveryResponse` items
+      derived from the case-scoped admitted external-evidence rows.
+      It is **always present** (``[]`` rather than omitted when the
+      case has no bound external evidence) so the workspace page can
+      render an explicit empty external-discovery slot. Items whose
+      source observation was deleted in storage are skipped rather
+      than emitted with a dangling observation; missing artifacts are
+      projected as ``null`` so the workspace exposes an explicit
+      ``artifact unavailable`` state rather than fabricating data.
 
     The endpoint is read-only and never invents data: when a run has
     no published result the workspace exposes a ``null`` slot rather
@@ -398,12 +509,17 @@ class ResearchCaseWorkspaceResponse(BaseModel):
     evidence_packs: list[EvidencePackResponse] = Field(default_factory=list)
     runs: list[ResearchRunResponse] = Field(default_factory=list)
     results: list[ResearchResultResponse | None] = Field(default_factory=list)
+    external_discovery: list[ResearchCaseWorkspaceDiscoveryResponse] = Field(
+        default_factory=list
+    )
 
 
 __all__ = [
     "EvidencePackResponse",
     "ResearchCaseListResponse",
     "ResearchCaseResponse",
+    "ResearchCaseWorkspaceArtifactResponse",
+    "ResearchCaseWorkspaceDiscoveryResponse",
     "ResearchCaseWorkspaceResponse",
     "ResearchDashboardDataQuality",
     "ResearchDashboardEvidenceStatus",

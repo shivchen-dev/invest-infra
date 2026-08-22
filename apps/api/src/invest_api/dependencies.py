@@ -176,11 +176,25 @@ def get_data_freshness_query_service(
 def get_research_query_service(
     session: Annotated[Session, Depends(get_db_session)],
 ) -> ResearchQueryService:
+    """Build the application service that backs ``/api/v1/research-cases``.
+
+    Composes the read-side repositories used by the resource-level
+    endpoints (PR-7) plus the Stage 4D external-chain ports required
+    by the PR-W05 workspace ``external_discovery`` slot. The
+    workspace endpoint remains strictly read-only; the
+    :class:`ResearchExternalEvidenceService` command surface is not
+    wired here and no admission / link command is issued on the read
+    path.
+    """
+
     return ResearchQueryService(
         case_repository=SqlAlchemyResearchCaseRepository(session),
         evidence_repository=SqlAlchemyEvidencePackRepository(session),
         run_repository=SqlAlchemyResearchRunRepository(session),
         result_repository=SqlAlchemyResearchResultRepository(session),
+        external_evidence_repository=SqlAlchemyResearchExternalEvidenceRepository(session),
+        observation_repository=SqlAlchemyExternalObservationRepository(session),
+        artifact_repository=SqlAlchemyExternalArtifactRepository(session),
     )
 
 

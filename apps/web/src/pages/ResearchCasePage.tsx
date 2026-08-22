@@ -1,6 +1,7 @@
 import { useResearchCaseWorkspace } from "../api/researchCaseWorkspace";
 import type {
   EvidencePackResponse,
+  ResearchCaseWorkspaceDiscoveryView,
   ResearchCaseWorkspaceResponse,
   ResearchResultResponse,
   ResearchRunResponse,
@@ -34,6 +35,13 @@ const CASE_SECTIONS: ReadonlyArray<CaseSection> = [
     description: "只读展示的 Evidence Pack 与 provenance",
     unavailableTitle: "Evidence Pack 暂未加载",
     unavailableReason: "Evidence 列表与 content_hash 由 workspace.evidence_packs 提供。",
+  },
+  {
+    id: "external-discovery",
+    title: "External Discovery",
+    description: "外部观察 / 准入 / 产物 · WorkBuddy → 形式证据",
+    unavailableTitle: "External Discovery 暂未加载",
+    unavailableReason: "外部发现链路由 workspace.external_discovery 提供；缺失时为空列表。",
   },
   {
     id: "factor-snapshot",
@@ -96,7 +104,7 @@ export function ResearchCasePage() {
             工作区分区
           </h3>
           <span className="sectionMeta">
-            PR-W05 · Workspace Read API 已接入 · Factor / Risk 暂由后续 PR 提供
+            Stage 4D Task 3.3 · 统一时间线已接入 Discovery → Admission → Artifact → Evidence → Research
           </span>
         </header>
         <nav className="cockpitCaseSubnav" aria-label="Case 工作区导航">
@@ -147,6 +155,11 @@ function SectionSlot({
   if (section.id === "evidence-pack") {
     return (
       <EvidencePackWidget section={section} workspace={workspace} />
+    );
+  }
+  if (section.id === "external-discovery") {
+    return (
+      <ExternalDiscoveryWidget section={section} workspace={workspace} />
     );
   }
   if (section.id === "research-result") {
@@ -428,6 +441,226 @@ function qualityTone(status: string): ResearchWidgetMeta["tone"] {
   if (status === "failed" || status === "conflict") return "danger";
   if (status === "partial" || status === "stale") return "warning";
   return "neutral";
+}
+
+function ExternalDiscoveryWidget({
+  section,
+  workspace,
+}: {
+  section: CaseSection;
+  workspace: ReturnType<typeof useResearchCaseWorkspace>;
+}) {
+  const items = workspace.data?.external_discovery ?? [];
+  const meta = buildWorkspaceMeta(section, workspace, {
+    badgeLabel:
+      workspace.data && workspace.data.external_discovery.length === 0
+        ? "Empty"
+        : undefined,
+  });
+  return (
+    <div id="case-external-discovery">
+      <WidgetFrame meta={meta}>
+        <WorkspaceLoadingGate workspace={workspace}>
+          {(data) => <ExternalDiscoveryBody items={data.external_discovery} />}
+        </WorkspaceLoadingGate>
+      </WidgetFrame>
+    </div>
+  );
+}
+
+function ExternalDiscoveryBody({
+  items,
+}: {
+  items: ResearchCaseWorkspaceResponse["external_discovery"];
+}) {
+  if (items.length === 0) {
+    return (
+      <div className="cockpitWidgetPlaceholder">
+        <strong>暂无 External Discovery</strong>
+        <p>
+          本 Case 未绑定任何已准入的外部证据；浏览器不会自动推导 WorkBuddy
+          观察或形式 Evidence。
+        </p>
+      </div>
+    );
+  }
+  return (
+    <ul className="cockpitExternalDiscoveryList">
+      {items.map((item) => (
+        <li
+          key={item.evidence_id}
+          className="cockpitExternalDiscoveryItem"
+          data-external-discovery-id={item.evidence_id}
+        >
+          <ExternalDiscoveryRow item={item} />
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+function ExternalDiscoveryRow({
+  item,
+}: {
+  item: ResearchCaseWorkspaceDiscoveryView;
+}) {
+  const admissionTone = admissionToneFor(item.admission_status);
+  const observationLabel = observationLabelFor(item.producer);
+  return (
+    <div className="cockpitWidgetStack">
+      <div className="cockpitEvidencePackHeader">
+        <span className="cockpitEvidencePackHash" data-discovery-hash>
+          {item.evidence_id || "—"}
+        </span>
+        <span data-discovery-observation-kind>
+          <StatusBadge tone="info" title={`producer: ${item.producer}`}>
+            {observationLabel}
+          </StatusBadge>
+        </span>
+        <span data-discovery-admission-status>
+          <StatusBadge tone={admissionTone} title={`admission: ${item.admission_status}`}>
+            Admission: {item.admission_status || "unknown"}
+          </StatusBadge>
+        </span>
+      </div>
+      <dl className="cockpitCaseMeta">
+        <div>
+          <dt>Observation ID</dt>
+          <dd>{item.observation_id || "—"}</dd>
+        </div>
+        <div>
+          <dt>Producer</dt>
+          <dd>{item.producer || "—"}</dd>
+        </div>
+        <div>
+          <dt>Observed At</dt>
+          <dd>{item.observed_at || "—"}</dd>
+        </div>
+        <div>
+          <dt>As Of</dt>
+          <dd>{item.as_of || "—"}</dd>
+        </div>
+        <div>
+          <dt>Source URI</dt>
+          <dd>{item.source_uri || "—"}</dd>
+        </div>
+        <div>
+          <dt>Run ID</dt>
+          <dd>{item.run_id || "—"}</dd>
+        </div>
+        <div>
+          <dt>Content Hash</dt>
+          <dd>{item.content_hash || "—"}</dd>
+        </div>
+        <div>
+          <dt>Admission Reason</dt>
+          <dd>{extractAdmissionReason(item) || "—"}</dd>
+        </div>
+        <div>
+          <dt>Rules Version</dt>
+          <dd>{extractAdmissionField(item, "rules_version") || "—"}</dd>
+        </div>
+        <div>
+          <dt>Decided By</dt>
+          <dd>{extractAdmissionField(item, "decided_by") || "—"}</dd>
+        </div>
+      </dl>
+      <ArtifactSummary artifact={item.artifact} />
+    </div>
+  );
+}
+
+function ArtifactSummary({
+  artifact,
+}: {
+  artifact: ResearchCaseWorkspaceDiscoveryView["artifact"];
+}) {
+  if (artifact === null) {
+    return (
+      <div
+        className="cockpitArtifactUnavailable"
+        data-discovery-artifact-state="unavailable"
+      >
+        <strong>Artifact 暂不可用</strong>
+        <p>
+          本观测在存储层未绑定 Artifact；浏览器不会自动派生 artifact 元数据。
+        </p>
+      </div>
+    );
+  }
+  return (
+    <div
+      className="cockpitWidgetStack"
+      data-discovery-artifact-state="available"
+    >
+      <div className="cockpitEvidencePackHeader">
+        <span className="cockpitEvidencePackHash" data-discovery-artifact-hash>
+          {artifact.content_hash || "—"}
+        </span>
+        <StatusBadge tone="info">{artifact.media_type || "unknown"}</StatusBadge>
+      </div>
+      <dl className="cockpitCaseMeta">
+        <div>
+          <dt>Logical URI</dt>
+          <dd>{artifact.logical_uri || "—"}</dd>
+        </div>
+        <div>
+          <dt>Content Hash</dt>
+          <dd>{artifact.content_hash || "—"}</dd>
+        </div>
+        <div>
+          <dt>Media Type</dt>
+          <dd>{artifact.media_type || "—"}</dd>
+        </div>
+        <div>
+          <dt>Size (bytes)</dt>
+          <dd>{typeof artifact.size_bytes === "number" ? artifact.size_bytes : "—"}</dd>
+        </div>
+        <div>
+          <dt>Run ID</dt>
+          <dd>{artifact.run_id || "—"}</dd>
+        </div>
+        <div>
+          <dt>Created At</dt>
+          <dd>{artifact.created_at || "—"}</dd>
+        </div>
+      </dl>
+    </div>
+  );
+}
+
+function observationLabelFor(producer: string): string {
+  if (producer === "workbuddy") return "WorkBuddy 观察";
+  if (!producer) return "外部观察";
+  return `${producer} 观察`;
+}
+
+function admissionToneFor(status: string): ResearchWidgetMeta["tone"] {
+  if (status === "admitted" || status === "corroborated") return "success";
+  if (status === "rejected" || status === "conflict") return "danger";
+  if (status === "pending") return "info";
+  return "neutral";
+}
+
+function extractAdmissionReason(
+  item: ResearchCaseWorkspaceDiscoveryView,
+): string {
+  const reason = extractAdmissionField(item, "reason");
+  return reason ?? "";
+}
+
+function extractAdmissionField(
+  item: ResearchCaseWorkspaceDiscoveryView,
+  key: string,
+): string | null {
+  const admission = item.admission;
+  if (!admission || typeof admission !== "object") return null;
+  const value = (admission as Record<string, unknown>)[key];
+  if (typeof value === "string") return value;
+  if (typeof value === "number" || typeof value === "boolean") {
+    return String(value);
+  }
+  return null;
 }
 
 function ResearchResultWidget({
@@ -1123,7 +1356,7 @@ function CaseMetaCard({
         </div>
         <div>
           <dt>数据接入</dt>
-          <dd>PR-W05 Workspace Read API</dd>
+          <dd>Stage 4D Task 3.3 Workspace Read API</dd>
         </div>
         <div>
           <dt>基础状态</dt>

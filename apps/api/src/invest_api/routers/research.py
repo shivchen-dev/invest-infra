@@ -20,6 +20,8 @@ from invest_api.schemas.research import (
     EvidencePackResponse,
     ResearchCaseListResponse,
     ResearchCaseResponse,
+    ResearchCaseWorkspaceArtifactResponse,
+    ResearchCaseWorkspaceDiscoveryResponse,
     ResearchCaseWorkspaceResponse,
     ResearchDashboardEvidenceStatus,
     ResearchDashboardMarketStatus,
@@ -167,6 +169,26 @@ def get_research_case_workspace(
         results=[
             ResearchResultResponse.from_domain(result) if result is not None else None
             for result in view.results
+        ],
+        external_discovery=[
+            ResearchCaseWorkspaceDiscoveryResponse(
+                evidence_id=item.evidence_id,
+                observation_id=item.observation_id,
+                run_id=item.run_id,
+                producer=item.producer,
+                as_of=item.as_of,
+                observed_at=item.observed_at,
+                source_uri=item.source_uri,
+                content_hash=item.content_hash,
+                admission_status=item.admission_status,
+                admission=dict(item.admission),
+                artifact=(
+                    ResearchCaseWorkspaceArtifactResponse.from_domain(item.artifact)
+                    if item.artifact is not None
+                    else None
+                ),
+            )
+            for item in view.external_discovery
         ],
     )
 

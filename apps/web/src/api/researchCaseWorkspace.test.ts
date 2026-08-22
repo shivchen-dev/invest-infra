@@ -133,6 +133,7 @@ function makeWorkspace(
     evidence_packs: [],
     runs: [],
     results: [],
+    external_discovery: [],
     ...overrides,
   };
 }

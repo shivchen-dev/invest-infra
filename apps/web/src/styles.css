@@ -1829,6 +1829,40 @@ code.inlineCode {
   padding: 12px 14px;
 }
 
+.cockpitExternalDiscoveryList {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.cockpitExternalDiscoveryItem {
+  border: 1px solid var(--cockpit-border);
+  border-radius: 10px;
+  background: var(--color-content);
+  padding: 12px 14px;
+}
+
+.cockpitArtifactUnavailable {
+  border: 1px dashed var(--cockpit-border);
+  border-radius: 10px;
+  padding: 12px 14px;
+  background: var(--color-surface-soft);
+  color: var(--color-text-muted);
+  font-size: 13px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.cockpitArtifactUnavailable strong {
+  color: var(--color-text);
+  font-weight: 600;
+  font-size: 13px;
+}
+
 .cockpitEvidencePackHeader {
   display: flex;
   align-items: center;

@@ -27,10 +27,13 @@ from unittest.mock import MagicMock
 from uuid import uuid4
 
 from invest_api.application.research import (
+    ResearchCaseWorkspaceArtifactView,
+    ResearchCaseWorkspaceDiscoveryView,
     ResearchCaseWorkspaceView,
     ResearchQueryError,
 )
 from invest_domain.instruments import InstrumentId
+from invest_domain.integration import AdmissionStatus
 from invest_domain.research.research_case import ResearchCase, ResearchCaseStatus
 from invest_domain.research.research_run import ResearchRun, ResearchRunStatus
 
@@ -236,7 +239,135 @@ class TestWorkspaceEndpoint:
         assert body["evidence_packs"] == []
         assert body["runs"] == []
         assert body["results"] == []
+        # The Stage 4D Task 3.3 ``external_discovery`` slot is
+        # always present on the response (the service defaults it to
+        # ``[]``) so the workspace page can render an explicit empty
+        # state when no external evidence is bound.
+        assert body["external_discovery"] == []
         research_service.get_workspace.assert_called_once_with(case.case_id)
+
+    def test_external_discovery_is_serialized_when_bound_to_case(
+        self,
+        client: TestClient,
+        research_service: MagicMock,
+    ) -> None:
+        case = _build_case()
+        observation_id = uuid4()
+        run_id = uuid4()
+        artifact_view = ResearchCaseWorkspaceArtifactView(
+            logical_uri="archive://run/a.json",
+            content_hash="a" * 64,
+            media_type="application/json",
+            size_bytes=256,
+            run_id=run_id,
+            created_at=datetime(2026, 8, 14, 8, 30, tzinfo=UTC),
+        )
+        discovery = ResearchCaseWorkspaceDiscoveryView(
+            evidence_id="ext-evi:ffffffff",
+            observation_id=observation_id,
+            run_id=run_id,
+            producer="workbuddy",
+            as_of=date(2026, 8, 14),
+            observed_at=datetime(2026, 8, 14, 9, tzinfo=UTC),
+            source_uri="archive://run/a.json",
+            content_hash="a" * 64,
+            admission_status=AdmissionStatus.ADMITTED.value,
+            admission={
+                "status": "admitted",
+                "reason": "all admission checks passed",
+                "rules_version": "observation-admission/1.0",
+                "decided_by": "system",
+                "checks": {
+                    "identity_ok": True,
+                    "freshness_ok": True,
+                    "unit_ok": True,
+                    "internal_cross_check_ok": True,
+                    "conflict_detected": False,
+                },
+            },
+            artifact=artifact_view,
+        )
+        view = ResearchCaseWorkspaceView(
+            case=case,
+            evidence_packs=[],
+            runs=[],
+            results=[],
+            external_discovery=[discovery],
+        )
+        research_service.get_workspace.return_value = view
+
+        response = client.get(_endpoint(case.case_id))
+
+        assert response.status_code == 200
+        body = response.json()
+        assert isinstance(body["external_discovery"], list)
+        assert len(body["external_discovery"]) == 1
+        item = body["external_discovery"][0]
+        assert item["evidence_id"] == "ext-evi:ffffffff"
+        assert item["observation_id"] == str(observation_id)
+        assert item["run_id"] == str(run_id)
+        assert item["producer"] == "workbuddy"
+        assert item["admission_status"] == "admitted"
+        # Admission decision metadata is projected verbatim so the
+        # WorkBuddy observation, formal admission and research
+        # interpretation remain visibly distinct in the UI.
+        assert item["admission"]["status"] == "admitted"
+        assert item["admission"]["rules_version"] == "observation-admission/1.0"
+        # The safe artifact projection: logical_uri + hash +
+        # media_type + size + run_id + created_at. Host paths and
+        # shared-directory paths must never appear in the response.
+        assert item["artifact"] is not None
+        assert item["artifact"]["logical_uri"] == "archive://run/a.json"
+        assert item["artifact"]["media_type"] == "application/json"
+        assert item["artifact"]["size_bytes"] == 256
+        assert item["artifact"]["run_id"] == str(run_id)
+        assert "host" not in str(item["artifact"]).lower()
+        assert "shared" not in str(item["artifact"]).lower()
+
+    def test_external_discovery_artifact_missing_is_serialized_as_null(
+        self,
+        client: TestClient,
+        research_service: MagicMock,
+    ) -> None:
+        case = _build_case()
+        observation_id = uuid4()
+        run_id = uuid4()
+        discovery = ResearchCaseWorkspaceDiscoveryView(
+            evidence_id="ext-evi:gggggggg",
+            observation_id=observation_id,
+            run_id=run_id,
+            producer="workbuddy",
+            as_of=date(2026, 8, 14),
+            observed_at=datetime(2026, 8, 14, 9, tzinfo=UTC),
+            source_uri="archive://run/a.json",
+            content_hash="a" * 64,
+            admission_status=AdmissionStatus.ADMITTED.value,
+            admission={"status": "admitted"},
+            artifact=None,
+        )
+        view = ResearchCaseWorkspaceView(
+            case=case,
+            evidence_packs=[],
+            runs=[],
+            results=[],
+            external_discovery=[discovery],
+        )
+        research_service.get_workspace.return_value = view
+
+        response = client.get(_endpoint(case.case_id))
+
+        assert response.status_code == 200
+        body = response.json()
+        assert len(body["external_discovery"]) == 1
+        # The workspace never fabricates artifact data: a missing
+        # bounded artifact lookup projects as ``null`` so the
+        # front-end renders an understandable unavailable state.
+        assert body["external_discovery"][0]["artifact"] is None
+        # Admission / producer metadata still surface so the WorkBuddy
+        # provenance stays visible even when the artifact row is
+        # missing.
+        assert body["external_discovery"][0]["producer"] == "workbuddy"
+        assert body["external_discovery"][0]["admission_status"] == "admitted"
 
 
 class TestWorkspaceEndpointMethodSurface:
