@@ -18,10 +18,36 @@ from invest_pipeline.integrations.bridge_ingestor import (
     import_archived_candidate_run,
 )
 from invest_pipeline.workbuddy_candidates import extract_legacy_candidates
-from invest_pipeline.workbuddy_candidates.archive import archive_candidates
+from invest_pipeline.workbuddy_candidates.archive import (
+    ArchiveOutcome,
+    archive_candidates,
+)
 
 _PACKAGE_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}\.ready$")
 _MAX_JSON_BYTES = 16 * 1024 * 1024
+
+
+class ArchiveConflictError(Exception):
+    """Raised when an archive for a workflow run already exists with different bytes.
+
+    Carries the run identity and archive URI so callers can route the package
+    into a dedicated ``conflict/`` bucket distinct from generic failures.
+    """
+
+    def __init__(
+        self,
+        *,
+        workflow_run_id: str,
+        trade_date: str,
+        archive_uri: str,
+    ) -> None:
+        super().__init__(
+            "archive conflict for workflow_run_id="
+            f"{workflow_run_id} trade_date={trade_date} archive_uri={archive_uri}"
+        )
+        self.workflow_run_id = workflow_run_id
+        self.trade_date = trade_date
+        self.archive_uri = archive_uri
 
 
 @dataclass(frozen=True, slots=True)
@@ -29,6 +55,14 @@ class SharedDirectoryImport:
     package: str
     result: BridgeImportResult | None
     error: str | None = None
+    archive_uri: str | None = None
+    accepted_count: int | None = None
+    rejected_count: int | None = None
+    needs_symbol_resolution_count: int | None = None
+    findings: tuple[dict[str, Any], ...] = ()
+    archive_idempotent: bool | None = None
+    import_idempotent: bool | None = None
+    conflict: bool | None = None
 
 
 class SharedDirectoryWorkBuddyGateway:
@@ -37,14 +71,13 @@ class SharedDirectoryWorkBuddyGateway:
     def __init__(self, bridge_root: str | Path, source_dir: str | Path | None = None) -> None:
         self.root = Path(bridge_root).resolve()
         self.source = (
-            Path(source_dir).resolve()
-            if source_dir is not None
-            else self.root / "选股报告"
+            Path(source_dir).resolve() if source_dir is not None else self.root / "选股报告"
         )
         self.inbox = self.root / "workbuddy" / "results"
         self.processing = self.root / "workbuddy" / "processing"
         self.archive = self.root / "workbuddy" / "archive"
         self.failed = self.root / "workbuddy" / "failed"
+        self.conflict = self.root / "workbuddy" / "conflict"
         self.import_archive = self.root / "invest-infra" / "archive"
 
     def discover_ready(self) -> tuple[Path, ...]:
@@ -72,52 +105,70 @@ class SharedDirectoryWorkBuddyGateway:
                 claimed = self._claim(ready_path)
             except FileNotFoundError:
                 continue
-            try:
-                payload = self._load_payload(claimed)
-                normalized = self._normalize_payload(payload)
-                archive_outcome = archive_candidates(normalized, str(self.import_archive))
-                if archive_outcome.conflict:
-                    raise ValueError("archive conflict for workflow run")
-                result = import_archived_candidate_run(
-                    self.import_archive,
-                    trade_date=normalized["trade_date"],
-                    workflow_run_id=normalized["workflow_run_id"],
+            outcomes.append(
+                self._process_claimed(
+                    claimed,
+                    package_name,
+                    ready_kind=True,
                     uow=uow,
                     resolver=resolver,
                 )
-                self._finish(claimed, self.archive / package_name.removesuffix(".ready"))
-                outcomes.append(SharedDirectoryImport(package_name, result))
-            except Exception as exc:
-                self._finish(claimed, self.failed / package_name.removesuffix(".ready"))
-                outcomes.append(SharedDirectoryImport(package_name, None, str(exc)))
+            )
         for candidate_path in self.discover_candidates():
             package_name = candidate_path.name
             try:
                 claimed = self._claim_file(candidate_path)
             except FileNotFoundError:
                 continue
-            try:
-                payload = _read_json(claimed)
-                result = self._import_payload(payload, uow=uow, resolver=resolver)
-                self._finish(claimed, self.archive / package_name)
-                outcomes.append(SharedDirectoryImport(package_name, result))
-            except Exception as exc:
-                self._finish(claimed, self.failed / package_name)
-                outcomes.append(SharedDirectoryImport(package_name, None, str(exc)))
+            outcomes.append(
+                self._process_claimed(
+                    claimed,
+                    package_name,
+                    ready_kind=False,
+                    uow=uow,
+                    resolver=resolver,
+                )
+            )
         return tuple(outcomes)
 
-    def _import_payload(self, payload: dict[str, Any], *, uow, resolver=None) -> BridgeImportResult:
-        normalized = self._normalize_payload(payload)
-        archive_outcome = archive_candidates(normalized, str(self.import_archive))
-        if archive_outcome.conflict:
-            raise ValueError("archive conflict for workflow run")
-        return import_archived_candidate_run(
-            self.import_archive,
-            trade_date=normalized["trade_date"],
-            workflow_run_id=normalized["workflow_run_id"],
-            uow=uow,
-            resolver=resolver,
-        )
+    def _process_claimed(
+        self,
+        claimed: Path,
+        package_name: str,
+        *,
+        ready_kind: bool,
+        uow,
+        resolver,
+    ) -> SharedDirectoryImport:
+        base = package_name.removesuffix(".ready") if ready_kind else package_name
+        archive_target = self.archive / base
+        conflict_target = self.conflict / base
+        failed_target = self.failed / base
+        try:
+            payload = self._load_payload(claimed) if ready_kind else _read_json(claimed)
+            normalized = self._normalize_payload(payload)
+            archive_outcome = archive_candidates(normalized, str(self.import_archive))
+            if archive_outcome.conflict:
+                raise ArchiveConflictError(
+                    workflow_run_id=normalized["workflow_run_id"],
+                    trade_date=normalized["trade_date"],
+                    archive_uri=archive_outcome.archive_uri,
+                )
+            result = import_archived_candidate_run(
+                self.import_archive,
+                trade_date=normalized["trade_date"],
+                workflow_run_id=normalized["workflow_run_id"],
+                uow=uow,
+                resolver=resolver,
+            )
+            self._finish(claimed, archive_target)
+            return _build_success(package_name, archive_outcome, result)
+        except ArchiveConflictError as exc:
+            self._finish(claimed, conflict_target)
+            return _build_conflict(package_name, exc, archive_outcome)
+        except Exception as exc:
+            self._finish(claimed, failed_target)
+            return SharedDirectoryImport(package=package_name, result=None, error=str(exc))
 
     def _claim(self, ready_path: Path) -> Path:
         self.processing.mkdir(parents=True, exist_ok=True)
@@ -163,6 +214,53 @@ class SharedDirectoryWorkBuddyGateway:
         }
 
 
+def _build_success(
+    package_name: str,
+    archive_outcome: ArchiveOutcome,
+    result: BridgeImportResult,
+) -> SharedDirectoryImport:
+    return SharedDirectoryImport(
+        package=package_name,
+        result=result,
+        error=None,
+        archive_uri=archive_outcome.archive_uri,
+        accepted_count=archive_outcome.accepted_count,
+        rejected_count=archive_outcome.rejected_count,
+        needs_symbol_resolution_count=_count_needs_symbol_resolution(result),
+        findings=tuple(result.findings),
+        archive_idempotent=archive_outcome.idempotent,
+        import_idempotent=result.idempotent,
+        conflict=False,
+    )
+
+
+def _build_conflict(
+    package_name: str,
+    exc: ArchiveConflictError,
+    archive_outcome: ArchiveOutcome,
+) -> SharedDirectoryImport:
+    return SharedDirectoryImport(
+        package=package_name,
+        result=None,
+        error=str(exc),
+        archive_uri=exc.archive_uri,
+        accepted_count=archive_outcome.accepted_count,
+        rejected_count=archive_outcome.rejected_count,
+        findings=tuple(archive_outcome.findings),
+        archive_idempotent=archive_outcome.idempotent,
+        import_idempotent=None,
+        conflict=True,
+    )
+
+
+def _count_needs_symbol_resolution(result: BridgeImportResult) -> int:
+    return sum(
+        1
+        for observation in result.observations
+        if observation.metadata.get("candidate_status") == "needs_symbol_resolution"
+    )
+
+
 def _read_json(path: Path) -> dict[str, Any]:
     resolved = path.resolve()
     if resolved.parent != path.parent.resolve():
@@ -176,4 +274,8 @@ def _read_json(path: Path) -> dict[str, Any]:
     return value
 
 
-__all__ = ["SharedDirectoryImport", "SharedDirectoryWorkBuddyGateway"]
+__all__ = [
+    "ArchiveConflictError",
+    "SharedDirectoryImport",
+    "SharedDirectoryWorkBuddyGateway",
+]

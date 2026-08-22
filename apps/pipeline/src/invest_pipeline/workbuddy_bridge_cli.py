@@ -32,16 +32,28 @@ def resolve_paths(settings: Settings, args: argparse.Namespace) -> tuple[Path, P
 
 
 def _summary(outcomes: tuple[Any, ...]) -> dict[str, list[dict[str, Any]]]:
-    return {
-        "imports": [
+    summary: list[dict[str, Any]] = []
+    for outcome in outcomes:
+        result = getattr(outcome, "result", None)
+        findings = getattr(outcome, "findings", None) or []
+        summary.append(
             {
                 "file": outcome.package,
                 "status": "success" if outcome.error is None else "failed",
-                "observation_count": len(outcome.result.observations) if outcome.result else 0,
+                "observation_count": len(result.observations) if result else 0,
+                "archive_uri": getattr(outcome, "archive_uri", None),
+                "accepted_count": getattr(outcome, "accepted_count", None),
+                "rejected_count": getattr(outcome, "rejected_count", None),
+                "needs_symbol_resolution_count": getattr(
+                    outcome, "needs_symbol_resolution_count", None
+                ),
+                "findings": [dict(item) for item in findings],
+                "archive_idempotent": getattr(outcome, "archive_idempotent", None),
+                "import_idempotent": getattr(outcome, "import_idempotent", None),
+                "conflict": getattr(outcome, "conflict", None),
             }
-            for outcome in outcomes
-        ]
-    }
+        )
+    return {"imports": summary}
 
 
 def run_import(

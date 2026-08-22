@@ -35,8 +35,28 @@ def test_run_import_emits_redacted_summary_with_fake_dependencies(
             package="candidates_ok.json",
             result=SimpleNamespace(observations=(1, 2)),
             error=None,
+            archive_uri="archive://runs/2026-08-14/ok",
+            accepted_count=2,
+            rejected_count=0,
+            needs_symbol_resolution_count=0,
+            findings=({"scope": "item", "index": 0, "error": "symbol needs resolution"},),
+            archive_idempotent=False,
+            import_idempotent=False,
+            conflict=False,
         ),
-        SimpleNamespace(package="candidates_bad.json", result=None, error="invalid payload"),
+        SimpleNamespace(
+            package="candidates_bad.json",
+            result=None,
+            error="invalid payload",
+            archive_uri=None,
+            accepted_count=None,
+            rejected_count=None,
+            needs_symbol_resolution_count=None,
+            findings=(),
+            archive_idempotent=None,
+            import_idempotent=None,
+            conflict=None,
+        ),
     )
 
     class _Gateway:
@@ -71,11 +91,101 @@ def test_run_import_emits_redacted_summary_with_fake_dependencies(
     summary = json.loads(capsys.readouterr().out)
     assert summary == {
         "imports": [
-            {"file": "candidates_ok.json", "status": "success", "observation_count": 2},
-            {"file": "candidates_bad.json", "status": "failed", "observation_count": 0},
+            {
+                "file": "candidates_ok.json",
+                "status": "success",
+                "observation_count": 2,
+                "archive_uri": "archive://runs/2026-08-14/ok",
+                "accepted_count": 2,
+                "rejected_count": 0,
+                "needs_symbol_resolution_count": 0,
+                "findings": [
+                    {"scope": "item", "index": 0, "error": "symbol needs resolution"},
+                ],
+                "archive_idempotent": False,
+                "import_idempotent": False,
+                "conflict": False,
+            },
+            {
+                "file": "candidates_bad.json",
+                "status": "failed",
+                "observation_count": 0,
+                "archive_uri": None,
+                "accepted_count": None,
+                "rejected_count": None,
+                "needs_symbol_resolution_count": None,
+                "findings": [],
+                "archive_idempotent": None,
+                "import_idempotent": None,
+                "conflict": None,
+            },
         ]
     }
     assert "invalid payload" not in capsys.readouterr().out
+
+
+def test_summary_tolerates_legacy_outcomes_without_new_fields() -> None:
+    outcomes = (
+        SimpleNamespace(
+            package="legacy.json",
+            result=SimpleNamespace(observations=(1,)),
+            error=None,
+        ),
+    )
+
+    summary = cli._summary(outcomes)
+
+    assert summary == {
+        "imports": [
+            {
+                "file": "legacy.json",
+                "status": "success",
+                "observation_count": 1,
+                "archive_uri": None,
+                "accepted_count": None,
+                "rejected_count": None,
+                "needs_symbol_resolution_count": None,
+                "findings": [],
+                "archive_idempotent": None,
+                "import_idempotent": None,
+                "conflict": None,
+            },
+        ]
+    }
+
+
+def test_summary_marks_conflict_outcome_without_leaking_payload() -> None:
+    outcomes = (
+        SimpleNamespace(
+            package="conflict.json",
+            result=None,
+            error="archive conflict for workflow_run_id=run-1 trade_date=2026-08-14",
+            archive_uri="archive://runs/2026-08-14/run-1",
+            accepted_count=1,
+            rejected_count=0,
+            needs_symbol_resolution_count=None,
+            findings=({"scope": "item", "error": "rejected_by_intake"},),
+            archive_idempotent=False,
+            import_idempotent=None,
+            conflict=True,
+        ),
+    )
+
+    summary = cli._summary(outcomes)
+    payload = json.dumps(summary, ensure_ascii=False)
+
+    assert summary["imports"][0]["status"] == "failed"
+    assert summary["imports"][0]["conflict"] is True
+    assert summary["imports"][0]["archive_uri"] == "archive://runs/2026-08-14/run-1"
+    assert summary["imports"][0]["accepted_count"] == 1
+    assert summary["imports"][0]["rejected_count"] == 0
+    assert summary["imports"][0]["archive_idempotent"] is False
+    assert summary["imports"][0]["import_idempotent"] is None
+    # The raw error text and any candidate raw payload must never appear in
+    # the summary; archive_uri is the only identity that surfaces.
+    assert "archive conflict for workflow_run_id" not in payload
+    assert "trade_date" not in payload
+    assert "raw" not in payload
 
 
 def test_main_returns_nonzero_without_printing_exception_details(
