@@ -24,6 +24,7 @@ from invest_pipeline.workbuddy_candidates.archive import (
 )
 
 _PACKAGE_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}\.ready$")
+_PROCESSING_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 _MAX_JSON_BYTES = 16 * 1024 * 1024
 
 
@@ -96,6 +97,20 @@ class SharedDirectoryWorkBuddyGateway:
             return ()
         return tuple(sorted(self.source.glob("candidates_*.json"), key=lambda item: item.name))
 
+    def discover_processing(self) -> tuple[Path, ...]:
+        """Return safe direct children left after an interrupted claim."""
+        if not self.processing.is_dir():
+            return ()
+        return tuple(
+            path
+            for path in sorted(self.processing.iterdir(), key=lambda item: item.name)
+            if (
+                _PROCESSING_RE.fullmatch(path.name)
+                and not path.name.endswith(".tmp")
+                and (path.is_dir() or path.is_file())
+            )
+        )
+
     def process_once(self, *, uow, resolver=None) -> tuple[SharedDirectoryImport, ...]:
         """Claim every package visible at the start and process it once."""
         outcomes: list[SharedDirectoryImport] = []
@@ -125,6 +140,23 @@ class SharedDirectoryWorkBuddyGateway:
                     claimed,
                     package_name,
                     ready_kind=False,
+                    uow=uow,
+                    resolver=resolver,
+                )
+            )
+        return tuple(outcomes)
+
+    def recover_once(self, *, uow, resolver=None) -> tuple[SharedDirectoryImport, ...]:
+        """Resume packages already claimed into ``processing/``."""
+        outcomes: list[SharedDirectoryImport] = []
+        for claimed in self.discover_processing():
+            ready_kind = claimed.is_dir()
+            package_name = f"{claimed.name}.ready" if ready_kind else claimed.name
+            outcomes.append(
+                self._process_claimed(
+                    claimed,
+                    package_name,
+                    ready_kind=ready_kind,
                     uow=uow,
                     resolver=resolver,
                 )

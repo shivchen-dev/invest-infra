@@ -20,6 +20,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="python -m invest_pipeline.workbuddy_bridge_cli")
     parser.add_argument("--bridge-root", type=Path)
     parser.add_argument("--source-dir", type=Path)
+    parser.add_argument("--recover", action="store_true")
     return parser
 
 
@@ -97,6 +98,7 @@ def run_import(
     gateway_factory: Callable[..., Any] = SharedDirectoryWorkBuddyGateway,
     uow_factory: Callable[[Any], Any] = SqlAlchemyUnitOfWork,
     settings: Settings | None = None,
+    recover: bool = False,
 ) -> int:
     configured = settings or get_settings()
     engine = engine_builder(configured.database_url)
@@ -105,7 +107,8 @@ def run_import(
         gateway = gateway_factory(bridge_root, source_dir)
         with uow_factory(sessions) as uow:
             resolver = _build_instrument_resolver(uow)
-            outcomes = gateway.process_once(uow=uow, resolver=resolver)
+            process = gateway.recover_once if recover else gateway.process_once
+            outcomes = process(uow=uow, resolver=resolver)
         print(json.dumps(_summary(outcomes), ensure_ascii=False, separators=(",", ":")))
         return 0
     finally:

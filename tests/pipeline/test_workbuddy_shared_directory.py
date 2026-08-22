@@ -90,3 +90,22 @@ def test_gateway_normalizes_legacy_result_json(tmp_path):
     assert outcomes[0].error is None
     assert outcomes[0].result is not None
     assert outcomes[0].result.run.metadata["strategy_id"] == "legacy-v1"
+
+
+def test_gateway_ignores_tmp_files_and_recovers_processing_package(tmp_path):
+    source = tmp_path / "选股报告"
+    source.mkdir()
+    (source / "candidates_ignored.json.tmp").write_text("{}")
+    processing = tmp_path / "workbuddy" / "processing" / "message-004"
+    processing.mkdir(parents=True)
+    (processing / "candidates.json").write_text(json.dumps(_payload()))
+    (tmp_path / "workbuddy" / "processing" / "message-005.tmp").write_text("{}")
+
+    gateway = SharedDirectoryWorkBuddyGateway(tmp_path, source)
+    assert gateway.discover_candidates() == ()
+    assert [path.name for path in gateway.discover_processing()] == ["message-004"]
+    outcomes = gateway.recover_once(uow=_Uow())
+
+    assert len(outcomes) == 1
+    assert outcomes[0].error is None
+    assert (tmp_path / "workbuddy" / "archive" / "message-004").is_dir()

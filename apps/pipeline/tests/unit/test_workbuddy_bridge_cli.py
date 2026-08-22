@@ -18,6 +18,10 @@ def test_parser_accepts_optional_path_overrides() -> None:
     assert args.source_dir == Path("/mnt/reports")
 
 
+def test_parser_accepts_recovery_mode() -> None:
+    assert cli.build_parser().parse_args(["--recover"]).recover is True
+
+
 def test_default_paths_follow_settings() -> None:
     settings = Settings()
 
@@ -68,6 +72,9 @@ def test_run_import_emits_redacted_summary_with_fake_dependencies(
             assert uow == "uow"
             assert resolver(" 600000 ") is None
             return outcomes
+
+        def recover_once(self, *, uow, resolver):
+            raise AssertionError("normal mode must not recover")
 
     class _Uow:
         def __init__(self, factory):
