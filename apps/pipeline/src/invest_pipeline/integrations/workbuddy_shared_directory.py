@@ -7,6 +7,7 @@ in ``workbuddy_candidates`` and persistence stays behind the Bridge/UoW.
 from __future__ import annotations
 
 import json
+import logging
 import os
 import re
 from dataclasses import dataclass
@@ -26,6 +27,7 @@ from invest_pipeline.workbuddy_candidates.archive import (
 _PACKAGE_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}\.ready$")
 _PROCESSING_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 _MAX_JSON_BYTES = 16 * 1024 * 1024
+_LOGGER = logging.getLogger(__name__)
 
 
 class ArchiveConflictError(Exception):
@@ -113,6 +115,7 @@ class SharedDirectoryWorkBuddyGateway:
 
     def process_once(self, *, uow, resolver=None) -> tuple[SharedDirectoryImport, ...]:
         """Claim every package visible at the start and process it once."""
+        _LOGGER.info("workbuddy_event", extra={"event": "scan_started", "mode": "normal"})
         outcomes: list[SharedDirectoryImport] = []
         for ready_path in self.discover_ready():
             package_name = ready_path.name
@@ -148,6 +151,7 @@ class SharedDirectoryWorkBuddyGateway:
 
     def recover_once(self, *, uow, resolver=None) -> tuple[SharedDirectoryImport, ...]:
         """Resume packages already claimed into ``processing/``."""
+        _LOGGER.info("workbuddy_event", extra={"event": "scan_started", "mode": "recovery"})
         outcomes: list[SharedDirectoryImport] = []
         for claimed in self.discover_processing():
             ready_kind = claimed.is_dir()
@@ -161,6 +165,10 @@ class SharedDirectoryWorkBuddyGateway:
                     resolver=resolver,
                 )
             )
+        _LOGGER.info(
+            "workbuddy_event",
+            extra={"event": "scan_finished", "mode": "recovery", "count": len(outcomes)},
+        )
         return tuple(outcomes)
 
     def _process_claimed(
@@ -194,12 +202,37 @@ class SharedDirectoryWorkBuddyGateway:
                 resolver=resolver,
             )
             self._finish(claimed, archive_target)
+            _LOGGER.info(
+                "workbuddy_event",
+                extra={
+                    "event": "package_finished",
+                    "package": package_name,
+                    "status": "success",
+                },
+            )
             return _build_success(package_name, archive_outcome, result)
         except ArchiveConflictError as exc:
             self._finish(claimed, conflict_target)
+            _LOGGER.warning(
+                "workbuddy_event",
+                extra={
+                    "event": "package_finished",
+                    "package": package_name,
+                    "status": "conflict",
+                },
+            )
             return _build_conflict(package_name, exc, archive_outcome)
         except Exception as exc:
             self._finish(claimed, failed_target)
+            _LOGGER.error(
+                "workbuddy_event",
+                extra={
+                    "event": "package_finished",
+                    "package": package_name,
+                    "status": "failed",
+                    "error_type": type(exc).__name__,
+                },
+            )
             return SharedDirectoryImport(package=package_name, result=None, error=str(exc))
 
     def _claim(self, ready_path: Path) -> Path:

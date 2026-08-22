@@ -90,6 +90,25 @@ def test_gateway_imports_flat_candidates_files_and_ignores_legacy_audit_files(
     assert (tmp_path / "invest-infra" / "archive" / "runs" / "2026-08-14" / "flat-v2").is_dir()
 
 
+def test_gateway_emits_structured_lifecycle_events(tmp_path: Path, caplog) -> None:
+    source = tmp_path / "选股报告"
+    source.mkdir()
+    (source / "candidates_event.json").write_text(
+        json.dumps(_payload("event-run")), encoding="utf-8"
+    )
+
+    gateway = SharedDirectoryWorkBuddyGateway(tmp_path, source)
+    with caplog.at_level("INFO"):
+        outcomes = gateway.process_once(uow=_Uow())
+
+    assert outcomes[0].error is None
+    events = [record for record in caplog.records if record.name.endswith("shared_directory")]
+    assert [record.event for record in events] == ["scan_started", "package_finished"]
+    assert events[0].mode == "normal"
+    assert events[1].package == "candidates_event.json"
+    assert events[1].status == "success"
+
+
 def test_gateway_claims_invalid_flat_candidate_to_failed(tmp_path: Path) -> None:
     source = tmp_path / "选股报告"
     source.mkdir()
