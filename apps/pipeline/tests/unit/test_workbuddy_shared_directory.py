@@ -60,8 +60,8 @@ def _payload(
 def test_gateway_imports_flat_candidates_files_and_ignores_legacy_audit_files(
     tmp_path: Path,
 ) -> None:
-    source = tmp_path / "选股报告"
-    source.mkdir()
+    source = tmp_path / "candidate" / "results"
+    source.mkdir(parents=True)
     (source / "candidates_v2.json").write_text(
         json.dumps(_payload("flat-v2", schema_version="2.0.0")), encoding="utf-8"
     )
@@ -79,11 +79,11 @@ def test_gateway_imports_flat_candidates_files_and_ignores_legacy_audit_files(
         "candidates_v2.json",
     }
     assert all(outcome.error is None for outcome in outcomes)
-    assert {path.name for path in (tmp_path / "workbuddy" / "archive").iterdir()} == {
+    assert {path.name for path in (tmp_path / "candidate" / "archive").iterdir()} == {
         "candidates_sector.json",
         "candidates_v2.json",
     }
-    assert not tuple((tmp_path / "workbuddy" / "processing").iterdir())
+    assert not tuple((tmp_path / "candidate" / "processing").iterdir())
     assert (source / "result_sector.json").exists()
     assert (source / "report.json").exists()
     assert (tmp_path / "invest-infra" / "archive" / "runs" / "2026-08-14" / "flat-v1").is_dir()
@@ -91,8 +91,8 @@ def test_gateway_imports_flat_candidates_files_and_ignores_legacy_audit_files(
 
 
 def test_gateway_emits_structured_lifecycle_events(tmp_path: Path, caplog) -> None:
-    source = tmp_path / "选股报告"
-    source.mkdir()
+    source = tmp_path / "candidate" / "results"
+    source.mkdir(parents=True)
     (source / "candidates_event.json").write_text(
         json.dumps(_payload("event-run")), encoding="utf-8"
     )
@@ -110,8 +110,8 @@ def test_gateway_emits_structured_lifecycle_events(tmp_path: Path, caplog) -> No
 
 
 def test_gateway_claims_invalid_flat_candidate_to_failed(tmp_path: Path) -> None:
-    source = tmp_path / "选股报告"
-    source.mkdir()
+    source = tmp_path / "candidate" / "results"
+    source.mkdir(parents=True)
     input_path = source / "candidates_broken.json"
     input_path.write_text("not-json", encoding="utf-8")
 
@@ -120,13 +120,13 @@ def test_gateway_claims_invalid_flat_candidate_to_failed(tmp_path: Path) -> None
     assert outcomes[0].package == input_path.name
     assert outcomes[0].result is None
     assert outcomes[0].error
-    assert (tmp_path / "workbuddy" / "failed" / input_path.name).is_file()
+    assert (tmp_path / "candidate" / "failed" / input_path.name).is_file()
     assert not input_path.exists()
 
 
 def test_gateway_exposes_diagnostics_on_success(tmp_path: Path) -> None:
-    source = tmp_path / "选股报告"
-    source.mkdir()
+    source = tmp_path / "candidate" / "results"
+    source.mkdir(parents=True)
     (source / "candidates_diag.json").write_text(
         json.dumps(
             _payload(
@@ -165,8 +165,8 @@ def test_gateway_exposes_diagnostics_on_success(tmp_path: Path) -> None:
 
 
 def test_gateway_routes_archive_conflict_to_conflict_bucket(tmp_path: Path) -> None:
-    source = tmp_path / "选股报告"
-    source.mkdir()
+    source = tmp_path / "candidate" / "results"
+    source.mkdir(parents=True)
     base_payload = _payload(
         "conflict-001",
         candidates=[{"symbol": "510300", "reason": "liquid"}],
@@ -197,14 +197,14 @@ def test_gateway_routes_archive_conflict_to_conflict_bucket(tmp_path: Path) -> N
     assert conflict_outcome.accepted_count == 1
     assert conflict_outcome.rejected_count == 0
 
-    assert (tmp_path / "workbuddy" / "archive" / "candidates_a.json").is_file()
-    assert (tmp_path / "workbuddy" / "conflict" / "candidates_b.json").is_file()
-    assert not (tmp_path / "workbuddy" / "failed" / "candidates_b.json").exists()
-    assert not (tmp_path / "workbuddy" / "archive" / "candidates_b.json").exists()
+    assert (tmp_path / "candidate" / "archive" / "candidates_a.json").is_file()
+    assert (tmp_path / "candidate" / "conflict" / "candidates_b.json").is_file()
+    assert not (tmp_path / "candidate" / "failed" / "candidates_b.json").exists()
+    assert not (tmp_path / "candidate" / "archive" / "candidates_b.json").exists()
 
 
 def test_gateway_routes_ready_package_conflict_to_conflict_bucket(tmp_path: Path) -> None:
-    ready_dir = tmp_path / "workbuddy" / "results"
+    ready_dir = tmp_path / "candidate" / "results"
     ready_dir.mkdir(parents=True)
     package = ready_dir / "ready-conflict-001.ready"
     package.mkdir()
@@ -227,9 +227,9 @@ def test_gateway_routes_ready_package_conflict_to_conflict_bucket(tmp_path: Path
     assert second[0].error is not None
     assert isinstance(second[0].error, str)
 
-    assert (tmp_path / "workbuddy" / "archive" / "ready-conflict-001").is_dir()
-    assert (tmp_path / "workbuddy" / "conflict" / "ready-conflict-002").is_dir()
-    assert not (tmp_path / "workbuddy" / "failed" / "ready-conflict-002").exists()
+    assert (tmp_path / "candidate" / "archive" / "ready-conflict-001").is_dir()
+    assert (tmp_path / "candidate" / "conflict" / "ready-conflict-002").is_dir()
+    assert not (tmp_path / "candidate" / "failed" / "ready-conflict-002").exists()
 
 
 def test_archive_conflict_error_carries_identity_fields() -> None:
@@ -246,8 +246,8 @@ def test_archive_conflict_error_carries_identity_fields() -> None:
 
 
 def test_gateway_idempotent_rerun_reports_both_layers_idempotent(tmp_path: Path) -> None:
-    source = tmp_path / "选股报告"
-    source.mkdir()
+    source = tmp_path / "candidate" / "results"
+    source.mkdir(parents=True)
     payload = _payload("idem-001")
     (source / "candidates_idem_first.json").write_text(json.dumps(payload), encoding="utf-8")
 
@@ -273,13 +273,13 @@ def test_gateway_idempotent_rerun_reports_both_layers_idempotent(tmp_path: Path)
     assert rerun.accepted_count == 1
     assert rerun.rejected_count == 0
     assert rerun.needs_symbol_resolution_count == 0
-    assert (tmp_path / "workbuddy" / "archive" / "candidates_idem_first.json").is_file()
-    assert (tmp_path / "workbuddy" / "archive" / "candidates_idem_second.json").is_file()
+    assert (tmp_path / "candidate" / "archive" / "candidates_idem_first.json").is_file()
+    assert (tmp_path / "candidate" / "archive" / "candidates_idem_second.json").is_file()
 
 
 def test_gateway_other_exceptions_remain_under_failed_bucket(tmp_path: Path) -> None:
-    source = tmp_path / "选股报告"
-    source.mkdir()
+    source = tmp_path / "candidate" / "results"
+    source.mkdir(parents=True)
     (source / "candidates_bad.json").write_text("definitely not json", encoding="utf-8")
 
     gateway = SharedDirectoryWorkBuddyGateway(tmp_path)
@@ -291,5 +291,46 @@ def test_gateway_other_exceptions_remain_under_failed_bucket(tmp_path: Path) -> 
     assert outcomes[0].conflict is None
     assert outcomes[0].archive_idempotent is None
     assert outcomes[0].import_idempotent is None
-    assert (tmp_path / "workbuddy" / "failed" / "candidates_bad.json").is_file()
-    assert not (tmp_path / "workbuddy" / "conflict" / "candidates_bad.json").exists()
+    assert (tmp_path / "candidate" / "failed" / "candidates_bad.json").is_file()
+    assert not (tmp_path / "candidate" / "conflict" / "candidates_bad.json").exists()
+
+
+def test_gateway_paths_are_under_candidate_phase_no_obsolete_workbuddy_segment(
+    tmp_path: Path,
+) -> None:
+    """Focused assertion that the candidate intake stays under ``candidate/``.
+
+    The formal WorkBuddy bridge root already is the workbuddy root, so no
+    nested ``workbuddy/`` segment may appear in the lifecycle paths. This
+    guards against silently re-introducing the obsolete ``<root>/workbuddy/*``
+    layout or a legacy single-level source directory.
+    """
+    gateway = SharedDirectoryWorkBuddyGateway(tmp_path)
+    lifecycle_paths = (
+        gateway.source,
+        gateway.inbox,
+        gateway.processing,
+        gateway.archive,
+        gateway.failed,
+        gateway.conflict,
+    )
+    for path in lifecycle_paths:
+        assert path.parent.name == "candidate", (
+            f"lifecycle path {path} must live under <bridge_root>/candidate/"
+        )
+        assert "workbuddy" not in path.parts, (
+            f"lifecycle path {path} must not nest a workbuddy segment"
+        )
+
+    source = tmp_path / "candidate" / "results"
+    source.mkdir(parents=True)
+    (source / "candidates_phase.json").write_text(
+        json.dumps(_payload("phase-001")), encoding="utf-8"
+    )
+
+    SharedDirectoryWorkBuddyGateway(tmp_path).process_once(uow=_Uow())
+
+    assert not (tmp_path / "workbuddy").exists(), (
+        "obsolete <bridge_root>/workbuddy/ candidate-intake directory must not be created"
+    )
+    assert (tmp_path / "candidate" / "archive" / "candidates_phase.json").is_file()

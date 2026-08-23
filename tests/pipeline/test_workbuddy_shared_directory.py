@@ -46,7 +46,7 @@ def _payload():
 
 
 def test_gateway_claims_ready_package_and_archives_after_import(tmp_path):
-    package = tmp_path / "workbuddy" / "results" / "message-001.ready"
+    package = tmp_path / "candidate" / "results" / "message-001.ready"
     package.mkdir(parents=True)
     (package / "candidates.json").write_text(json.dumps(_payload()), encoding="utf-8")
     gateway = SharedDirectoryWorkBuddyGateway(tmp_path)
@@ -57,12 +57,12 @@ def test_gateway_claims_ready_package_and_archives_after_import(tmp_path):
     assert outcomes[0].error is None
     assert outcomes[0].result is not None
     assert not package.exists()
-    assert (tmp_path / "workbuddy" / "archive" / "message-001").is_dir()
-    assert not (tmp_path / "workbuddy" / "processing" / "message-001").exists()
+    assert (tmp_path / "candidate" / "archive" / "message-001").is_dir()
+    assert not (tmp_path / "candidate" / "processing" / "message-001").exists()
 
 
 def test_gateway_moves_invalid_package_to_failed(tmp_path):
-    package = tmp_path / "workbuddy" / "results" / "message-002.ready"
+    package = tmp_path / "candidate" / "results" / "message-002.ready"
     package.mkdir(parents=True)
     (package / "candidates.json").write_text("not-json", encoding="utf-8")
     gateway = SharedDirectoryWorkBuddyGateway(tmp_path)
@@ -71,11 +71,11 @@ def test_gateway_moves_invalid_package_to_failed(tmp_path):
 
     assert outcomes[0].result is None
     assert outcomes[0].error
-    assert (tmp_path / "workbuddy" / "failed" / "message-002").is_dir()
+    assert (tmp_path / "candidate" / "failed" / "message-002").is_dir()
 
 
 def test_gateway_normalizes_legacy_result_json(tmp_path):
-    package = tmp_path / "workbuddy" / "results" / "message-003.ready"
+    package = tmp_path / "candidate" / "results" / "message-003.ready"
     package.mkdir(parents=True)
     legacy = {
         "workflow_run_id": "legacy-run-003",
@@ -93,13 +93,13 @@ def test_gateway_normalizes_legacy_result_json(tmp_path):
 
 
 def test_gateway_ignores_tmp_files_and_recovers_processing_package(tmp_path):
-    source = tmp_path / "选股报告"
-    source.mkdir()
+    source = tmp_path / "candidate" / "results"
+    source.mkdir(parents=True)
     (source / "candidates_ignored.json.tmp").write_text("{}")
-    processing = tmp_path / "workbuddy" / "processing" / "message-004"
+    processing = tmp_path / "candidate" / "processing" / "message-004"
     processing.mkdir(parents=True)
     (processing / "candidates.json").write_text(json.dumps(_payload()))
-    (tmp_path / "workbuddy" / "processing" / "message-005.tmp").write_text("{}")
+    (tmp_path / "candidate" / "processing" / "message-005.tmp").write_text("{}")
 
     gateway = SharedDirectoryWorkBuddyGateway(tmp_path, source)
     assert gateway.discover_candidates() == ()
@@ -108,4 +108,4 @@ def test_gateway_ignores_tmp_files_and_recovers_processing_package(tmp_path):
 
     assert len(outcomes) == 1
     assert outcomes[0].error is None
-    assert (tmp_path / "workbuddy" / "archive" / "message-004").is_dir()
+    assert (tmp_path / "candidate" / "archive" / "message-004").is_dir()

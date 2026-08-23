@@ -16,7 +16,7 @@ def make_worker(tmp_path: Path, stage: str = "research") -> StagePackageWorker:
 def test_all_stage_paths_are_created_under_stage_root(tmp_path: Path) -> None:
     for stage in STAGES:
         worker = make_worker(tmp_path, stage)
-        assert worker.root == tmp_path / "workbuddy" / stage
+        assert worker.root == tmp_path / stage
         directories = (
             worker.inbox, worker.processing, worker.results, worker.archive, worker.failed
         )

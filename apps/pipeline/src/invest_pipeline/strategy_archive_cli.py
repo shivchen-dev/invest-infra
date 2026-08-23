@@ -54,7 +54,7 @@ def build_parser() -> _SilentErrorArgumentParser:
         "--bridge-root",
         type=Path,
         required=True,
-        help="Bridge root directory that hosts the workbuddy/strategy tree.",
+        help="Bridge root directory that hosts the strategy stage tree.",
     )
     parser.add_argument(
         "--recover",

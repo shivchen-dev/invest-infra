@@ -155,7 +155,7 @@ class StrategyCombinedArchive:
         evidence_max_bytes: int = DEFAULT_EVIDENCE_MAX_BYTES,
     ) -> None:
         self.bridge_root = Path(bridge_root).resolve()
-        self.root = self.bridge_root / "workbuddy" / "strategy"
+        self.root = self.bridge_root / "strategy"
         self.inbox = self.root / "inbox"
         self.processing = self.root / "processing"
         self.results = self.root / "results"

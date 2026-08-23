@@ -74,13 +74,15 @@ class SharedDirectoryWorkBuddyGateway:
     def __init__(self, bridge_root: str | Path, source_dir: str | Path | None = None) -> None:
         self.root = Path(bridge_root).resolve()
         self.source = (
-            Path(source_dir).resolve() if source_dir is not None else self.root / "选股报告"
+            Path(source_dir).resolve()
+            if source_dir is not None
+            else self.root / "candidate" / "results"
         )
-        self.inbox = self.root / "workbuddy" / "results"
-        self.processing = self.root / "workbuddy" / "processing"
-        self.archive = self.root / "workbuddy" / "archive"
-        self.failed = self.root / "workbuddy" / "failed"
-        self.conflict = self.root / "workbuddy" / "conflict"
+        self.inbox = self.root / "candidate" / "results"
+        self.processing = self.root / "candidate" / "processing"
+        self.archive = self.root / "candidate" / "archive"
+        self.failed = self.root / "candidate" / "failed"
+        self.conflict = self.root / "candidate" / "conflict"
         self.import_archive = self.root / "invest-infra" / "archive"
 
     def discover_ready(self) -> tuple[Path, ...]:

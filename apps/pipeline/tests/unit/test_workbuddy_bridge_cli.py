@@ -27,8 +27,8 @@ def test_default_paths_follow_settings() -> None:
 
     bridge_root, source_dir = cli.resolve_paths(settings, cli.build_parser().parse_args([]))
 
-    assert bridge_root == Path("/shared")
-    assert source_dir == Path("/shared/选股报告")
+    assert bridge_root == Path("/shared/workbuddy")
+    assert source_dir == Path("/shared/workbuddy/candidate/results")
 
 
 def test_run_import_emits_redacted_summary_with_fake_dependencies(
@@ -65,8 +65,8 @@ def test_run_import_emits_redacted_summary_with_fake_dependencies(
 
     class _Gateway:
         def __init__(self, bridge_root, source_dir):
-            assert bridge_root == Path("/shared")
-            assert source_dir == Path("/shared/选股报告")
+            assert bridge_root == Path("/shared/workbuddy")
+            assert source_dir == Path("/shared/workbuddy/candidate/results")
 
         def process_once(self, *, uow, resolver):
             assert uow == "uow"
@@ -87,8 +87,8 @@ def test_run_import_emits_redacted_summary_with_fake_dependencies(
             return False
 
     cli.run_import(
-        Path("/shared"),
-        Path("/shared/选股报告"),
+        Path("/shared/workbuddy"),
+        Path("/shared/workbuddy/candidate/results"),
         engine_builder=lambda _url: "engine",
         session_factory_builder=lambda _engine: "sessions",
         gateway_factory=_Gateway,

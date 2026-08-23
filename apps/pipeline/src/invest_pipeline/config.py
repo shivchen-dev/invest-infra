@@ -41,14 +41,14 @@ class Settings(BaseSettings):
         ),
     )
     workbuddy_bridge_root: Path = Field(
-        default=Path("/shared"),
+        default=Path("/shared/workbuddy"),
         validation_alias=AliasChoices(
             "INVEST_PIPELINE_WORKBUDDY_BRIDGE_ROOT",
             "workbuddy_bridge_root",
         ),
     )
     workbuddy_source_dir: Path = Field(
-        default=Path("/shared/选股报告"),
+        default=Path("/shared/workbuddy/candidate/results"),
         validation_alias=AliasChoices(
             "INVEST_PIPELINE_WORKBUDDY_SOURCE_DIR",
             "workbuddy_source_dir",
@@ -58,7 +58,7 @@ class Settings(BaseSettings):
     @model_validator(mode="after")
     def derive_workbuddy_source_dir(self) -> Settings:
         if "workbuddy_source_dir" not in self.model_fields_set:
-            self.workbuddy_source_dir = self.workbuddy_bridge_root / "选股报告"
+            self.workbuddy_source_dir = self.workbuddy_bridge_root / "candidate" / "results"
         return self
 
 

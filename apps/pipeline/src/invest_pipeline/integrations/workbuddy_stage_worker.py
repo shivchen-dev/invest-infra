@@ -43,7 +43,7 @@ class StagePackageWorker:
             raise ValueError(f"unsupported stage: {stage}")
         self.stage = stage
         self.bridge_root = Path(bridge_root).resolve()
-        self.root = self.bridge_root / "workbuddy" / stage
+        self.root = self.bridge_root / stage
         self.inbox = self.root / "inbox"
         self.processing = self.root / "processing"
         self.results = self.root / "results"

@@ -37,7 +37,7 @@ def _write_package(
 
 
 def _stage_root(bridge_root: Path) -> Path:
-    return bridge_root / "workbuddy" / "research"
+    return bridge_root / "research"
 
 
 def test_parser_exposes_required_archive_and_recovery_help() -> None:

@@ -49,8 +49,8 @@ services:
     environment:
       DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-invest}:${POSTGRES_PASSWORD:-invest_dev_password}@postgres:5432/${POSTGRES_DB:-invest}
       DAGSTER_HOME: /workspace/.dagster
-      INVEST_PIPELINE_WORKBUDDY_BRIDGE_ROOT: /shared
-      INVEST_PIPELINE_WORKBUDDY_SOURCE_DIR: /shared/选股报告
+      INVEST_PIPELINE_WORKBUDDY_BRIDGE_ROOT: /shared/workbuddy
+      INVEST_PIPELINE_WORKBUDDY_SOURCE_DIR: /shared/workbuddy/candidate/results
       INVEST_PIPELINE_WORKBUDDY_AUTO_SCHEDULE_ENABLED: "false"
     ports:
       - "3000:3000"

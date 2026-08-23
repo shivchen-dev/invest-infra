@@ -35,8 +35,8 @@ def test_auto_schedule_switch_requires_true(monkeypatch: pytest.MonkeyPatch, val
 
 
 def test_candidate_parser_only_accepts_candidates_glob(tmp_path: Path) -> None:
-    source = tmp_path / "选股报告"
-    source.mkdir()
+    source = tmp_path / "candidate" / "results"
+    source.mkdir(parents=True)
     (source / "result_sector.json").write_text("{}", encoding="utf-8")
     assert wb._has_pending_candidates(source) is False
     (source / "candidates_stock.json").write_text("{}", encoding="utf-8")
@@ -44,7 +44,7 @@ def test_candidate_parser_only_accepts_candidates_glob(tmp_path: Path) -> None:
 
 
 def test_schedule_skips_without_candidates(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    source = tmp_path / "选股报告"
+    source = tmp_path / "candidate" / "results"
     settings = Settings(workbuddy_bridge_root=tmp_path, workbuddy_source_dir=source)
     monkeypatch.setattr(wb, "get_settings", lambda: settings)
 
@@ -57,8 +57,8 @@ def test_schedule_skips_without_candidates(monkeypatch: pytest.MonkeyPatch, tmp_
 def test_schedule_requests_run_with_candidates(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    source = tmp_path / "选股报告"
-    source.mkdir()
+    source = tmp_path / "candidate" / "results"
+    source.mkdir(parents=True)
     (source / "candidates_stock.json").write_text(json.dumps({}), encoding="utf-8")
     settings = Settings(workbuddy_bridge_root=tmp_path, workbuddy_source_dir=source)
     monkeypatch.setattr(wb, "get_settings", lambda: settings)
@@ -76,9 +76,9 @@ def test_schedule_skips_when_only_stage_ready_pending(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     bridge_root = tmp_path
-    source = tmp_path / "选股报告"
-    source.mkdir()
-    results = bridge_root / "workbuddy" / "research" / "results"
+    source = tmp_path / "candidate" / "results"
+    source.mkdir(parents=True)
+    results = bridge_root / "research" / "results"
     results.mkdir(parents=True)
     (results / "case-9.ready").mkdir()
     settings = Settings(workbuddy_bridge_root=bridge_root, workbuddy_source_dir=source)
@@ -96,7 +96,7 @@ def test_schedule_still_skips_when_stage_ready_present_alongside_missing_candida
 ) -> None:
     bridge_root = tmp_path
     source = tmp_path / "missing-source-dir"
-    results = bridge_root / "workbuddy" / "observation" / "results"
+    results = bridge_root / "observation" / "results"
     results.mkdir(parents=True)
     (results / "obs-1.ready").mkdir()
     settings = Settings(workbuddy_bridge_root=bridge_root, workbuddy_source_dir=source)

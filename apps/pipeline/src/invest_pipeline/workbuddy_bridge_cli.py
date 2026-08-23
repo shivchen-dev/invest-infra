@@ -27,7 +27,7 @@ def build_parser() -> argparse.ArgumentParser:
 def resolve_paths(settings: Settings, args: argparse.Namespace) -> tuple[Path, Path]:
     bridge_root = (args.bridge_root or settings.workbuddy_bridge_root).resolve()
     source_dir = (
-        args.source_dir or settings.workbuddy_source_dir or bridge_root / "选股报告"
+        args.source_dir or settings.workbuddy_source_dir or bridge_root / "candidate" / "results"
     ).resolve()
     return bridge_root, source_dir
 
