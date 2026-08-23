@@ -35,23 +35,39 @@ def resolve_paths(settings: Settings, args: argparse.Namespace) -> tuple[Path, P
 def _build_instrument_resolver(uow: Any) -> Callable[[str], str | None]:
     cache: dict[str, str | None] = {}
     repository = getattr(uow, "instruments", None)
+    suffix_to_exchange = {"SH": "SSE", "SZ": "SZSE"}
 
     def resolve(symbol: str) -> str | None:
         normalized = symbol.strip()
         if normalized in cache:
             return cache[normalized]
-        if repository is None or len(normalized) != 6 or not normalized.isdigit():
+        if repository is None:
             cache[normalized] = None
             return None
 
-        prefix = normalized[0]
+        bare = normalized
+        suffix = None
+        if "." in normalized:
+            head, _, tail = normalized.partition(".")
+            if len(tail) == 2 and tail.isalpha():
+                bare = head
+                suffix = tail.upper()
+
+        if len(bare) != 6 or not bare.isdigit():
+            cache[normalized] = None
+            return None
+        prefix = bare[0]
         exchange = "SSE" if prefix in {"5", "6"} else "SZSE" if prefix in {"1", "2"} else None
         if exchange is None:
             cache[normalized] = None
             return None
+        if suffix is not None and suffix_to_exchange.get(suffix) != exchange:
+            cache[normalized] = None
+            return None
+
         instrument = repository.get_by_business_key(
             exchange=exchange,
-            symbol=normalized,
+            symbol=bare,
         )
         resolved = (
             instrument.symbol

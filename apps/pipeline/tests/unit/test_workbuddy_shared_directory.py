@@ -259,9 +259,10 @@ def test_gateway_idempotent_rerun_reports_both_layers_idempotent(tmp_path: Path)
     assert first[0].archive_idempotent is False
     assert first[0].import_idempotent is False
 
-    # Re-stage the same payload under a different filename so the workbuddy
-    # archive destination does not collide. archive_candidates still sees the
-    # existing run_dir and the bridge must reuse the existing run/artifact.
+    # Re-stage the same payload under a different filename. archive_candidates
+    # still sees the existing run_dir by workflow_run_id+trade_date and the
+    # bridge must reuse the existing run/artifact. The new filename keeps the
+    # lifecycle destination distinct so _finish must perform a real move.
     (source / "candidates_idem_second.json").write_text(json.dumps(payload), encoding="utf-8")
     second = gateway.process_once(uow=uow)
     assert len(second) == 1
@@ -275,6 +276,100 @@ def test_gateway_idempotent_rerun_reports_both_layers_idempotent(tmp_path: Path)
     assert rerun.needs_symbol_resolution_count == 0
     assert (tmp_path / "candidate" / "archive" / "candidates_idem_first.json").is_file()
     assert (tmp_path / "candidate" / "archive" / "candidates_idem_second.json").is_file()
+
+
+def test_gateway_idempotent_finish_when_same_flat_file_is_resubmitted(
+    tmp_path: Path,
+) -> None:
+    """Re-submitting byte-identical flat candidate file under the same name.
+
+    archive_candidates and import_archived_candidate_run both report
+    idempotent, so the lifecycle must finish cleanly: the existing archive
+    destination stays untouched and the duplicate is discarded instead of
+    raising ``FileExistsError`` or landing in ``failed/``.
+    """
+    source = tmp_path / "candidate" / "results"
+    source.mkdir(parents=True)
+    payload = _payload("idem-flat-001")
+    file_name = "candidates_idem_flat.json"
+    (source / file_name).write_text(json.dumps(payload), encoding="utf-8")
+
+    gateway = SharedDirectoryWorkBuddyGateway(tmp_path)
+    uow = _Uow()
+    first = gateway.process_once(uow=uow)
+    assert len(first) == 1
+    assert first[0].error is None
+    assert first[0].archive_idempotent is False
+    assert first[0].import_idempotent is False
+
+    archive_destination = tmp_path / "candidate" / "archive" / file_name
+    assert archive_destination.is_file()
+    first_bytes = archive_destination.read_bytes()
+
+    # Re-stage the same filename with the same payload bytes — must finish
+    # idempotently without raising or routing to failed/.
+    (source / file_name).write_text(json.dumps(payload), encoding="utf-8")
+    second = gateway.process_once(uow=uow)
+    assert len(second) == 1
+    rerun = second[0]
+    assert rerun.error is None
+    assert rerun.archive_idempotent is True
+    assert rerun.import_idempotent is True
+    assert rerun.conflict is False
+    assert rerun.accepted_count == 1
+    assert rerun.rejected_count == 0
+
+    # Existing destination must remain untouched (no overwrite) and no
+    # failed/ or conflict/ copy may appear.
+    assert archive_destination.is_file()
+    assert archive_destination.read_bytes() == first_bytes
+    assert not (tmp_path / "candidate" / "failed" / file_name).exists()
+    assert not (tmp_path / "candidate" / "conflict" / file_name).exists()
+    assert not (tmp_path / "candidate" / "processing" / file_name).exists()
+
+
+def test_gateway_different_content_collision_routes_claimed_to_failed(
+    tmp_path: Path,
+) -> None:
+    """A destination that already exists with different bytes forces a failure.
+
+    ``_finish`` must keep raising ``FileExistsError`` so the existing failure
+    routing (``failed/``) preserves the claimed package instead of silently
+    overwriting or silently discarding the new submission.
+    """
+    source = tmp_path / "candidate" / "results"
+    source.mkdir(parents=True)
+    file_name = "candidates_collision.json"
+
+    # Pre-populate the archive destination with bytes that do NOT match the
+    # payload that will be submitted. This simulates a stale archive slot.
+    archive_destination = tmp_path / "candidate" / "archive" / file_name
+    archive_destination.parent.mkdir(parents=True, exist_ok=True)
+    stale_bytes = b'{"legacy": "different bytes"}'
+    archive_destination.write_bytes(stale_bytes)
+
+    payload = _payload("collision-001")
+    (source / file_name).write_text(json.dumps(payload), encoding="utf-8")
+
+    outcomes = SharedDirectoryWorkBuddyGateway(tmp_path).process_once(uow=_Uow())
+
+    assert len(outcomes) == 1
+    outcome = outcomes[0]
+    assert outcome.error is not None
+    assert outcome.result is None
+    assert outcome.conflict is None
+    assert outcome.archive_idempotent is None
+    assert outcome.import_idempotent is None
+
+    # The pre-existing archive target must remain byte-for-byte intact and the
+    # claimed duplicate must be routed to failed/ for operator inspection.
+    assert archive_destination.is_file()
+    assert archive_destination.read_bytes() == stale_bytes
+    failed_destination = tmp_path / "candidate" / "failed" / file_name
+    assert failed_destination.is_file()
+    assert failed_destination.read_bytes() == json.dumps(payload).encode("utf-8")
+    assert not (tmp_path / "candidate" / "conflict" / file_name).exists()
+    assert not (tmp_path / "candidate" / "processing" / file_name).exists()
 
 
 def test_gateway_other_exceptions_remain_under_failed_bucket(tmp_path: Path) -> None:

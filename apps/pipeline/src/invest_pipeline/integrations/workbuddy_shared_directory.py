@@ -6,10 +6,12 @@ in ``workbuddy_candidates`` and persistence stays behind the Bridge/UoW.
 
 from __future__ import annotations
 
+import filecmp
 import json
 import logging
 import os
 import re
+import shutil
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -252,6 +254,17 @@ class SharedDirectoryWorkBuddyGateway:
     def _finish(self, claimed: Path, target: Path) -> None:
         target.parent.mkdir(parents=True, exist_ok=True)
         if target.exists():
+            if _payload_content_matches(claimed, target):
+                _discard_claimed(claimed)
+                _LOGGER.info(
+                    "workbuddy_event",
+                    extra={
+                        "event": "package_finished",
+                        "package": claimed.name,
+                        "status": "duplicate_discarded",
+                    },
+                )
+                return
             raise FileExistsError(f"destination package already exists: {target}")
         os.replace(claimed, target)
 
@@ -339,6 +352,49 @@ def _read_json(path: Path) -> dict[str, Any]:
     if not isinstance(value, dict):
         raise ValueError(f"{path.name} must contain a JSON object")
     return value
+
+
+def _payload_content_matches(claimed: Path, target: Path) -> bool:
+    """Return True iff ``claimed`` and ``target`` carry identical payload bytes.
+
+    Files compare by full byte content. Directories compare by matching file
+    set and per-file byte content so a partial re-submission cannot masquerade
+    as identical. Both paths must exist and resolve to the same kind.
+    """
+    try:
+        if claimed.is_file() and target.is_file():
+            return filecmp.cmp(claimed, target, shallow=False)
+        if claimed.is_dir() and target.is_dir():
+            return _directories_share_content(claimed, target)
+    except OSError:
+        return False
+    return False
+
+
+def _directories_share_content(a: Path, b: Path) -> bool:
+    a_files = sorted(
+        (path for path in a.rglob("*") if path.is_file()),
+        key=lambda p: p.relative_to(a).as_posix(),
+    )
+    b_files = sorted(
+        (path for path in b.rglob("*") if path.is_file()),
+        key=lambda p: p.relative_to(b).as_posix(),
+    )
+    if [path.relative_to(a).as_posix() for path in a_files] != [
+        path.relative_to(b).as_posix() for path in b_files
+    ]:
+        return False
+    return all(
+        filecmp.cmp(left, right, shallow=False)
+        for left, right in zip(a_files, b_files, strict=True)
+    )
+
+
+def _discard_claimed(claimed: Path) -> None:
+    if claimed.is_dir() and not claimed.is_symlink():
+        shutil.rmtree(claimed)
+    else:
+        claimed.unlink()
 
 
 __all__ = [

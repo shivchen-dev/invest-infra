@@ -239,3 +239,39 @@ def test_instrument_resolver_rejects_inactive_and_missing_repository() -> None:
         cli._build_instrument_resolver(SimpleNamespace(instruments=_Repository()))("600000") is None
     )
     assert cli._build_instrument_resolver(SimpleNamespace())("600000") is None
+
+
+def test_instrument_resolver_normalizes_exchange_qualified_symbols() -> None:
+    calls: list[tuple[str, str]] = []
+
+    class _Repository:
+        def get_by_business_key(self, *, exchange, symbol):
+            calls.append((exchange, symbol))
+            return SimpleNamespace(symbol=symbol, is_active=True)
+
+    resolver = cli._build_instrument_resolver(SimpleNamespace(instruments=_Repository()))
+
+    assert resolver("510300.SH") == "510300"
+    assert resolver("600000.SH") == "600000"
+    assert resolver("100001.SZ") == "100001"
+    assert resolver("200001.SZ") == "200001"
+    # Lowercase suffix normalizes to the supported form
+    assert resolver("510300.sh") == "510300"
+    # Mismatched suffixes are rejected without invoking the repository
+    assert resolver("510300.SZ") is None
+    assert resolver("100001.SH") is None
+    # Unsupported suffix leaves the qualified symbol unresolvable
+    assert resolver("600000.XY") is None
+    assert calls == [
+        ("SSE", "510300"),
+        ("SSE", "600000"),
+        ("SZSE", "100001"),
+        ("SZSE", "200001"),
+        ("SSE", "510300"),
+    ]
+
+
+def test_instrument_resolver_rejects_qualified_symbol_when_repository_missing() -> None:
+    resolver = cli._build_instrument_resolver(SimpleNamespace())
+
+    assert resolver("510300.SH") is None
