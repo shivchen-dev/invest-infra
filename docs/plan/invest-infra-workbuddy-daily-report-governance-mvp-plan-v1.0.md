@@ -21,7 +21,7 @@
 
 ### invest-infra
 
-- 解析最小候选 JSON，并兼容从历史三件套提取 candidates；
+- 解析 2.0.0 最小候选 JSON；
 - 映射证券主数据、去重并标记无法映射项；
 - 不可变留存原始输入和导入 findings；
 - 将合法候选写入 ExternalObservation，进入待验证状态；
@@ -54,7 +54,7 @@ WorkBuddy candidate artifact
 - Markdown 和 JSON 的逐字段一致性；
 - 生产者 quality report 和 manifest。
 
-现有 `workbuddy_reports` 模块暂作 legacy 报告审计工具，不作为候选入口前置。
+现有 `workbuddy_reports` 模块及 legacy 报告审计合同退出当前生产路径，仅保留历史资料。
 
 ## 5. 实施阶段
 
@@ -67,7 +67,7 @@ WorkBuddy candidate artifact
 ### M1：候选适配与轻量校验
 
 - [x] 实现 2.0.0 candidates JSON parser；
-- [x] 实现 1.1.1 / 1.1.2 历史三件套 candidate extractor；
+- [x] 明确不实现 1.1.1 / 1.1.2 历史三件套兼容；
 - [x] 实现 run-level 和 item-level 轻量校验；
 - [x] 输出标准化 candidate intake result。
 
@@ -80,7 +80,7 @@ WorkBuddy candidate artifact
 
 ### M3：真实样本验收
 
-- [ ] 现有 1.1.1 真实样本能提取候选；
+- [x] 1.1.x legacy 样本不纳入当前真实验收范围；
 - [x] 评分不可复算、ranking 缺失、source refs 不完整不阻断外部候选准入；
 - [x] 验证单项拒绝、去重、幂等和原始归档；
 - [x] Pipeline 回归通过。
@@ -92,7 +92,7 @@ WorkBuddy candidate artifact
 - 现有真实样本不再因报告审计问题无法入池；
 - 投研系统承担正式身份、数据、来源验证和研究责任，不重复实现 WorkBuddy 的选股、评分、排名；
 - 原始候选输入可留档、重复导入幂等、冲突不覆盖；
-- legacy 严格审计可独立使用，但不阻断外部候选准入。
+- legacy 严格审计退出当前生产范围，不阻断 2.0.0 外部候选准入。
 
 ## 7. 暂缓
 

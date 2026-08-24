@@ -1,12 +1,12 @@
 # WorkBuddy 日报治理 MVP：M0 合同决策
 
-> 状态：Legacy report-audit contract
+> 状态：RETIRED（历史 report-audit contract，仅保留归档参考）
 > 日期：2026-08-13
 > 对应计划：`docs/plan/invest-infra-workbuddy-daily-report-governance-mvp-plan-v1.0.md`
 > 生产规则：`WORKBUDDY-REPORT-RULES.md` 1.1.2
 > 兼容规则版本：`1.1.1`、`1.1.2`（显式矩阵）
 
-> **重新定位（2026-08-14）**：本合同只适用于 legacy 三件套报告的可选严格审计，不再作为 WorkBuddy 候选入池门槛。新候选入口合同见 `WORKBUDDY-CANDIDATE-INTAKE-M0-CONTRACT.md`。
+> **退出说明（2026-08-24）**：本合同及 1.1.x 三件套不再属于当前生产路径、候选入口或 Gate 验收范围。新候选入口唯一依据为 `WORKBUDDY-CANDIDATE-INTAKE-M0-CONTRACT.md` 的 2.0.0 合同；本文仅保留历史决策和迁移参考。
 
 ## 1. M0 边界
 

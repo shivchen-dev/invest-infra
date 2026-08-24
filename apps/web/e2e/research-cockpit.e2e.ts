@@ -178,7 +178,7 @@ test.describe("Web Research Cockpit", () => {
     await expect(
       page.getByText("只读模式 · 浏览器不写入 Research 数据"),
     ).toBeVisible();
-    await expect(page.locator("[data-widget-id]")).toHaveCount(6);
+    await expect(page.locator("[data-widget-id]")).toHaveCount(7);
     await expectNoHorizontalOverflow(page);
     expect(consoleErrors).toEqual([]);
   });

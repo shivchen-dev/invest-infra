@@ -960,6 +960,32 @@ describe("ResearchCasePage", () => {
       expect(discovery.textContent ?? "").not.toMatch(/\/mnt\/|C:\\|\\\\host/);
     });
 
+    it("does not throw when the workspace omits external_discovery", async () => {
+      const workspace = makeWorkspace();
+      delete (workspace as { external_discovery?: unknown }).external_discovery;
+      mockUseWorkspace.mockReturnValue(
+        successQuery(workspace as ResearchCaseWorkspaceResponse),
+      );
+
+      expect(() => renderCasePage("/research/case-discovery-omitted")).not.toThrow();
+
+      // The page heading still renders.
+      expect(
+        screen.getByRole("heading", {
+          name: /Research Case · case-discovery-omitted/,
+        }),
+      ).toBeInTheDocument();
+
+      // External Discovery gracefully falls back to its explicit empty
+      // state instead of crashing on a missing list.
+      const widgetGrid = screen.getByLabelText("Research Case widgets");
+      const discovery = widgetGrid.querySelector(
+        '[data-widget-id="external-discovery"]',
+      ) as HTMLElement;
+      expect(discovery).toHaveTextContent("暂无 External Discovery");
+      expect(discovery.querySelector(".cockpitExternalDiscoveryList")).toBeNull();
+    });
+
     it("renders an understandable unavailable state when artifact is null", async () => {
       mockUseWorkspace.mockReturnValue(
         successQuery(

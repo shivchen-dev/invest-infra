@@ -453,7 +453,7 @@ function ExternalDiscoveryWidget({
   const items = workspace.data?.external_discovery ?? [];
   const meta = buildWorkspaceMeta(section, workspace, {
     badgeLabel:
-      workspace.data && workspace.data.external_discovery.length === 0
+      workspace.data && items.length === 0
         ? "Empty"
         : undefined,
   });
@@ -461,7 +461,9 @@ function ExternalDiscoveryWidget({
     <div id="case-external-discovery">
       <WidgetFrame meta={meta}>
         <WorkspaceLoadingGate workspace={workspace}>
-          {(data) => <ExternalDiscoveryBody items={data.external_discovery} />}
+          {(data) => (
+            <ExternalDiscoveryBody items={data.external_discovery ?? []} />
+          )}
         </WorkspaceLoadingGate>
       </WidgetFrame>
     </div>

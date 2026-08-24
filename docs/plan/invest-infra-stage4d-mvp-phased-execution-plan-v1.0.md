@@ -17,7 +17,7 @@
 
 当前只推进以下事项：
 
-1. 使用真实 WorkBuddy 2.0.0 与 legacy 1.1.x 样本完成可复现导入演示；
+1. 使用真实 WorkBuddy 2.0.0 Candidate JSON 完成可复现导入演示；
 2. 核对共享目录路径、权限、原子 rename、失败包和凭据脱敏；
 3. 核对本地分支与远端 `origin/main`，补齐验收证据；
 4. Gate 1 通过前不启动 Inbox API、不引入日志平台、不新增消息队列或持久化状态表。
@@ -46,7 +46,7 @@
 ### 2.1 MVP 包含
 
 ```text
-WorkBuddy candidates JSON / legacy 三件套
+WorkBuddy 2.0.0 candidates JSON
 → Candidate Intake
 → 不可变归档
 → ExternalWorkflowRun / Artifact / Observation
@@ -109,7 +109,7 @@ WorkBuddy candidates JSON / legacy 三件套
 
 #### 任务 0.2：冻结 Candidate Intake 交接合同
 
-冻结 Candidate Schema 2.0.0、legacy 1.1.x 适配、Intake Manifest、run-level/item-level 准入矩阵及 Stage 4D 数据库投影输入。
+冻结 Candidate Schema 2.0.0、Intake Manifest、run-level/item-level 准入矩阵及 Stage 4D 数据库投影输入。legacy 1.1.x 三件套不再属于当前入口。
 
 验收标准：
 
@@ -121,11 +121,11 @@ WorkBuddy candidates JSON / legacy 三件套
 
 #### 任务 0.3：完成真实样本和共享目录验证
 
-使用真实 WorkBuddy 2.0.0 样本和至少一份 legacy 1.1.x 三件套验证字段、编码、路径和原子写入能力。
+使用真实 WorkBuddy 2.0.0 Candidate JSON 验证字段、编码、路径和原子写入能力。
 
 验收标准：
 
-- 真实 2.0.0 与 legacy 样本均有可复现验收记录；
+- 真实 2.0.0 样本有可复现验收记录；
 - Windows 容器与 Linux 宿主路径映射明确；
 - 写权限、最大文件、原子 rename、失败结果结构和凭据脱敏已确认。
 
@@ -176,14 +176,14 @@ WorkBuddy candidates JSON / legacy 三件套
 
 #### 任务 1.3：接入 WorkBuddy Shared Directory Adapter
 
-实现 2.0.0/legacy 输入适配，并将 Candidate Intake 归档与标准化结果投影为 Stage 4D ExternalWorkflow/Artifact/Observation 对象。
+实现 2.0.0 输入适配，并将 Candidate Intake 归档与标准化结果投影为 Stage 4D ExternalWorkflow/Artifact/Observation 对象。
 
 验收标准：
 
 - 合法候选进入 pending_validation；
 - 坏项隔离且同批合法项继续；
 - 无法映射的 symbol 进入 needs_symbol_resolution；
-- legacy 报告审计失败不阻断已提取合法候选。
+- legacy 报告审计不属于当前候选入口范围。
 
 验证：fake WorkBuddy E2E 与一次真实 WorkBuddy 导入演示通过。
 
@@ -191,11 +191,19 @@ WorkBuddy candidates JSON / legacy 三件套
 
 ### Gate 1：外部候选准入闭环
 
-- [ ] 正常、partial、failed、坏批次和坏项均可诊断；
-- [ ] 重复导入幂等；
-- [ ] 原始文件、Artifact 和数据库对象可用 run ID/hash 串联；
-- [ ] 共享目录短暂不可用后可恢复；
-- [ ] 阶段 1 focused tests 和现有相关测试通过。
+- [x] 正常、partial、failed、坏批次和坏项均可诊断；
+- [x] 重复导入幂等；
+- [x] 原始文件、Artifact 和数据库对象可用 run ID/hash 串联；
+- [x] 共享目录短暂不可用后可恢复；
+- [x] 阶段 1 focused tests 和现有相关测试通过。
+
+2026-08-24 技术验收结果：
+
+1. 真实共享目录已完成坏批次、坏条目、待解析标的、重复导入、冲突包和 processing 恢复演练；
+2. 自动化矩阵 `31 passed`，Pipeline 全量 `2426 passed, 1 skipped`，Ruff 通过；
+3. 证据记录见 `docs/validation/stage4d-gate1-20260824.md`，Gate 1 技术条件通过，可进入阶段 2 的只读 API/Web 工作台。
+
+legacy 1.1.x 不在当前入口、测试队列或后续 Web 工作台范围内。
 
 ## 6. 阶段 2：只读工作台 MVP
 

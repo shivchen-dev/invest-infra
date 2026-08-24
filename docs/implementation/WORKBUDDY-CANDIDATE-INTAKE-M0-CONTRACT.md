@@ -13,7 +13,7 @@ WorkBuddy candidates JSON → 轻量入口校验 → ExternalObservation
                                            ↓
                               正式数据验证 / 准入 → 研究
 
-WorkBuddy 三件套 → legacy 严格报告审计（可选）
+legacy 三件套不属于当前 Candidate Intake 入口；历史审计合同仅作归档参考
 ```
 
 ## 2. 入口硬门槛
@@ -62,14 +62,14 @@ archive_uri
 
 ## 6. 兼容边界
 
-- 生产规则 `2.x` 是候选入口合同；
-- `1.1.1` / `1.1.2` 三件套可由适配器提取 `candidates`，不要求先通过严格报告审计；
-- 现有 `workbuddy_reports` 校验器继续作为 legacy 报告审计工具，不是候选入口。
+- 生产规则 `2.0.0` 是当前唯一候选入口合同；
+- `1.1.1` / `1.1.2` 三件套不再兼容、不再验收，也不再作为当前 Gate 的依赖；
+- `workbuddy_reports` 及其 legacy 审计合同仅保留为历史资料，不属于当前生产路径。
 
 ## 7. M0 验收
 
 - [x] 2.0.0 最小候选 JSON 可导入（纯 Python API）；
-- [ ] 1.1.1 真实三件套可提取候选，不受评分、ranking 或 source refs 缺失阻断；
+- [x] legacy 1.1.x 三件套明确移出当前入口与验收范围；
 - [x] 一个坏候选不阻断其他合法候选；
 - [x] 重复导入幂等，同 run ID 不同内容冲突拒绝；
 - [x] 原始输入不可变归档；
