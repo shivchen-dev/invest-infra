@@ -5,7 +5,11 @@ from typing import Protocol
 from uuid import UUID
 
 from invest_domain.instruments import InstrumentId
-from invest_domain.integration import ExternalEvidenceItem, observation_to_evidence_item
+from invest_domain.integration import (
+    AdmissionStatus,
+    ExternalEvidenceItem,
+    observation_to_evidence_item,
+)
 from invest_domain.research import ResearchCase
 
 
@@ -48,6 +52,10 @@ class ResearchExternalEvidenceService:
     evidence_writer: _EvidenceWriter
 
     def _build_item(self, observation):
+        if observation.admission_status is not AdmissionStatus.ADMITTED:
+            raise ExternalEvidenceLinkError(
+                "External Observation must be admitted before linking to a Research Case"
+            )
         artifact = None
         if observation.artifact_id is not None:
             artifact = self.artifact_reader.get_by_id(observation.artifact_id)
@@ -58,6 +66,12 @@ class ResearchExternalEvidenceService:
         except ValueError as exc:
             raise ExternalEvidenceLinkError(str(exc)) from exc
 
+    def _add_evidence(self, case_id: UUID, item: ExternalEvidenceItem) -> ExternalEvidenceItem:
+        try:
+            return self.evidence_writer.add(case_id, item)
+        except ValueError as exc:
+            raise ExternalEvidenceLinkError(str(exc)) from exc
+
     def link(self, *, case_id: UUID, observation_id: UUID) -> ExternalEvidenceItem:
         case = self.case_reader.get(case_id)
         if case is None:
@@ -65,13 +79,14 @@ class ResearchExternalEvidenceService:
         observation = self.observation_reader.get_by_id(observation_id)
         if observation is None:
             raise ExternalEvidenceLinkError("External Observation not found")
-        if (
-            observation.instrument_id is not None
-            and observation.instrument_id != case.instrument_id.value
-        ):
+        if observation.instrument_id is None:
+            raise ExternalEvidenceLinkError(
+                "Observation instrument is required to link to a Research Case"
+            )
+        if observation.instrument_id != case.instrument_id.value:
             raise ExternalEvidenceLinkError("Observation instrument does not match Research Case")
         item = self._build_item(observation)
-        return self.evidence_writer.add(case_id, item)
+        return self._add_evidence(case_id, item)
 
     def create_case_and_link(
         self,
@@ -102,5 +117,5 @@ class ResearchExternalEvidenceService:
             horizon=horizon,
         )
         case = self.case_reader.add(case)
-        evidence = self.evidence_writer.add(case.case_id, item)
+        evidence = self._add_evidence(case.case_id, item)
         return ResearchCaseEvidenceResult(case, evidence, True)

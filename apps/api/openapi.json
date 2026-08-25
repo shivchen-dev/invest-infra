@@ -2,73 +2,17 @@
   "components": {
     "schemas": {
       "AdmissionDecisionRequest": {
+        "description": "Public command payload for ``POST .../admission-decisions``.\n\nClient callers only send the :class:`Idempotency-Key` companion.\nVerification facts (identity / freshness / unit / internal cross-check /\nconflict), the rules version and the decision principal are all\nserver-controlled: they are derived from the loaded\n:class:`invest_domain.integration.ExternalObservation` and the\nrepository's recent observations by the application service.",
         "properties": {
-          "conflict_detected": {
-            "default": false,
-            "title": "Conflict Detected",
-            "type": "boolean"
-          },
-          "decided_by": {
-            "default": "api",
-            "maxLength": 128,
-            "minLength": 1,
-            "title": "Decided By",
-            "type": "string"
-          },
-          "freshness_ok": {
-            "title": "Freshness Ok",
-            "type": "boolean"
-          },
           "idempotency_key": {
             "maxLength": 128,
             "minLength": 8,
             "title": "Idempotency Key",
             "type": "string"
-          },
-          "identity_ok": {
-            "title": "Identity Ok",
-            "type": "boolean"
-          },
-          "internal_cross_check_ok": {
-            "anyOf": [
-              {
-                "type": "boolean"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Internal Cross Check Ok"
-          },
-          "reason": {
-            "anyOf": [
-              {
-                "maxLength": 512,
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Reason"
-          },
-          "rules_version": {
-            "default": "observation-admission/1.0",
-            "maxLength": 64,
-            "minLength": 1,
-            "title": "Rules Version",
-            "type": "string"
-          },
-          "unit_ok": {
-            "title": "Unit Ok",
-            "type": "boolean"
           }
         },
         "required": [
-          "idempotency_key",
-          "identity_ok",
-          "freshness_ok",
-          "unit_ok"
+          "idempotency_key"
         ],
         "title": "AdmissionDecisionRequest",
         "type": "object"
@@ -1202,6 +1146,17 @@
             "title": "As Of",
             "type": "string"
           },
+          "candidate_status": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Candidate Status"
+          },
           "instrument_id": {
             "anyOf": [
               {
@@ -1237,6 +1192,18 @@
           "producer": {
             "title": "Producer",
             "type": "string"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "maxLength": 200,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
           },
           "run_id": {
             "format": "uuid",
@@ -2098,8 +2065,125 @@
         "title": "ResearchCaseResponse",
         "type": "object"
       },
+      "ResearchCaseWorkspaceArtifactResponse": {
+        "description": "Safe provenance summary of a bound ``ExternalArtifact``.\n\nThe Stage 4D Task 3.3 workspace surfaces only the explicitly safe\nartifact fields — ``logical_uri``, ``content_hash``,\n``media_type``, ``size_bytes``, ``run_id`` and ``created_at``.\nHost paths and shared-directory paths are never projected onto\nthis response so the front-end cannot display them.",
+        "properties": {
+          "content_hash": {
+            "title": "Content Hash",
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "logical_uri": {
+            "title": "Logical Uri",
+            "type": "string"
+          },
+          "media_type": {
+            "title": "Media Type",
+            "type": "string"
+          },
+          "run_id": {
+            "format": "uuid",
+            "title": "Run Id",
+            "type": "string"
+          },
+          "size_bytes": {
+            "minimum": 0.0,
+            "title": "Size Bytes",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "logical_uri",
+          "content_hash",
+          "media_type",
+          "size_bytes",
+          "run_id",
+          "created_at"
+        ],
+        "title": "ResearchCaseWorkspaceArtifactResponse",
+        "type": "object"
+      },
+      "ResearchCaseWorkspaceDiscoveryResponse": {
+        "description": "One external-evidence item projected onto the workspace page.\n\nThe shape composes the admitted ``ExternalEvidenceItem`` (already\nbound to the case) with the source ``ExternalObservation`` so the\nfront-end can render the WorkBuddy observation, the formal\nadmission decision and the bound artifact as a single traceable\nchain.\n\nField invariants:\n\n- ``evidence_id`` is the canonical\n  ``\"ext-evi:{observation_id}:{hash_prefix}\"`` identifier\n  computed in :class:`invest_domain.integration.ExternalEvidenceItem`.\n- ``producer`` and ``source_uri`` come from the source observation\n  so the WorkBuddy observation is visibly distinct from the\n  formal admission metadata in the UI.\n- ``admission_status`` carries the upstream\n  :class:`invest_domain.integration.AdmissionStatus` string so\n  the UI can render pending / corroborated / admitted / rejected\n  / conflict states.\n- ``admission`` is the verbatim admission decision metadata the\n  pipeline stored at link time (rules version, decided_by,\n  checks, reason); the front-end reads but does not mutate it.\n- ``artifact`` is the safe artifact summary, or ``null`` when\n  the observation has no bound artifact or the bounded lookup\n  misses in storage; the workspace never fabricates artifact\n  data.",
+        "properties": {
+          "admission": {
+            "additionalProperties": true,
+            "title": "Admission",
+            "type": "object"
+          },
+          "admission_status": {
+            "title": "Admission Status",
+            "type": "string"
+          },
+          "artifact": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ResearchCaseWorkspaceArtifactResponse"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "as_of": {
+            "format": "date",
+            "title": "As Of",
+            "type": "string"
+          },
+          "content_hash": {
+            "title": "Content Hash",
+            "type": "string"
+          },
+          "evidence_id": {
+            "title": "Evidence Id",
+            "type": "string"
+          },
+          "observation_id": {
+            "format": "uuid",
+            "title": "Observation Id",
+            "type": "string"
+          },
+          "observed_at": {
+            "format": "date-time",
+            "title": "Observed At",
+            "type": "string"
+          },
+          "producer": {
+            "title": "Producer",
+            "type": "string"
+          },
+          "run_id": {
+            "format": "uuid",
+            "title": "Run Id",
+            "type": "string"
+          },
+          "source_uri": {
+            "title": "Source Uri",
+            "type": "string"
+          }
+        },
+        "required": [
+          "evidence_id",
+          "observation_id",
+          "run_id",
+          "producer",
+          "as_of",
+          "observed_at",
+          "source_uri",
+          "content_hash",
+          "admission_status",
+          "admission",
+          "artifact"
+        ],
+        "title": "ResearchCaseWorkspaceDiscoveryResponse",
+        "type": "object"
+      },
       "ResearchCaseWorkspaceResponse": {
-        "description": "Composite read-only envelope for the Research Case workspace page.\n\nComposes the existing resource shapes so the front-end can render\nthe case, its bound evidence packs, the runs attached to the case\nand the (nullable) result for each run in a single round trip. The\nendpoint is the PR-W05 first increment; only the API/backend\ncontract is shipped here.\n\nField invariants:\n\n- ``case`` always echoes the canonical case detail shape used by\n  ``GET /api/v1/research-cases/{case_id}``; the router enforces\n  the ``case_id`` URL parameter matches the resource.\n- ``evidence_packs`` is the same list shape as\n  ``GET /api/v1/research-cases/{case_id}/evidence`` (already\n  serialised by :class:`EvidencePackResponse`) but is **always\n  present** - it is ``[]`` rather than omitted when the case has\n  no bound pack, so the workspace page can render an explicit\n  empty evidence slot.\n- ``runs`` is the same per-run shape used by\n  ``GET /api/v1/research-runs/{run_id}`` and is always present\n  (the storage repository returns ``[]`` rather than ``None``\n  when the case has no runs).\n- ``results`` is **parallel to** ``runs``: ``results[i]``\n  corresponds to ``runs[i]``; ``results[i] is None`` when the run\n  has not (yet) produced a result. The pair is never reordered\n  server-side so the front-end can rely on positional pairing.\n  The list always carries exactly one entry per run, never an\n  arbitrary subset.\n\nThe endpoint is read-only and never invents data: when a run has\nno published result the workspace exposes a ``null`` slot rather\nthan fabricating one.",
+        "description": "Composite read-only envelope for the Research Case workspace page.\n\nComposes the existing resource shapes so the front-end can render\nthe case, its bound evidence packs, the runs attached to the case\nand the (nullable) result for each run in a single round trip. The\nendpoint is the PR-W05 first increment; only the API/backend\ncontract is shipped here.\n\nField invariants:\n\n- ``case`` always echoes the canonical case detail shape used by\n  ``GET /api/v1/research-cases/{case_id}``; the router enforces\n  the ``case_id`` URL parameter matches the resource.\n- ``evidence_packs`` is the same list shape as\n  ``GET /api/v1/research-cases/{case_id}/evidence`` (already\n  serialised by :class:`EvidencePackResponse`) but is **always\n  present** - it is ``[]`` rather than omitted when the case has\n  no bound pack, so the workspace page can render an explicit\n  empty evidence slot.\n- ``runs`` is the same per-run shape used by\n  ``GET /api/v1/research-runs/{run_id}`` and is always present\n  (the storage repository returns ``[]`` rather than ``None``\n  when the case has no runs).\n- ``results`` is **parallel to** ``runs``: ``results[i]``\n  corresponds to ``runs[i]``; ``results[i] is None`` when the run\n  has not (yet) produced a result. The pair is never reordered\n  server-side so the front-end can rely on positional pairing.\n  The list always carries exactly one entry per run, never an\n  arbitrary subset.\n- ``external_discovery`` is the Stage 4D Task 3.3 addition: a\n  list of :class:`ResearchCaseWorkspaceDiscoveryResponse` items\n  derived from the case-scoped admitted external-evidence rows.\n  It is **always present** (``[]`` rather than omitted when the\n  case has no bound external evidence) so the workspace page can\n  render an explicit empty external-discovery slot. Items whose\n  source observation was deleted in storage are skipped rather\n  than emitted with a dangling observation; missing artifacts are\n  projected as ``null`` so the workspace exposes an explicit\n  ``artifact unavailable`` state rather than fabricating data.\n\nThe endpoint is read-only and never invents data: when a run has\nno published result the workspace exposes a ``null`` slot rather\nthan fabricating one.",
         "properties": {
           "case": {
             "$ref": "#/components/schemas/ResearchCaseResponse"
@@ -2109,6 +2193,13 @@
               "$ref": "#/components/schemas/EvidencePackResponse"
             },
             "title": "Evidence Packs",
+            "type": "array"
+          },
+          "external_discovery": {
+            "items": {
+              "$ref": "#/components/schemas/ResearchCaseWorkspaceDiscoveryResponse"
+            },
+            "title": "External Discovery",
             "type": "array"
           },
           "results": {

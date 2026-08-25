@@ -259,9 +259,21 @@ legacy 1.1.x 不在当前入口、测试队列或后续 Web 工作台范围内�
 
 实现 identity、date/freshness、unit/definition、internal cross-check、conflict detection 和 admission decision。
 
+设计依据：`docs/adr/0015-external-observation-admission.md`。
+
+Gate 3 准入契约冻结如下：
+
+- 客户端/WorkBuddy 只提交 `observation_id`、`Idempotency-Key` 和必要的操作上下文，不提交 `identity_ok`、`freshness_ok`、`unit_ok` 或 `conflict_detected` 等验证结论；
+- 服务端从 `ExternalObservation`、关联 `ExternalArtifact`、标的主数据及同源/内部历史 Observation 读取判定输入，由版本化规则计算验证事实和最终 `AdmissionDecision`；
+- `identity`、`freshness`、`unit/definition` 属于确定性检查；缺少必要数据时不得默认为通过；
+- `internal cross-check` 和 `conflict detection` 必须基于服务端可查询的既有事实，无法自动消解时进入 `corroborated` 或 `conflict`，不得由客户端强行标记 `admitted`；
+- `rules_version`、决定主体、原因、检查明细、来源 Observation/run 和决定时间写入不可变审计元数据；
+- 当前已存在的布尔验证字段仅视为过渡实现，Slice B 必须移除其对公开 Command API 的依赖；生产写入 feature flag 在 Slice B、契约测试和迁移验证完成前保持关闭。
+
 验收标准：
 
 - 浏览器只提交命令，不计算验证结果；
+- 公共 Command API 不接受客户端验证布尔值，OpenAPI 与生成客户端同步反映该约束；
 - corroborated、admitted、rejected 和 conflict 的转换受领域规则约束；
 - 只有 admitted Observation 可生成新的 Evidence Item；
 - 所有决定保留规则版本、主体、原因和来源。

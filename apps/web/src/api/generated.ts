@@ -263,35 +263,20 @@ export type webhooks = Record<string, never>;
 
 export interface components {
   schemas: {
-    /** AdmissionDecisionRequest */
+    /**
+     * AdmissionDecisionRequest
+     * @description Public command payload for ``POST .../admission-decisions``.
+     *
+     * Client callers only send the :class:`Idempotency-Key` companion.
+     * Verification facts (identity / freshness / unit / internal cross-check /
+     * conflict), the rules version and the decision principal are all
+     * server-controlled: they are derived from the loaded
+     * :class:`invest_domain.integration.ExternalObservation` and the
+     * repository's recent observations by the application service.
+     */
     AdmissionDecisionRequest: {
-      /**
-       * Conflict Detected
-       * @default false
-       */
-      conflict_detected?: boolean;
-      /**
-       * Decided By
-       * @default api
-       */
-      decided_by?: string;
-      /** Freshness Ok */
-      freshness_ok: boolean;
       /** Idempotency Key */
       idempotency_key: string;
-      /** Identity Ok */
-      identity_ok: boolean;
-      /** Internal Cross Check Ok */
-      internal_cross_check_ok?: boolean | null;
-      /** Reason */
-      reason?: string | null;
-      /**
-       * Rules Version
-       * @default observation-admission/1.0
-       */
-      rules_version?: string;
-      /** Unit Ok */
-      unit_ok: boolean;
     };
     /** AdmissionDecisionResponse */
     AdmissionDecisionResponse: {
@@ -748,6 +733,8 @@ export interface components {
        * Format: date
        */
       as_of: string;
+      /** Candidate Status */
+      candidate_status?: string | null;
       /** Instrument Id */
       instrument_id?: string | null;
       /** Metadata */
@@ -770,6 +757,8 @@ export interface components {
       };
       /** Producer */
       producer: string;
+      /** Reason */
+      reason?: string | null;
       /**
        * Run Id
        * Format: uuid
@@ -1106,6 +1095,103 @@ export interface components {
       status: string;
     };
     /**
+     * ResearchCaseWorkspaceArtifactResponse
+     * @description Safe provenance summary of a bound ``ExternalArtifact``.
+     *
+     * The Stage 4D Task 3.3 workspace surfaces only the explicitly safe
+     * artifact fields — ``logical_uri``, ``content_hash``,
+     * ``media_type``, ``size_bytes``, ``run_id`` and ``created_at``.
+     * Host paths and shared-directory paths are never projected onto
+     * this response so the front-end cannot display them.
+     */
+    ResearchCaseWorkspaceArtifactResponse: {
+      /** Content Hash */
+      content_hash: string;
+      /**
+       * Created At
+       * Format: date-time
+       */
+      created_at: string;
+      /** Logical Uri */
+      logical_uri: string;
+      /** Media Type */
+      media_type: string;
+      /**
+       * Run Id
+       * Format: uuid
+       */
+      run_id: string;
+      /** Size Bytes */
+      size_bytes: number;
+    };
+    /**
+     * ResearchCaseWorkspaceDiscoveryResponse
+     * @description One external-evidence item projected onto the workspace page.
+     *
+     * The shape composes the admitted ``ExternalEvidenceItem`` (already
+     * bound to the case) with the source ``ExternalObservation`` so the
+     * front-end can render the WorkBuddy observation, the formal
+     * admission decision and the bound artifact as a single traceable
+     * chain.
+     *
+     * Field invariants:
+     *
+     * - ``evidence_id`` is the canonical
+     *   ``"ext-evi:{observation_id}:{hash_prefix}"`` identifier
+     *   computed in :class:`invest_domain.integration.ExternalEvidenceItem`.
+     * - ``producer`` and ``source_uri`` come from the source observation
+     *   so the WorkBuddy observation is visibly distinct from the
+     *   formal admission metadata in the UI.
+     * - ``admission_status`` carries the upstream
+     *   :class:`invest_domain.integration.AdmissionStatus` string so
+     *   the UI can render pending / corroborated / admitted / rejected
+     *   / conflict states.
+     * - ``admission`` is the verbatim admission decision metadata the
+     *   pipeline stored at link time (rules version, decided_by,
+     *   checks, reason); the front-end reads but does not mutate it.
+     * - ``artifact`` is the safe artifact summary, or ``null`` when
+     *   the observation has no bound artifact or the bounded lookup
+     *   misses in storage; the workspace never fabricates artifact
+     *   data.
+     */
+    ResearchCaseWorkspaceDiscoveryResponse: {
+      /** Admission */
+      admission: {
+        [key: string]: unknown;
+      };
+      /** Admission Status */
+      admission_status: string;
+      artifact: components["schemas"]["ResearchCaseWorkspaceArtifactResponse"] | null;
+      /**
+       * As Of
+       * Format: date
+       */
+      as_of: string;
+      /** Content Hash */
+      content_hash: string;
+      /** Evidence Id */
+      evidence_id: string;
+      /**
+       * Observation Id
+       * Format: uuid
+       */
+      observation_id: string;
+      /**
+       * Observed At
+       * Format: date-time
+       */
+      observed_at: string;
+      /** Producer */
+      producer: string;
+      /**
+       * Run Id
+       * Format: uuid
+       */
+      run_id: string;
+      /** Source Uri */
+      source_uri: string;
+    };
+    /**
      * ResearchCaseWorkspaceResponse
      * @description Composite read-only envelope for the Research Case workspace page.
      *
@@ -1136,6 +1222,16 @@ export interface components {
      *   server-side so the front-end can rely on positional pairing.
      *   The list always carries exactly one entry per run, never an
      *   arbitrary subset.
+     * - ``external_discovery`` is the Stage 4D Task 3.3 addition: a
+     *   list of :class:`ResearchCaseWorkspaceDiscoveryResponse` items
+     *   derived from the case-scoped admitted external-evidence rows.
+     *   It is **always present** (``[]`` rather than omitted when the
+     *   case has no bound external evidence) so the workspace page can
+     *   render an explicit empty external-discovery slot. Items whose
+     *   source observation was deleted in storage are skipped rather
+     *   than emitted with a dangling observation; missing artifacts are
+     *   projected as ``null`` so the workspace exposes an explicit
+     *   ``artifact unavailable`` state rather than fabricating data.
      *
      * The endpoint is read-only and never invents data: when a run has
      * no published result the workspace exposes a ``null`` slot rather
@@ -1145,6 +1241,8 @@ export interface components {
       case: components["schemas"]["ResearchCaseResponse"];
       /** Evidence Packs */
       evidence_packs?: components["schemas"]["EvidencePackResponse"][];
+      /** External Discovery */
+      external_discovery?: components["schemas"]["ResearchCaseWorkspaceDiscoveryResponse"][];
       /** Results */
       results?: (components["schemas"]["ResearchResultResponse"] | null)[];
       /** Runs */
@@ -1230,9 +1328,14 @@ export interface components {
      * ResearchCenterCapabilityResponse
      * @description One capability entry on the contract response shape.
      *
-     * Slice 1 pins every capability to a deterministic placeholder so
-     * the response shape is stable and later slices can replace
-     * individual entries without re-shaping the application layer.
+     * The capability section is frozen to a deterministic
+     * vocabulary (``deferred`` / ``unavailable`` /
+     * ``available``) so the response shape is stable and later
+     * slices can replace individual entries without re-shaping
+     * the application layer. Slice 3B promotes ``delivery`` to
+     * ``available`` because the bounded ``delivery`` sub-segment
+     * now renders end-to-end; the other capability entries
+     * remain on ``deferred`` / ``unavailable`` placeholders.
      */
     ResearchCenterCapabilityResponse: {
       /** Reason */
@@ -1241,7 +1344,7 @@ export interface components {
        * State
        * @enum {string}
        */
-      state: "deferred" | "unavailable";
+      state: "deferred" | "unavailable" | "available";
     };
     /**
      * ResearchCenterDataFreshnessResponse
@@ -1283,7 +1386,7 @@ export interface components {
     };
     /**
      * ResearchCenterDeliveryArchiveResponse
-     * @description ``delivery.archive`` sub-segment of the contract response (Slice 3A).
+     * @description ``delivery.archive`` sub-segment of the contract response (Slice 3B).
      *
      * Mirrors
      * :class:`invest_api.application.research_center.ResearchCenterArchiveSummaryView`
@@ -1292,12 +1395,19 @@ export interface components {
      * :meth:`invest_api.application.external_workflows.ExternalWorkflowQueryService.list_artifacts`
      * already produces — the bounded ``artifact_count`` (always
      * ``<= ARCHIVE_ARTIFACT_LIMIT``), the latest run's
-     * :attr:`ExternalWorkflowRun.producer_status` value, and the
+     * :attr:`ExternalWorkflowRun.producer_status` value, the
      * maximum ``created_at.date()`` across the bounded artifact
-     * slice. No artifact URI, payload, metadata, host path, logical
-     * URI, content hash, run identifier or credential is projected
-     * so the central surface remains a thin pointer to the
-     * existing detail page.
+     * slice, the bounded ``freshness_at`` anchor (mirrors
+     * ``latest_as_of``) and the bounded ``source`` ``media_type``
+     * label of the most-recent artifact (e.g.
+     * ``"application/json"``). No artifact URI, payload,
+     * metadata, host path, logical URI, content hash, run
+     * identifier, credential or connection string is projected so the
+     * central surface remains a thin pointer to the existing
+     * detail page. The bounded ``source`` projects only the
+     * storage-layer ``media_type`` value (length-bounded by the
+     * schema) so the public surface cannot echo a logical URI,
+     * host path, content hash, payload blob or connection string.
      *
      * The three-state vocabulary
      * ``available | empty | failed`` mirrors Slice 2A's
@@ -1309,12 +1419,16 @@ export interface components {
     ResearchCenterDeliveryArchiveResponse: {
       /** Artifact Count */
       artifact_count?: number | null;
+      /** Freshness At */
+      freshness_at?: string | null;
       /** Latest As Of */
       latest_as_of?: string | null;
       /** Latest Run Status */
       latest_run_status?: string | null;
       /** Reason */
       reason?: string | null;
+      /** Source */
+      source?: string | null;
       /**
        * State
        * @enum {string}
@@ -1323,7 +1437,7 @@ export interface components {
     };
     /**
      * ResearchCenterDeliveryIntegrationResponse
-     * @description ``delivery.integration`` sub-segment of the contract response (Slice 3A).
+     * @description ``delivery.integration`` sub-segment of the contract response (Slice 3B).
      *
      * Mirrors
      * :class:`invest_api.application.research_center.ResearchCenterIntegrationSummaryView`
@@ -1332,13 +1446,16 @@ export interface components {
      * :meth:`invest_api.application.external_workflows.ExternalWorkflowQueryService.health`
      * already produces — the bounded ``sample_size`` (always
      * ``<= INTEGRATION_HEALTH_RUN_LIMIT``), the ``status``
-     * (``healthy`` / ``degraded``) and the pre-populated
+     * (``healthy`` / ``degraded``), the pre-populated
      * ``producer_status_counts`` / ``intake_status_counts``
-     * dictionaries — plus the latest ``as_of`` date resolved from
-     * the most recent run. No payload blob, source URI, run
-     * identifier, host path, producer or producer identifier is
-     * projected so the central surface remains a thin pointer to
-     * the existing detail page.
+     * dictionaries, the latest ``as_of`` date resolved from the
+     * most recent run, the bounded ``freshness_at`` anchor
+     * (mirrors ``latest_as_of``) and the bounded ``source``
+     * ``producer`` label of the latest run (e.g.
+     * ``"workbuddy"``). No payload blob, source URI, run
+     * identifier, host path, producer identifier, credential or
+     * connection string is projected so the central surface
+     * remains a thin pointer to the existing detail page.
      *
      * The three-state vocabulary
      * ``available | empty | failed`` mirrors Slice 2A's
@@ -1346,8 +1463,13 @@ export interface components {
      * invent a fourth "no external run yet" token. Every field
      * stays ``None`` whenever ``state == "failed"`` so a
      * fabricated zero cannot masquerade as "data unavailable".
+     * The bounded ``source`` projects only the storage-layer
+     * ``producer`` value (length-bounded by the schema) so the
+     * public surface cannot echo a credential or path.
      */
     ResearchCenterDeliveryIntegrationResponse: {
+      /** Freshness At */
+      freshness_at?: string | null;
       /** Intake Status Counts */
       intake_status_counts?: {
         [key: string]: number;
@@ -1362,6 +1484,8 @@ export interface components {
       reason?: string | null;
       /** Sample Size */
       sample_size?: number | null;
+      /** Source */
+      source?: string | null;
       /**
        * State
        * @enum {string}
@@ -1372,7 +1496,7 @@ export interface components {
     };
     /**
      * ResearchCenterDeliveryPipelineResponse
-     * @description ``delivery.pipeline`` sub-segment of the contract response (Slice 3A).
+     * @description ``delivery.pipeline`` sub-segment of the contract response (Slice 3B).
      *
      * Mirrors
      * :class:`invest_api.application.research_center.ResearchCenterPipelineSummaryView`
@@ -1381,27 +1505,37 @@ export interface components {
      * :meth:`invest_api.application.pipeline_runs.PipelineRunQueryService.get_latest_run`
      * already produces — the latest run's ``status`` value, the
      * timezone-aware execution timestamps (``started_at`` and
-     * ``finished_at``) and the business completion date (derived
-     * from ``finished_at``). ``error_summary`` is **never**
-     * projected so a driver-level message can never leak through
-     * the response body.
+     * ``finished_at``), the business completion date (derived
+     * from ``finished_at``), the bounded ``freshness_at`` anchor
+     * (calendar day the run produced terminal output, mirroring
+     * :attr:`business_completion_date`) and the bounded ``source``
+     * label (the run's :attr:`PipelineRun.trigger_type`, e.g.
+     * ``"scheduled"`` / ``"manual"``). ``error_summary`` is
+     * **never** projected so a driver-level message can never leak
+     * through the response body; the bounded ``source`` value is
+     * the non-blank string the domain validator already enforces
+     * so the public surface can never echo a host path or credential or
+     * connection string.
      *
      * The five-state vocabulary
      * ``available | empty | running | partial | failed`` is the
-     * only Slice 3A sub-segment vocabulary that exposes the
-     * in-flight ``running`` and terminal ``partial`` states in
-     * addition to the three-state ``available | empty | failed``
-     * set so the UI can render an in-flight or partially-completed
-     * run without misclassifying it. ``available`` is reserved for
+     * pipeline sub-segment vocabulary that exposes the in-flight
+     * ``running`` and terminal ``partial`` states in addition to
+     * the three-state ``available | empty | failed`` set so the
+     * UI can render an in-flight or partially-completed run
+     * without misclassifying it. ``available`` is reserved for
      * terminal ``succeeded`` runs only — ``failed`` /
      * ``cancelled`` runs never borrow the ``available`` vocabulary;
      * ``running`` covers both ``running`` and ``queued`` runs;
-     * ``partial`` covers both ``partial`` and ``cancelled`` runs;
-     * ``failed`` covers a controlled
+     * ``partial`` covers ``partial``, ``cancelled`` and orphan
+     * terminal-without-success runs so the front-end can render
+     * the explainable-but-uncertain slot; ``failed`` covers a
+     * controlled
      * :class:`invest_api.application.pipeline_runs.PipelineRunQueryError`
-     * boundary **or** a terminal ``failed`` run. ``status`` carries
-     * the canonical :class:`invest_domain.pipeline.PipelineRunStatus`
-     * value; ``reason`` stays ``None`` whenever
+     * boundary **or** a terminal ``failed`` run. ``status``
+     * carries the canonical
+     * :class:`invest_domain.pipeline.PipelineRunStatus` value;
+     * ``reason`` stays ``None`` whenever
      * ``state != "failed"``, and the only legal ``reason`` value
      * (when ``state == "failed"``) is
      * :data:`invest_api.application.research_center.PIPELINE_FAILED_REASON`
@@ -1412,8 +1546,12 @@ export interface components {
       business_completion_date?: string | null;
       /** Finished At */
       finished_at?: string | null;
+      /** Freshness At */
+      freshness_at?: string | null;
       /** Reason */
       reason?: string | null;
+      /** Source */
+      source?: string | null;
       /** Started At */
       started_at?: string | null;
       /**
@@ -1426,7 +1564,7 @@ export interface components {
     };
     /**
      * ResearchCenterDeliveryResearchRunsResponse
-     * @description ``delivery.research_runs`` sub-segment of the contract response (Slice 3A).
+     * @description ``delivery.research_runs`` sub-segment of the contract response (Slice 3B).
      *
      * Mirrors
      * :class:`invest_api.application.research_center.ResearchCenterResearchRunsSummaryView`
@@ -1435,12 +1573,18 @@ export interface components {
      * already produces — the bounded ``run_count`` (always
      * ``<= DASHBOARD_RECENT_RUNS_LIMIT``), the
      * :class:`invest_domain.research.research_run.ResearchRunStatus`
-     * -> ``int`` count dictionary, and the most-recent run's
-     * status / start / finish timestamps. No report body,
-     * evidence bundle, ``error_summary``, ``case_id`` or
-     * ``evidence_pack_id`` is projected so the public surface
+     * -> ``int`` count dictionary, the most-recent run's
+     * status / start / finish timestamps, the bounded
+     * ``freshness_at`` anchor (mirrors ``latest_finished_at``)
+     * and the bounded ``source`` ``runner_key`` label of the
+     * latest run (e.g. ``"llm"``). No report body, evidence
+     * bundle, ``error_summary``, ``case_id``, ``playbook_key``
+     * or ``evidence_pack_id`` is projected so the public surface
      * stays a thin pointer to the existing research-runs detail
-     * page.
+     * page. The bounded ``source`` projects only the
+     * domain-validated ``runner_key`` so the public surface
+     * cannot echo a host path or credential, payload blob or
+     * connection string.
      *
      * The three-state vocabulary
      * ``available | empty | failed`` mirrors Slice 2A's
@@ -1450,6 +1594,8 @@ export interface components {
      * zero cannot masquerade as "data unavailable".
      */
     ResearchCenterDeliveryResearchRunsResponse: {
+      /** Freshness At */
+      freshness_at?: string | null;
       /** Latest Finished At */
       latest_finished_at?: string | null;
       /** Latest Started At */
@@ -1460,6 +1606,8 @@ export interface components {
       reason?: string | null;
       /** Run Count */
       run_count?: number | null;
+      /** Source */
+      source?: string | null;
       /**
        * State
        * @enum {string}

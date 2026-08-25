@@ -37,9 +37,7 @@ def link_external_observation(
     except ExternalEvidenceLinkError as exc:
         detail = str(exc)
         code = (
-            status.HTTP_404_NOT_FOUND
-            if detail.endswith("not found")
-            else status.HTTP_409_CONFLICT
+            status.HTTP_404_NOT_FOUND if detail.endswith("not found") else status.HTTP_409_CONFLICT
         )
         raise HTTPException(status_code=code, detail=detail) from exc
     return ResearchExternalEvidenceResponse.from_domain(item)
@@ -67,9 +65,7 @@ def create_case_from_observation(
     except ExternalEvidenceLinkError as exc:
         detail = str(exc)
         code = (
-            status.HTTP_404_NOT_FOUND
-            if detail.endswith("not found")
-            else status.HTTP_409_CONFLICT
+            status.HTTP_404_NOT_FOUND if detail.endswith("not found") else status.HTTP_409_CONFLICT
         )
         raise HTTPException(status_code=code, detail=detail) from exc
     return ResearchCaseFromObservationResponse(

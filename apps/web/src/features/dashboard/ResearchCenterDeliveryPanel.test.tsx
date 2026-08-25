@@ -207,6 +207,8 @@ function makePipeline(
     started_at: null,
     finished_at: null,
     business_completion_date: null,
+    freshness_at: null,
+    source: null,
     reason: null,
     ...overrides,
   };
@@ -222,6 +224,8 @@ function makeIntegration(
     producer_status_counts: null,
     intake_status_counts: null,
     latest_as_of: null,
+    freshness_at: null,
+    source: null,
     reason: null,
     ...overrides,
   };
@@ -235,6 +239,8 @@ function makeArchive(
     artifact_count: null,
     latest_run_status: null,
     latest_as_of: null,
+    freshness_at: null,
+    source: null,
     reason: null,
     ...overrides,
   };
@@ -250,6 +256,8 @@ function makeResearchRuns(
     latest_status: null,
     latest_started_at: null,
     latest_finished_at: null,
+    freshness_at: null,
+    source: null,
     reason: null,
     ...overrides,
   };
@@ -336,6 +344,8 @@ describe("ResearchCenterDeliveryPanel", () => {
                 started_at: "2026-08-15T01:00:00Z",
                 finished_at: "2026-08-15T01:30:00Z",
                 business_completion_date: "2026-08-15",
+                freshness_at: null,
+                source: null,
                 reason: null,
               },
               integration: {
@@ -345,6 +355,8 @@ describe("ResearchCenterDeliveryPanel", () => {
                 producer_status_counts: { ok: 5 },
                 intake_status_counts: { imported: 5 },
                 latest_as_of: "2026-08-15",
+                freshness_at: null,
+                source: null,
                 reason: null,
               },
               archive: {
@@ -352,6 +364,8 @@ describe("ResearchCenterDeliveryPanel", () => {
                 artifact_count: 12,
                 latest_run_status: "succeeded",
                 latest_as_of: "2026-08-15",
+                freshness_at: null,
+                source: null,
                 reason: null,
               },
               research_runs: {
@@ -361,6 +375,8 @@ describe("ResearchCenterDeliveryPanel", () => {
                 latest_status: "succeeded",
                 latest_started_at: "2026-08-15T00:00:00Z",
                 latest_finished_at: "2026-08-15T00:30:00Z",
+                freshness_at: null,
+                source: null,
                 reason: null,
               },
             }),

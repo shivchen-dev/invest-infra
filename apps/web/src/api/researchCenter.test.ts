@@ -105,6 +105,8 @@ function makeDelivery(
       started_at: null,
       finished_at: null,
       business_completion_date: null,
+      freshness_at: null,
+      source: null,
       reason: null,
     },
     integration: {
@@ -114,6 +116,8 @@ function makeDelivery(
       producer_status_counts: null,
       intake_status_counts: null,
       latest_as_of: null,
+      freshness_at: null,
+      source: null,
       reason: null,
     },
     archive: {
@@ -121,6 +125,8 @@ function makeDelivery(
       artifact_count: null,
       latest_run_status: null,
       latest_as_of: null,
+      freshness_at: null,
+      source: null,
       reason: null,
     },
     research_runs: {
@@ -130,6 +136,8 @@ function makeDelivery(
       latest_status: null,
       latest_started_at: null,
       latest_finished_at: null,
+      freshness_at: null,
+      source: null,
       reason: null,
     },
     ...overrides,

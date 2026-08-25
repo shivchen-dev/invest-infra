@@ -6,7 +6,6 @@ from typing import Annotated
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Header, HTTPException, status
-from invest_domain.integration import AdmissionVerification
 
 from invest_api.application.admission import ObservationAdmissionCommandService
 from invest_api.config import get_settings
@@ -37,16 +36,6 @@ def decide_admission(
     try:
         result = service.decide(
             observation_id,
-            AdmissionVerification(
-                identity_ok=request.identity_ok,
-                freshness_ok=request.freshness_ok,
-                unit_ok=request.unit_ok,
-                internal_cross_check_ok=request.internal_cross_check_ok,
-                conflict_detected=request.conflict_detected,
-                rules_version=request.rules_version,
-                decided_by=request.decided_by,
-                reason=request.reason,
-            ),
             idempotency_key=request.idempotency_key,
         )
     except LookupError as exc:

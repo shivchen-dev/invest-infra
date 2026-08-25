@@ -7,13 +7,7 @@ from invest_api.main import app
 
 
 def _body(key: str = "admission-001"):
-    return {
-        "idempotency_key": key,
-        "identity_ok": True,
-        "freshness_ok": True,
-        "unit_ok": True,
-        "internal_cross_check_ok": True,
-    }
+    return {"idempotency_key": key}
 
 
 def test_admission_command_is_disabled_by_default(client, monkeypatch):
