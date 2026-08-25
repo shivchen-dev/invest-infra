@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from typing import Annotated
+from collections.abc import Mapping
+from typing import Annotated, Any
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -17,6 +18,16 @@ from invest_api.schemas.external_workflows import (
 )
 
 router = APIRouter(prefix="/api/v1/external-workflows", tags=["external-workflows"])
+
+# Bounded observation diagnostics exposed on the read-only endpoint.
+# ``candidate_status`` is a closed enum of values produced by the
+# WorkBuddy / import pipeline; anything else collapses to ``None``.
+_ALLOWED_CANDIDATE_STATUSES: frozenset[str] = frozenset(
+    {"pending_validation", "needs_symbol_resolution"}
+)
+# ``reason`` is a short, safe summary; we cap it well below any plausible
+# diagnostic and reject overlong values rather than silently truncating.
+_REASON_MAX_LEN = 200
 
 
 def _run(run) -> ExternalWorkflowRunResponse:
@@ -46,6 +57,7 @@ def _artifact(artifact) -> ExternalArtifactResponse:
 
 
 def _observation(observation) -> ExternalObservationResponse:
+    candidate_status, reason = _observation_diagnostics(dict(observation.metadata))
     return ExternalObservationResponse(
         observation_id=observation.observation_id,
         run_id=observation.run_id,
@@ -58,8 +70,44 @@ def _observation(observation) -> ExternalObservationResponse:
         symbol=observation.symbol,
         instrument_id=observation.instrument_id,
         admission_status=observation.admission_status.value,
+        candidate_status=candidate_status,
+        reason=reason,
         metadata=dict(observation.metadata),
     )
+
+
+def _observation_diagnostics(
+    metadata: Mapping[str, Any],
+) -> tuple[str | None, str | None]:
+    """Return bounded ``(candidate_status, reason)`` derived from observation metadata.
+
+    Only the closed set of known WorkBuddy candidate statuses is allowed;
+    unknown, missing, or non-string values collapse to ``None`` so the
+    endpoint never leaks raw metadata, payloads, paths, URIs, or
+    exception strings. ``reason`` is bounded by ``_REASON_MAX_LEN``; any
+    overlong or malformed value also collapses to ``None``.
+    """
+
+    raw_status = metadata.get("candidate_status")
+    if (
+        isinstance(raw_status, str)
+        and raw_status in _ALLOWED_CANDIDATE_STATUSES
+    ):
+        candidate_status: str | None = raw_status
+    else:
+        candidate_status = None
+
+    raw_reason = metadata.get("reason")
+    if (
+        isinstance(raw_reason, str)
+        and raw_reason.strip()
+        and len(raw_reason) <= _REASON_MAX_LEN
+    ):
+        reason: str | None = raw_reason
+    else:
+        reason = None
+
+    return candidate_status, reason
 
 
 @router.get("", response_model=ExternalWorkflowRunListResponse)

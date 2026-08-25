@@ -43,6 +43,8 @@ class ExternalObservationResponse(BaseModel):
     symbol: str | None = None
     instrument_id: UUID | None = None
     admission_status: str
+    candidate_status: str | None = None
+    reason: str | None = Field(default=None, max_length=200)
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 

@@ -1,6 +1,7 @@
 import { apiGet, queryKeys } from "./client";
 import type {
   ExternalArtifactResponse,
+  ExternalObservationResponse,
   ExternalWorkflowRunListResponse,
   ExternalWorkflowRunResponse,
 } from "./types";
@@ -21,6 +22,16 @@ export function fetchExternalWorkflowArtifacts(
 ): Promise<ExternalArtifactResponse[]> {
   return apiGet<ExternalArtifactResponse[]>(
     `/api/v1/external-workflows/${encodeURIComponent(runId)}/artifacts`,
+    signal,
+  );
+}
+
+export function fetchExternalWorkflowObservations(
+  runId: string,
+  signal?: AbortSignal,
+): Promise<ExternalObservationResponse[]> {
+  return apiGet<ExternalObservationResponse[]>(
+    `/api/v1/external-workflows/${encodeURIComponent(runId)}/observations`,
     signal,
   );
 }

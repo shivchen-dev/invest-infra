@@ -68,7 +68,17 @@ function RadarTable({ items }: { items: ExternalObservationResponse[] }) {
           {items.map((item) => (
             <tr key={item.observation_id}>
               <td><strong>{item.symbol ?? "待解析"}</strong></td>
-              <td><span className="statusPill statusPillNeutral">{statusLabel(item.admission_status)}</span></td>
+              <td>
+                <div className="statusPill statusPillNeutral">{statusLabel(item.admission_status)}</div>
+                {item.candidate_status && (
+                  <div className={`statusPill ${candidateStatusTone(item.candidate_status)}`}>
+                    {candidateStatusLabel(item.candidate_status)}
+                  </div>
+                )}
+                {item.reason && (
+                  <div className="radarSource radarReason">{item.reason}</div>
+                )}
+              </td>
               <td>{formatDate(item.as_of)}</td>
               <td className="radarSource">{item.producer}</td>
               <td>{formatDateTime(item.observed_at)}</td>
@@ -82,4 +92,16 @@ function RadarTable({ items }: { items: ExternalObservationResponse[] }) {
 
 function statusLabel(status: string): string {
   return { pending: "待验证", corroborated: "已交叉验证", admitted: "已准入", rejected: "已拒绝", conflict: "冲突" }[status] ?? status;
+}
+
+function candidateStatusLabel(status: string): string {
+  return {
+    pending_validation: "候选待校验",
+    needs_symbol_resolution: "需解析代码",
+  }[status] ?? status;
+}
+
+function candidateStatusTone(status: string): string {
+  if (status === "needs_symbol_resolution") return "statusPillWarning";
+  return "statusPillNeutral";
 }

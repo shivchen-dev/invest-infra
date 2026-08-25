@@ -34,7 +34,10 @@ export type CandidatePoolDiffResponse = Omit<
 };
 export type PipelineRunResponse = RequiredDefined<components["schemas"]["PipelineRunResponse"]>;
 export type IntegrationHealthResponse = RequiredDefined<components["schemas"]["IntegrationHealthResponse"]>;
-export type ExternalObservationResponse = RequiredDefined<components["schemas"]["ExternalObservationResponse"]>;
+export type ExternalObservationResponse = RequiredDefined<components["schemas"]["ExternalObservationResponse"]> & {
+  candidate_status: string | null;
+  reason: string | null;
+};
 export type ExternalWorkflowRunResponse = RequiredDefined<components["schemas"]["ExternalWorkflowRunResponse"]>;
 export type ExternalArtifactResponse = RequiredDefined<components["schemas"]["ExternalArtifactResponse"]>;
 export type ExternalWorkflowRunListResponse = Omit<
