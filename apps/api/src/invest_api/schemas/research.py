@@ -2,13 +2,13 @@ from __future__ import annotations
 
 from datetime import date, datetime
 from decimal import Decimal
-from typing import Any, Literal
+from typing import Any, Literal, Self
 from uuid import UUID
 
 from invest_domain.integration import ExternalArtifact, ExternalEvidenceItem, ExternalObservation
 from invest_domain.research import EvidencePack, ResearchCase
 from invest_domain.research.research_run import ResearchResult, ResearchRun
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 class ResearchCaseResponse(BaseModel):
@@ -459,6 +459,71 @@ class ResearchCaseWorkspaceDiscoveryResponse(BaseModel):
         )
 
 
+ResearchCaseWorkspaceTimelineEventType = Literal[
+    "case_created",
+    "evidence_pack_available",
+    "external_observation",
+    "research_run_started",
+    "research_run_finished",
+    "research_result_published",
+]
+"""Closed vocabulary for :class:`ResearchCaseWorkspaceTimelineItem.event_type`.
+
+The timeline is derived strictly from existing
+:class:`ResearchCaseResponse` / :class:`EvidencePackResponse` /
+:class:`ResearchRunResponse` / :class:`ResearchResultResponse` /
+:class:`ResearchCaseWorkspaceDiscoveryResponse` fields; the literal
+exhaustively enumerates the events the derivation may emit so the
+front-end can switch on ``event_type`` without an unknown branch.
+"""
+
+
+class ResearchCaseWorkspaceTimelineItem(BaseModel):
+    """One read-only timeline event projected onto the workspace page.
+
+    The timeline is a bounded, deterministic projection of the
+    workspace's already-composed resource surfaces (case, evidence
+    packs, runs / results, external discovery) so the front-end can
+    render the case lifecycle as a single list without re-fanning-out
+    to the resource-level endpoints. Every field is safe by
+    construction:
+
+    - ``event_type`` is one of the closed
+      :data:`ResearchCaseWorkspaceTimelineEventType` literals; the
+      derivation never invents a new vocabulary.
+    - ``occurred_at`` carries the source timestamp when one exists in
+      the domain (``case.created_at``, ``run.started_at`` /
+      ``run.finished_at``, ``discovery.observed_at``,
+      ``result.created_at``). It is ``None`` for
+      ``evidence_pack_available`` because :class:`EvidencePack`
+      exposes no creation timestamp; the workspace surfaces the
+      explicit ``None`` rather than fabricating one so the
+      front-end can render an ``unknown`` slot rather than a
+      misleading date.
+    - ``source_id`` is the canonical identifier of the row the event
+      describes (``case_id`` / ``pack_id`` / ``evidence_id`` /
+      ``run_id`` / ``result_id``), serialised as a string so the
+      front-end can deep-link without a separate UUID parse.
+    - ``status`` echoes the upstream status enum string (case status,
+      data quality, admission status, run status) so the front-end
+      can colour the timeline without a follow-up lookup. ``None``
+      when the source row has no status to project.
+    - ``label`` is a short, deterministic summary the front-end can
+      render verbatim: producer / source for
+      ``external_observation``, an explicit
+      ``creation timestamp unavailable`` note for
+      ``evidence_pack_available``, and a bounded phrase for the
+      remaining events. Host paths, prompts and raw payloads never
+      appear in the label.
+    """
+
+    event_type: ResearchCaseWorkspaceTimelineEventType
+    occurred_at: datetime | None = None
+    source_id: str
+    status: str | None = None
+    label: str
+
+
 class ResearchCaseWorkspaceResponse(BaseModel):
     """Composite read-only envelope for the Research Case workspace page.
 
@@ -499,10 +564,22 @@ class ResearchCaseWorkspaceResponse(BaseModel):
       than emitted with a dangling observation; missing artifacts are
       projected as ``null`` so the workspace exposes an explicit
       ``artifact unavailable`` state rather than fabricating data.
+    - ``timeline`` is a deterministic, sorted projection of the
+      other fields, derived inside this Pydantic model by
+      :meth:`_derive_timeline` (a ``model_validator(mode="after")``)
+      so the application services, routers and storage layer stay
+      unchanged. Events are sorted ascending by ``occurred_at``,
+      with ``None`` timestamps last; ties break on ``event_type``
+      then ``source_id``. The derivation never fabricates
+      timestamps: ``evidence_pack_available`` events always carry
+      ``occurred_at = None`` because :class:`EvidencePack` exposes
+      no creation timestamp, and the label makes that explicit.
 
     The endpoint is read-only and never invents data: when a run has
     no published result the workspace exposes a ``null`` slot rather
-    than fabricating one.
+    than fabricating one, and the corresponding
+    ``research_result_published`` event is simply absent from the
+    timeline.
     """
 
     case: ResearchCaseResponse
@@ -512,6 +589,107 @@ class ResearchCaseWorkspaceResponse(BaseModel):
     external_discovery: list[ResearchCaseWorkspaceDiscoveryResponse] = Field(
         default_factory=list
     )
+    timeline: list[ResearchCaseWorkspaceTimelineItem] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def _derive_timeline(self) -> Self:
+        """Populate :attr:`timeline` from the composed resource fields.
+
+        The derivation is deterministic and bounded by the existing
+        composition: the router already collects the case, evidence
+        packs, runs / results and external discovery for the
+        resource-level surfaces, and the timeline re-projects those
+        rows onto the closed :data:`ResearchCaseWorkspaceTimelineEventType`
+        vocabulary.
+
+        Sort order: timestamped events ascending by ``occurred_at``,
+        then by ``event_type`` (lexicographic), then by ``source_id``.
+        Events with ``occurred_at is None`` (``evidence_pack_available``
+        today) sort after every timestamped event so the
+        front-end can render them as an ``unknown`` group at the
+        tail of the list. No timestamp is fabricated: the
+        ``evidence_pack_available`` event always carries
+        ``occurred_at = None`` because :class:`EvidencePack`
+        exposes no creation timestamp.
+        """
+
+        items: list[ResearchCaseWorkspaceTimelineItem] = []
+
+        items.append(
+            ResearchCaseWorkspaceTimelineItem(
+                event_type="case_created",
+                occurred_at=self.case.created_at,
+                source_id=str(self.case.case_id),
+                status=self.case.status,
+                label=f"Research case created ({self.case.status})",
+            )
+        )
+
+        for pack in self.evidence_packs:
+            items.append(
+                ResearchCaseWorkspaceTimelineItem(
+                    event_type="evidence_pack_available",
+                    occurred_at=None,
+                    source_id=str(pack.pack_id),
+                    status=pack.data_quality.quality_status,
+                    label="Evidence pack available (creation timestamp unavailable)",
+                )
+            )
+
+        for discovery in self.external_discovery:
+            items.append(
+                ResearchCaseWorkspaceTimelineItem(
+                    event_type="external_observation",
+                    occurred_at=discovery.observed_at,
+                    source_id=discovery.evidence_id,
+                    status=discovery.admission_status,
+                    label=f"{discovery.producer} / {discovery.source_uri}",
+                )
+            )
+
+        for run, result in zip(self.runs, self.results, strict=True):
+            if run.started_at is not None:
+                items.append(
+                    ResearchCaseWorkspaceTimelineItem(
+                        event_type="research_run_started",
+                        occurred_at=run.started_at,
+                        source_id=str(run.run_id),
+                        status=run.status,
+                        label="Research run started",
+                    )
+                )
+            if run.finished_at is not None:
+                items.append(
+                    ResearchCaseWorkspaceTimelineItem(
+                        event_type="research_run_finished",
+                        occurred_at=run.finished_at,
+                        source_id=str(run.run_id),
+                        status=run.status,
+                        label="Research run finished",
+                    )
+                )
+            if result is not None:
+                items.append(
+                    ResearchCaseWorkspaceTimelineItem(
+                        event_type="research_result_published",
+                        occurred_at=result.created_at,
+                        source_id=str(result.result_id),
+                        status=run.status,
+                        label="Research result published",
+                    )
+                )
+
+        items.sort(
+            key=lambda item: (
+                item.occurred_at is None,
+                item.occurred_at,
+                item.event_type,
+                item.source_id,
+            )
+        )
+
+        self.timeline = items
+        return self
 
 
 __all__ = [
@@ -521,6 +699,8 @@ __all__ = [
     "ResearchCaseWorkspaceArtifactResponse",
     "ResearchCaseWorkspaceDiscoveryResponse",
     "ResearchCaseWorkspaceResponse",
+    "ResearchCaseWorkspaceTimelineEventType",
+    "ResearchCaseWorkspaceTimelineItem",
     "ResearchDashboardDataQuality",
     "ResearchDashboardEvidenceStatus",
     "ResearchDashboardFreshness",
