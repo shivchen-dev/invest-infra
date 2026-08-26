@@ -100,6 +100,43 @@ def import_archived_candidate_run(
     existing_run = uow.external_workflow_runs.get_by_id(run.run_id)
     existing_artifact = uow.external_artifacts.get_by_id(artifact.artifact_id)
     if existing_run is not None and existing_artifact is not None:
+        observations = list(
+            uow.external_observations.list_by_run(run.run_id, limit=10_000)
+        )
+        symbol_resolver = resolver or (lambda symbol: symbol)
+        for obs in observations:
+            if obs.instrument_id is not None:
+                continue
+            if not obs.symbol:
+                continue
+            try:
+                resolved_symbol = symbol_resolver(obs.symbol)
+            except Exception:
+                continue
+            if not resolved_symbol:
+                continue
+            instrument = _lookup_instrument(uow, resolved_symbol)
+            if instrument is None or instrument.instrument_id is None:
+                continue
+            metadata = dict(obs.metadata)
+            metadata["candidate_status"] = "pending_validation"
+            instrument_id = getattr(instrument.instrument_id, "value", instrument.instrument_id)
+            uow.external_observations.save_resolution(
+                type(obs)(
+                    observation_id=obs.observation_id,
+                    run_id=obs.run_id,
+                    artifact_id=obs.artifact_id,
+                    observed_at=obs.observed_at,
+                    as_of=obs.as_of,
+                    source_uri=obs.source_uri,
+                    producer=obs.producer,
+                    payload=obs.payload,
+                    symbol=obs.symbol,
+                    instrument_id=instrument_id,
+                    admission_status=obs.admission_status,
+                    metadata=metadata,
+                )
+            )
         observations = tuple(
             uow.external_observations.list_by_run(run.run_id, limit=10_000)
         )
@@ -191,6 +228,23 @@ def _producer_status(status: str, has_rejections: bool) -> ProducerStatus:
     if status == "cancelled":
         return ProducerStatus.CANCELLED
     return ProducerStatus.PARTIAL if has_rejections else ProducerStatus.SUCCEEDED
+
+
+def _lookup_instrument(uow, symbol: str):
+    """Resolve a symbol to an active ``Instrument`` via the UoW.
+
+    Tries SSE first then SZSE so we cover the common Chinese ETF/stock
+    namespaces (510xxx/600xxx SSE; 000xxx/100xxx/159xxx/200xxx SZSE).
+    Returns ``None`` when no active row matches.
+    """
+    repository = getattr(uow, "instruments", None)
+    if repository is None:
+        return None
+    for exchange in ("SSE", "SZSE"):
+        instrument = repository.get_by_business_key(exchange=exchange, symbol=symbol)
+        if instrument is not None:
+            return instrument
+    return None
 
 
 def _intake_status(parsed) -> IntakeStatus:

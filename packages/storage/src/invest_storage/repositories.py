@@ -5421,6 +5421,25 @@ class SqlAlchemyExternalObservationRepository:
         self._session.flush()
         return _row_to_external_observation(row)
 
+    def save_resolution(self, observation: ExternalObservation) -> ExternalObservation:
+        """Persist only the bounded resolution transition.
+
+        Re-resolves a previously unresolved observation: sets
+        ``instrument_id`` from a fresh lookup and rewrites ``metadata``
+        (typically flipping ``candidate_status`` to
+        ``pending_validation``). ``payload``, ``source_uri``, the
+        ``run_id`` / ``artifact_id`` identity, ``symbol``, and
+        ``admission_status`` are deliberately left untouched so the
+        archival provenance is preserved.
+        """
+        row = self._session.get(ExternalObservationRow, observation.observation_id)
+        if row is None:
+            raise LookupError(f"ExternalObservation {observation.observation_id!s} not found")
+        row.instrument_id = observation.instrument_id
+        row.metadata_json = dict(observation.metadata)
+        self._session.flush()
+        return _row_to_external_observation(row)
+
 
 class SqlAlchemyResearchExternalEvidenceRepository:
     """Idempotent persistence for admitted evidence bound to a Research Case."""

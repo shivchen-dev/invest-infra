@@ -70,4 +70,12 @@ Gate 3 核心聚焦测试另通过：`43 passed`，覆盖 Observation Admission�
 
 **Gate 3 自动化验证通过，Gate 3 整体尚未完成。**
 
-剩余阻塞是当前有效 2.0.0 WorkBuddy 研究输入的真实手工联调证据，以及最终全量验收收口；不是旧报告三件套缺失。
+2026-08-26 已使用当前有效的真实 2.0.0 Candidate 归档执行重解析演练：
+
+- `run_13e8593b12257afe` / `510300.SH`：`status=success`、`archive_idempotent=true`、`import_idempotent=true`；
+- `run_dc1574b8250849a9` / `510500.SH`：`status=success`、`archive_idempotent=true`、`import_idempotent=true`；
+- 两条 Observation 均已从 `needs_symbol_resolution` 转为 `pending_validation`，并关联现有 `core.instruments` UUID；
+- payload、source URI、run/artifact identity 和 `admission_status=pending` 未被改写；
+- 临时输入文件已清理，未生成新的 WorkBuddy 结果。
+
+剩余阻塞是 Observation Admission 后的真实 Research Run/Result 手工联调，以及最终验收收口；不是旧报告三件套缺失。
