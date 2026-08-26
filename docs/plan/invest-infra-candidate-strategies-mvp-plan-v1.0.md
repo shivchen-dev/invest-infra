@@ -32,6 +32,7 @@
 - 用户/CIA 决定策略业务语义、适用范围、风险和是否批准；ARC 不代替投研决策。
 - WorkBuddy 可以评估数据能力、形成策略工程化材料并执行策略，但不能批准、创建或激活正式版本。
 - 首版由 RAA 审计作为策略发布硬门禁；RAA 只读待审策略，不直接修改策略状态。
+- 本 MVP 不建设或依赖回测模块。RAA 只审核规则可执行性、数据口径、无未来数据、可复算性、失败条件和证据边界，不审核或证明策略收益有效性。
 - AgentOA 负责审计任务投递和 `audit.json` 回传，不代表审计入库、策略批准或业务摄取完成。
 - JSON 是机器权威；Markdown 仅供人工审核。
 - 历史 YAML、策略代码、旧任务包和裸 `strategy_id` 不自动升级为正式策略。
@@ -57,7 +58,7 @@
 - `StrategyAutomationDefinition`、周期调度和自动任务发布；
 - RAA 写 API、审批 UI 和通用权限平台；
 - 多策略编排、通用 DAG、图形化流程设计器；
-- 自动审批、自动激活、自动淘汰、自动调参或复杂回测；
+- 任何回测模块、收益验证、参数寻优或以回测指标作为发布门禁；
 - `suspended/retired` 等当前无真实用例的生命周期状态；
 - 修改或重置现有两条已 `rejected` Observation；
 - 恢复 legacy 1.1.x 三件套或 JiuwenSwarm 路径。
@@ -143,6 +144,8 @@ RAA 通过 AgentOA 交付 `audit.json`。AgentOA 是传输通道，ARC 使用受
 
 重复报告按 `(draft_id, artifact_hash, agentoa_task_id)` 幂等。Draft 内容或 hash 变化后，旧审计不能用于发布新版本。
 
+审计 `pass` 只表示当前 Draft 的规则、数据和执行边界满足受控运行要求，不表示策略收益已经验证。不得要求回测区间、样本量、收益基准、Rank IC 或收益通过阈值，也不得因系统没有回测能力而阻断审核。
+
 ### 4.4 最小 StrategyVersion 聚合
 
 数据库只新增一个正式聚合，保存：
@@ -225,6 +228,7 @@ RAA 只读 API 位于 Draft 查询接缝；首版不提供 RAA 写 API。ARC 使
 - ARC通过AgentOA分别发布绑定`draft_id + artifact_hash`的审计任务；
 - RAA通过只读API逐条审核并分别交付`audit.json`；
 - ARC使用受控CLI分别校验、摄取两份不可变`StrategyAudit`；
+- 对 `changes_required` 中涉及回测区间、样本量、收益指标或回测通过阈值的要求，按本计划明确排除，不纳入新 Draft 或复审门禁；
 - CIA对两条通过审计的当前Draft分别作出决定；
 - 新增最小 `StrategyVersion`，实现发布、人工激活和按 `strategy_key` 查询；
 - 校验 Draft hash、有效审计、CIA 决定、版本唯一性和不可变性；
@@ -234,6 +238,8 @@ RAA 只读 API 位于 Draft 查询接缝；首版不提供 RAA 写 API。ARC 使
 
 - [ ] AgentOA 完成不等于审计入库成功；
 - [ ] hash 不符、任务身份不符、非 RAA 提交或非 pass 审计均不能发布版本；
+- [ ] RAA pass 只证明受控可执行，不宣称或暗示收益有效性；
+- [ ] 审核、发布和激活均不依赖不存在的回测模块或回测指标；
 - [ ] 未经 CIA 批准或未激活版本不能作为执行依据；
 - [ ] 每条key/version重复登记幂等，冲突内容失败；
 - [ ] 已登记版本不能原地修改；
