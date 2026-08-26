@@ -13,6 +13,7 @@ from uuid import UUID
 import pytest
 from invest_api.application.strategy_drafts import (
     StrategyArtifactReader,
+    StrategyAuditRepository,
     StrategyDraftArtifactDecodeError,
     StrategyDraftArtifactHashMismatchError,
     StrategyDraftArtifactReadError,
@@ -26,12 +27,18 @@ from invest_api.schemas.strategy_drafts import (
     StrategyDraftAuditSummaryResponse,
     StrategyDraftResponse,
 )
-from invest_domain.strategy import SourceRef, StrategyDraft
+from invest_domain.strategy import (
+    SourceRef,
+    StrategyAudit,
+    StrategyAuditVerdict,
+    StrategyDraft,
+)
 
 DRAFT_ID = UUID("aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee")
 HASH = "a" * 64
 OTHER = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
 CREATED = datetime(2026, 8, 26, 12, 0, tzinfo=UTC)
+AUDITED = datetime(2026, 8, 26, 13, 0, tzinfo=UTC)
 STRATEGY: dict[str, Any] = {
     "schema_version": "1.0.0",
     "strategy_key": "sector-strength",
@@ -74,17 +81,28 @@ def build_service(
     draft: StrategyDraft | None = None,
     artifact_bytes: bytes | None = None,
     reader_raises: BaseException | None = None,
-) -> tuple[StrategyDraftQueryService, MagicMock, MagicMock]:
+) -> tuple[StrategyDraftQueryService, MagicMock, MagicMock, MagicMock]:
     repo = MagicMock(spec=StrategyDraftRepository)
+    audit_repo = MagicMock(spec=StrategyAuditRepository)
     reader = MagicMock(spec=StrategyArtifactReader)
     repo.get_by_id.return_value = draft
+    audit_repo.list_by_draft.return_value = []
     if reader_raises is not None:
         reader.read_bytes.side_effect = reader_raises
     else:
         reader.read_bytes.return_value = (
             artifact_bytes if artifact_bytes is not None else bytes_for()
         )
-    return StrategyDraftQueryService(repository=repo, artifact_reader=reader), repo, reader
+    return (
+        StrategyDraftQueryService(
+            repository=repo,
+            audit_repository=audit_repo,
+            artifact_reader=reader,
+        ),
+        repo,
+        audit_repo,
+        reader,
+    )
 
 
 def test_happy_path_returns_view_with_verified_payload():
@@ -92,7 +110,7 @@ def test_happy_path_returns_view_with_verified_payload():
         SourceRef(ref="a", content_hash=HASH),
         SourceRef(ref="b", content_hash=OTHER),
     ))
-    service, repo, reader = build_service(draft=draft)
+    service, repo, audit_repo, reader = build_service(draft=draft)
 
     view = service.get_draft(DRAFT_ID)
 
@@ -107,7 +125,51 @@ def test_happy_path_returns_view_with_verified_payload():
     assert dict(view.validation_result) == {"status": "ok"}
     assert view.created_at == CREATED
     repo.get_by_id.assert_called_once_with(DRAFT_ID)
+    audit_repo.list_by_draft.assert_called_once_with(DRAFT_ID)
     reader.read_bytes.assert_called_once_with(draft.artifact_ref)
+
+
+def test_happy_path_maps_audits_in_repository_order():
+    service, _, audit_repo, _ = build_service(draft=make_draft())
+    first_id = UUID("11111111-1111-4111-8111-111111111111")
+    second_id = UUID("22222222-2222-4222-8222-222222222222")
+    audit_repo.list_by_draft.return_value = [
+        StrategyAudit.create(
+            draft_id=DRAFT_ID,
+            artifact_hash=HASH,
+            agentoa_task_id="task-first",
+            auditor_agent_id="raa",
+            verdict=StrategyAuditVerdict.CHANGES_REQUIRED,
+            findings=[],
+            limitations=[],
+            report_ref="audit/first.json",
+            report_hash=OTHER,
+            audited_at=AUDITED,
+            audit_id_factory=lambda: first_id,
+            clock=lambda: AUDITED,
+        ),
+        StrategyAudit.create(
+            draft_id=DRAFT_ID,
+            artifact_hash=OTHER,
+            agentoa_task_id="task-second",
+            auditor_agent_id="raa",
+            verdict=StrategyAuditVerdict.PASS,
+            findings=[],
+            limitations=[],
+            report_ref="audit/second.json",
+            report_hash=HASH,
+            audited_at=CREATED,
+            audit_id_factory=lambda: second_id,
+            clock=lambda: CREATED,
+        ),
+    ]
+
+    view = service.get_draft(DRAFT_ID)
+
+    assert [summary.audit_id for summary in view.audit_summaries] == [first_id, second_id]
+    assert view.audit_summaries[0].artifact_hash == HASH
+    assert view.audit_summaries[0].verdict == "changes_required"
+    assert view.audit_summaries[0].audited_at == AUDITED
 
 
 def test_public_view_recursively_redacts_internal_paths_without_changing_hash():
@@ -122,7 +184,7 @@ def test_public_view_recursively_redacts_internal_paths_without_changing_hash():
     }
     raw = bytes_for(strategy)
     draft = make_draft(artifact_hash=sha(raw))
-    service, _, _ = build_service(draft=draft, artifact_bytes=raw)
+    service, _, _, _ = build_service(draft=draft, artifact_bytes=raw)
 
     view = service.get_draft(DRAFT_ID)
 
@@ -138,7 +200,7 @@ def test_public_view_recursively_redacts_internal_paths_without_changing_hash():
 
 
 def test_missing_draft_raises_not_found_without_calling_reader():
-    service, _, reader = build_service(draft=None)
+    service, _, audit_repo, reader = build_service(draft=None)
 
     with pytest.raises(StrategyDraftNotFoundError) as exc_info:
         service.get_draft(DRAFT_ID)
@@ -146,11 +208,12 @@ def test_missing_draft_raises_not_found_without_calling_reader():
     assert exc_info.value.draft_id == DRAFT_ID
     assert "strategy-engineering" not in str(exc_info.value)
     reader.read_bytes.assert_not_called()
+    audit_repo.list_by_draft.assert_not_called()
 
 
 def test_hash_mismatch_raises_dedicated_error_when_bytes_tampered():
     draft = make_draft(artifact_hash=HASH)
-    service, _, _ = build_service(draft=draft, artifact_bytes=b'{"different": "payload"}')
+    service, _, _, _ = build_service(draft=draft, artifact_bytes=b'{"different": "payload"}')
 
     with pytest.raises(StrategyDraftArtifactHashMismatchError):
         service.get_draft(DRAFT_ID)
@@ -169,7 +232,7 @@ def test_hash_mismatch_raises_dedicated_error_when_bytes_tampered():
 )
 def test_decode_failures_raise_decode_error(bad_bytes: bytes):
     draft = make_draft(artifact_hash=sha(bad_bytes))
-    service, _, _ = build_service(draft=draft, artifact_bytes=bad_bytes)
+    service, _, _, _ = build_service(draft=draft, artifact_bytes=bad_bytes)
 
     with pytest.raises(StrategyDraftArtifactDecodeError):
         service.get_draft(DRAFT_ID)
@@ -209,7 +272,7 @@ def test_reader_failure_translates_to_sanitized_error(
     leak: BaseException, forbidden: str
 ):
     draft = make_draft()
-    service, _, _ = build_service(draft=draft, reader_raises=leak)
+    service, _, _, _ = build_service(draft=draft, reader_raises=leak)
 
     with pytest.raises(StrategyDraftArtifactReadError) as exc_info:
         service.get_draft(DRAFT_ID)
@@ -219,7 +282,7 @@ def test_reader_failure_translates_to_sanitized_error(
 
 
 def test_view_is_frozen_and_excludes_artifact_ref():
-    service, _, _ = build_service(draft=make_draft())
+    service, _, _, _ = build_service(draft=make_draft())
     view = service.get_draft(DRAFT_ID)
 
     assert set(StrategyDraftView.__dataclass_fields__) == {
@@ -233,7 +296,7 @@ def test_view_is_frozen_and_excludes_artifact_ref():
 
 
 def test_response_schema_carries_verified_payload_and_hides_artifact_ref():
-    service, _, _ = build_service(draft=make_draft())
+    service, _, _, _ = build_service(draft=make_draft())
     response = StrategyDraftResponse.from_view(service.get_draft(DRAFT_ID))
 
     declared = set(StrategyDraftResponse.model_fields)

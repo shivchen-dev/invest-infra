@@ -17,7 +17,7 @@ from types import MappingProxyType
 from typing import Any, Protocol
 from uuid import UUID
 
-from invest_domain.strategy import SourceRef, StrategyDraft
+from invest_domain.strategy import SourceRef, StrategyAudit, StrategyDraft
 
 READ_ERROR: str = "strategy artifact could not be read"
 HASH_MISMATCH: str = "strategy artifact hash does not match the registered draft"
@@ -55,6 +55,10 @@ def _sanitize_public_value(value: Any) -> Any:
 
 class StrategyDraftRepository(Protocol):
     def get_by_id(self, draft_id: UUID) -> StrategyDraft | None: ...
+
+
+class StrategyAuditRepository(Protocol):
+    def list_by_draft(self, draft_id: UUID) -> list[StrategyAudit]: ...
 
 
 class StrategyArtifactReader(Protocol):
@@ -105,9 +109,11 @@ class StrategyDraftQueryService:
         self,
         *,
         repository: StrategyDraftRepository,
+        audit_repository: StrategyAuditRepository,
         artifact_reader: StrategyArtifactReader,
     ) -> None:
         self._repository = repository
+        self._audit_repository = audit_repository
         self._artifact_reader = artifact_reader
 
     def get_draft(self, draft_id: UUID) -> StrategyDraftView:
@@ -141,12 +147,21 @@ class StrategyDraftQueryService:
                 _sanitize_public_value(dict(draft.validation_result))
             ),
             created_at=draft.created_at,
-            audit_summaries=(),
+            audit_summaries=tuple(
+                StrategyDraftAuditSummary(
+                    audit_id=audit.audit_id,
+                    artifact_hash=audit.artifact_hash,
+                    verdict=audit.verdict.value,
+                    audited_at=audit.audited_at,
+                )
+                for audit in self._audit_repository.list_by_draft(draft_id)
+            ),
         )
 
 
 __all__ = [
     "StrategyArtifactReader",
+    "StrategyAuditRepository",
     "StrategyDraftArtifactDecodeError",
     "StrategyDraftArtifactHashMismatchError",
     "StrategyDraftArtifactReadError",

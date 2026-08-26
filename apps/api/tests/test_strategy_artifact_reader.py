@@ -21,7 +21,10 @@ from invest_api.strategy_artifacts import (
     LocalStrategyArtifactReader,
     StrategyArtifactReadError,
 )
-from invest_storage.repositories import SqlAlchemyStrategyDraftRepository
+from invest_storage.repositories import (
+    SqlAlchemyStrategyAuditRepository,
+    SqlAlchemyStrategyDraftRepository,
+)
 from pydantic_settings import SettingsConfigDict
 from sqlalchemy.orm import Session
 
@@ -114,6 +117,10 @@ class TestDependency:
             service._repository, SqlAlchemyStrategyDraftRepository
         )
         assert service._repository._session is session  # noqa: SLF001
+        assert isinstance(  # noqa: SLF001
+            service._audit_repository, SqlAlchemyStrategyAuditRepository
+        )
+        assert service._audit_repository._session is session  # noqa: SLF001
         assert isinstance(service._artifact_reader, LocalStrategyArtifactReader)  # noqa: SLF001
 
 

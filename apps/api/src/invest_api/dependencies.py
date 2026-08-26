@@ -24,6 +24,7 @@ from invest_storage.repositories import (
     SqlAlchemyResearchExternalEvidenceRepository,
     SqlAlchemyResearchResultRepository,
     SqlAlchemyResearchRunRepository,
+    SqlAlchemyStrategyAuditRepository,
     SqlAlchemyStrategyDraftRepository,
 )
 from sqlalchemy import Engine
@@ -77,6 +78,7 @@ def get_strategy_draft_query_service(
         artifact_root = repository_root / artifact_root
     return StrategyDraftQueryService(
         repository=SqlAlchemyStrategyDraftRepository(session),
+        audit_repository=SqlAlchemyStrategyAuditRepository(session),
         artifact_reader=LocalStrategyArtifactReader(artifact_root),
     )
 
