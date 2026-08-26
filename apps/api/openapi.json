@@ -2183,7 +2183,7 @@
         "type": "object"
       },
       "ResearchCaseWorkspaceResponse": {
-        "description": "Composite read-only envelope for the Research Case workspace page.\n\nComposes the existing resource shapes so the front-end can render\nthe case, its bound evidence packs, the runs attached to the case\nand the (nullable) result for each run in a single round trip. The\nendpoint is the PR-W05 first increment; only the API/backend\ncontract is shipped here.\n\nField invariants:\n\n- ``case`` always echoes the canonical case detail shape used by\n  ``GET /api/v1/research-cases/{case_id}``; the router enforces\n  the ``case_id`` URL parameter matches the resource.\n- ``evidence_packs`` is the same list shape as\n  ``GET /api/v1/research-cases/{case_id}/evidence`` (already\n  serialised by :class:`EvidencePackResponse`) but is **always\n  present** - it is ``[]`` rather than omitted when the case has\n  no bound pack, so the workspace page can render an explicit\n  empty evidence slot.\n- ``runs`` is the same per-run shape used by\n  ``GET /api/v1/research-runs/{run_id}`` and is always present\n  (the storage repository returns ``[]`` rather than ``None``\n  when the case has no runs).\n- ``results`` is **parallel to** ``runs``: ``results[i]``\n  corresponds to ``runs[i]``; ``results[i] is None`` when the run\n  has not (yet) produced a result. The pair is never reordered\n  server-side so the front-end can rely on positional pairing.\n  The list always carries exactly one entry per run, never an\n  arbitrary subset.\n- ``external_discovery`` is the Stage 4D Task 3.3 addition: a\n  list of :class:`ResearchCaseWorkspaceDiscoveryResponse` items\n  derived from the case-scoped admitted external-evidence rows.\n  It is **always present** (``[]`` rather than omitted when the\n  case has no bound external evidence) so the workspace page can\n  render an explicit empty external-discovery slot. Items whose\n  source observation was deleted in storage are skipped rather\n  than emitted with a dangling observation; missing artifacts are\n  projected as ``null`` so the workspace exposes an explicit\n  ``artifact unavailable`` state rather than fabricating data.\n\nThe endpoint is read-only and never invents data: when a run has\nno published result the workspace exposes a ``null`` slot rather\nthan fabricating one.",
+        "description": "Composite read-only envelope for the Research Case workspace page.\n\nComposes the existing resource shapes so the front-end can render\nthe case, its bound evidence packs, the runs attached to the case\nand the (nullable) result for each run in a single round trip. The\nendpoint is the PR-W05 first increment; only the API/backend\ncontract is shipped here.\n\nField invariants:\n\n- ``case`` always echoes the canonical case detail shape used by\n  ``GET /api/v1/research-cases/{case_id}``; the router enforces\n  the ``case_id`` URL parameter matches the resource.\n- ``evidence_packs`` is the same list shape as\n  ``GET /api/v1/research-cases/{case_id}/evidence`` (already\n  serialised by :class:`EvidencePackResponse`) but is **always\n  present** - it is ``[]`` rather than omitted when the case has\n  no bound pack, so the workspace page can render an explicit\n  empty evidence slot.\n- ``runs`` is the same per-run shape used by\n  ``GET /api/v1/research-runs/{run_id}`` and is always present\n  (the storage repository returns ``[]`` rather than ``None``\n  when the case has no runs).\n- ``results`` is **parallel to** ``runs``: ``results[i]``\n  corresponds to ``runs[i]``; ``results[i] is None`` when the run\n  has not (yet) produced a result. The pair is never reordered\n  server-side so the front-end can rely on positional pairing.\n  The list always carries exactly one entry per run, never an\n  arbitrary subset.\n- ``external_discovery`` is the Stage 4D Task 3.3 addition: a\n  list of :class:`ResearchCaseWorkspaceDiscoveryResponse` items\n  derived from the case-scoped admitted external-evidence rows.\n  It is **always present** (``[]`` rather than omitted when the\n  case has no bound external evidence) so the workspace page can\n  render an explicit empty external-discovery slot. Items whose\n  source observation was deleted in storage are skipped rather\n  than emitted with a dangling observation; missing artifacts are\n  projected as ``null`` so the workspace exposes an explicit\n  ``artifact unavailable`` state rather than fabricating data.\n- ``timeline`` is a deterministic, sorted projection of the\n  other fields, derived inside this Pydantic model by\n  :meth:`_derive_timeline` (a ``model_validator(mode=\"after\")``)\n  so the application services, routers and storage layer stay\n  unchanged. Events are sorted ascending by ``occurred_at``,\n  with ``None`` timestamps last; ties break on ``event_type``\n  then ``source_id``. The derivation never fabricates\n  timestamps: ``evidence_pack_available`` events always carry\n  ``occurred_at = None`` because :class:`EvidencePack` exposes\n  no creation timestamp, and the label makes that explicit.\n\nThe endpoint is read-only and never invents data: when a run has\nno published result the workspace exposes a ``null`` slot rather\nthan fabricating one, and the corresponding\n``research_result_published`` event is simply absent from the\ntimeline.",
         "properties": {
           "case": {
             "$ref": "#/components/schemas/ResearchCaseResponse"
@@ -2222,12 +2222,74 @@
             },
             "title": "Runs",
             "type": "array"
+          },
+          "timeline": {
+            "items": {
+              "$ref": "#/components/schemas/ResearchCaseWorkspaceTimelineItem"
+            },
+            "title": "Timeline",
+            "type": "array"
           }
         },
         "required": [
           "case"
         ],
         "title": "ResearchCaseWorkspaceResponse",
+        "type": "object"
+      },
+      "ResearchCaseWorkspaceTimelineItem": {
+        "description": "One read-only timeline event projected onto the workspace page.\n\nThe timeline is a bounded, deterministic projection of the\nworkspace's already-composed resource surfaces (case, evidence\npacks, runs / results, external discovery) so the front-end can\nrender the case lifecycle as a single list without re-fanning-out\nto the resource-level endpoints. Every field is safe by\nconstruction:\n\n- ``event_type`` is one of the closed\n  :data:`ResearchCaseWorkspaceTimelineEventType` literals; the\n  derivation never invents a new vocabulary.\n- ``occurred_at`` carries the source timestamp when one exists in\n  the domain (``case.created_at``, ``run.started_at`` /\n  ``run.finished_at``, ``discovery.observed_at``,\n  ``result.created_at``). It is ``None`` for\n  ``evidence_pack_available`` because :class:`EvidencePack`\n  exposes no creation timestamp; the workspace surfaces the\n  explicit ``None`` rather than fabricating one so the\n  front-end can render an ``unknown`` slot rather than a\n  misleading date.\n- ``source_id`` is the canonical identifier of the row the event\n  describes (``case_id`` / ``pack_id`` / ``evidence_id`` /\n  ``run_id`` / ``result_id``), serialised as a string so the\n  front-end can deep-link without a separate UUID parse.\n- ``status`` echoes the upstream status enum string (case status,\n  data quality, admission status, run status) so the front-end\n  can colour the timeline without a follow-up lookup. ``None``\n  when the source row has no status to project.\n- ``label`` is a short, deterministic summary the front-end can\n  render verbatim: producer / source for\n  ``external_observation``, an explicit\n  ``creation timestamp unavailable`` note for\n  ``evidence_pack_available``, and a bounded phrase for the\n  remaining events. Host paths, prompts and raw payloads never\n  appear in the label.",
+        "properties": {
+          "event_type": {
+            "enum": [
+              "case_created",
+              "evidence_pack_available",
+              "external_observation",
+              "research_run_started",
+              "research_run_finished",
+              "research_result_published"
+            ],
+            "title": "Event Type",
+            "type": "string"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          },
+          "occurred_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Occurred At"
+          },
+          "source_id": {
+            "title": "Source Id",
+            "type": "string"
+          },
+          "status": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Status"
+          }
+        },
+        "required": [
+          "event_type",
+          "source_id",
+          "label"
+        ],
+        "title": "ResearchCaseWorkspaceTimelineItem",
         "type": "object"
       },
       "ResearchCenterBreadthResponse": {

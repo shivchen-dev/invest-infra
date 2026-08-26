@@ -1232,10 +1232,22 @@ export interface components {
      *   than emitted with a dangling observation; missing artifacts are
      *   projected as ``null`` so the workspace exposes an explicit
      *   ``artifact unavailable`` state rather than fabricating data.
+     * - ``timeline`` is a deterministic, sorted projection of the
+     *   other fields, derived inside this Pydantic model by
+     *   :meth:`_derive_timeline` (a ``model_validator(mode="after")``)
+     *   so the application services, routers and storage layer stay
+     *   unchanged. Events are sorted ascending by ``occurred_at``,
+     *   with ``None`` timestamps last; ties break on ``event_type``
+     *   then ``source_id``. The derivation never fabricates
+     *   timestamps: ``evidence_pack_available`` events always carry
+     *   ``occurred_at = None`` because :class:`EvidencePack` exposes
+     *   no creation timestamp, and the label makes that explicit.
      *
      * The endpoint is read-only and never invents data: when a run has
      * no published result the workspace exposes a ``null`` slot rather
-     * than fabricating one.
+     * than fabricating one, and the corresponding
+     * ``research_result_published`` event is simply absent from the
+     * timeline.
      */
     ResearchCaseWorkspaceResponse: {
       case: components["schemas"]["ResearchCaseResponse"];
@@ -1247,6 +1259,62 @@ export interface components {
       results?: (components["schemas"]["ResearchResultResponse"] | null)[];
       /** Runs */
       runs?: components["schemas"]["ResearchRunResponse"][];
+      /** Timeline */
+      timeline?: components["schemas"]["ResearchCaseWorkspaceTimelineItem"][];
+    };
+    /**
+     * ResearchCaseWorkspaceTimelineItem
+     * @description One read-only timeline event projected onto the workspace page.
+     *
+     * The timeline is a bounded, deterministic projection of the
+     * workspace's already-composed resource surfaces (case, evidence
+     * packs, runs / results, external discovery) so the front-end can
+     * render the case lifecycle as a single list without re-fanning-out
+     * to the resource-level endpoints. Every field is safe by
+     * construction:
+     *
+     * - ``event_type`` is one of the closed
+     *   :data:`ResearchCaseWorkspaceTimelineEventType` literals; the
+     *   derivation never invents a new vocabulary.
+     * - ``occurred_at`` carries the source timestamp when one exists in
+     *   the domain (``case.created_at``, ``run.started_at`` /
+     *   ``run.finished_at``, ``discovery.observed_at``,
+     *   ``result.created_at``). It is ``None`` for
+     *   ``evidence_pack_available`` because :class:`EvidencePack`
+     *   exposes no creation timestamp; the workspace surfaces the
+     *   explicit ``None`` rather than fabricating one so the
+     *   front-end can render an ``unknown`` slot rather than a
+     *   misleading date.
+     * - ``source_id`` is the canonical identifier of the row the event
+     *   describes (``case_id`` / ``pack_id`` / ``evidence_id`` /
+     *   ``run_id`` / ``result_id``), serialised as a string so the
+     *   front-end can deep-link without a separate UUID parse.
+     * - ``status`` echoes the upstream status enum string (case status,
+     *   data quality, admission status, run status) so the front-end
+     *   can colour the timeline without a follow-up lookup. ``None``
+     *   when the source row has no status to project.
+     * - ``label`` is a short, deterministic summary the front-end can
+     *   render verbatim: producer / source for
+     *   ``external_observation``, an explicit
+     *   ``creation timestamp unavailable`` note for
+     *   ``evidence_pack_available``, and a bounded phrase for the
+     *   remaining events. Host paths, prompts and raw payloads never
+     *   appear in the label.
+     */
+    ResearchCaseWorkspaceTimelineItem: {
+      /**
+       * Event Type
+       * @enum {string}
+       */
+      event_type: "case_created" | "evidence_pack_available" | "external_observation" | "research_run_started" | "research_run_finished" | "research_result_published";
+      /** Label */
+      label: string;
+      /** Occurred At */
+      occurred_at?: string | null;
+      /** Source Id */
+      source_id: string;
+      /** Status */
+      status?: string | null;
     };
     /**
      * ResearchCenterBreadthResponse

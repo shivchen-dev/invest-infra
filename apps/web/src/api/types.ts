@@ -127,22 +127,13 @@ export type ResearchCaseWorkspaceDiscoveryView = {
   artifact: ResearchCaseWorkspaceArtifactView | null;
 };
 export type ResearchCaseWorkspaceTimelineEventType =
-  | "case_created"
-  | "evidence_pack_available"
-  | "external_observation"
-  | "research_run_started"
-  | "research_run_finished"
-  | "research_result_published";
-export type ResearchCaseWorkspaceTimelineItem = {
-  event_type: ResearchCaseWorkspaceTimelineEventType;
-  occurred_at: string | null;
-  source_id: string;
-  status: string | null;
-  label: string;
-};
+  components["schemas"]["ResearchCaseWorkspaceTimelineItem"]["event_type"];
+export type ResearchCaseWorkspaceTimelineItem = RequiredDefined<
+  components["schemas"]["ResearchCaseWorkspaceTimelineItem"]
+>;
 export type ResearchCaseWorkspaceResponse = Omit<
   RequiredDefined<components["schemas"]["ResearchCaseWorkspaceResponse"]>,
-  "evidence_packs" | "runs" | "results" | "external_discovery"
+  "evidence_packs" | "runs" | "results" | "external_discovery" | "timeline"
 > & {
   evidence_packs: ResearchCaseWorkspaceEvidencePack[];
   runs: ResearchCaseWorkspaceRun[];
