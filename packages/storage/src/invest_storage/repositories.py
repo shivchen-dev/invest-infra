@@ -124,7 +124,7 @@ from invest_domain.research.research_run import (
     ResearchRunStatus,
 )
 from invest_domain.shared.values import Currency
-from invest_domain.strategy import SourceRef, StrategyDraft
+from invest_domain.strategy import SourceRef, StrategyAudit, StrategyAuditVerdict, StrategyDraft
 from sqlalchemy import func, select, text, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.exc import IntegrityError
@@ -168,6 +168,7 @@ from invest_storage.models import (
     ResearchResultRow,
     ResearchRunRow,
     StockPriceLimitRow,
+    StrategyAuditRow,
     StrategyDraftRow,
 )
 
@@ -5672,3 +5673,100 @@ def _row_to_strategy_draft(row: StrategyDraftRow) -> StrategyDraft:
 
 class StrategyDraftConflictError(RuntimeError):
     """Raised when ``add`` cannot honour the draft uniqueness contract."""
+
+
+class SqlAlchemyStrategyAuditRepository:
+    """Persistence for immutable RAA audit reports."""
+
+    def __init__(self, session: Session) -> None:
+        self._session = session
+
+    def add(self, audit: StrategyAudit) -> StrategyAudit:
+        if not isinstance(audit, StrategyAudit):
+            raise TypeError("SqlAlchemyStrategyAuditRepository.add expects a StrategyAudit")
+        existing = self._session.scalars(
+            select(StrategyAuditRow).where(
+                StrategyAuditRow.draft_id == audit.draft_id,
+                StrategyAuditRow.artifact_hash == audit.artifact_hash,
+                StrategyAuditRow.agentoa_task_id == audit.agentoa_task_id,
+            )
+        ).first()
+        if existing is not None:
+            stored = _row_to_strategy_audit(existing)
+            if _strategy_audit_content(stored) != _strategy_audit_content(audit):
+                raise StrategyAuditConflictError(
+                    "StrategyAudit idempotency key already exists with different content"
+                )
+            return stored
+        self._session.add(StrategyAuditRow(
+            audit_id=audit.audit_id,
+            draft_id=audit.draft_id,
+            artifact_hash=audit.artifact_hash,
+            agentoa_task_id=audit.agentoa_task_id,
+            auditor_agent_id=audit.auditor_agent_id,
+            verdict=audit.verdict.value,
+            findings=_json_value(audit.findings),
+            limitations=list(audit.limitations),
+            report_ref=audit.report_ref,
+            report_hash=audit.report_hash,
+            audited_at=audit.audited_at,
+            created_at=audit.created_at,
+        ))
+        return audit
+
+    def get_by_id(self, audit_id: UUID) -> StrategyAudit | None:
+        row = self._session.get(StrategyAuditRow, audit_id)
+        return _row_to_strategy_audit(row) if row is not None else None
+
+    def list_by_draft(self, draft_id: UUID) -> list[StrategyAudit]:
+        rows = self._session.scalars(
+            select(StrategyAuditRow)
+            .where(StrategyAuditRow.draft_id == draft_id)
+            .order_by(StrategyAuditRow.audited_at, StrategyAuditRow.audit_id)
+        ).all()
+        return [_row_to_strategy_audit(row) for row in rows]
+
+
+def _json_value(value: Any) -> Any:
+    if isinstance(value, dict) or hasattr(value, "items"):
+        return {str(key): _json_value(item) for key, item in value.items()}
+    if isinstance(value, (tuple, list)):
+        return [_json_value(item) for item in value]
+    return value
+
+
+def _strategy_audit_content(audit: StrategyAudit) -> tuple[Any, ...]:
+    """Fields supplied by the immutable external audit report."""
+    return (
+        audit.draft_id,
+        audit.artifact_hash,
+        audit.agentoa_task_id,
+        audit.auditor_agent_id,
+        audit.verdict,
+        audit.findings,
+        audit.limitations,
+        audit.report_ref,
+        audit.report_hash,
+        audit.audited_at,
+    )
+
+
+def _row_to_strategy_audit(row: StrategyAuditRow) -> StrategyAudit:
+    return StrategyAudit(
+        audit_id=row.audit_id,
+        draft_id=row.draft_id,
+        artifact_hash=row.artifact_hash,
+        agentoa_task_id=row.agentoa_task_id,
+        auditor_agent_id=row.auditor_agent_id,
+        verdict=StrategyAuditVerdict(row.verdict),
+        findings=tuple(dict(item) for item in row.findings),
+        limitations=tuple(row.limitations),
+        report_ref=row.report_ref,
+        report_hash=row.report_hash,
+        audited_at=row.audited_at,
+        created_at=row.created_at,
+    )
+
+
+class StrategyAuditConflictError(RuntimeError):
+    """Raised when an audit idempotency key is reused with new content."""

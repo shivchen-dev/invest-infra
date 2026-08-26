@@ -60,6 +60,7 @@ from invest_storage.repositories import (
     SqlAlchemyResearchResultRepository,
     SqlAlchemyResearchRunRepository,
     SqlAlchemyStockPriceLimitRepository,
+    SqlAlchemyStrategyAuditRepository,
     SqlAlchemyStrategyDraftRepository,
 )
 
@@ -573,6 +574,13 @@ class StrategyDraftRepositoryPort(Protocol):
 
 
 @runtime_checkable
+class StrategyAuditRepositoryPort(Protocol):
+    def add(self, audit): ...
+    def get_by_id(self, audit_id): ...
+    def list_by_draft(self, draft_id): ...
+
+
+@runtime_checkable
 class SessionProvider(Protocol):
     """Anything that can hand out a SQLAlchemy ``Session``.
 
@@ -625,6 +633,7 @@ class UnitOfWork(Protocol):
     external_observations: ExternalObservationRepositoryPort
     research_external_evidence: ResearchExternalEvidenceRepositoryPort
     strategy_drafts: StrategyDraftRepositoryPort
+    strategy_audits: StrategyAuditRepositoryPort
 
     def commit(self) -> None:
         """Persist the current transaction to the database."""
@@ -693,6 +702,7 @@ class SqlAlchemyUnitOfWork:
         self._external_observations: SqlAlchemyExternalObservationRepository | None = None
         self._research_external_evidence: SqlAlchemyResearchExternalEvidenceRepository | None = None
         self._strategy_drafts: SqlAlchemyStrategyDraftRepository | None = None
+        self._strategy_audits: SqlAlchemyStrategyAuditRepository | None = None
         self._closed = True
         self._user_committed = False
 
@@ -897,6 +907,12 @@ class SqlAlchemyUnitOfWork:
             self._strategy_drafts = SqlAlchemyStrategyDraftRepository(self.session)
         return self._strategy_drafts
 
+    @property
+    def strategy_audits(self) -> SqlAlchemyStrategyAuditRepository:
+        if self._strategy_audits is None:
+            self._strategy_audits = SqlAlchemyStrategyAuditRepository(self.session)
+        return self._strategy_audits
+
     def commit(self) -> None:
         self.session.commit()
         self._user_committed = True
@@ -959,6 +975,7 @@ class SqlAlchemyUnitOfWork:
             self._external_observations = None
             self._research_external_evidence = None
             self._strategy_drafts = None
+            self._strategy_audits = None
             self._user_committed = False
             self._closed = True
 
@@ -998,6 +1015,7 @@ __all__ = [
     "SessionProvider",
     "StockPriceLimitRepositoryPort",
     "StrategyDraftRepositoryPort",
+    "StrategyAuditRepositoryPort",
     "SqlAlchemyUnitOfWork",
     "UnitOfWork",
 ]  # noqa: E501

@@ -288,7 +288,7 @@ class MigrationChainTest(unittest.TestCase):
         head_ids = all_revision_ids - referenced_down_revisions
         self.assertEqual(
             head_ids,
-            {"20260826_0021"},
+            {"20260826_0022"},
             f"expected exactly one unreferenced chain head, got {sorted(head_ids)}",
         )
 
@@ -393,7 +393,7 @@ class MigrationChainTest(unittest.TestCase):
         head_ids = all_revision_ids - referenced_down_revisions
         self.assertEqual(
             head_ids,
-            {"20260826_0021"},
+            {"20260826_0022"},
             f"expected exactly one unreferenced chain head, got {sorted(head_ids)}",
         )
 
@@ -483,7 +483,7 @@ class MigrationChainTest(unittest.TestCase):
         heads = {revision for revision, _ in revisions.values()} - {
             down_revision for _, down_revision in revisions.values() if down_revision is not None
         }
-        self.assertEqual(heads, {"20260826_0021"})
+        self.assertEqual(heads, {"20260826_0022"})
         source = (versions_directory / "20260805_0010_research_context_packs.py").read_text()
         self.assertIn('revision: str = "20260805_0010"', source)
         self.assertIn('down_revision: str | None = "20260805_0009"', source)
@@ -631,7 +631,7 @@ class MigrationChainTest(unittest.TestCase):
         head_ids = all_revision_ids - referenced_down_revisions
         self.assertEqual(
             head_ids,
-            {"20260826_0021"},
+            {"20260826_0022"},
             f"expected exactly one unreferenced chain head, got {sorted(head_ids)}",
         )
 
@@ -1031,7 +1031,7 @@ class MigrationChainTest(unittest.TestCase):
         head_ids = all_revision_ids - referenced_down_revisions
         self.assertEqual(
             head_ids,
-            {"20260826_0021"},
+            {"20260826_0022"},
             f"expected exactly one unreferenced chain head, got {sorted(head_ids)}",
         )
 
@@ -1277,8 +1277,8 @@ class MigrationChainTest(unittest.TestCase):
         head_ids = all_revision_ids - referenced_down_revisions
         self.assertEqual(
             head_ids,
-            {"20260826_0021"},
-            f"expected exactly one chain head pointing at 20260826_0021, got {sorted(head_ids)}",
+            {"20260826_0022"},
+            f"expected exactly one chain head pointing at 20260826_0022, got {sorted(head_ids)}",
         )
 
         for token in (
@@ -1365,7 +1365,7 @@ class MigrationChainTest(unittest.TestCase):
         head_ids = {r for r, _ in revisions.values()} - {
             d for _, d in revisions.values() if d is not None
         }
-        self.assertEqual(head_ids, {"20260826_0021"})
+        self.assertEqual(head_ids, {"20260826_0022"})
 
         migration_file = versions_directory / "20260826_0021_strategy_drafts.py"
         source = migration_file.read_text(encoding="utf-8")
@@ -1416,6 +1416,31 @@ class MigrationChainTest(unittest.TestCase):
             and isinstance(c.func.value, ast.Name) and c.func.value.id == "op"
         ]
         self.assertEqual(op_calls, ["drop_index", "drop_table"])
+
+    def test_strategy_audits_migration_is_current_head(self) -> None:
+        versions_directory = (
+            Path(__file__).resolve().parents[1]
+            / "apps" / "migrations" / "migrations" / "versions"
+        )
+        migration_file = versions_directory / "20260826_0022_strategy_audits.py"
+        source = migration_file.read_text(encoding="utf-8")
+        tree = ast.parse(source, filename=str(migration_file))
+        self.assertIn('revision: str = "20260826_0022"', source)
+        self.assertIn('down_revision: str | None = "20260826_0021"', source)
+        for token in (
+            '"strategy_audits"',
+            '"analytics.strategy_drafts.draft_id"',
+            "fk_strategy_audits_draft_id_strategy_drafts",
+            "uq_strategy_audits_draft_artifact_task",
+            "ck_strategy_audits_artifact_hash_len64",
+            "ck_strategy_audits_report_hash_len64",
+            "ck_strategy_audits_verdict_valid",
+            "ck_strategy_audits_findings_array",
+            "ck_strategy_audits_limitations_array",
+            "ix_strategy_audits_draft_id_audited_at",
+        ):
+            self.assertIn(token, source)
+        self.assertNotIn("uq_strategy_audits_report_hash", source)
 
         explicit_names = [
             node.value for node in ast.walk(tree)

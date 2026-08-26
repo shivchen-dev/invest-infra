@@ -2454,3 +2454,48 @@ class StrategyDraftRow(Base):
     source_refs: Mapped[list[Any]] = mapped_column(JSONB, nullable=False)
     validation_result: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class StrategyAuditRow(Base):
+    """Immutable RAA audit result for one registered strategy draft."""
+
+    __tablename__ = "strategy_audits"
+    __table_args__ = (
+        UniqueConstraint(
+            "draft_id", "artifact_hash", "agentoa_task_id",
+            name="uq_strategy_audits_draft_artifact_task",
+        ),
+        CheckConstraint(
+            "artifact_hash ~ '^[0-9a-f]{64}$'", name="artifact_hash_len64",
+        ),
+        CheckConstraint(
+            "report_hash ~ '^[0-9a-f]{64}$'", name="report_hash_len64",
+        ),
+        CheckConstraint(
+            "verdict IN ('pass', 'changes_required', 'reject')",
+            name="verdict_valid",
+        ),
+        CheckConstraint(
+            "jsonb_typeof(findings) = 'array'", name="findings_array",
+        ),
+        CheckConstraint(
+            "jsonb_typeof(limitations) = 'array'", name="limitations_array",
+        ),
+        Index("ix_strategy_audits_draft_id_audited_at", "draft_id", "audited_at"),
+        {"schema": "analytics"},
+    )
+
+    audit_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True)
+    draft_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("analytics.strategy_drafts.draft_id"), nullable=False,
+    )
+    artifact_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    agentoa_task_id: Mapped[str] = mapped_column(String(160), nullable=False)
+    auditor_agent_id: Mapped[str] = mapped_column(String(160), nullable=False)
+    verdict: Mapped[str] = mapped_column(String(24), nullable=False)
+    findings: Mapped[list[Any]] = mapped_column(JSONB, nullable=False)
+    limitations: Mapped[list[str]] = mapped_column(JSONB, nullable=False)
+    report_ref: Mapped[str] = mapped_column(String(512), nullable=False)
+    report_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    audited_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
