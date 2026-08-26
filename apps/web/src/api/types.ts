@@ -126,6 +126,20 @@ export type ResearchCaseWorkspaceDiscoveryView = {
   admission: Record<string, unknown>;
   artifact: ResearchCaseWorkspaceArtifactView | null;
 };
+export type ResearchCaseWorkspaceTimelineEventType =
+  | "case_created"
+  | "evidence_pack_available"
+  | "external_observation"
+  | "research_run_started"
+  | "research_run_finished"
+  | "research_result_published";
+export type ResearchCaseWorkspaceTimelineItem = {
+  event_type: ResearchCaseWorkspaceTimelineEventType;
+  occurred_at: string | null;
+  source_id: string;
+  status: string | null;
+  label: string;
+};
 export type ResearchCaseWorkspaceResponse = Omit<
   RequiredDefined<components["schemas"]["ResearchCaseWorkspaceResponse"]>,
   "evidence_packs" | "runs" | "results" | "external_discovery"
@@ -134,6 +148,7 @@ export type ResearchCaseWorkspaceResponse = Omit<
   runs: ResearchCaseWorkspaceRun[];
   results: (ResearchCaseWorkspaceResult | null)[];
   external_discovery: ResearchCaseWorkspaceDiscoveryView[];
+  timeline?: ResearchCaseWorkspaceTimelineItem[];
 };
 export type ResearchDashboardDataQuality = components["schemas"]["ResearchDashboardResponse"]["data_quality"];
 export type ResearchDashboardFreshness = components["schemas"]["ResearchDashboardResponse"]["freshness"];

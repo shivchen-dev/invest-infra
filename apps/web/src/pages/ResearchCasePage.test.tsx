@@ -154,6 +154,21 @@ function makeEvidencePack(
   };
 }
 
+function makeTimelineItem(
+  overrides: Partial<
+    NonNullable<ResearchCaseWorkspaceResponse["timeline"]>[number]
+  > = {},
+): NonNullable<ResearchCaseWorkspaceResponse["timeline"]>[number] {
+  return {
+    event_type: "case_created",
+    occurred_at: "2026-08-09T00:00:00Z",
+    source_id: "11111111-1111-1111-1111-111111111111",
+    status: "open",
+    label: "Research case created (open)",
+    ...overrides,
+  };
+}
+
 function makeWorkspace(
   overrides: Partial<ResearchCaseWorkspaceResponse> = {},
 ): ResearchCaseWorkspaceResponse {
@@ -163,6 +178,7 @@ function makeWorkspace(
     runs: [],
     results: [],
     external_discovery: [],
+    timeline: [],
     ...overrides,
   };
 }
@@ -1086,6 +1102,157 @@ describe("ResearchCasePage", () => {
           within(widgetGrid).getAllByText("Research Case not found").length,
         ).toBeGreaterThan(0);
       });
+    });
+  });
+
+  describe("case timeline", () => {
+    function getCaseOverview(): HTMLElement {
+      const widgetGrid = screen.getByLabelText("Research Case widgets");
+      const overview = widgetGrid.querySelector(
+        '[data-widget-id="case-overview"]',
+      );
+      if (!overview) throw new Error("case-overview widget not found");
+      return overview as HTMLElement;
+    }
+
+    function getTimeline(): HTMLElement | null {
+      return getCaseOverview().querySelector(
+        "[data-case-timeline]",
+      ) as HTMLElement | null;
+    }
+
+    function getTimelineItems(): HTMLElement[] {
+      return Array.from(
+        getCaseOverview().querySelectorAll(
+          "[data-case-timeline-item]",
+        ),
+      ) as HTMLElement[];
+    }
+
+    it("renders an explicit empty placeholder when the timeline has no events", async () => {
+      mockUseWorkspace.mockReturnValue(successQuery(makeWorkspace()));
+
+      renderCasePage("/research/case-timeline-empty");
+
+      const overview = getCaseOverview();
+      const placeholder = within(overview).getByTestId(
+        "case-timeline-empty",
+      );
+      expect(placeholder).toHaveTextContent("暂无时间线");
+      expect(getTimeline()).not.toBeNull();
+      expect(getTimelineItems()).toHaveLength(0);
+    });
+
+    it("renders timeline events with event type, source id, status and occurred_at", async () => {
+      mockUseWorkspace.mockReturnValue(
+        successQuery(
+          makeWorkspace({
+            timeline: [
+              makeTimelineItem({
+                event_type: "case_created",
+                occurred_at: "2026-08-09T00:00:00Z",
+                source_id: "case-1111",
+                status: "open",
+                label: "Research case created (open)",
+              }),
+              makeTimelineItem({
+                event_type: "research_run_started",
+                occurred_at: "2026-08-09T00:05:00Z",
+                source_id: "run-2222",
+                status: "running",
+                label: "Research run started",
+              }),
+            ],
+          }),
+        ),
+      );
+
+      renderCasePage("/research/case-timeline-populated");
+
+      const overview = getCaseOverview();
+      const items = getTimelineItems();
+      expect(items).toHaveLength(2);
+
+      const [created, started] = items;
+      expect(created).toHaveAttribute(
+        "data-case-timeline-event-type",
+        "case_created",
+      );
+      expect(within(created).getByTestId("case-timeline-label")).toHaveTextContent(
+        "Research case created (open)",
+      );
+      expect(within(created).getByTestId("case-timeline-source-id")).toHaveTextContent(
+        "case-1111",
+      );
+      expect(within(created).getByTestId("case-timeline-occurred-at")).toHaveTextContent(
+        "2026-08-09T00:00:00Z",
+      );
+      const createdStatus = within(created).getByTestId(
+        "case-timeline-status",
+      );
+      expect(createdStatus).toHaveAttribute("data-case-timeline-status-value", "open");
+      expect(createdStatus).not.toHaveTextContent("时间未知");
+
+      expect(started).toHaveAttribute(
+        "data-case-timeline-event-type",
+        "research_run_started",
+      );
+      expect(within(started).getByTestId("case-timeline-label")).toHaveTextContent(
+        "Research run started",
+      );
+      expect(within(started).getByTestId("case-timeline-source-id")).toHaveTextContent(
+        "run-2222",
+      );
+      expect(within(started).getByTestId("case-timeline-occurred-at")).toHaveTextContent(
+        "2026-08-09T00:05:00Z",
+      );
+
+      // Read-only assertion: no fabricated buy / sell / stance language.
+      expect(overview.textContent ?? "").not.toMatch(/buy|sell|stance/i);
+    });
+
+    it("shows an explicit '时间未知（API 未提供）' placeholder when occurred_at is null", async () => {
+      mockUseWorkspace.mockReturnValue(
+        successQuery(
+          makeWorkspace({
+            timeline: [
+              makeTimelineItem({
+                event_type: "evidence_pack_available",
+                occurred_at: null,
+                source_id: "pack-9999",
+                status: "ok",
+                label: "Evidence pack available (creation timestamp unavailable)",
+              }),
+            ],
+          }),
+        ),
+      );
+
+      renderCasePage("/research/case-timeline-null-timestamp");
+
+      const overview = getCaseOverview();
+      const items = getTimelineItems();
+      expect(items).toHaveLength(1);
+
+      const occurredAt = within(items[0]!).getByTestId(
+        "case-timeline-occurred-at",
+      );
+      expect(occurredAt).toHaveAttribute(
+        "data-case-timeline-occurred-at-known",
+        "false",
+      );
+      expect(occurredAt).toHaveTextContent("时间未知（API 未提供）");
+
+      // The placeholder must never be confused with a real ISO timestamp —
+      // scope to the timeline cell so the case-metadata dl (which always
+      // echoes caseRow.created_at) does not poison this assertion.
+      expect(occurredAt.textContent ?? "").not.toMatch(
+        /^\d{4}-\d{2}-\d{2}T/,
+      );
+      // And the verbatim label from the API must still be visible.
+      expect(overview).toHaveTextContent(
+        "Evidence pack available (creation timestamp unavailable)",
+      );
     });
   });
 });

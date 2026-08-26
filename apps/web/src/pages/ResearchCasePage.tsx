@@ -3,6 +3,8 @@ import type {
   EvidencePackResponse,
   ResearchCaseWorkspaceDiscoveryView,
   ResearchCaseWorkspaceResponse,
+  ResearchCaseWorkspaceTimelineEventType,
+  ResearchCaseWorkspaceTimelineItem,
   ResearchResultResponse,
   ResearchRunResponse,
 } from "../api/types";
@@ -332,8 +334,148 @@ function CaseOverviewBody({
           <dd>{caseRow.closed_at ?? "—"}</dd>
         </div>
       </dl>
+      <CaseTimelineSection timeline={data.timeline ?? []} />
     </div>
   );
+}
+
+function CaseTimelineSection({
+  timeline,
+}: {
+  timeline: ResearchCaseWorkspaceTimelineItem[];
+}) {
+  const items = timeline ?? [];
+  if (items.length === 0) {
+    return (
+      <section
+        data-case-timeline="true"
+        aria-label="Case Timeline"
+        className="cockpitWidgetStack"
+      >
+        <div
+          className="cockpitWidgetPlaceholder"
+          data-testid="case-timeline-empty"
+        >
+          <strong>暂无时间线</strong>
+          <p>当前 Case 暂无 timeline 事件；浏览器不会自动构造时间线。</p>
+        </div>
+      </section>
+    );
+  }
+  return (
+    <section
+      data-case-timeline="true"
+      aria-label="Case Timeline"
+      className="cockpitWidgetStack"
+    >
+      {items.map((item, index) => (
+        <TimelineRow
+          key={`${item.event_type}:${item.source_id}:${index}`}
+          item={item}
+        />
+      ))}
+    </section>
+  );
+}
+
+function TimelineRow({
+  item,
+}: {
+  item: ResearchCaseWorkspaceTimelineItem;
+}) {
+  const occurredKnown =
+    typeof item.occurred_at === "string" && item.occurred_at.length > 0;
+  const hasStatus =
+    typeof item.status === "string" && item.status.length > 0;
+  return (
+    <div
+      className="cockpitWidgetStack"
+      data-case-timeline-item
+      data-case-timeline-event-type={item.event_type}
+    >
+      <div className="cockpitEvidencePackHeader">
+        <span data-testid="case-timeline-event-type-label">
+          {timelineEventLabel(item.event_type)}
+        </span>
+        {hasStatus ? (
+          <span
+            data-testid="case-timeline-status"
+            data-case-timeline-status-value={item.status}
+          >
+            <StatusBadge tone={timelineStatusTone(item)}>
+              {item.status}
+            </StatusBadge>
+          </span>
+        ) : null}
+      </div>
+      <dl className="cockpitCaseMeta">
+        <div>
+          <dt>Label</dt>
+          <dd data-testid="case-timeline-label">{item.label || "—"}</dd>
+        </div>
+        <div>
+          <dt>Source ID</dt>
+          <dd data-testid="case-timeline-source-id">
+            {item.source_id || "—"}
+          </dd>
+        </div>
+        <div>
+          <dt>Occurred At</dt>
+          <dd
+            data-testid="case-timeline-occurred-at"
+            data-case-timeline-occurred-at-known={occurredKnown ? "true" : "false"}
+          >
+            {occurredKnown ? item.occurred_at : "时间未知（API 未提供）"}
+          </dd>
+        </div>
+      </dl>
+    </div>
+  );
+}
+
+function timelineEventLabel(
+  eventType: ResearchCaseWorkspaceTimelineEventType,
+): string {
+  switch (eventType) {
+    case "case_created":
+      return "Case 创建";
+    case "evidence_pack_available":
+      return "Evidence Pack 就绪";
+    case "external_observation":
+      return "外部观察";
+    case "research_run_started":
+      return "Run 启动";
+    case "research_run_finished":
+      return "Run 完成";
+    case "research_result_published":
+      return "Result 发布";
+  }
+}
+
+function timelineStatusTone(
+  item: ResearchCaseWorkspaceTimelineItem,
+): ResearchWidgetMeta["tone"] {
+  const status = item.status ?? "";
+  if (!status) return "neutral";
+  if (item.event_type === "evidence_pack_available") {
+    if (status === "ok" || status === "complete") return "success";
+    if (status === "failed" || status === "conflict") return "danger";
+    if (status === "partial" || status === "stale") return "warning";
+    return "neutral";
+  }
+  if (item.event_type === "external_observation") {
+    if (status === "admitted" || status === "corroborated") return "success";
+    if (status === "rejected" || status === "conflict") return "danger";
+    if (status === "pending") return "info";
+    return "neutral";
+  }
+  if (status === "succeeded" || status === "success" || status === "completed") {
+    return "success";
+  }
+  if (status === "failed" || status === "error") return "danger";
+  if (status === "running" || status === "pending") return "info";
+  if (status === "skipped" || status === "cancelled") return "warning";
+  return "neutral";
 }
 
 function EvidencePackWidget({

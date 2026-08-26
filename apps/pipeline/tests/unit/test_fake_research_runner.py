@@ -53,7 +53,11 @@ from invest_pipeline.fake_research_runner import (
 )
 from invest_pipeline.research_orchestration_service import (
     ResearchOrchestrationFailedError,
+    ResearchOrchestrationOutcome,
     ResearchOrchestrationService,
+)
+from invest_pipeline.research_run_worker import (
+    ResearchRunWorker,
 )
 
 # ---------------------------------------------------------------------------
@@ -328,6 +332,20 @@ def _build_service(
     return service, uow
 
 
+def _build_worker(
+    *,
+    case: ResearchCase,
+    run: ResearchRun,
+    pack: EvidencePack,
+    runner: FakeResearchRunner,
+) -> tuple[ResearchRunWorker, _FakeUoW]:
+    service, uow = _build_service(case=case, run=run, pack=pack, runner=runner)
+    return (
+        ResearchRunWorker(uow_factory=lambda: uow, orchestration=service),
+        uow,
+    )
+
+
 # ---------------------------------------------------------------------------
 # Tests
 # ---------------------------------------------------------------------------
@@ -442,6 +460,53 @@ class FailureClassificationTest(unittest.TestCase):
             uow.cases.cases[case.case_id].status, ResearchCaseStatus.FAILED
         )
         self.assertNotIn(run.run_id, uow.results.by_run)
+
+
+class WorkerEndToEndTest(unittest.TestCase):
+    """ResearchRunWorker.run_once drives a queued run through the orchestrator
+    and FakeResearchRunner to a terminal state, mirroring the production CLI."""
+
+    def test_run_once_happy_path_persists_result_via_fake_runner(self) -> None:
+        case, run, pack = _ready_case_and_queued_run()
+        runner = FakeResearchRunner(raise_exc=None)
+        worker, uow = _build_worker(
+            case=case, run=run, pack=pack, runner=runner
+        )
+
+        outcome = worker.run_once(run.run_id)
+
+        self.assertIsInstance(outcome, ResearchOrchestrationOutcome)
+        self.assertFalse(outcome.replay)
+        self.assertIsNotNone(outcome.result)
+        self.assertIs(outcome.run.status, ResearchRunStatus.SUCCEEDED)
+        self.assertIs(outcome.case.status, ResearchCaseStatus.COMPLETED)
+        self.assertIs(uow.results.by_run[run.run_id], outcome.result)
+        self.assertEqual(len(runner.calls), 1)
+        self.assertEqual(runner.calls[0]["run_id"], run.run_id)
+        self.assertEqual(runner.calls[0]["case_id"], case.case_id)
+        self.assertEqual(runner.calls[0]["playbook_key"], _PLAYBOOK_KEY)
+
+    def test_run_once_propagates_adapter_failure_and_records_failed_state(self) -> None:
+        case, run, pack = _ready_case_and_queued_run()
+        # Default ctor ships with a fresh JiuwenSwarmRemoteFailureError
+        # injection; the orchestrator classifies it as a permanent failure.
+        runner = FakeResearchRunner()
+        worker, uow = _build_worker(
+            case=case, run=run, pack=pack, runner=runner
+        )
+
+        with self.assertRaises(ResearchOrchestrationFailedError) as ctx:
+            worker.run_once(run.run_id)
+
+        self.assertIn("JiuwenSwarmRemoteFailureError", str(ctx.exception))
+        self.assertIn(str(run.run_id), str(ctx.exception))
+        self.assertIs(uow.runs.runs[run.run_id].status, ResearchRunStatus.FAILED)
+        self.assertIs(uow.cases.cases[case.case_id].status, ResearchCaseStatus.FAILED)
+        self.assertNotIn(run.run_id, uow.results.by_run)
+        # runner.calls is appended BEFORE the injection is re-raised, so the
+        # orchestrator trace can still inspect what the runner saw.
+        self.assertEqual(len(runner.calls), 1)
+        self.assertEqual(runner.calls[0]["run_id"], run.run_id)
 
 
 if __name__ == "__main__":
