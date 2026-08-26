@@ -57,7 +57,16 @@ Gate 3 核心聚焦测试另通过：`43 passed`，覆盖 Observation Admission�
 
 旧的 1.1.x 报告样本和三件套不属于以上待办，不再追补、不再复验。
 
-## 5. 当前结论
+## 5. 全量回归
+
+2026-08-26 复核结果：
+
+- Pipeline：`2453 passed, 1 skipped`；
+- API：`684 passed`，另有 1 条既有 Starlette/httpx 弃用 warning；
+- Web typecheck：通过；
+- Web 全量测试：`28 files passed`、`216 tests passed`。
+
+## 6. 当前结论
 
 **Gate 3 自动化验证通过，Gate 3 整体尚未完成。**
 
