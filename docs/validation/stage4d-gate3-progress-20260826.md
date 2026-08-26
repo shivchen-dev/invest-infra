@@ -1,0 +1,64 @@
+# Stage 4D Gate 3：当前进度与自动化验证记录
+
+## 1. 依据与范围
+
+- 当前权威计划：`docs/plan/invest-infra-stage4d-mvp-phased-execution-plan-v1.0.md`
+- 当前验收目标：`Observation → Admission → Evidence → Research Case → Research Run/Result → Research Workspace timeline`
+- WorkBuddy 范围：当前 Candidate Schema 2.0.0；不包含 legacy 1.1.x 报告三件套
+- JiuwenSwarm：按当前计划不再作为本阶段依赖或验收对象
+- 验收时间：2026-08-26（Asia/Shanghai）
+
+## 2. 已通过的自动化验证
+
+### Pipeline
+
+执行：
+
+```bash
+cd apps/pipeline
+uv run --no-env-file pytest -q \
+  tests/unit/test_workbuddy_research_artifacts.py \
+  tests/unit/test_workbuddy_research_ingest_cli.py \
+  tests/unit/test_workbuddy_stage_worker.py \
+  tests/unit/test_workbuddy_shared_directory.py \
+  tests/unit/test_external_research_handoff.py \
+  tests/unit/test_research_context_projection.py \
+  tests/unit/test_research_run_worker_cli.py
+```
+
+结果：`75 passed`。
+
+Gate 3 核心聚焦测试另通过：`43 passed`，覆盖 Observation Admission、Fake ResearchRunner、Research Runtime、Orchestration 和 Research Run Worker。
+
+### API
+
+执行 Gate 3 Admission、Evidence、Research Run、Research Case 和 Workspace 相关测试，结果：`62 passed`，`1 warning`（Starlette/httpx 弃用提示，不影响断言）。
+
+### Web
+
+执行 Research Case、Workspace API、Research Run Timeline 相关入口；当前 Web 测试命令运行全量套件，结果：`28 files passed`、`216 tests passed`。
+
+## 3. 当前能力确认
+
+- 服务端 Admission 负责计算验证事实，客户端不提交验证布尔结论；
+- Fake WorkBuddy → Orchestrator → Fake ResearchRunner 的成功/失败路径已有测试；
+- Research Case 页面已展示发现、准入、Artifact、Evidence、Research Run/Result 时间线；
+- `occurred_at` 缺失时页面明确显示时间未知；
+- API OpenAPI 与 Web 生成客户端已同步。
+
+## 4. 尚未完成的 Gate 3 项
+
+以下项目仍不能标记为完成：
+
+1. 使用当前有效的 WorkBuddy 2.0.0 Candidate 输入，完成一次真实的 Observation 准入后 Research Run/Result 手工联调；
+2. 对应真实链路保留输入 hash、run/case/result 关联、执行命令和结果状态；
+3. 完成 Gate 3 全量回归、构建和最终演示；
+4. 补齐运行手册、架构说明与最终 Gate 3 验收记录。
+
+旧的 1.1.x 报告样本和三件套不属于以上待办，不再追补、不再复验。
+
+## 5. 当前结论
+
+**Gate 3 自动化验证通过，Gate 3 整体尚未完成。**
+
+剩余阻塞是当前有效 2.0.0 WorkBuddy 研究输入的真实手工联调证据，以及最终全量验收收口；不是旧报告三件套缺失。
