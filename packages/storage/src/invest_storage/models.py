@@ -2395,3 +2395,62 @@ class ResearchExternalEvidenceRow(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
+
+
+class StrategyDraftRow(Base):
+    """One :class:`invest_domain.strategy.StrategyDraft` envelope in
+    ``analytics.strategy_drafts``. Slice 0: 8 fields; unique
+    ``(strategy_key, proposed_version)`` and ``artifact_hash``; DB-side
+    CHECK rejects blank strings, an ``artifact_hash`` that is not
+    exactly 64 lowercase hex characters, and ``source_refs`` that is not
+    a non-empty JSONB array; ``validation_result`` is required to be a
+    JSONB object. ``source_refs`` has no default — a draft without
+    explicit source material is not a valid registration attempt.
+    Constraint ``name``s are short suffixes; the ``Base``
+    ``NAMING_CONVENTION`` adds the ``ck_strategy_drafts_`` /
+    ``uq_strategy_drafts_`` / ``ix_strategy_drafts_`` prefix."""
+
+    __tablename__ = "strategy_drafts"
+    __table_args__ = (
+        UniqueConstraint(
+            "strategy_key", "proposed_version",
+            name="uq_strategy_drafts_strategy_key_proposed_version",
+        ),
+        UniqueConstraint(
+            "artifact_hash",
+            name="uq_strategy_drafts_artifact_hash",
+        ),
+        CheckConstraint("btrim(strategy_key) <> ''", name="strategy_key_nonblank"),
+        CheckConstraint(
+            "btrim(proposed_version) <> ''", name="proposed_version_nonblank",
+        ),
+        CheckConstraint(
+            "btrim(artifact_ref) <> ''", name="artifact_ref_nonblank",
+        ),
+        CheckConstraint(
+            "artifact_hash ~ '^[0-9a-f]{64}$'", name="artifact_hash_len64",
+        ),
+        CheckConstraint(
+            "jsonb_typeof(source_refs) = 'array' "
+            "AND jsonb_array_length(source_refs) > 0",
+            name="source_refs_array",
+        ),
+        CheckConstraint(
+            "jsonb_typeof(validation_result) = 'object'",
+            name="validation_result_object",
+        ),
+        Index(
+            "ix_strategy_drafts_strategy_key_created_at",
+            "strategy_key", "created_at",
+        ),
+        {"schema": "analytics"},
+    )
+
+    draft_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True)
+    strategy_key: Mapped[str] = mapped_column(String(120), nullable=False)
+    proposed_version: Mapped[str] = mapped_column(String(64), nullable=False)
+    artifact_ref: Mapped[str] = mapped_column(String(512), nullable=False)
+    artifact_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    source_refs: Mapped[list[Any]] = mapped_column(JSONB, nullable=False)
+    validation_result: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)

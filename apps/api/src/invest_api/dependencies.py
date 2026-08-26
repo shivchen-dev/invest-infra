@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 from functools import lru_cache
+from pathlib import Path
 from typing import Annotated
 
 from fastapi import Depends
@@ -23,6 +24,7 @@ from invest_storage.repositories import (
     SqlAlchemyResearchExternalEvidenceRepository,
     SqlAlchemyResearchResultRepository,
     SqlAlchemyResearchRunRepository,
+    SqlAlchemyStrategyDraftRepository,
 )
 from sqlalchemy import Engine
 from sqlalchemy.orm import Session, sessionmaker
@@ -39,7 +41,9 @@ from invest_api.application.research import ResearchQueryService
 from invest_api.application.research_center import ResearchCenterQueryService
 from invest_api.application.research_external_evidence import ResearchExternalEvidenceService
 from invest_api.application.research_run_command import ResearchRunCommandService
+from invest_api.application.strategy_drafts import StrategyDraftQueryService
 from invest_api.config import get_settings
+from invest_api.strategy_artifacts import LocalStrategyArtifactReader
 
 
 @lru_cache
@@ -62,6 +66,19 @@ def get_db_session() -> Iterator[Session]:
         raise
     finally:
         session.close()
+
+
+def get_strategy_draft_query_service(
+    session: Annotated[Session, Depends(get_db_session)],
+) -> StrategyDraftQueryService:
+    artifact_root = get_settings().strategy_artifact_root
+    if not artifact_root.is_absolute():
+        repository_root = Path(__file__).resolve().parents[4]
+        artifact_root = repository_root / artifact_root
+    return StrategyDraftQueryService(
+        repository=SqlAlchemyStrategyDraftRepository(session),
+        artifact_reader=LocalStrategyArtifactReader(artifact_root),
+    )
 
 
 def get_pipeline_run_query_service(
@@ -276,4 +293,5 @@ __all__ = [
     "get_research_center_query_service",
     "get_research_query_service",
     "get_session_factory",
+    "get_strategy_draft_query_service",
 ]

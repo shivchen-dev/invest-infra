@@ -32,11 +32,13 @@ from invest_storage.repositories import (
     SqlAlchemyProviderBatchRepository,
     SqlAlchemyResearchResultRepository,
     SqlAlchemyResearchRunRepository,
+    SqlAlchemyStrategyDraftRepository,
 )
 from invest_storage.unit_of_work import (
     ResearchResultRepositoryPort,
     ResearchRunRepositoryPort,
     SqlAlchemyUnitOfWork,
+    StrategyDraftRepositoryPort,
     UnitOfWork,
 )
 from sqlalchemy.orm import Session
@@ -304,6 +306,49 @@ class SqlAlchemyUnitOfWorkMockTests(unittest.TestCase):
         # Neither post-exit call should have reached the released session mock.
         self._session.commit.assert_not_called()
         self._session.rollback.assert_called_once_with()
+
+
+    # ------------------------------------------------------------------
+    # PR-STRATEGY-DRAFT cached strategy_drafts property
+    # ------------------------------------------------------------------
+
+    def test_uow_strategy_drafts_property_caches_and_resets(self) -> None:
+        # Concrete type, same-session binding, per-UoW caching and
+        # reset/fresh instance after re-entry - the combined contract the
+        # existing instrument / provider-batch / research-run /
+        # research-result tests pin for the other repositories.
+        with self._uow as uow:
+            drafts = uow.strategy_drafts
+            self.assertIsInstance(drafts, SqlAlchemyStrategyDraftRepository)
+            # the same session the factory handed out is wired into the repo
+            self.assertIs(drafts._session, self._session)
+            # the same repository instance is reused for the lifetime of
+            # the UoW so SQLAlchemy's identity map behaves as expected.
+            self.assertIs(uow.strategy_drafts, drafts)
+
+        # After exit the internal ref is cleared, and re-entering the UoW
+        # produces a fresh repository instance.
+        with self._uow as uow:
+            self.assertIsNot(uow.strategy_drafts, drafts)
+
+    def test_uow_strategy_drafts_satisfies_protocol_port_and_surface(self) -> None:
+        # The Protocol-based port is structural; the concrete adapter and
+        # the UoW surface must both satisfy it so callers can type-hint
+        # against the port without importing SQLAlchemy. Pins the four
+        # public callables the application layer depends on.
+        with self._uow as uow:
+            drafts = uow.strategy_drafts
+            self.assertIsInstance(drafts, StrategyDraftRepositoryPort)
+            for method_name in (
+                "add",
+                "get_by_id",
+                "get_by_artifact_hash",
+                "get_by_strategy_key_proposed_version",
+            ):
+                self.assertTrue(
+                    callable(getattr(drafts, method_name, None)),
+                    f"SqlAlchemyStrategyDraftRepository must expose {method_name!r}",
+                )
 
 
 if __name__ == "__main__":

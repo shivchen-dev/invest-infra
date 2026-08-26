@@ -15,10 +15,10 @@ Design constraints (see M1 increment 3 plan):
   ``uow.provider_requests``, ``uow.provider_attempts``,
   ``uow.provider_batches``, ``uow.pipeline_runs``,
   ``uow.candidate_pool_runs``, ``uow.candidate_pool_items``,
-  ``uow.research_runs`` and ``uow.research_results``. The
-  same repository instance is reused for the lifetime of the UoW so
-  identity-based caching (e.g. SQLAlchemy's identity map) works as
-  expected.
+  ``uow.research_runs``, ``uow.research_results`` and
+  ``uow.strategy_drafts``. The same repository instance is reused for
+  the lifetime of the UoW so identity-based caching (e.g. SQLAlchemy's
+  identity map) works as expected.
 - The protocol (``UnitOfWork``) keeps the application layer decoupled
   from SQLAlchemy; the SQLAlchemy implementation
   (:class:`SqlAlchemyUnitOfWork`) is the only adapter in M1.
@@ -60,6 +60,7 @@ from invest_storage.repositories import (
     SqlAlchemyResearchResultRepository,
     SqlAlchemyResearchRunRepository,
     SqlAlchemyStockPriceLimitRepository,
+    SqlAlchemyStrategyDraftRepository,
 )
 
 
@@ -555,6 +556,23 @@ class EtfHoldingSnapshotRepositoryPort(Protocol):
 
 
 @runtime_checkable
+class StrategyDraftRepositoryPort(Protocol):
+    """Subset of the StrategyDraft repository surface the UoW exposes.
+
+    The :class:`invest_storage.repositories.SqlAlchemyStrategyDraftRepository`
+    is the only adapter; the Protocol keeps the application layer
+    decoupled from the concrete class.
+    """
+
+    def add(self, draft): ...
+    def get_by_id(self, draft_id): ...
+    def get_by_artifact_hash(self, artifact_hash): ...
+    def get_by_strategy_key_proposed_version(
+        self, strategy_key, proposed_version
+    ): ...
+
+
+@runtime_checkable
 class SessionProvider(Protocol):
     """Anything that can hand out a SQLAlchemy ``Session``.
 
@@ -606,6 +624,7 @@ class UnitOfWork(Protocol):
     external_artifacts: ExternalArtifactRepositoryPort
     external_observations: ExternalObservationRepositoryPort
     research_external_evidence: ResearchExternalEvidenceRepositoryPort
+    strategy_drafts: StrategyDraftRepositoryPort
 
     def commit(self) -> None:
         """Persist the current transaction to the database."""
@@ -673,6 +692,7 @@ class SqlAlchemyUnitOfWork:
         self._external_artifacts: SqlAlchemyExternalArtifactRepository | None = None
         self._external_observations: SqlAlchemyExternalObservationRepository | None = None
         self._research_external_evidence: SqlAlchemyResearchExternalEvidenceRepository | None = None
+        self._strategy_drafts: SqlAlchemyStrategyDraftRepository | None = None
         self._closed = True
         self._user_committed = False
 
@@ -871,6 +891,12 @@ class SqlAlchemyUnitOfWork:
             )
         return self._research_external_evidence
 
+    @property
+    def strategy_drafts(self) -> SqlAlchemyStrategyDraftRepository:
+        if self._strategy_drafts is None:
+            self._strategy_drafts = SqlAlchemyStrategyDraftRepository(self.session)
+        return self._strategy_drafts
+
     def commit(self) -> None:
         self.session.commit()
         self._user_committed = True
@@ -932,6 +958,7 @@ class SqlAlchemyUnitOfWork:
             self._external_artifacts = None
             self._external_observations = None
             self._research_external_evidence = None
+            self._strategy_drafts = None
             self._user_committed = False
             self._closed = True
 
@@ -970,6 +997,7 @@ __all__ = [
     "ProviderRequestRepositoryPort",
     "SessionProvider",
     "StockPriceLimitRepositoryPort",
+    "StrategyDraftRepositoryPort",
     "SqlAlchemyUnitOfWork",
     "UnitOfWork",
 ]  # noqa: E501

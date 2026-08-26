@@ -253,6 +253,8 @@ legacy 1.1.x 不在当前入口、测试队列或后续 Web 工作台范围内�
 
 对应原蓝图：D7–D8。目标是完成 `Observation → Admission → Evidence → Research Case → Research Run/Result → 统一时间线`。JiuwenSwarm 已停止采用，不再作为本阶段依赖或验收对象。
 
+真实 WorkBuddy 验收前置依赖：先完成 `invest-infra-candidate-strategies-mvp-plan-v1.0.md`，将既有板块强度与通达信个股筛选交付纳入 Draft → RAA 审计 → CIA 批准 → StrategyVersion 发布激活，再以两个正式版本执行固定两阶段候选发现。该切片属于 Stage 4D P0，不新增并行主线。
+
 ### 7.1 交付任务
 
 #### 任务 3.1：实现 Observation Admission

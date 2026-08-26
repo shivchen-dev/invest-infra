@@ -249,6 +249,10 @@ export interface paths {
     /** Get Research Run Result */
     get: operations["get_research_run_result_api_v1_research_runs__run_id__result_get"];
   };
+  "/api/v1/strategy-drafts/{draft_id}": {
+    /** Get Strategy Draft */
+    get: operations["get_strategy_draft_api_v1_strategy_drafts__draft_id__get"];
+  };
   "/health": {
     /** Health */
     get: operations["health_health_get"];
@@ -2226,6 +2230,61 @@ export interface components {
       /** Value */
       value?: string | null;
     };
+    /** SourceRefResponse */
+    SourceRefResponse: {
+      /** Content Hash */
+      content_hash: string;
+      /** Ref */
+      ref: string;
+    };
+    /** StrategyDraftAuditSummaryResponse */
+    StrategyDraftAuditSummaryResponse: {
+      /** Artifact Hash */
+      artifact_hash: string;
+      /**
+       * Audit Id
+       * Format: uuid
+       */
+      audit_id: string;
+      /**
+       * Audited At
+       * Format: date-time
+       */
+      audited_at: string;
+      /** Verdict */
+      verdict: string;
+    };
+    /** StrategyDraftResponse */
+    StrategyDraftResponse: {
+      /** Artifact Hash */
+      artifact_hash: string;
+      /** Audit Summaries */
+      audit_summaries?: components["schemas"]["StrategyDraftAuditSummaryResponse"][];
+      /**
+       * Created At
+       * Format: date-time
+       */
+      created_at: string;
+      /**
+       * Draft Id
+       * Format: uuid
+       */
+      draft_id: string;
+      /** Proposed Version */
+      proposed_version: string;
+      /** Source Refs */
+      source_refs: components["schemas"]["SourceRefResponse"][];
+      /** Strategy */
+      strategy: {
+        [key: string]: unknown;
+      };
+      /** Strategy Key */
+      strategy_key: string;
+      /** Validation Result */
+      validation_result: {
+        [key: string]: unknown;
+      };
+    };
     /** ValidationError */
     ValidationError: {
       /** Context */
@@ -3008,6 +3067,28 @@ export interface operations {
       200: {
         content: {
           "application/json": components["schemas"]["ResearchResultResponse"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  /** Get Strategy Draft */
+  get_strategy_draft_api_v1_strategy_drafts__draft_id__get: {
+    parameters: {
+      path: {
+        draft_id: string;
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      200: {
+        content: {
+          "application/json": components["schemas"]["StrategyDraftResponse"];
         };
       };
       /** @description Validation Error */

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from functools import lru_cache
+from pathlib import Path
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -12,6 +13,7 @@ class Settings(BaseSettings):
     database_url: str = "postgresql+psycopg://invest:invest_dev_password@localhost:5432/invest"
     api_cors_origins: str = "http://localhost:5173"
     stage4d_admission_commands_enabled: bool = False
+    strategy_artifact_root: Path = Path("var/strategy-artifacts")
 
     @property
     def cors_origins(self) -> list[str]:

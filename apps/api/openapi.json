@@ -4036,6 +4036,116 @@
         "title": "RuleOutcomeResponse",
         "type": "object"
       },
+      "SourceRefResponse": {
+        "properties": {
+          "content_hash": {
+            "title": "Content Hash",
+            "type": "string"
+          },
+          "ref": {
+            "title": "Ref",
+            "type": "string"
+          }
+        },
+        "required": [
+          "ref",
+          "content_hash"
+        ],
+        "title": "SourceRefResponse",
+        "type": "object"
+      },
+      "StrategyDraftAuditSummaryResponse": {
+        "properties": {
+          "artifact_hash": {
+            "title": "Artifact Hash",
+            "type": "string"
+          },
+          "audit_id": {
+            "format": "uuid",
+            "title": "Audit Id",
+            "type": "string"
+          },
+          "audited_at": {
+            "format": "date-time",
+            "title": "Audited At",
+            "type": "string"
+          },
+          "verdict": {
+            "title": "Verdict",
+            "type": "string"
+          }
+        },
+        "required": [
+          "audit_id",
+          "artifact_hash",
+          "verdict",
+          "audited_at"
+        ],
+        "title": "StrategyDraftAuditSummaryResponse",
+        "type": "object"
+      },
+      "StrategyDraftResponse": {
+        "properties": {
+          "artifact_hash": {
+            "title": "Artifact Hash",
+            "type": "string"
+          },
+          "audit_summaries": {
+            "items": {
+              "$ref": "#/components/schemas/StrategyDraftAuditSummaryResponse"
+            },
+            "title": "Audit Summaries",
+            "type": "array"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "draft_id": {
+            "format": "uuid",
+            "title": "Draft Id",
+            "type": "string"
+          },
+          "proposed_version": {
+            "title": "Proposed Version",
+            "type": "string"
+          },
+          "source_refs": {
+            "items": {
+              "$ref": "#/components/schemas/SourceRefResponse"
+            },
+            "title": "Source Refs",
+            "type": "array"
+          },
+          "strategy": {
+            "additionalProperties": true,
+            "title": "Strategy",
+            "type": "object"
+          },
+          "strategy_key": {
+            "title": "Strategy Key",
+            "type": "string"
+          },
+          "validation_result": {
+            "additionalProperties": true,
+            "title": "Validation Result",
+            "type": "object"
+          }
+        },
+        "required": [
+          "draft_id",
+          "strategy_key",
+          "proposed_version",
+          "artifact_hash",
+          "strategy",
+          "source_refs",
+          "validation_result",
+          "created_at"
+        ],
+        "title": "StrategyDraftResponse",
+        "type": "object"
+      },
       "ValidationError": {
         "properties": {
           "ctx": {
@@ -5585,6 +5695,49 @@
         "summary": "Get Research Run Result",
         "tags": [
           "research"
+        ]
+      }
+    },
+    "/api/v1/strategy-drafts/{draft_id}": {
+      "get": {
+        "operationId": "get_strategy_draft_api_v1_strategy_drafts__draft_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "draft_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Draft Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StrategyDraftResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Strategy Draft",
+        "tags": [
+          "strategy-drafts"
         ]
       }
     },

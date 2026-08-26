@@ -124,6 +124,7 @@ from invest_domain.research.research_run import (
     ResearchRunStatus,
 )
 from invest_domain.shared.values import Currency
+from invest_domain.strategy import SourceRef, StrategyDraft
 from sqlalchemy import func, select, text, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.exc import IntegrityError
@@ -167,6 +168,7 @@ from invest_storage.models import (
     ResearchResultRow,
     ResearchRunRow,
     StockPriceLimitRow,
+    StrategyDraftRow,
 )
 
 
@@ -5556,3 +5558,117 @@ def _row_to_external_evidence(row: ResearchExternalEvidenceRow) -> ExternalEvide
         admission=dict(row.admission or {}),
         content_hash=row.content_hash,
     )
+
+
+class SqlAlchemyStrategyDraftRepository:
+    """Persistence for the immutable :class:`StrategyDraft` envelope.
+
+    Slice-0 contract: a new ``(strategy_key, proposed_version)`` pair
+    inserts; the same pair + same ``artifact_hash`` returns the
+    existing draft (idempotent, no comparison of other fields); the
+    same pair with a different ``artifact_hash`` or the same
+    ``artifact_hash`` under a different pair raises
+    :class:`StrategyDraftConflictError`. Concurrent unique-violation
+    races propagate as :class:`IntegrityError` — no private classifier.
+    Reads return rebuilt :class:`StrategyDraft`; the ORM row is never
+    leaked.
+    """
+
+    def __init__(self, session: Session) -> None:
+        self._session = session
+
+    def add(self, draft: StrategyDraft) -> StrategyDraft:
+        if not isinstance(draft, StrategyDraft):
+            raise TypeError(
+                "SqlAlchemyStrategyDraftRepository.add expects a "
+                f"StrategyDraft, got {type(draft).__name__}"
+            )
+        existing_by_pair = self._session.scalars(
+            select(StrategyDraftRow).where(
+                StrategyDraftRow.strategy_key == draft.strategy_key,
+                StrategyDraftRow.proposed_version == draft.proposed_version,
+            )
+        ).first()
+        if existing_by_pair is not None:
+            if existing_by_pair.artifact_hash != draft.artifact_hash:
+                raise StrategyDraftConflictError(
+                    f"StrategyDraft for ({draft.strategy_key!r}, "
+                    f"{draft.proposed_version!r}) already exists with a "
+                    "different artifact_hash"
+                )
+            return _row_to_strategy_draft(existing_by_pair)
+        other_by_hash = self._session.scalars(
+            select(StrategyDraftRow).where(
+                StrategyDraftRow.artifact_hash == draft.artifact_hash,
+            )
+        ).first()
+        if other_by_hash is not None:
+            raise StrategyDraftConflictError(
+                f"StrategyDraft artifact_hash {draft.artifact_hash!s} is "
+                "already registered under a different "
+                f"(strategy_key, proposed_version) pair"
+            )
+        self._session.add(StrategyDraftRow(
+            draft_id=draft.draft_id,
+            strategy_key=draft.strategy_key,
+            proposed_version=draft.proposed_version,
+            artifact_ref=draft.artifact_ref,
+            artifact_hash=draft.artifact_hash,
+            source_refs=[
+                {"ref": item.ref, "content_hash": item.content_hash}
+                for item in draft.source_refs
+            ],
+            validation_result=dict(draft.validation_result),
+            created_at=draft.created_at,
+        ))
+        return draft
+
+    def get_by_id(self, draft_id: UUID) -> StrategyDraft | None:
+        row = self._session.get(StrategyDraftRow, draft_id)
+        return _row_to_strategy_draft(row) if row is not None else None
+
+    def get_by_artifact_hash(self, artifact_hash: str) -> StrategyDraft | None:
+        row = self._session.scalars(
+            select(StrategyDraftRow).where(
+                StrategyDraftRow.artifact_hash == artifact_hash,
+            )
+        ).first()
+        return _row_to_strategy_draft(row) if row is not None else None
+
+    def get_by_strategy_key_proposed_version(
+        self,
+        strategy_key: str,
+        proposed_version: str,
+    ) -> StrategyDraft | None:
+        row = self._session.scalars(
+            select(StrategyDraftRow).where(
+                StrategyDraftRow.strategy_key == strategy_key,
+                StrategyDraftRow.proposed_version == proposed_version,
+            )
+        ).first()
+        return _row_to_strategy_draft(row) if row is not None else None
+
+
+def _row_to_strategy_draft(row: StrategyDraftRow) -> StrategyDraft:
+    items = list(row.source_refs)
+    if not all(isinstance(item, dict) for item in items):
+        raise ValueError(
+            "StrategyDraftRow.source_refs contains a non-dict element"
+        )
+    return StrategyDraft(
+        draft_id=row.draft_id,
+        strategy_key=row.strategy_key,
+        proposed_version=row.proposed_version,
+        artifact_ref=row.artifact_ref,
+        artifact_hash=row.artifact_hash,
+        source_refs=tuple(
+            SourceRef(ref=str(i["ref"]), content_hash=str(i["content_hash"]))
+            for i in items
+        ),
+        validation_result=dict(row.validation_result),
+        created_at=row.created_at,
+    )
+
+
+class StrategyDraftConflictError(RuntimeError):
+    """Raised when ``add`` cannot honour the draft uniqueness contract."""

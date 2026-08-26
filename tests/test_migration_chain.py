@@ -288,7 +288,7 @@ class MigrationChainTest(unittest.TestCase):
         head_ids = all_revision_ids - referenced_down_revisions
         self.assertEqual(
             head_ids,
-            {"20260814_0020"},
+            {"20260826_0021"},
             f"expected exactly one unreferenced chain head, got {sorted(head_ids)}",
         )
 
@@ -393,7 +393,7 @@ class MigrationChainTest(unittest.TestCase):
         head_ids = all_revision_ids - referenced_down_revisions
         self.assertEqual(
             head_ids,
-            {"20260814_0020"},
+            {"20260826_0021"},
             f"expected exactly one unreferenced chain head, got {sorted(head_ids)}",
         )
 
@@ -483,7 +483,7 @@ class MigrationChainTest(unittest.TestCase):
         heads = {revision for revision, _ in revisions.values()} - {
             down_revision for _, down_revision in revisions.values() if down_revision is not None
         }
-        self.assertEqual(heads, {"20260814_0020"})
+        self.assertEqual(heads, {"20260826_0021"})
         source = (versions_directory / "20260805_0010_research_context_packs.py").read_text()
         self.assertIn('revision: str = "20260805_0010"', source)
         self.assertIn('down_revision: str | None = "20260805_0009"', source)
@@ -631,7 +631,7 @@ class MigrationChainTest(unittest.TestCase):
         head_ids = all_revision_ids - referenced_down_revisions
         self.assertEqual(
             head_ids,
-            {"20260814_0020"},
+            {"20260826_0021"},
             f"expected exactly one unreferenced chain head, got {sorted(head_ids)}",
         )
 
@@ -1031,7 +1031,7 @@ class MigrationChainTest(unittest.TestCase):
         head_ids = all_revision_ids - referenced_down_revisions
         self.assertEqual(
             head_ids,
-            {"20260814_0020"},
+            {"20260826_0021"},
             f"expected exactly one unreferenced chain head, got {sorted(head_ids)}",
         )
 
@@ -1277,8 +1277,8 @@ class MigrationChainTest(unittest.TestCase):
         head_ids = all_revision_ids - referenced_down_revisions
         self.assertEqual(
             head_ids,
-            {"20260814_0020"},
-            f"expected exactly one chain head pointing at 20260814_0020, got {sorted(head_ids)}",
+            {"20260826_0021"},
+            f"expected exactly one chain head pointing at 20260826_0021, got {sorted(head_ids)}",
         )
 
         for token in (
@@ -1329,6 +1329,102 @@ class MigrationChainTest(unittest.TestCase):
         self.assertIn("ix_research_results_evidence_bundle_id", result_index_names)
         result_column = result_table.c["evidence_bundle_id"]
         self.assertTrue(result_column.nullable)
+
+    def test_strategy_drafts_migration_is_current_head(self) -> None:
+        """Pin the 20260826_0021 contract: sole head, eight columns matching
+        StrategyDraftRow, PK / 2 UQ / 6 CHECK / 1 IX names, lowercase-SHA-256
+        regex, non-empty source_refs JSONB array, no server defaults / FKs,
+        downgrade drops index then table, identifier length <=63."""
+
+        versions_directory = (
+            Path(__file__).resolve().parents[1]
+            / "apps" / "migrations" / "migrations" / "versions"
+        )
+        revisions: dict[Path, tuple[str, object]] = {}
+        for revision_file in sorted(versions_directory.glob("*.py")):
+            tree = ast.parse(revision_file.read_text(encoding="utf-8"))
+            assignments: dict[str, object] = {}
+            for node in tree.body:
+                if isinstance(node, ast.Assign):
+                    value = _try_literal_eval(node.value)
+                    if value is not _NOT_LITERAL:
+                        for target in node.targets:
+                            if isinstance(target, ast.Name):
+                                assignments[target.id] = value
+                elif (
+                    isinstance(node, ast.AnnAssign)
+                    and isinstance(node.target, ast.Name)
+                    and node.value is not None
+                ):
+                    value = _try_literal_eval(node.value)
+                    if value is not _NOT_LITERAL:
+                        assignments[node.target.id] = value
+            revisions[revision_file] = (
+                assignments["revision"], assignments["down_revision"],
+            )
+        head_ids = {r for r, _ in revisions.values()} - {
+            d for _, d in revisions.values() if d is not None
+        }
+        self.assertEqual(head_ids, {"20260826_0021"})
+
+        migration_file = versions_directory / "20260826_0021_strategy_drafts.py"
+        source = migration_file.read_text(encoding="utf-8")
+
+        self.assertIn('revision: str = "20260826_0021"', source)
+        self.assertIn('down_revision: str | None = "20260814_0020"', source)
+
+        for column in (
+            'sa.Column("draft_id", postgresql.UUID(as_uuid=True), nullable=False)',
+            'sa.Column("strategy_key", sa.String(length=120), nullable=False)',
+            'sa.Column("proposed_version", sa.String(length=64), nullable=False)',
+            'sa.Column("artifact_ref", sa.String(length=512), nullable=False)',
+            'sa.Column("artifact_hash", sa.String(length=64), nullable=False)',
+            'sa.Column("source_refs", postgresql.JSONB, nullable=False)',
+            'sa.Column("validation_result", postgresql.JSONB, nullable=False)',
+            'sa.Column("created_at", sa.DateTime(timezone=True), nullable=False)',
+        ):
+            self.assertIn(column, source)
+        self.assertNotIn("server_default", source)
+        self.assertNotIn("ForeignKeyConstraint", source)
+
+        for name in (
+            "pk_strategy_drafts",
+            "uq_strategy_drafts_strategy_key_proposed_version",
+            "uq_strategy_drafts_artifact_hash",
+            "ck_strategy_drafts_strategy_key_nonblank",
+            "ck_strategy_drafts_proposed_version_nonblank",
+            "ck_strategy_drafts_artifact_ref_nonblank",
+            "ck_strategy_drafts_artifact_hash_len64",
+            "ck_strategy_drafts_source_refs_array",
+            "ck_strategy_drafts_validation_result_object",
+            "ix_strategy_drafts_strategy_key_created_at",
+        ):
+            self.assertIn(name, source)
+
+        self.assertIn("artifact_hash ~ '^[0-9a-f]{64}$'", source)
+        self.assertIn("jsonb_typeof(source_refs) = 'array'", source)
+        self.assertIn("jsonb_array_length(source_refs) > 0", source)
+
+        tree = ast.parse(source, filename=str(migration_file))
+        downgrade = next(
+            n for n in tree.body
+            if isinstance(n, ast.FunctionDef) and n.name == "downgrade"
+        )
+        op_calls = [
+            c.func.attr for c in ast.walk(downgrade)
+            if isinstance(c, ast.Call) and isinstance(c.func, ast.Attribute)
+            and isinstance(c.func.value, ast.Name) and c.func.value.id == "op"
+        ]
+        self.assertEqual(op_calls, ["drop_index", "drop_table"])
+
+        explicit_names = [
+            node.value for node in ast.walk(tree)
+            if isinstance(node, ast.Constant) and isinstance(node.value, str)
+            and node.value.startswith(("fk_", "uq_", "ck_", "ix_", "pk_"))
+        ]
+        self.assertEqual(
+            sorted(n for n in explicit_names if len(n) > 63), [],
+        )
 
 
 def _first_string_literal(call_node: ast.Call) -> str | None:

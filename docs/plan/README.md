@@ -13,7 +13,7 @@
 
 | 优先级 | 主线 | 状态 | 唯一权威实施计划 |
 |---|---|---|---|---|
-| P0 | Stage 4D 研究交付收口 | `ACTIVE` | `invest-infra-stage4d-mvp-phased-execution-plan-v1.0.md` |
+| P0 | Stage 4D 研究交付收口 | `ACTIVE` | `invest-infra-stage4d-mvp-phased-execution-plan-v1.0.md`；Gate 3 前置切片：`invest-infra-candidate-strategies-mvp-plan-v1.0.md` |
 | P1 | 中心投研可视化平台 MVP | `ACTIVE` | `invest-infra-central-research-visualization-mvp-plan-v1.0.md` |
 
 状态解释：
@@ -56,6 +56,7 @@
 | `invest-infra-central-research-visualization-mvp-plan-v1.0.md` | `ACTIVE` | 当前可视化实施方案；Slice 0–3 为 MVP，Slice 4–5 独立冻结合同和授权 |
 | `invest-infra-stage4d-mvp-phased-execution-plan-v1.0.md` | `ACTIVE` | 当前 Stage 4D 收口权威；只处理真实联调、剩余 Research Workspace 和最终验收 |
 | `invest-infra-strategy-source-to-automation-workflow.md` | `CONTRACT_AUTHORITY` | 策略交付物和来源追溯的合同权威，不作为当前开发排期 |
+| `invest-infra-candidate-strategies-mvp-plan-v1.0.md` | `ACTIVE` | Stage 4D Gate 3 前置切片；原文恢复、两条Draft审计发布、固定两阶段人工执行 |
 | `archive/reference-blueprints/invest-infra-stage4d-unified-investment-workbench-integration-plan-v1.0.md` | `REFERENCE_BLUEPRINT` | Stage 4D–4G 长期蓝图；保留原文件名和完整内容，不得直接从正文派工 |
 | `invest-infra-data-collection-enhancement-plan-v1.0.md` | `REFERENCE_BLUEPRINT` | 数据采集架构参考；不作为当前全量建设承诺 |
 | `invest-infra-investment-context-provider-integration-plan.md` | `REFERENCE_BLUEPRINT` | Provider/Evidence 参考；新数据源按独立授权切片实施 |
