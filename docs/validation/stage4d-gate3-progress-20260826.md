@@ -78,4 +78,13 @@ Gate 3 核心聚焦测试另通过：`43 passed`，覆盖 Observation Admission�
 - payload、source URI、run/artifact identity 和 `admission_status=pending` 未被改写；
 - 临时输入文件已清理，未生成新的 WorkBuddy 结果。
 
-剩余阻塞是 Observation Admission 后的真实 Research Run/Result 手工联调，以及最终验收收口；不是旧报告三件套缺失。
+## 7. 真实 Admission 手工验收结果（2026-08-26）
+
+使用仅监听本机 `127.0.0.1:8001`、开启 `STAGE4D_ADMISSION_COMMANDS_ENABLED=true` 的临时 API 进程，对上述两条真实 2.0.0 Observation 执行了服务端准入命令：
+
+- `2033cf44-d331-52a6-8eb1-59b9e84c2462`（`510500.SH`）：`rejected`；`unit_ok=false`；
+- `65027d0a-7679-55fd-88d7-8fa851522556`（`510300.SH`）：`rejected`；`unit_ok=false`。
+
+两条候选原始 payload 均只有 `symbol` 与 `reason`，没有当前 Admission 合同要求的 `unit` 与 `definition`。服务端按计划规定拒绝缺少正式验证数据的观察，不从 `reason` 推断字段，也未创建 Evidence、ResearchCase 或 ResearchRun。该临时 API 进程已停止。
+
+因此当前真实 Gate3 阻塞已明确为：需要 WorkBuddy 按当前 Candidate 2.0.0 合同重新产出包含可验证 `unit/definition` 的新候选 run；既有 rejected Observation 不回写、不重置。新 run 通过准入后再继续 Evidence → Research Case → Research Run/Result 手工联调；不是旧报告三件套缺失。
