@@ -110,6 +110,33 @@ def test_happy_path_returns_view_with_verified_payload():
     reader.read_bytes.assert_called_once_with(draft.artifact_ref)
 
 
+def test_public_view_recursively_redacts_internal_paths_without_changing_hash():
+    strategy = {
+        "task_source": r"Z:\workbuddy\strategy\inbox\task.ready",
+        "nested": {
+            "host_path": "/srv/private/input.json",
+            "source_url": "https://example.test/a/b",
+            "description": "Use the latest available business data",
+            "values": [r"C:\private\file.json", "relative/business-label"],
+        },
+    }
+    raw = bytes_for(strategy)
+    draft = make_draft(artifact_hash=sha(raw))
+    service, _, _ = build_service(draft=draft, artifact_bytes=raw)
+
+    view = service.get_draft(DRAFT_ID)
+
+    assert view.artifact_hash == sha(raw)
+    assert "task_source" not in view.strategy
+    assert "host_path" not in view.strategy["nested"]
+    assert view.strategy["nested"]["source_url"] == "https://example.test/a/b"
+    assert view.strategy["nested"]["description"] == "Use the latest available business data"
+    assert view.strategy["nested"]["values"] == [
+        "[internal path redacted]",
+        "relative/business-label",
+    ]
+
+
 def test_missing_draft_raises_not_found_without_calling_reader():
     service, _, reader = build_service(draft=None)
 

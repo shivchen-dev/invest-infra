@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -21,6 +22,35 @@ from invest_domain.strategy import SourceRef, StrategyDraft
 READ_ERROR: str = "strategy artifact could not be read"
 HASH_MISMATCH: str = "strategy artifact hash does not match the registered draft"
 DECODE_ERROR: str = "strategy artifact is not a valid UTF-8 JSON object"
+_INTERNAL_PATH_KEYS = frozenset(
+    {"artifact_ref", "host_path", "local_path", "task_source", "workbuddy_path"}
+)
+_WINDOWS_ABSOLUTE_PATH = re.compile(r"^[A-Za-z]:[\\/]")
+_PATH_REDACTION = "[internal path redacted]"
+
+
+def _is_absolute_host_path(value: str) -> bool:
+    return (
+        value.startswith("file://")
+        or value.startswith("\\\\")
+        or (value.startswith("/") and not value.startswith("//"))
+        or _WINDOWS_ABSOLUTE_PATH.match(value) is not None
+    )
+
+
+def _sanitize_public_value(value: Any) -> Any:
+    """Copy JSON data while removing internal path fields and values."""
+    if isinstance(value, dict):
+        return {
+            key: _sanitize_public_value(item)
+            for key, item in value.items()
+            if key not in _INTERNAL_PATH_KEYS
+        }
+    if isinstance(value, list):
+        return [_sanitize_public_value(item) for item in value]
+    if isinstance(value, str) and _is_absolute_host_path(value):
+        return _PATH_REDACTION
+    return value
 
 
 class StrategyDraftRepository(Protocol):
@@ -105,9 +135,11 @@ class StrategyDraftQueryService:
             strategy_key=draft.strategy_key,
             proposed_version=draft.proposed_version,
             artifact_hash=draft.artifact_hash,
-            strategy=MappingProxyType(dict(parsed)),
+            strategy=MappingProxyType(_sanitize_public_value(parsed)),
             source_refs=draft.source_refs,
-            validation_result=draft.validation_result,
+            validation_result=MappingProxyType(
+                _sanitize_public_value(dict(draft.validation_result))
+            ),
             created_at=draft.created_at,
             audit_summaries=(),
         )

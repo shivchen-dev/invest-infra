@@ -204,11 +204,11 @@ RAA 只读 API 位于 Draft 查询接缝；首版不提供 RAA 写 API。ARC 使
 
 **验收标准：**
 
-- [ ] 两篇原文正文可读取，旧hash与当前快照关系明确；
-- [ ] 两条策略的 key、版本、市场范围、规则和数据口径分别明确；
-- [ ] manifest与现有策略交付hash复算一致；
-- [ ] 两条Draft入库后内容和hash不可原地修改；
-- [ ] RAA能通过API分别读取完整策略、来源、能力评估和validation结果。
+- [x] 两篇原文正文可读取，旧hash与当前快照关系明确；
+- [x] 两条策略的 key、版本、市场范围、规则和数据口径分别明确；
+- [x] manifest与现有策略交付hash复算一致；
+- [x] 两条Draft入库后内容和hash不可原地修改；
+- [x] RAA能通过API分别读取完整策略、来源、能力评估和validation结果。
 
 **验证：** JSON schema/fixture、hash、repository 和只读 API tests；RAA 身份实际读回。
 

@@ -25,6 +25,7 @@ dist/
 *.log
 .dagster/
 .runs/
+var/strategy-artifacts/
 
 # apps/web generated build artifacts
 apps/web/*.tsbuildinfo
