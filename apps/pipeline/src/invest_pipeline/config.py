@@ -3,7 +3,7 @@ from __future__ import annotations
 from functools import lru_cache
 from pathlib import Path
 
-from pydantic import AliasChoices, Field, model_validator
+from pydantic import AliasChoices, Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 _REPOSITORY_ROOT = Path(__file__).resolve().parents[4]
@@ -54,6 +54,35 @@ class Settings(BaseSettings):
             "workbuddy_source_dir",
         ),
     )
+    strategy_approver_agent_ids: tuple[str, ...] = Field(
+        default=(),
+        validation_alias=AliasChoices(
+            "INVEST_PIPELINE_STRATEGY_APPROVER_AGENT_IDS",
+            "strategy_approver_agent_ids",
+        ),
+    )
+
+    @field_validator("strategy_approver_agent_ids", mode="after")
+    @classmethod
+    def _normalize_strategy_approver_agent_ids(
+        cls, value: tuple[str, ...]
+    ) -> tuple[str, ...]:
+        normalized: list[str] = []
+        for raw in value:
+            if not isinstance(raw, str):
+                raise TypeError(
+                    "strategy_approver_agent_ids entries must be strings, "
+                    f"got {type(raw).__name__}"
+                )
+            stripped = raw.strip()
+            if not stripped:
+                raise ValueError(
+                    "strategy_approver_agent_ids entries must be non-empty "
+                    "strings; blank or whitespace-only values are rejected so "
+                    "authorization cannot be silently granted"
+                )
+            normalized.append(stripped)
+        return tuple(normalized)
 
     @model_validator(mode="after")
     def derive_workbuddy_source_dir(self) -> Settings:

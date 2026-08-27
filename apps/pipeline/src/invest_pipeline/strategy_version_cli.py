@@ -12,10 +12,9 @@ Subcommands
 ===========
 
 ``publish``
-    Parse a strict CIA decision envelope, bind every expected CLI
-    argument to either the parsed decision or the stored aggregate,
-    and publish an immutable :class:`StrategyVersion` through the
-    service.
+    Parse a strict CIA decision envelope, verify it against the
+    trusted ``--expected-decision-sha256`` anchor, and publish an
+    immutable :class:`StrategyVersion` through the service.
 
 ``activate``
     Flip the activation flag for an existing :class:`StrategyVersion`
@@ -90,37 +89,25 @@ def publish_version(
     decision_json_file: Path,
     decision_ref: str,
     expected_decision_sha256: str,
-    expected_draft_id: str,
-    expected_audit_id: str,
-    expected_strategy_key: str,
-    expected_version: str,
-    expected_artifact_hash: str,
-    expected_approver_agent_id: str,
 ) -> dict[str, object]:
-    """Publish a CIA-approved StrategyVersion through the service."""
+    """Publish a CIA-approved StrategyVersion through the service.
+
+    The decision file is read once and its SHA-256 is compared against
+    the trusted ``expected_decision_sha256`` anchor before parsing or
+    service invocation. The verified computed hash is bound to the
+    published version; every cross-aggregate binding and the approver
+    allowlist check are owned by the governance service.
+    """
     data = _read_regular(Path(decision_json_file))
-    if _sha(data) != expected_decision_sha256:
+    decision_hash = _sha(data)
+    if decision_hash != expected_decision_sha256:
         raise ValueError("decision JSON integrity failure")
     payload = json.loads(data.decode("utf-8", errors="strict"))
     decision = StrategyDecision.from_mapping(payload)
-    expected_draft = UUID(expected_draft_id)
-    expected_audit = UUID(expected_audit_id)
-    if decision.draft_id != expected_draft:
-        raise ValueError("decision draft_id binding mismatch")
-    if decision.audit_id != expected_audit:
-        raise ValueError("decision audit_id binding mismatch")
-    if decision.artifact_hash != expected_artifact_hash:
-        raise ValueError("decision artifact_hash binding mismatch")
-    if decision.decided_by_agent_id != expected_approver_agent_id:
-        raise ValueError("decision approver binding mismatch")
     stored = service.publish_approved_version(
-        draft_id=decision.draft_id,
-        audit_id=decision.audit_id,
-        expected_strategy_key=expected_strategy_key,
-        expected_version=expected_version,
         decision=decision,
         decision_ref=decision_ref,
-        decision_hash=expected_decision_sha256,
+        decision_hash=decision_hash,
     )
     return _view(stored)
 
@@ -194,12 +181,6 @@ def build_parser() -> argparse.ArgumentParser:
     pub.add_argument("--decision-json-file", type=Path, required=True)
     pub.add_argument("--decision-ref", required=True)
     pub.add_argument("--expected-decision-sha256", required=True)
-    pub.add_argument("--expected-draft-id", required=True)
-    pub.add_argument("--expected-audit-id", required=True)
-    pub.add_argument("--expected-strategy-key", required=True)
-    pub.add_argument("--expected-version", required=True)
-    pub.add_argument("--expected-artifact-hash", required=True)
-    pub.add_argument("--expected-approver-agent-id", required=True)
 
     act = subparsers.add_parser("activate")
     act.add_argument("--strategy-id", required=True)
@@ -221,7 +202,8 @@ def main(argv: list[str] | None = None) -> int:
 
     from invest_pipeline.config import get_settings
 
-    engine = build_engine(get_settings().database_url)
+    settings = get_settings()
+    engine = build_engine(settings.database_url)
     try:
         factory = session_factory(engine)
 
@@ -231,10 +213,15 @@ def main(argv: list[str] | None = None) -> int:
         if args.command == "publish":
             service = StrategyGovernanceService(
                 uow_factory=uow_factory,
-                authorized_approver_agent_ids=(args.expected_approver_agent_id,),
+                authorized_approver_agent_ids=settings.strategy_approver_agent_ids,
             )
-            payload = {k: v for k, v in vars(args).items() if k != "command"}
-            return run("publish", service=service, **payload)
+            return run(
+                "publish",
+                service=service,
+                decision_json_file=args.decision_json_file,
+                decision_ref=args.decision_ref,
+                expected_decision_sha256=args.expected_decision_sha256,
+            )
         if args.command == "activate":
             service = StrategyGovernanceService(
                 uow_factory=uow_factory,

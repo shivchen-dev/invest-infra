@@ -48,33 +48,24 @@ class StrategyGovernanceService:
     def publish_approved_version(
         self,
         *,
-        draft_id: UUID,
-        audit_id: UUID,
-        expected_strategy_key: str,
-        expected_version: str,
         decision: StrategyDecision,
         decision_ref: str,
         decision_hash: str,
     ) -> StrategyVersion:
         """Validate bindings and authorization, persist, then commit.
 
-        Missing evidence, non-pass audits, mismatched hashes or identifiers,
-        and unauthorized approvers raise :class:`StrategyApprovalError` before
-        the version repository is called.
+        The Draft and Audit records are authoritative: their identities are
+        resolved from :attr:`StrategyDecision.draft_id` and
+        :attr:`StrategyDecision.audit_id`. Missing evidence, non-pass
+        audits, mismatched hashes or identifiers, and unauthorized
+        approvers raise :class:`StrategyApprovalError` before the version
+        repository is called.
         """
 
         with self._uow_factory() as uow:
-            draft = self._load_draft(uow, draft_id)
-            if draft.strategy_key != expected_strategy_key:
-                raise StrategyApprovalError(
-                    "StrategyDraft.strategy_key does not match the expected strategy key"
-                )
-            if draft.proposed_version != expected_version:
-                raise StrategyApprovalError(
-                    "StrategyDraft.proposed_version does not match the expected version"
-                )
-            audit = self._load_audit(uow, audit_id)
-            self._verify_binding(draft, audit, decision, audit_id)
+            draft = self._load_draft(uow, decision.draft_id)
+            audit = self._load_audit(uow, decision.audit_id)
+            self._verify_binding(draft, audit, decision)
             self._verify_verdict(audit)
             self._verify_approver(decision)
             version = self._build_version(
@@ -142,13 +133,12 @@ class StrategyGovernanceService:
         draft: StrategyDraft,
         audit: StrategyAudit,
         decision: StrategyDecision,
-        audit_id: UUID,
     ) -> None:
         if decision.draft_id != draft.draft_id:
             raise StrategyApprovalError(
                 "StrategyDecision.draft_id does not match the supplied draft"
             )
-        if decision.audit_id != audit_id:
+        if decision.audit_id != audit.audit_id:
             raise StrategyApprovalError(
                 "StrategyDecision.audit_id does not match the supplied audit"
             )

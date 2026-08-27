@@ -182,10 +182,6 @@ class PublishHappyPathTests(unittest.TestCase):
 
     def _publish(self) -> StrategyVersion:
         return self.service.publish_approved_version(
-            draft_id=DRAFT_ID,
-            audit_id=AUDIT_ID,
-            expected_strategy_key=STRATEGY_KEY,
-            expected_version=PROPOSED_VERSION,
             decision=self.decision,
             decision_ref=DECISION_REF,
             decision_hash=DECISION_HASH,
@@ -222,20 +218,6 @@ class PublishNegativeTests(unittest.TestCase):
         cases = (
             ("missing draft", None, _build_audit(), _build_decision(), AUTHORIZED_APPROVERS),
             ("missing audit", _build_draft(), None, _build_decision(), AUTHORIZED_APPROVERS),
-            (
-                "strategy key binding",
-                _build_draft(),
-                _build_audit(),
-                _build_decision(),
-                AUTHORIZED_APPROVERS,
-            ),
-            (
-                "strategy version binding",
-                _build_draft(),
-                _build_audit(),
-                _build_decision(),
-                AUTHORIZED_APPROVERS,
-            ),
             (
                 "decision draft binding",
                 _build_draft(),
@@ -313,18 +295,6 @@ class PublishNegativeTests(unittest.TestCase):
 
                 with self.assertRaises(StrategyApprovalError):
                     service.publish_approved_version(
-                        draft_id=DRAFT_ID,
-                        audit_id=AUDIT_ID,
-                        expected_strategy_key=(
-                            "other-strategy"
-                            if name == "strategy key binding"
-                            else STRATEGY_KEY
-                        ),
-                        expected_version=(
-                            "v2"
-                            if name == "strategy version binding"
-                            else PROPOSED_VERSION
-                        ),
                         decision=decision,
                         decision_ref=DECISION_REF,
                         decision_hash=DECISION_HASH,

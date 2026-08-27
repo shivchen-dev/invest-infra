@@ -1,4 +1,12 @@
-"""Behavioral and safety contracts for the StrategyVersion CLI."""
+"""Behavioral and safety contracts for the StrategyVersion CLI.
+
+The ``publish`` subcommand accepts the decision file, its reference,
+and a trusted SHA-256 anchor. It reads the file once, verifies the
+anchor before parsing or service invocation, and delegates every
+cross-aggregate binding plus the approver allowlist check to
+:class:`StrategyGovernanceService`. ``activate`` and ``get-active``
+are unchanged from prior behavior.
+"""
 
 from __future__ import annotations
 
@@ -7,13 +15,16 @@ import io
 import json
 from datetime import UTC, datetime
 from pathlib import Path
+from unittest.mock import MagicMock
 from uuid import UUID
 
 import pytest
+from invest_pipeline.config import get_settings
 from invest_pipeline.strategy_version_cli import (
     activate_version,
     build_parser,
     get_active_view,
+    main,
     publish_version,
     run,
 )
@@ -21,8 +32,6 @@ from invest_pipeline.strategy_version_cli import (
 DRAFT_ID = UUID("11111111-1111-4111-8111-111111111111")
 AUDIT_ID = UUID("22222222-2222-4222-8222-222222222222")
 STRATEGY_ID = UUID("33333333-3333-4333-8333-333333333333")
-OTHER_DRAFT_ID = UUID("44444444-4444-4444-8444-444444444444")
-OTHER_AUDIT_ID = UUID("55555555-5555-4555-8555-555555555555")
 ARTIFACT_HASH = "a" * 64
 DECISION_REF = "decisions/2026/08/sample.json"
 STRATEGY_KEY = "sector-strength"
@@ -46,6 +55,7 @@ VIEW_KEYS = frozenset(
         "created_at",
     }
 )
+_ENV_ALIAS = "INVEST_PIPELINE_STRATEGY_APPROVER_AGENT_IDS"
 
 
 class FakeService:
@@ -60,28 +70,18 @@ class FakeService:
     def publish_approved_version(
         self,
         *,
-        draft_id: UUID,
-        audit_id: UUID,
-        expected_strategy_key: str,
-        expected_version: str,
         decision: object,
         decision_ref: str,
         decision_hash: str,
     ) -> object:
         self.publish_calls.append(
             {
-                "draft_id": draft_id,
-                "audit_id": audit_id,
-                "expected_strategy_key": expected_strategy_key,
-                "expected_version": expected_version,
                 "decision": decision,
                 "decision_ref": decision_ref,
                 "decision_hash": decision_hash,
             }
         )
         assert self.publish_return is not None, "publish_return must be set"
-        # Mirror StrategyGovernanceService: the stored aggregate carries the
-        # decision_hash the CLI asked to bind, not a fabricated one.
         object.__setattr__(self.publish_return, "decision_hash", decision_hash)
         return self.publish_return
 
@@ -147,31 +147,27 @@ def _write_decision(parent: Path, payload: dict[str, object]) -> tuple[Path, str
 
 
 def _publish_kwargs(
-    decision_path: Path, decision_hash: str, **overrides: object
+    decision_path: Path, decision_hash: str | None = None, **overrides: object
 ) -> dict[str, object]:
     kwargs: dict[str, object] = {
         "decision_json_file": decision_path,
         "decision_ref": DECISION_REF,
-        "expected_decision_sha256": decision_hash,
-        "expected_draft_id": str(DRAFT_ID),
-        "expected_audit_id": str(AUDIT_ID),
-        "expected_strategy_key": STRATEGY_KEY,
-        "expected_version": PROPOSED_VERSION,
-        "expected_artifact_hash": ARTIFACT_HASH,
-        "expected_approver_agent_id": APPROVER_AGENT_ID,
+        "expected_decision_sha256": decision_hash if decision_hash is not None else "0" * 64,
     }
     kwargs.update(overrides)
     return kwargs
 
 
-def test_publish_returns_bounded_view_and_binds_arguments(tmp_path: Path) -> None:
+def test_publish_returns_bounded_view_when_anchor_matches(tmp_path: Path) -> None:
     service = FakeService()
     service.publish_return = _build_stored()
     decision_path, decision_hash = _write_decision(
         tmp_path / "secret_home_user", _decision_payload()
     )
 
-    result = publish_version(service=service, **_publish_kwargs(decision_path, decision_hash))
+    result = publish_version(
+        service=service, **_publish_kwargs(decision_path, decision_hash)
+    )
 
     assert set(result) == VIEW_KEYS
     assert result["strategy_id"] == str(STRATEGY_ID)
@@ -186,17 +182,14 @@ def test_publish_returns_bounded_view_and_binds_arguments(tmp_path: Path) -> Non
 
     assert len(service.publish_calls) == 1
     call = service.publish_calls[0]
-    assert call["draft_id"] == DRAFT_ID
-    assert call["audit_id"] == AUDIT_ID
-    assert call["expected_strategy_key"] == STRATEGY_KEY
-    assert call["expected_version"] == PROPOSED_VERSION
+    assert set(call) == {"decision", "decision_ref", "decision_hash"}
+    assert call["decision_ref"] == DECISION_REF
+    assert call["decision_hash"] == decision_hash
     assert call["decision"].decided_by_agent_id == APPROVER_AGENT_ID
     assert call["decision"].decision == "approve"
     assert call["decision"].draft_id == DRAFT_ID
     assert call["decision"].audit_id == AUDIT_ID
     assert call["decision"].artifact_hash == ARTIFACT_HASH
-    assert call["decision_ref"] == DECISION_REF
-    assert call["decision_hash"] == decision_hash
     dumped = json.dumps(result)
     assert "Approve strategy v1" not in dumped
     assert "secret_home_user" not in dumped
@@ -206,99 +199,259 @@ def test_publish_returns_bounded_view_and_binds_arguments(tmp_path: Path) -> Non
 @pytest.mark.parametrize(
     "scenario",
     [
-        "symlink", "bad_json", "unknown_field", "missing_field",
-        "bad_uuid", "bad_time", "naive_time", "non_approve", "wrong_hash",
+        "wrong_hash", "symlink", "bad_json", "unknown_field", "missing_field",
+        "bad_uuid", "bad_time", "naive_time", "non_approve",
     ],
 )
 def test_publish_rejects_invalid_inputs(tmp_path: Path, scenario: str) -> None:
     """Each malformed input must raise before the service is called."""
     service = FakeService()
     parent = tmp_path / scenario
-    if scenario == "symlink":
+    if scenario == "wrong_hash":
+        decision_path, _ = _write_decision(parent, _decision_payload())
+        anchor = "0" * 64
+    elif scenario == "symlink":
         real = parent / "real"
         real.mkdir(parents=True, exist_ok=True)
         real_decision, real_hash = _write_decision(real, _decision_payload())
         link = parent / "link.json"
         link.symlink_to(real_decision)
-        decision_path, decision_hash = link, real_hash
+        decision_path, anchor = link, real_hash
     elif scenario == "bad_json":
         parent.mkdir(parents=True, exist_ok=True)
         decision_path = parent / "decision.json"
-        bad = b"\xff\xfe"
-        decision_path.write_bytes(bad)
-        decision_hash = hashlib.sha256(bad).hexdigest()
+        decision_path.write_bytes(b"\xff\xfe")
+        anchor = hashlib.sha256(b"\xff\xfe").hexdigest()
     elif scenario == "unknown_field":
-        payload = _decision_payload(extra="nope")
-        decision_path, decision_hash = _write_decision(parent, payload)
+        decision_path, anchor = _write_decision(
+            parent, _decision_payload(extra="nope")
+        )
     elif scenario == "missing_field":
         payload = _decision_payload()
         del payload["statement"]
-        decision_path, decision_hash = _write_decision(parent, payload)
+        decision_path, anchor = _write_decision(parent, payload)
     elif scenario == "bad_uuid":
-        payload = _decision_payload(draft_id="not-a-uuid")
-        decision_path, decision_hash = _write_decision(parent, payload)
+        decision_path, anchor = _write_decision(
+            parent, _decision_payload(draft_id="not-a-uuid")
+        )
     elif scenario == "bad_time":
-        payload = _decision_payload(decided_at="not-a-datetime")
-        decision_path, decision_hash = _write_decision(parent, payload)
+        decision_path, anchor = _write_decision(
+            parent, _decision_payload(decided_at="not-a-datetime")
+        )
     elif scenario == "naive_time":
-        payload = _decision_payload(decided_at="2026-08-26T12:00:00")
-        decision_path, decision_hash = _write_decision(parent, payload)
-    elif scenario == "non_approve":
-        payload = _decision_payload(decision="reject")
-        decision_path, decision_hash = _write_decision(parent, payload)
-    else:  # wrong_hash
-        decision_path, _ = _write_decision(parent, _decision_payload())
-        decision_hash = "0" * 64
+        decision_path, anchor = _write_decision(
+            parent, _decision_payload(decided_at="2026-08-26T12:00:00")
+        )
+    else:  # non_approve
+        decision_path, anchor = _write_decision(
+            parent, _decision_payload(decision="reject")
+        )
 
     with pytest.raises((TypeError, ValueError)):
         publish_version(
+            service=service, **_publish_kwargs(decision_path, anchor)
+        )
+    assert service.publish_calls == []
+
+
+def test_publish_mismatching_anchor_rejects_before_service(tmp_path: Path) -> None:
+    """Trusted-hash mismatch must raise before any service invocation."""
+    service = FakeService()
+    service.publish_return = _build_stored()
+    decision_path, _ = _write_decision(tmp_path / "decision", _decision_payload())
+
+    with pytest.raises(ValueError, match="integrity"):
+        publish_version(
+            service=service, **_publish_kwargs(decision_path, "0" * 64)
+        )
+    assert service.publish_calls == []
+
+
+def test_run_publish_redacts_failures_and_emits_safe_json(tmp_path: Path) -> None:
+    service = FakeService()
+    service.publish_return = _build_stored()
+    decision_path, decision_hash = _write_decision(
+        tmp_path / "decision", _decision_payload()
+    )
+    out, err = io.StringIO(), io.StringIO()
+
+    assert (
+        run(
+            "publish",
+            stdout=out,
+            stderr=err,
             service=service,
             **_publish_kwargs(decision_path, decision_hash),
         )
-    assert service.publish_calls == []
-
-
-@pytest.mark.parametrize(
-    ("expected_arg", "value"),
-    [
-        ("expected_draft_id", str(OTHER_DRAFT_ID)),
-        ("expected_audit_id", str(OTHER_AUDIT_ID)),
-        ("expected_artifact_hash", "f" * 64),
-        ("expected_approver_agent_id", "cia:approver:rogue"),
-    ],
-)
-def test_publish_rejects_each_expected_binding(
-    tmp_path: Path, expected_arg: str, value: object
-) -> None:
-    """Each expected binding must be verified before the service is called."""
-    service = FakeService()
-    decision_path, decision_hash = _write_decision(tmp_path / "decision", _decision_payload())
-    overrides = {expected_arg: value}
-
-    with pytest.raises((TypeError, ValueError)):
-        publish_version(
-            service=service,
-            **_publish_kwargs(decision_path, decision_hash, **overrides),
-        )
-    assert service.publish_calls == []
-
-
-def test_run_redacts_failures_and_emits_safe_json(tmp_path: Path) -> None:
-    service = FakeService()
-    service.publish_return = _build_stored()
-    decision_path, decision_hash = _write_decision(tmp_path / "decision", _decision_payload())
-    out, err = io.StringIO(), io.StringIO()
-
-    kwargs = _publish_kwargs(decision_path, decision_hash)
-    assert run("publish", stdout=out, stderr=err, service=service, **kwargs) == 0
+        == 0
+    )
     assert set(json.loads(out.getvalue())) == VIEW_KEYS
 
-    bad = kwargs | {"decision_json_file": "/secret/decision.json"}
-    assert run("publish", stdout=out, stderr=err, service=service, **bad) == 1
+    bad_kwargs = _publish_kwargs(Path("/secret/decision.json"))
+    assert run("publish", stdout=out, stderr=err, service=service, **bad_kwargs) == 1
     assert err.getvalue() == "error: strategy version operation failed\n"
     assert "/secret" not in err.getvalue()
     assert "secret" not in err.getvalue()
     assert "Traceback" not in err.getvalue()
+
+
+def test_parser_publish_requires_three_arguments(tmp_path: Path) -> None:
+    parser = build_parser()
+    decision_path = tmp_path / "decision.json"
+    decision_path.write_bytes(b"{}")
+    base = [
+        "publish",
+        "--decision-json-file",
+        str(decision_path),
+        "--decision-ref",
+        DECISION_REF,
+        "--expected-decision-sha256",
+        "0" * 64,
+    ]
+    args = parser.parse_args(base)
+    assert args.command == "publish"
+    assert args.decision_json_file == decision_path
+    assert args.decision_ref == DECISION_REF
+    assert args.expected_decision_sha256 == "0" * 64
+
+    for missing in (
+        [
+            "publish", "--decision-ref", DECISION_REF,
+            "--expected-decision-sha256", "0" * 64,
+        ],
+        [
+            "publish", "--decision-json-file", str(decision_path),
+            "--expected-decision-sha256", "0" * 64,
+        ],
+        ["publish", "--decision-json-file", str(decision_path), "--decision-ref", DECISION_REF],
+    ):
+        with pytest.raises(SystemExit):
+            parser.parse_args(missing)
+
+
+@pytest.mark.parametrize(
+    "removed_flag",
+    [
+        "--expected-draft-id",
+        "--expected-audit-id",
+        "--expected-strategy-key",
+        "--expected-version",
+        "--expected-artifact-hash",
+        "--expected-approver-agent-id",
+    ],
+)
+def test_parser_publish_rejects_removed_legacy_arguments(
+    tmp_path: Path, removed_flag: str
+) -> None:
+    parser = build_parser()
+    decision_path = tmp_path / "decision.json"
+    decision_path.write_bytes(b"{}")
+    base = [
+        "publish",
+        "--decision-json-file",
+        str(decision_path),
+        "--decision-ref",
+        DECISION_REF,
+        "--expected-decision-sha256",
+        "0" * 64,
+    ]
+    with pytest.raises(SystemExit):
+        parser.parse_args(base + [removed_flag, "x"])
+
+
+@pytest.fixture
+def _isolated_settings(monkeypatch: pytest.MonkeyPatch):
+    get_settings.cache_clear()
+    monkeypatch.delenv(_ENV_ALIAS, raising=False)
+    yield monkeypatch
+    get_settings.cache_clear()
+
+
+def _patch_storage_stack(
+    monkeypatch: pytest.MonkeyPatch, captured: dict[str, object]
+) -> type:
+    """Stub the storage layer and return a StrategyGovernanceService stub."""
+
+    monkeypatch.setattr(
+        "invest_storage.database.build_engine",
+        lambda _url: MagicMock(name="Engine"),
+    )
+    monkeypatch.setattr(
+        "invest_storage.database.session_factory",
+        lambda _engine: MagicMock(name="Factory"),
+    )
+    monkeypatch.setattr(
+        "invest_storage.unit_of_work.SqlAlchemyUnitOfWork",
+        lambda _factory: MagicMock(name="Uow"),
+    )
+
+    class CapturingService:
+        def __init__(self, *, uow_factory, authorized_approver_agent_ids, clock=None):
+            captured["uow_factory"] = uow_factory
+            captured["authorized_approver_agent_ids"] = authorized_approver_agent_ids
+            captured["clock"] = clock
+
+        def publish_approved_version(self, *, decision, decision_ref, decision_hash):
+            stored = _build_stored()
+            object.__setattr__(stored, "decision_hash", decision_hash)
+            return stored
+
+    monkeypatch.setattr(
+        "invest_pipeline.strategy_version_cli.StrategyGovernanceService",
+        CapturingService,
+    )
+    return CapturingService
+
+
+def test_main_publish_wires_configured_approver_allowlist(
+    tmp_path: Path, _isolated_settings: pytest.MonkeyPatch
+) -> None:
+    _isolated_settings.setenv(_ENV_ALIAS, json.dumps(["alpha", "beta"]))
+    captured: dict[str, object] = {}
+    _patch_storage_stack(_isolated_settings, captured)
+    decision_path, decision_hash = _write_decision(
+        tmp_path / "decision", _decision_payload()
+    )
+
+    rc = main(
+        [
+            "publish",
+            "--decision-json-file",
+            str(decision_path),
+            "--decision-ref",
+            DECISION_REF,
+            "--expected-decision-sha256",
+            decision_hash,
+        ]
+    )
+
+    assert rc == 0
+    assert captured["authorized_approver_agent_ids"] == ("alpha", "beta")
+
+
+def test_main_publish_passes_empty_allowlist_fail_closed(
+    tmp_path: Path, _isolated_settings: pytest.MonkeyPatch
+) -> None:
+    captured: dict[str, object] = {}
+    _patch_storage_stack(_isolated_settings, captured)
+    decision_path, decision_hash = _write_decision(
+        tmp_path / "decision", _decision_payload()
+    )
+
+    rc = main(
+        [
+            "publish",
+            "--decision-json-file",
+            str(decision_path),
+            "--decision-ref",
+            DECISION_REF,
+            "--expected-decision-sha256",
+            decision_hash,
+        ]
+    )
+
+    assert rc == 0
+    assert captured["authorized_approver_agent_ids"] == ()
 
 
 # === Activate =====================================================
@@ -372,33 +525,6 @@ def test_get_active_none_prints_null_and_exits_zero() -> None:
     )
     assert out.getvalue().strip() == "null"
     assert service.get_active_calls == ["absent"]
-
-
-def test_parser_requires_publish_args(tmp_path: Path) -> None:
-    parser = build_parser()
-    decision_path = tmp_path / "decision.json"
-    decision_path.write_bytes(b"{}")
-    base = [
-        "publish",
-        "--decision-json-file",
-        str(decision_path),
-        "--decision-ref",
-        DECISION_REF,
-        "--expected-decision-sha256",
-        "0" * 64,
-        "--expected-draft-id",
-        str(DRAFT_ID),
-        "--expected-audit-id",
-        str(AUDIT_ID),
-        "--expected-strategy-key",
-        STRATEGY_KEY,
-        "--expected-version",
-        PROPOSED_VERSION,
-        "--expected-artifact-hash",
-        ARTIFACT_HASH,
-    ]
-    with pytest.raises(SystemExit):
-        parser.parse_args(base)
 
 
 @pytest.mark.parametrize("argv", [[], ["activate"], ["get-active"]])

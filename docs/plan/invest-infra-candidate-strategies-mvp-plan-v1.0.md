@@ -182,12 +182,19 @@ AND activated_at 非空
 
 ```text
 register_draft(...)
-publish_approved_version(draft_id, audit_id, decision_ref)
+publish_approved_version(decision, decision_ref, decision_hash)
 activate_version(strategy_id, version)
 get_active_version(strategy_key)
 ```
 
-RAA 只读 API 位于 Draft 查询接缝；首版不提供 RAA 写 API。ARC 使用受控管理 CLI 摄取 `audit.json`，CLI 调用同一领域校验能力，不复制规则。artifact 校验、hash、审计有效性、唯一性、不可变性和激活约束隐藏在模块内部。
+StrategyVersion 管理 CLI 的发布入口仅接收 CIA 决策文件、不可变决策引用及 AgentOA 提供的可信 SHA-256；Draft/Audit 身份、策略 key/version、artifact hash 和批准人授权由决策、数据库记录及服务配置推导，不由操作者重复输入。RAA 只读 API 位于 Draft 查询接缝；首版不提供 RAA 写 API。ARC 使用受控管理 CLI 摄取 `audit.json`，CLI 调用同一领域校验能力，不复制规则。artifact 校验、hash、审计有效性、唯一性、不可变性和激活约束隐藏在模块内部。
+
+```bash
+python -m invest_pipeline.strategy_version_cli publish \
+  --decision-json-file <decision.json> \
+  --decision-ref <immutable-agentoa-ref> \
+  --expected-decision-sha256 <trusted-agentoa-sha256>
+```
 
 ## 5. 实施切片
 
