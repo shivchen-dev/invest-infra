@@ -124,7 +124,16 @@ from invest_domain.research.research_run import (
     ResearchRunStatus,
 )
 from invest_domain.shared.values import Currency
-from invest_domain.strategy import SourceRef, StrategyAudit, StrategyAuditVerdict, StrategyDraft
+from invest_domain.strategy import (
+    SourceRef,
+    StrategyAudit,
+    StrategyAuditVerdict,
+    StrategyDraft,
+    StrategyVersion,
+    StrategyVersionAlreadyActiveError,
+    StrategyVersionConflictError,
+    StrategyVersionNotFoundError,
+)
 from sqlalchemy import func, select, text, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.exc import IntegrityError
@@ -170,6 +179,7 @@ from invest_storage.models import (
     StockPriceLimitRow,
     StrategyAuditRow,
     StrategyDraftRow,
+    StrategyVersionRow,
 )
 
 
@@ -5770,3 +5780,206 @@ def _row_to_strategy_audit(row: StrategyAuditRow) -> StrategyAudit:
 
 class StrategyAuditConflictError(RuntimeError):
     """Raised when an audit idempotency key is reused with new content."""
+
+
+class SqlAlchemyStrategyVersionRepository:
+    """Persistence for the immutable :class:`StrategyVersion` aggregate.
+
+    Natural-key repeats are idempotent only when immutable content matches;
+    hash reuse or drift raises :class:`StrategyVersionConflictError`.
+    Immutable comparison includes artifact/source and decision/audit approval
+    metadata, but excludes generated identity, creation time, and activation.
+
+    Reads always rebuild domain aggregates. ``get_active`` relies on the
+    database partial unique index to guarantee at most one active row for a
+    strategy key.
+
+    Activation uses ``activated_at IS NULL`` CAS, classifying a lost race as
+    already-active or not-found. Database uniqueness errors propagate.
+    """
+
+    def __init__(self, session: Session) -> None:
+        self._session = session
+
+    def add(self, version: StrategyVersion) -> StrategyVersion:
+        if not isinstance(version, StrategyVersion):
+            raise TypeError(
+                "SqlAlchemyStrategyVersionRepository.add expects a "
+                f"StrategyVersion, got {type(version).__name__}"
+            )
+        existing_by_pair = self._session.scalars(
+            select(StrategyVersionRow).where(
+                StrategyVersionRow.strategy_key == version.strategy_key,
+                StrategyVersionRow.version == version.version,
+            )
+        ).first()
+        if existing_by_pair is not None:
+            stored = _row_to_strategy_version(existing_by_pair)
+            if _strategy_version_immutable_payload(
+                stored
+            ) != _strategy_version_immutable_payload(version):
+                raise StrategyVersionConflictError(
+                    f"StrategyVersion for ({version.strategy_key!r}, "
+                    f"{version.version!r}) already exists with different "
+                    "immutable content"
+                )
+            return stored
+        other_by_artifact = self._session.scalars(
+            select(StrategyVersionRow).where(
+                StrategyVersionRow.artifact_hash == version.artifact_hash,
+            )
+        ).first()
+        if other_by_artifact is not None:
+            raise StrategyVersionConflictError(
+                f"StrategyVersion artifact_hash {version.artifact_hash!s} "
+                "is already registered under a different "
+                f"(strategy_key, version) pair "
+                f"({other_by_artifact.strategy_key!r}, "
+                f"{other_by_artifact.version!r})"
+            )
+        other_by_decision = self._session.scalars(
+            select(StrategyVersionRow).where(
+                StrategyVersionRow.decision_hash == version.decision_hash,
+            )
+        ).first()
+        if other_by_decision is not None:
+            raise StrategyVersionConflictError(
+                f"StrategyVersion decision_hash {version.decision_hash!s} "
+                "is already bound to a different "
+                f"(strategy_key, version) pair "
+                f"({other_by_decision.strategy_key!r}, "
+                f"{other_by_decision.version!r})"
+            )
+        self._session.add(StrategyVersionRow(
+            strategy_id=version.strategy_id,
+            strategy_key=version.strategy_key,
+            version=version.version,
+            artifact_ref=version.artifact_ref,
+            artifact_hash=version.artifact_hash,
+            source_hashes=list(version.source_hashes),
+            decision_ref=version.decision_ref,
+            decision_hash=version.decision_hash,
+            decided_by_agent_id=version.decided_by_agent_id,
+            audit_id=version.audit_id,
+            approved_at=version.approved_at,
+            activated_at=version.activated_at,
+            created_at=version.created_at,
+        ))
+        self._session.flush()
+        return version
+
+    def get_by_id(self, strategy_id: UUID) -> StrategyVersion | None:
+        row = self._session.get(StrategyVersionRow, strategy_id)
+        return _row_to_strategy_version(row) if row is not None else None
+
+    def get_active(self, strategy_key: str) -> StrategyVersion | None:
+        """Return the uniquely active row for ``strategy_key``, if any."""
+
+        row = self._session.scalars(
+            select(StrategyVersionRow).where(
+                StrategyVersionRow.strategy_key == strategy_key,
+                StrategyVersionRow.activated_at.is_not(None),
+            )
+        ).first()
+        return _row_to_strategy_version(row) if row is not None else None
+
+    def activate(self, strategy_id: UUID, *, at: datetime) -> StrategyVersion:
+        """Activate once using aware time and classify CAS loss by re-read.
+
+        Unknown rows raise :class:`StrategyVersionNotFoundError`; rows already
+        active raise :class:`StrategyVersionAlreadyActiveError`. A conditional
+        update that affects no row is re-read and classified the same way.
+        Concurrent activation of another version may propagate the database
+        partial-unique :class:`sqlalchemy.exc.IntegrityError`.
+        """
+
+        if not isinstance(at, datetime):
+            raise TypeError(
+                f"activate requires a datetime for 'at', got {type(at).__name__}"
+            )
+        if at.tzinfo is None or at.utcoffset() is None:
+            raise ValueError("activate requires a timezone-aware datetime for 'at'")
+        row = self._session.scalars(
+            select(StrategyVersionRow).where(
+                StrategyVersionRow.strategy_id == strategy_id,
+            )
+        ).first()
+        if row is None:
+            raise StrategyVersionNotFoundError(
+                f"StrategyVersion {strategy_id!s} not found; cannot activate"
+            )
+        if row.activated_at is not None:
+            raise StrategyVersionAlreadyActiveError(
+                f"StrategyVersion {strategy_id!s} is already active"
+            )
+        result = self._session.execute(
+            update(StrategyVersionRow)
+            .where(
+                StrategyVersionRow.strategy_id == strategy_id,
+                StrategyVersionRow.activated_at.is_(None),
+            )
+            .values(activated_at=at)
+        )
+        if result.rowcount != 1:
+            # Re-read classifies a lost CAS as active or missing.
+            current = self._session.scalars(
+                select(StrategyVersionRow).where(
+                    StrategyVersionRow.strategy_id == strategy_id,
+                )
+            ).first()
+            if current is not None and current.activated_at is not None:
+                raise StrategyVersionAlreadyActiveError(
+                    f"StrategyVersion {strategy_id!s} is already active"
+                )
+            raise StrategyVersionNotFoundError(
+                f"StrategyVersion {strategy_id!s} not found; cannot activate"
+            )
+        self._session.flush()
+        refreshed = self._session.scalars(
+            select(StrategyVersionRow).where(
+                StrategyVersionRow.strategy_id == strategy_id,
+            )
+        ).first()
+        if refreshed is None:
+            # Never return the stale pre-update aggregate.
+            raise StrategyVersionNotFoundError(
+                f"StrategyVersion {strategy_id!s} not found after activate"
+            )
+        return _row_to_strategy_version(refreshed)
+
+
+def _strategy_version_immutable_payload(version: StrategyVersion) -> tuple[Any, ...]:
+    """Return content used for natural-key idempotency.
+
+    Generated identity, creation time, and one-shot activation state are
+    intentionally excluded.
+    """
+
+    return (
+        version.artifact_ref,
+        version.artifact_hash,
+        version.source_hashes,
+        version.decision_ref,
+        version.decision_hash,
+        version.decided_by_agent_id,
+        version.audit_id,
+        version.approved_at,
+    )
+
+
+def _row_to_strategy_version(row: StrategyVersionRow) -> StrategyVersion:
+    return StrategyVersion(
+        strategy_id=row.strategy_id,
+        strategy_key=row.strategy_key,
+        version=row.version,
+        artifact_ref=row.artifact_ref,
+        artifact_hash=row.artifact_hash,
+        source_hashes=tuple(row.source_hashes or ()),
+        decision_ref=row.decision_ref,
+        decision_hash=row.decision_hash,
+        decided_by_agent_id=row.decided_by_agent_id,
+        audit_id=row.audit_id,
+        approved_at=row.approved_at,
+        activated_at=row.activated_at,
+        created_at=row.created_at,
+    )

@@ -62,6 +62,7 @@ from invest_storage.repositories import (
     SqlAlchemyStockPriceLimitRepository,
     SqlAlchemyStrategyAuditRepository,
     SqlAlchemyStrategyDraftRepository,
+    SqlAlchemyStrategyVersionRepository,
 )
 
 
@@ -581,6 +582,21 @@ class StrategyAuditRepositoryPort(Protocol):
 
 
 @runtime_checkable
+class StrategyVersionRepositoryPort(Protocol):
+    """Subset of the StrategyVersion repository surface the UoW exposes.
+
+    The :class:`invest_storage.repositories.SqlAlchemyStrategyVersionRepository`
+    is the only adapter; the Protocol keeps the application layer
+    decoupled from the concrete class.
+    """
+
+    def add(self, version): ...
+    def get_by_id(self, strategy_id): ...
+    def get_active(self, strategy_key): ...
+    def activate(self, strategy_id, *, at): ...
+
+
+@runtime_checkable
 class SessionProvider(Protocol):
     """Anything that can hand out a SQLAlchemy ``Session``.
 
@@ -634,6 +650,7 @@ class UnitOfWork(Protocol):
     research_external_evidence: ResearchExternalEvidenceRepositoryPort
     strategy_drafts: StrategyDraftRepositoryPort
     strategy_audits: StrategyAuditRepositoryPort
+    strategy_versions: StrategyVersionRepositoryPort
 
     def commit(self) -> None:
         """Persist the current transaction to the database."""
@@ -703,6 +720,7 @@ class SqlAlchemyUnitOfWork:
         self._research_external_evidence: SqlAlchemyResearchExternalEvidenceRepository | None = None
         self._strategy_drafts: SqlAlchemyStrategyDraftRepository | None = None
         self._strategy_audits: SqlAlchemyStrategyAuditRepository | None = None
+        self._strategy_versions: SqlAlchemyStrategyVersionRepository | None = None
         self._closed = True
         self._user_committed = False
 
@@ -913,6 +931,12 @@ class SqlAlchemyUnitOfWork:
             self._strategy_audits = SqlAlchemyStrategyAuditRepository(self.session)
         return self._strategy_audits
 
+    @property
+    def strategy_versions(self) -> SqlAlchemyStrategyVersionRepository:
+        if self._strategy_versions is None:
+            self._strategy_versions = SqlAlchemyStrategyVersionRepository(self.session)
+        return self._strategy_versions
+
     def commit(self) -> None:
         self.session.commit()
         self._user_committed = True
@@ -976,6 +1000,7 @@ class SqlAlchemyUnitOfWork:
             self._research_external_evidence = None
             self._strategy_drafts = None
             self._strategy_audits = None
+            self._strategy_versions = None
             self._user_committed = False
             self._closed = True
 
@@ -1016,6 +1041,7 @@ __all__ = [
     "StockPriceLimitRepositoryPort",
     "StrategyDraftRepositoryPort",
     "StrategyAuditRepositoryPort",
+    "StrategyVersionRepositoryPort",
     "SqlAlchemyUnitOfWork",
     "UnitOfWork",
 ]  # noqa: E501

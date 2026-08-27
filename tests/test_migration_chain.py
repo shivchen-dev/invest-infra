@@ -288,7 +288,7 @@ class MigrationChainTest(unittest.TestCase):
         head_ids = all_revision_ids - referenced_down_revisions
         self.assertEqual(
             head_ids,
-            {"20260826_0022"},
+            {"20260826_0023"},
             f"expected exactly one unreferenced chain head, got {sorted(head_ids)}",
         )
 
@@ -393,7 +393,7 @@ class MigrationChainTest(unittest.TestCase):
         head_ids = all_revision_ids - referenced_down_revisions
         self.assertEqual(
             head_ids,
-            {"20260826_0022"},
+            {"20260826_0023"},
             f"expected exactly one unreferenced chain head, got {sorted(head_ids)}",
         )
 
@@ -483,7 +483,7 @@ class MigrationChainTest(unittest.TestCase):
         heads = {revision for revision, _ in revisions.values()} - {
             down_revision for _, down_revision in revisions.values() if down_revision is not None
         }
-        self.assertEqual(heads, {"20260826_0022"})
+        self.assertEqual(heads, {"20260826_0023"})
         source = (versions_directory / "20260805_0010_research_context_packs.py").read_text()
         self.assertIn('revision: str = "20260805_0010"', source)
         self.assertIn('down_revision: str | None = "20260805_0009"', source)
@@ -631,7 +631,7 @@ class MigrationChainTest(unittest.TestCase):
         head_ids = all_revision_ids - referenced_down_revisions
         self.assertEqual(
             head_ids,
-            {"20260826_0022"},
+            {"20260826_0023"},
             f"expected exactly one unreferenced chain head, got {sorted(head_ids)}",
         )
 
@@ -1031,7 +1031,7 @@ class MigrationChainTest(unittest.TestCase):
         head_ids = all_revision_ids - referenced_down_revisions
         self.assertEqual(
             head_ids,
-            {"20260826_0022"},
+            {"20260826_0023"},
             f"expected exactly one unreferenced chain head, got {sorted(head_ids)}",
         )
 
@@ -1277,8 +1277,8 @@ class MigrationChainTest(unittest.TestCase):
         head_ids = all_revision_ids - referenced_down_revisions
         self.assertEqual(
             head_ids,
-            {"20260826_0022"},
-            f"expected exactly one chain head pointing at 20260826_0022, got {sorted(head_ids)}",
+            {"20260826_0023"},
+            f"expected exactly one chain head pointing at 20260826_0023, got {sorted(head_ids)}",
         )
 
         for token in (
@@ -1365,7 +1365,7 @@ class MigrationChainTest(unittest.TestCase):
         head_ids = {r for r, _ in revisions.values()} - {
             d for _, d in revisions.values() if d is not None
         }
-        self.assertEqual(head_ids, {"20260826_0022"})
+        self.assertEqual(head_ids, {"20260826_0023"})
 
         migration_file = versions_directory / "20260826_0021_strategy_drafts.py"
         source = migration_file.read_text(encoding="utf-8")
@@ -1451,6 +1451,150 @@ class MigrationChainTest(unittest.TestCase):
             sorted(n for n in explicit_names if len(n) > 63), [],
         )
 
+    def test_strategy_versions_migration_contract(self) -> None:
+        versions_dir = (
+            Path(__file__).resolve().parents[1]
+            / "apps" / "migrations" / "migrations" / "versions"
+        )
+        migration_file = versions_dir / "20260826_0023_strategy_versions.py"
+        source = migration_file.read_text(encoding="utf-8")
+        tree = ast.parse(source, filename=str(migration_file))
+
+        self.assertIn('revision: str = "20260826_0023"', source)
+        self.assertIn('down_revision: str | None = "20260826_0022"', source)
+
+        upgrade = next(
+            node for node in tree.body
+            if isinstance(node, ast.FunctionDef) and node.name == "upgrade"
+        )
+        downgrade = next(
+            node for node in tree.body
+            if isinstance(node, ast.FunctionDef) and node.name == "downgrade"
+        )
+        create_table = next(
+            call for call in ast.walk(upgrade)
+            if isinstance(call, ast.Call)
+            and isinstance(call.func, ast.Attribute)
+            and call.func.attr == "create_table"
+        )
+        column_names = {
+            _first_string_literal(argument)
+            for argument in create_table.args
+            if isinstance(argument, ast.Call)
+            and isinstance(argument.func, ast.Attribute)
+            and argument.func.attr == "Column"
+        }
+        self.assertEqual(
+            column_names,
+            {
+                "strategy_id", "strategy_key", "version", "artifact_ref",
+                "artifact_hash", "source_hashes", "decision_ref",
+                "decision_hash", "decided_by_agent_id", "audit_id",
+                "approved_at", "activated_at", "created_at",
+            },
+        )
+
+        explicit_names = {
+            node.value
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Constant)
+            and isinstance(node.value, str)
+            and node.value.startswith(("pk_", "fk_", "uq_", "ck_", "ix_"))
+        }
+        required_names = {
+            "pk_strategy_versions",
+            "fk_strategy_versions_audit_id_strategy_audits",
+            "uq_strategy_versions_strategy_key_version",
+            "uq_strategy_versions_artifact_hash",
+            "uq_strategy_versions_decision_hash",
+            "ix_strategy_versions_audit_id",
+            "uq_strategy_versions_activated_strategy_key",
+            "ck_strategy_versions_activated_after_approved",
+            "ck_strategy_versions_source_hashes_array_nonempty",
+            "ck_strategy_versions_source_hashes_elements_lower_hex64",
+        }
+        self.assertTrue(required_names <= explicit_names)
+        self.assertFalse([name for name in explicit_names if len(name) > 63])
+        self.assertIn("analytics.strategy_audits.audit_id", source)
+        self.assertIn("activated_at IS NOT NULL", source)
+        self.assertIn("jsonb_typeof(source_hashes) = 'array'", source)
+        self.assertIn("jsonb_path_exists(source_hashes", source)
+
+        self.assertIn("op.create_table", ast.unparse(upgrade))
+        self.assertIn("op.create_index", ast.unparse(upgrade))
+        self.assertIn("op.drop_index", ast.unparse(downgrade))
+        self.assertIn("op.drop_table", ast.unparse(downgrade))
+
+    def test_strategy_version_row_schema_contract(self) -> None:
+        import sqlalchemy as sa
+        from invest_storage.models import StrategyVersionRow
+
+        table = StrategyVersionRow.__table__
+        self.assertEqual((table.schema, table.name), ("analytics", "strategy_versions"))
+        self.assertEqual(
+            {
+                constraint.name
+                for constraint in table.constraints
+                if isinstance(constraint, sa.UniqueConstraint)
+            },
+            {
+                "uq_strategy_versions_strategy_key_version",
+                "uq_strategy_versions_artifact_hash",
+                "uq_strategy_versions_decision_hash",
+            },
+        )
+        foreign_key = next(iter(table.foreign_key_constraints))
+        self.assertEqual(
+            foreign_key.name,
+            "fk_strategy_versions_audit_id_strategy_audits",
+        )
+        self.assertEqual(
+            next(iter(foreign_key.elements)).target_fullname,
+            "analytics.strategy_audits.audit_id",
+        )
+
+        checks = {
+            constraint.name: str(constraint.sqltext)
+            for constraint in table.constraints
+            if isinstance(constraint, sa.CheckConstraint)
+        }
+        self.assertIn(
+            "activated_at >= approved_at",
+            checks["ck_strategy_versions_activated_after_approved"],
+        )
+        self.assertIn(
+            "jsonb_typeof(source_hashes) = 'array'",
+            checks["ck_strategy_versions_source_hashes_array_nonempty"],
+        )
+        self.assertIn(
+            "jsonb_path_exists(source_hashes",
+            checks["ck_strategy_versions_source_hashes_elements_lower_hex64"],
+        )
+
+        indexes = {index.name: index for index in table.indexes}
+        self.assertEqual(
+            set(indexes),
+            {
+                "ix_strategy_versions_audit_id",
+                "uq_strategy_versions_activated_strategy_key",
+            },
+        )
+        active_index = indexes["uq_strategy_versions_activated_strategy_key"]
+        self.assertTrue(active_index.unique)
+        self.assertIn(
+            "activated_at IS NOT NULL",
+            str(active_index.dialect_options["postgresql"]["where"]),
+        )
+        names = (
+            set(indexes)
+            | set(checks)
+            | {
+                constraint.name
+                for constraint in table.constraints
+                if constraint.name is not None
+            }
+        )
+        self.assertFalse([name for name in names if len(name) > 63])
 
 def _first_string_literal(call_node: ast.Call) -> str | None:
     for argument in call_node.args:

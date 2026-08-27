@@ -2499,3 +2499,116 @@ class StrategyAuditRow(Base):
     report_hash: Mapped[str] = mapped_column(String(64), nullable=False)
     audited_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class StrategyVersionRow(Base):
+    """Immutable published :class:`invest_domain.strategy.version
+    .StrategyVersion` row in ``analytics.strategy_versions``.
+
+    Slice 1 persistence closure for the immutable published-version
+    aggregate: 14 fields mirroring the domain dataclass, FK to
+    ``analytics.strategy_audits.audit_id``, three UNIQUE constraints
+    (``(strategy_key, version)``, ``artifact_hash``, ``decision_hash``),
+    nine defensive CHECKs mirroring the v1 CIA contract (non-blank
+    fields, lowercase-SHA-256 regex for both hashes, the
+    ``activated_at IS NULL OR activated_at >= approved_at`` temporal
+    invariant and the JSONB ``source_hashes`` array shape), plus the
+    PostgreSQL PARTIAL UNIQUE INDEX
+    ``uq_strategy_versions_activated_strategy_key`` on
+    ``(strategy_key) WHERE activated_at IS NOT NULL`` that enforces
+    "at most one activated row per ``strategy_key``" at the database
+    boundary so a buggy application-service path cannot publish two
+    active versions for the same strategy. The supporting
+    ``ix_strategy_versions_audit_id`` index keeps FK reverse lookups
+    cheap. Constraint ``name``s
+    are short suffixes; the ``Base`` ``NAMING_CONVENTION`` adds the
+    ``ck_strategy_versions_`` / ``uq_strategy_versions_`` /
+    ``ix_strategy_versions_`` prefix."""
+
+    __tablename__ = "strategy_versions"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["audit_id"],
+            ["analytics.strategy_audits.audit_id"],
+            name="fk_strategy_versions_audit_id_strategy_audits",
+        ),
+        UniqueConstraint(
+            "strategy_key", "version",
+            name="uq_strategy_versions_strategy_key_version",
+        ),
+        UniqueConstraint(
+            "artifact_hash",
+            name="uq_strategy_versions_artifact_hash",
+        ),
+        UniqueConstraint(
+            "decision_hash",
+            name="uq_strategy_versions_decision_hash",
+        ),
+        CheckConstraint(
+            "btrim(strategy_key) <> ''",
+            name="strategy_key_nonblank",
+        ),
+        CheckConstraint(
+            "btrim(version) <> ''",
+            name="version_nonblank",
+        ),
+        CheckConstraint(
+            "btrim(artifact_ref) <> ''",
+            name="artifact_ref_nonblank",
+        ),
+        CheckConstraint(
+            "artifact_hash ~ '^[0-9a-f]{64}$'",
+            name="artifact_hash_len64",
+        ),
+        CheckConstraint(
+            "decision_hash ~ '^[0-9a-f]{64}$'",
+            name="decision_hash_len64",
+        ),
+        CheckConstraint(
+            "btrim(decision_ref) <> ''",
+            name="decision_ref_nonblank",
+        ),
+        CheckConstraint(
+            "btrim(decided_by_agent_id) <> ''",
+            name="decided_by_agent_id_nonblank",
+        ),
+        CheckConstraint(
+            "activated_at IS NULL OR activated_at >= approved_at",
+            name="activated_after_approved",
+        ),
+        CheckConstraint(
+            "jsonb_typeof(source_hashes) = 'array' AND jsonb_array_length(source_hashes) > 0",
+            name="source_hashes_array_nonempty",
+        ),
+        CheckConstraint(
+            "NOT jsonb_path_exists(source_hashes, "
+            "'$[*] ? (@.type() != \"string\" || "
+            "!(@ like_regex \"^[0-9a-f]{64}$\"))')",
+            name="source_hashes_elements_lower_hex64",
+        ),
+        Index(
+            "ix_strategy_versions_audit_id",
+            "audit_id",
+        ),
+        Index(
+            "uq_strategy_versions_activated_strategy_key",
+            "strategy_key",
+            unique=True,
+            postgresql_where=text("activated_at IS NOT NULL"),
+        ),
+        {"schema": "analytics"},
+    )
+
+    strategy_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True)
+    strategy_key: Mapped[str] = mapped_column(String(120), nullable=False)
+    version: Mapped[str] = mapped_column(String(64), nullable=False)
+    artifact_ref: Mapped[str] = mapped_column(String(512), nullable=False)
+    artifact_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    source_hashes: Mapped[list[str]] = mapped_column(JSONB, nullable=False)
+    decision_ref: Mapped[str] = mapped_column(String(512), nullable=False)
+    decision_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    decided_by_agent_id: Mapped[str] = mapped_column(String(160), nullable=False)
+    audit_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    approved_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    activated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
