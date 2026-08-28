@@ -26,6 +26,7 @@ from invest_storage.repositories import (
     SqlAlchemyResearchRunRepository,
     SqlAlchemyStrategyAuditRepository,
     SqlAlchemyStrategyDraftRepository,
+    SqlAlchemyStrategyVersionRepository,
 )
 from sqlalchemy import Engine
 from sqlalchemy.orm import Session, sessionmaker
@@ -43,6 +44,7 @@ from invest_api.application.research_center import ResearchCenterQueryService
 from invest_api.application.research_external_evidence import ResearchExternalEvidenceService
 from invest_api.application.research_run_command import ResearchRunCommandService
 from invest_api.application.strategy_drafts import StrategyDraftQueryService
+from invest_api.application.strategy_versions import StrategyVersionQueryService
 from invest_api.config import get_settings
 from invest_api.strategy_artifacts import LocalStrategyArtifactReader
 
@@ -80,6 +82,23 @@ def get_strategy_draft_query_service(
         repository=SqlAlchemyStrategyDraftRepository(session),
         audit_repository=SqlAlchemyStrategyAuditRepository(session),
         artifact_reader=LocalStrategyArtifactReader(artifact_root),
+    )
+
+
+def _resolve_strategy_artifact_root() -> Path:
+    artifact_root = get_settings().strategy_artifact_root
+    if not artifact_root.is_absolute():
+        repository_root = Path(__file__).resolve().parents[4]
+        artifact_root = repository_root / artifact_root
+    return artifact_root
+
+
+def get_strategy_version_query_service(
+    session: Annotated[Session, Depends(get_db_session)],
+) -> StrategyVersionQueryService:
+    return StrategyVersionQueryService(
+        repository=SqlAlchemyStrategyVersionRepository(session),
+        artifact_reader=LocalStrategyArtifactReader(_resolve_strategy_artifact_root()),
     )
 
 
@@ -296,4 +315,5 @@ __all__ = [
     "get_research_query_service",
     "get_session_factory",
     "get_strategy_draft_query_service",
+    "get_strategy_version_query_service",
 ]

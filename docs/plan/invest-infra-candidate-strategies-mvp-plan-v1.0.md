@@ -239,7 +239,7 @@ python -m invest_pipeline.strategy_version_cli publish \
 - CIA对两条通过审计的当前Draft分别作出决定；
 - 新增最小 `StrategyVersion`，实现发布、人工激活和按 `strategy_key` 查询；
 - 校验 Draft hash、有效审计、CIA 决定、版本唯一性和不可变性；
-- 提供最小只读查询能力，供 ARC 验收和任务发布读取。
+- 保留本机管理 CLI 查询能力，供 ARC 验收和治理操作使用；跨平台任务发布读取由 Slice 1A 的局域网公共只读接口提供。
 
 **验收标准：**
 
@@ -250,13 +250,53 @@ python -m invest_pipeline.strategy_version_cli publish \
 - [ ] 未经 CIA 批准或未激活版本不能作为执行依据；
 - [ ] 每条key/version重复登记幂等，冲突内容失败；
 - [ ] 已登记版本不能原地修改；
-- [ ] 查询返回正式 artifact 引用和 hash，而不是裸字符串。
+- [ ] 本机 CLI 查询返回正式 artifact 引用和 hash，而不是裸字符串。
 
 **验证：** audit ingestion、domain、repository、migration 和 focused CLI/query tests；AgentOA、审计记录、CIA决定和版本四方读回。
 
 **依赖：** Slice 0。
 
 **预计规模：** 拆成三个 M 任务，每个不超过 5 个文件：Audit 摄取；Version 领域/存储；发布/查询入口。
+
+### Slice 1A：提供 active StrategyVersion 局域网公共只读接口
+
+**目标：** 让 WorkBuddy、Windows、Linux 和其他局域网受信平台直接读取权威 active 策略，不依赖本机 CLI、宿主机路径或共享目录策略副本。
+
+**唯一接口：**
+
+```http
+GET /api/v1/strategies/{strategy_key}/active
+```
+
+**工作内容：**
+
+- 新增一个正式策略查询模块，复用现有 StrategyVersion repository 和 strategy artifact reader；
+- 只读取指定 key 当前唯一 active StrategyVersion；
+- 读取正式 `strategy.json` 原始字节，复算 SHA-256 并严格解析为 JSON object；
+- 响应只包含 schema version、strategy identity、version、active 状态、artifact hash、完整 strategy 内容和必要时间字段；
+- 不返回 artifact_ref、宿主机路径、Decision、Audit、批准人、凭证或数据库结构；
+- 不新增应用层登录，读取范围继续由现有局域网部署边界控制；
+- 固定错误语义：不存在为 404、artifact 不可读为 503、hash 或 JSON 完整性失败为 409，错误正文必须脱敏。
+
+**首版明确延期：**
+
+- 历史版本读取、策略列表、搜索、批量接口和写接口；
+- ETag、304 和专用缓存策略；
+- 独立 artifact 下载 URL、前端页面和共享目录策略副本。
+
+**验收标准：**
+
+- [ ] WorkBuddy/Windows 使用局域网 URL 读取两个现有 active v2.0.0 策略并获得 HTTP 200；
+- [ ] API、数据库 StrategyVersion 和本地 artifact 的 SHA-256 三方一致；
+- [ ] 错误 key、artifact 不可读、hash 不符和非法 JSON 均 fail closed 且不泄露内部信息；
+- [ ] OpenAPI 只新增一个 GET，不出现治理写入口或内部字段；
+- [ ] WorkBuddy 后续任务只引用该 URL、version 和 artifact hash，不再要求复制正式策略到 `Z:\workbuddy`。
+
+**验证：** focused query/endpoint tests、OpenAPI drift、Ruff、架构检查、真实 PostgreSQL 只读查询和 WorkBuddy 局域网实际读回。
+
+**依赖：** Slice 1 的 StrategyVersion 已发布并激活。
+
+**预计规模：** 一个 M 任务；OpenCode 增量实现，Codex 只读复核公共暴露与负面路径，ARC 最终验收。不得自动 commit、push、部署、重启服务或启用 WorkBuddy 周期生产。
 
 ### Slice 2：两阶段真实执行并回接 Stage 4D
 
@@ -352,8 +392,8 @@ Slice 2 两阶段 WorkBuddy 真实执行与 Stage 4D 回接
 ## 9. 实施规则
 
 - 本文已获用户授权并登记为 `ACTIVE`，作为 Stage 4D P0 的前置垂直切片，不新增第三条并行主线；
-- 三个 Slice 分别授权、实现和验收；
-- Slice 0–1 代码由 OpenCode 增量实现，Codex 独立复核，ARC 最终验收；
+- 各 Slice 分别授权、实现和验收；
+- Slice 0–1A 代码由 OpenCode 增量实现，Codex 独立复核，ARC 最终验收；
 - CIA/RAA 决定由对应角色产生，ARC 只负责技术登记和验证；
 - 提交、推送、部署均需单独明确授权。
 
@@ -362,6 +402,6 @@ Slice 2 两阶段 WorkBuddy 真实执行与 Stage 4D 回接
 1. 以已归档的板块强度和通达信个股筛选两套工程化交付作为首批Draft输入；
 2. 缺失原文重新提取时，内容变化必须保留新旧快照并由CIA确认；
 3. RAA通过投研系统只读API逐条审核，报告经AgentOA回传并由ARC CLI摄取；
-4. StrategyVersion首版使用管理CLI发布/激活，并提供只读查询；
+4. StrategyVersion首版使用管理CLI发布/激活；跨平台执行方只通过 Slice 1A 的 active 公共只读接口读取正式策略；
 5. 两阶段按固定顺序人工执行，不新增通用工作流编排对象；
 6. 本计划作为Stage 4D前置切片，不新增第三条活动主线。

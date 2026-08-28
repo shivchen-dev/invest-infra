@@ -4146,6 +4146,64 @@
         "title": "StrategyDraftResponse",
         "type": "object"
       },
+      "StrategyVersionResponse": {
+        "properties": {
+          "activated_at": {
+            "format": "date-time",
+            "title": "Activated At",
+            "type": "string"
+          },
+          "active": {
+            "title": "Active",
+            "type": "boolean"
+          },
+          "approved_at": {
+            "format": "date-time",
+            "title": "Approved At",
+            "type": "string"
+          },
+          "artifact_hash": {
+            "title": "Artifact Hash",
+            "type": "string"
+          },
+          "schema_version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Schema Version"
+          },
+          "strategy": {
+            "additionalProperties": true,
+            "title": "Strategy",
+            "type": "object"
+          },
+          "strategy_key": {
+            "title": "Strategy Key",
+            "type": "string"
+          },
+          "version": {
+            "title": "Version",
+            "type": "string"
+          }
+        },
+        "required": [
+          "schema_version",
+          "strategy_key",
+          "version",
+          "active",
+          "artifact_hash",
+          "strategy",
+          "approved_at",
+          "activated_at"
+        ],
+        "title": "StrategyVersionResponse",
+        "type": "object"
+      },
       "ValidationError": {
         "properties": {
           "ctx": {
@@ -5695,6 +5753,57 @@
         "summary": "Get Research Run Result",
         "tags": [
           "research"
+        ]
+      }
+    },
+    "/api/v1/strategies/{strategy_key}/active": {
+      "get": {
+        "operationId": "get_active_strategy_version_api_v1_strategies__strategy_key__active_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "strategy_key",
+            "required": true,
+            "schema": {
+              "title": "Strategy Key",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StrategyVersionResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "404": {
+            "description": "Strategy version not found"
+          },
+          "409": {
+            "description": "Strategy artifact failed integrity validation"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "503": {
+            "description": "Strategy artifact unavailable"
+          }
+        },
+        "summary": "Get Active Strategy Version",
+        "tags": [
+          "strategies"
         ]
       }
     },

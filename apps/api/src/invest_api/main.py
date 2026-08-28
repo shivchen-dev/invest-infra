@@ -20,6 +20,7 @@ from invest_api.routers.research_external_evidence import (
     router as research_external_evidence_router,
 )
 from invest_api.routers.strategy_drafts import router as strategy_drafts_router
+from invest_api.routers.strategy_versions import router as strategy_versions_router
 from invest_api.routes import router
 
 settings = get_settings()
@@ -46,3 +47,4 @@ app.include_router(market_temperature_router)
 app.include_router(market_breadth_router)
 app.include_router(research_center_router)
 app.include_router(strategy_drafts_router)
+app.include_router(strategy_versions_router)
