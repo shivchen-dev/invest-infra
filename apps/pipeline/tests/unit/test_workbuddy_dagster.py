@@ -108,6 +108,71 @@ def test_schedule_still_skips_when_stage_ready_present_alongside_missing_candida
     assert "no candidates_*.json" in result.skip_message
 
 
+def test_has_pending_candidates_recognizes_real_ready_directory(tmp_path: Path) -> None:
+    source = tmp_path / "candidate" / "results"
+    source.mkdir(parents=True)
+    (source / "ready-001.ready").mkdir()
+    assert wb._has_pending_candidates(source) is True
+
+
+def test_has_pending_candidates_ignores_malformed_temporary_and_file_entries(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "candidate" / "results"
+    source.mkdir(parents=True)
+    (source / ".ready").mkdir()
+    (source / "with space.ready").mkdir()
+    (source / "tmp-001.tmp").mkdir()
+    (source / "ready-file.ready").write_text("not a directory", encoding="utf-8")
+    assert wb._has_pending_candidates(source) is False
+
+
+def test_has_pending_candidates_ignores_symlink_ready_directory(tmp_path: Path) -> None:
+    source = tmp_path / "candidate" / "results"
+    source.mkdir(parents=True)
+    target = tmp_path / "elsewhere"
+    target.mkdir()
+    (source / "linked.ready").symlink_to(target)
+    assert wb._has_pending_candidates(source) is False
+
+
+def test_schedule_requests_run_when_only_real_ready_directory_exists(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    source = tmp_path / "candidate" / "results"
+    source.mkdir(parents=True)
+    (source / "ready-002.ready").mkdir()
+    settings = Settings(workbuddy_bridge_root=tmp_path, workbuddy_source_dir=source)
+    monkeypatch.setattr(wb, "get_settings", lambda: settings)
+
+    result = wb.workbuddy_result_import_schedule(_context())
+
+    assert isinstance(result, dg.RunRequest)
+    assert result.run_key == "workbuddy-import:2026-08-14T16:10:00"
+    assert result.tags["trigger_type"] == "schedule"
+    assert result.tags["bridge_root"] == str(tmp_path.resolve())
+    assert result.tags["pending_source"] == "ready_directory"
+
+
+def test_schedule_skips_when_only_observation_stage_ready_directory_exists(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    bridge_root = tmp_path
+    source = tmp_path / "candidate" / "results"
+    source.mkdir(parents=True)
+    observation = bridge_root / "observation" / "results"
+    observation.mkdir(parents=True)
+    (observation / "obs-9.ready").mkdir()
+    settings = Settings(workbuddy_bridge_root=bridge_root, workbuddy_source_dir=source)
+    monkeypatch.setattr(wb, "get_settings", lambda: settings)
+
+    result = wb.workbuddy_result_import_schedule(_context())
+
+    assert isinstance(result, dg.SkipReason)
+    assert "no candidates_*.json" in result.skip_message
+    assert "*.ready" in result.skip_message
+
+
 def test_schedule_definition_is_weekday_every_five_minutes_and_stopped() -> None:
     assert wb.workbuddy_result_import_schedule.cron_schedule == "*/5 * * * 1-5"
     assert wb.workbuddy_result_import_schedule.execution_timezone == "Asia/Shanghai"

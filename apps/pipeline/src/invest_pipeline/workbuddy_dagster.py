@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import re
 from collections.abc import Callable
 from pathlib import Path
 
@@ -12,6 +13,8 @@ from invest_pipeline.config import Settings, get_settings
 from invest_pipeline.workbuddy_bridge_cli import run_import
 
 _AUTO_SCHEDULE_ENV = "INVEST_PIPELINE_WORKBUDDY_AUTO_SCHEDULE_ENABLED"
+
+_READY_DIR_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}\.ready$")
 
 
 def _auto_schedule_enabled() -> bool:
@@ -23,8 +26,31 @@ def _resolve_paths(settings: Settings | None = None) -> tuple[Path, Path]:
     return configured.workbuddy_bridge_root.resolve(), configured.workbuddy_source_dir.resolve()
 
 
-def _has_pending_candidates(source_dir: Path) -> bool:
+def _has_legacy_candidate_file(source_dir: Path) -> bool:
     return source_dir.is_dir() and any(source_dir.glob("candidates_*.json"))
+
+
+def _has_real_ready_directory(source_dir: Path) -> bool:
+    if not source_dir.is_dir():
+        return False
+    return any(
+        not child.is_symlink()
+        and child.is_dir()
+        and bool(_READY_DIR_RE.fullmatch(child.name))
+        for child in source_dir.iterdir()
+    )
+
+
+def _has_pending_candidates(source_dir: Path) -> bool:
+    return _has_legacy_candidate_file(source_dir) or _has_real_ready_directory(source_dir)
+
+
+def _pending_kind(source_dir: Path) -> str | None:
+    if _has_legacy_candidate_file(source_dir):
+        return "candidates_json"
+    if _has_real_ready_directory(source_dir):
+        return "ready_directory"
+    return None
 
 
 def _run_workbuddy_import(
@@ -60,18 +86,20 @@ def workbuddy_result_import_job() -> None:
     ),
 )
 def workbuddy_result_import_schedule(context: dg.ScheduleEvaluationContext):
-    """Run only when a completed WorkBuddy candidate file is visible."""
+    """Run when a completed WorkBuddy candidate file or ready package directory is visible."""
     bridge_root, source_dir = _resolve_paths()
-    if not _has_pending_candidates(source_dir):
-        return dg.SkipReason(f"no candidates_*.json under {source_dir}")
-    pending_source = "candidates_json"
+    pending_kind = _pending_kind(source_dir)
+    if pending_kind is None:
+        return dg.SkipReason(
+            f"no candidates_*.json or *.ready directory under {source_dir}"
+        )
     scheduled_at = context.scheduled_execution_time.replace(microsecond=0).isoformat()
     return dg.RunRequest(
         run_key=f"workbuddy-import:{scheduled_at}",
         tags={
             "trigger_type": "schedule",
             "bridge_root": str(bridge_root),
-            "pending_source": pending_source,
+            "pending_source": pending_kind,
         },
     )
 
