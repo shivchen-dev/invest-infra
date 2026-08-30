@@ -344,8 +344,8 @@ describe("ResearchCenterDeliveryPanel", () => {
                 started_at: "2026-08-15T01:00:00Z",
                 finished_at: "2026-08-15T01:30:00Z",
                 business_completion_date: "2026-08-15",
-                freshness_at: null,
-                source: null,
+                freshness_at: "2026-08-15T01:45:00Z",
+                source: "scheduled",
                 reason: null,
               },
               integration: {
@@ -355,8 +355,8 @@ describe("ResearchCenterDeliveryPanel", () => {
                 producer_status_counts: { ok: 5 },
                 intake_status_counts: { imported: 5 },
                 latest_as_of: "2026-08-15",
-                freshness_at: null,
-                source: null,
+                freshness_at: "2026-08-15T02:15:00Z",
+                source: "workbuddy",
                 reason: null,
               },
               archive: {
@@ -364,8 +364,8 @@ describe("ResearchCenterDeliveryPanel", () => {
                 artifact_count: 12,
                 latest_run_status: "succeeded",
                 latest_as_of: "2026-08-15",
-                freshness_at: null,
-                source: null,
+                freshness_at: "2026-08-15T03:05:00Z",
+                source: "application/json",
                 reason: null,
               },
               research_runs: {
@@ -375,8 +375,8 @@ describe("ResearchCenterDeliveryPanel", () => {
                 latest_status: "succeeded",
                 latest_started_at: "2026-08-15T00:00:00Z",
                 latest_finished_at: "2026-08-15T00:30:00Z",
-                freshness_at: null,
-                source: null,
+                freshness_at: "2026-08-15T04:25:00Z",
+                source: "llm",
                 reason: null,
               },
             }),
@@ -393,6 +393,12 @@ describe("ResearchCenterDeliveryPanel", () => {
     expect(within(pipeline).getByText("succeeded")).toBeInTheDocument();
     expect(within(pipeline).getByText("business_completion_date")).toBeInTheDocument();
     expect(within(pipeline).getByText("2026-08-15")).toBeInTheDocument();
+    expect(within(pipeline).getByText("freshness_at")).toBeInTheDocument();
+    expect(
+      within(pipeline).getByText("2026-08-15 09:45:00"),
+    ).toBeInTheDocument();
+    expect(within(pipeline).getByText("source")).toBeInTheDocument();
+    expect(within(pipeline).getByText("scheduled")).toBeInTheDocument();
     expect(
       within(pipeline).getByRole("link", { name: "查看 Pipeline 运行详情" }),
     ).toHaveAttribute("href", "/operations");
@@ -408,6 +414,12 @@ describe("ResearchCenterDeliveryPanel", () => {
     expect(within(integration).getByText("5")).toBeInTheDocument();
     expect(within(integration).getByText("latest_as_of")).toBeInTheDocument();
     expect(within(integration).getByText("healthy · 外部工作流整体健康")).toBeInTheDocument();
+    expect(within(integration).getByText("freshness_at")).toBeInTheDocument();
+    expect(
+      within(integration).getByText("2026-08-15 10:15:00"),
+    ).toBeInTheDocument();
+    expect(within(integration).getByText("source")).toBeInTheDocument();
+    expect(within(integration).getByText("workbuddy")).toBeInTheDocument();
     expect(
       within(integration).getByRole("link", {
         name: "查看 Integration Health 详情",
@@ -421,6 +433,14 @@ describe("ResearchCenterDeliveryPanel", () => {
     ).toHaveTextContent("已记录最新归档");
     expect(within(archive).getByText("artifact_count")).toBeInTheDocument();
     expect(within(archive).getByText("12")).toBeInTheDocument();
+    expect(within(archive).getByText("freshness_at")).toBeInTheDocument();
+    expect(
+      within(archive).getByText("2026-08-15 11:05:00"),
+    ).toBeInTheDocument();
+    expect(within(archive).getByText("source")).toBeInTheDocument();
+    expect(
+      within(archive).getByText("application/json"),
+    ).toBeInTheDocument();
     expect(
       within(archive).getByRole("link", { name: "查看 Archive 详情" }),
     ).toHaveAttribute("href", "/automation");
@@ -434,6 +454,12 @@ describe("ResearchCenterDeliveryPanel", () => {
     ).toHaveTextContent("已观测 Research Run");
     expect(within(runs).getByText("run_count")).toBeInTheDocument();
     expect(within(runs).getByText("latest_status")).toBeInTheDocument();
+    expect(within(runs).getByText("freshness_at")).toBeInTheDocument();
+    expect(
+      within(runs).getByText("2026-08-15 12:25:00"),
+    ).toBeInTheDocument();
+    expect(within(runs).getByText("source")).toBeInTheDocument();
+    expect(within(runs).getByText("llm")).toBeInTheDocument();
     expect(
       within(runs).getByRole("link", { name: "查看 Research Run 历史" }),
     ).toHaveAttribute("href", "/research/history");

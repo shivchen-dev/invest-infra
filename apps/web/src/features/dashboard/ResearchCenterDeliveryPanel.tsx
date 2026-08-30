@@ -166,6 +166,14 @@ function PipelineCard({
           <dt>business_completion_date</dt>
           <dd>{formatDate(pipeline.business_completion_date)}</dd>
         </div>
+        <div>
+          <dt>freshness_at</dt>
+          <dd>{formatDateTime(pipeline.freshness_at)}</dd>
+        </div>
+        <div>
+          <dt>source</dt>
+          <dd>{pipeline.source ?? "—"}</dd>
+        </div>
       </dl>
       {detailLink}
     </article>
@@ -262,6 +270,14 @@ function IntegrationCard({
           <dt>latest_as_of</dt>
           <dd>{formatDate(integration.latest_as_of)}</dd>
         </div>
+        <div>
+          <dt>freshness_at</dt>
+          <dd>{formatDateTime(integration.freshness_at)}</dd>
+        </div>
+        <div>
+          <dt>source</dt>
+          <dd>{integration.source ?? "—"}</dd>
+        </div>
       </dl>
       {detailLink}
     </article>
@@ -352,6 +368,14 @@ function ArchiveCard({
         <div>
           <dt>latest_as_of</dt>
           <dd>{formatDate(archive.latest_as_of)}</dd>
+        </div>
+        <div>
+          <dt>freshness_at</dt>
+          <dd>{formatDateTime(archive.freshness_at)}</dd>
+        </div>
+        <div>
+          <dt>source</dt>
+          <dd>{archive.source ?? "—"}</dd>
         </div>
       </dl>
       {detailLink}
@@ -452,6 +476,14 @@ function ResearchRunsCard({
         <div>
           <dt>latest_finished_at</dt>
           <dd>{formatDateTime(researchRuns.latest_finished_at)}</dd>
+        </div>
+        <div>
+          <dt>freshness_at</dt>
+          <dd>{formatDateTime(researchRuns.freshness_at)}</dd>
+        </div>
+        <div>
+          <dt>source</dt>
+          <dd>{researchRuns.source ?? "—"}</dd>
         </div>
       </dl>
       {detailLink}

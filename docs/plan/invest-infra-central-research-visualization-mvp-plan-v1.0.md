@@ -1,9 +1,10 @@
 # 中心投研可视化平台 MVP 实施计划
 
-> 文档版本：v1.0
+> 文档版本：v1.1
 > 文档状态：ACTIVE（本文件是中心可视化主线唯一权威实施计划）
 > 计划治理：`docs/plan/README.md`
 > 制定日期：2026-08-15
+> 最近更新：2026-08-31（补充 Candidate 2.0.0 只读追溯执行拆分）
 > 上位蓝图：`docs/plan/archive/reference-blueprints/invest-infra-stage4d-unified-investment-workbench-integration-plan-v1.0.md`
 > 既有执行基线：`docs/plan/invest-infra-stage4d-mvp-phased-execution-plan-v1.0.md`
 
@@ -180,6 +181,119 @@ Center Dashboard Widgets
 - 不返回宿主机绝对路径或敏感信息；
 - cancelled orphan 等保守状态可解释但不阻断其他卡片；
 - 页面刷新后状态可恢复。
+
+#### Slice 3 增量：Candidate 2.0.0 只读追溯
+
+目标：在不改变 Stage 4D 业务合同的前提下，把真实 Candidate 2.0.0 从
+WorkBuddy 交付、校验、归档、摄取、Admission 到 Research Timeline 的既有事实
+组织为可追溯只读视图，并展示 Candidate 已持久化的策略版本与上游
+StageResult 绑定。该增量属于 Slice 3 的交付链可视化，不是 Slice 4 的策略迭代窗口。
+
+依赖关系：
+
+```text
+3B-Web 可信度与脱敏卡片
+  ↓
+3C-L0 真实字段盘点与合同门禁
+  ↓
+3C-L1 最小只读投影（仅在现有字段足够时）
+  ↓
+3C-L2 Candidate / Research Timeline 展示
+  ↓
+3C-L3 真实 Candidate 2.0.0 E2E 与 Gate B 证据
+```
+
+##### Task 3B-Web：交付可信度卡片
+
+**说明：** 消费现有 Slice 3B API 契约，在 Dashboard 交付链卡片中展示
+freshness、source、partial/failed 原因和恢复状态，不新增第二次资源请求。
+
+**验收标准：**
+
+- 四个 delivery 子段独立显示 loading、empty、running、succeeded、partial、failed；
+- 不展示宿主机路径、凭据、原始异常或浏览器推导的业务状态；
+- 刷新后完全以服务端 read model 恢复状态。
+
+**验证：** Web focused/full tests、typecheck、production build。
+
+**预计范围：** M，优先限制在 Dashboard 卡片、对应测试和既有类型适配层。
+
+##### Task 3C-L0：真实字段盘点与合同门禁
+
+**说明：** 使用首份真实 Candidate 2.0.0、数据库只读结果、Research Workspace
+响应和归档元数据，逐项确认以下事实是否已经存在且可安全投影：WorkBuddy run、
+Candidate identity、末阶段策略 key/version/hash、上游 StageResult run/hash、归档状态、
+摄取状态、Admission 决定、Research Case/Run/Result 标识与时间。
+
+**验收标准：**
+
+- 每个拟展示字段均映射到一个现有权威来源，并标明 nullable/unavailable 语义；
+- 明确区分交付、归档、摄取、准入和研究完成，不用单一 `success` 合并；
+- 输出“现有契约足够”或字段级缺口清单，不以 fixture 或前端常量补缺。
+
+**验证：** AgentOA 结果、不可变 artifact、数据库和现有 API 四方只读对照。
+
+**预计范围：** S，只读探索与合同确认，不修改代码、数据库或业务数据。
+
+##### Task 3C-L1：最小只读追溯投影
+
+**说明：** 仅当 3C-L0 证明现有持久化事实足够时，在既有 Research Workspace
+或一个有界只读查询 seam 中投影 Candidate lineage；复用 Reader，不直读共享目录，
+不让 Web 拼接业务关系。
+
+**验收标准：**
+
+- Candidate 能追溯末阶段策略 key/version/hash 与上游 StageResult run/hash；
+- Archive、Intake、Admission、Research 状态分别投影，缺失值明确为 unavailable；
+- 响应拒绝宿主路径、artifact URI、原始 payload、凭据和未脱敏异常。
+
+**验证：** Application/API 成功、空、部分、冲突、损坏引用和脱敏测试；OpenAPI
+生成与 drift 检查；Ruff、架构边界检查。
+
+**预计范围：** M；若需要新增数据库字段、迁移或改变 Stage 4D 写入语义，立即停止，
+将缺口退回 P0 Stage 4D 主线单独规划和授权，不在可视化任务中顺带实现。
+
+##### Task 3C-L2：Candidate 与 Timeline 展示
+
+**说明：** 在现有 Candidate Pool / Research Case 页面上增加只读追溯区块，复用
+Research Workspace 和 Timeline，不新建平行详情系统。
+
+**验收标准：**
+
+- 用户可从 Candidate 或 Research Case 看见来源、策略版本、StageResult、Admission
+  与 Research 生命周期，且每个标识可复制核验；
+- unavailable、partial、conflict、rejected 与合法空结果有不同且中性的视觉语义；
+- 浏览器不计算投资结论、不推导哈希、不提供 Admission 或策略治理写操作。
+
+**验证：** Web loading/empty/success/partial/conflict/failed focused tests、全量测试、
+typecheck、production build和无障碍基本检查。
+
+**预计范围：** 拆为两个 S/M 垂直任务：先 Research Case lineage，再按真实导航需求
+决定是否给 Candidate Pool 增加入口；单个任务不超过约 5 个文件。
+
+##### Task 3C-L3：真实链路验收
+
+**说明：** 使用真实 WorkBuddy Candidate 2.0.0 完成一次只读 E2E，保存 Gate B
+证据；fixture 只用于自动测试，不替代真实验收。
+
+**验收标准：**
+
+- 页面展示与 AgentOA、artifact、数据库、API 四方的 ID/version/hash/status/time 一致；
+- 合法空结果、Admission 拒绝或部分 Research 链均能如实展示，不伪装为成功闭环；
+- Stage 4D 历史 Observation、Candidate、Run 和 Result 未被修改或重置。
+
+**验证：** Playwright E2E、API/Web 回归、OpenAPI drift、Web typecheck/build、
+`git diff --check`，以及一份不含凭据和宿主绝对路径的真实验收记录。
+
+**预计范围：** S，以 E2E、只读回读和验收记录为主。
+
+##### Slice 3 增量停止条件
+
+- 真实 Candidate 2.0.0 尚未交付时，不宣称 3C-L3 或 Gate B 完成；
+- 需要新增业务表、迁移、Candidate/Admission 写入字段或改变 Stage 4D 状态机；
+- 只能通过共享目录直读、文件名猜测、Markdown 解析或前端常量建立追溯关系；
+- 需要把策略审批、激活、Admission 决策或 Research 写操作开放到浏览器；
+- 追溯响应可能泄漏凭据、宿主机路径、内部 artifact URI 或原始异常。
 
 ### Slice 4：策略迭代只读窗口
 
