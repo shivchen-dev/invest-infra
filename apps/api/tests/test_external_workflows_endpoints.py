@@ -1,9 +1,10 @@
 """Focused endpoint tests for ``/api/v1/external-workflows``.
 
-The router exposes five read-only routes
+The router exposes six read-only routes
 (``list_external_workflows``, ``get_external_workflow``,
-``list_external_artifacts``, ``list_external_observations`` and
-``get_external_workflow_candidate_lineage``) that proxy through
+``list_external_artifacts``, ``list_external_observations``,
+``get_external_workflow_candidate_lineage`` and
+``get_external_workflow_candidate_lineage_states``) that proxy through
 :class:`invest_api.application.external_workflows.ExternalWorkflowQueryService`.
 
 The tests drive the routers through ``fastapi.testclient.TestClient``
@@ -41,6 +42,9 @@ DETAIL_TEMPLATE = "/api/v1/external-workflows/{run_id}"
 ARTIFACTS_TEMPLATE = "/api/v1/external-workflows/{run_id}/artifacts"
 OBSERVATIONS_TEMPLATE = "/api/v1/external-workflows/{run_id}/observations"
 CANDIDATE_LINEAGE_TEMPLATE = "/api/v1/external-workflows/{run_id}/candidate-lineage"
+CANDIDATE_LINEAGE_STATES_TEMPLATE = (
+    "/api/v1/external-workflows/{run_id}/candidate-lineage-states"
+)
 
 HASH_A = "a" * 64
 HASH_B = "b" * 64
@@ -865,6 +869,224 @@ class TestExternalWorkflowCandidateLineage:
         assert "/tmp/leak" not in response.text
 
 
+class TestExternalWorkflowCandidateLineageStates:
+    """Coverage for the read-only candidate lineage states envelope endpoint.
+
+    The endpoint proxies through
+    :meth:`invest_api.application.external_workflows.ExternalWorkflowQueryService.get_candidate_lineage_states`
+    exactly once and returns a closed Pydantic envelope so the response
+    cannot leak extra ``metadata``, ``payload``, ``path``, ``uri``,
+    ``exception``, ``traceback`` or ``decision`` keys from the underlying
+    observation / run objects.
+    """
+
+    def test_returns_envelope_with_exact_shape(
+        self,
+        client: TestClient,
+        external_workflow_service: MagicMock,
+    ) -> None:
+        run = _run()
+        observation_id = uuid4()
+        external_workflow_service.get_candidate_lineage_states.return_value = {
+            "run_id": run.run_id,
+            "lineage": _lineage_projection(),
+            "states": {
+                "archive": {
+                    "availability": "available",
+                    "producer_status": "succeeded",
+                    "intake_status": "accepted",
+                    "started_at": datetime(2026, 8, 14, 9, tzinfo=UTC),
+                    "finished_at": datetime(2026, 8, 14, 10, tzinfo=UTC),
+                },
+                "intake": {
+                    "availability": "available",
+                    "count": 1,
+                    "items": [
+                        {
+                            "observation_id": observation_id,
+                            "observed_at": datetime(2026, 8, 14, 9, 30, tzinfo=UTC),
+                            "as_of": date(2026, 8, 14),
+                        }
+                    ],
+                },
+                "admission": {
+                    "availability": "available",
+                    "count": 1,
+                    "decided_at": None,
+                    "items": [
+                        {
+                            "observation_id": observation_id,
+                            "admission_status": "corroborated",
+                        }
+                    ],
+                },
+                "research": {"availability": "unavailable"},
+            },
+        }
+
+        response = client.get(
+            CANDIDATE_LINEAGE_STATES_TEMPLATE.format(run_id=run.run_id)
+        )
+
+        assert response.status_code == 200
+        body = response.json()
+        assert set(body) == {"run_id", "lineage", "states"}
+        assert body["run_id"] == str(run.run_id)
+        assert body["lineage"] is not None
+        assert body["lineage"]["schema_version"] == "candidate-lineage/1.0"
+        states = body["states"]
+        assert set(states) == {"archive", "intake", "admission", "research"}
+        assert set(states["archive"]) == {
+            "availability",
+            "producer_status",
+            "intake_status",
+            "started_at",
+            "finished_at",
+        }
+        assert states["archive"]["availability"] == "available"
+        assert set(states["intake"]) == {"availability", "count", "items"}
+        assert states["intake"]["count"] == 1
+        assert set(states["intake"]["items"][0]) == {
+            "observation_id",
+            "observed_at",
+            "as_of",
+        }
+        assert states["intake"]["items"][0]["observation_id"] == str(observation_id)
+        assert set(states["admission"]) == {
+            "availability",
+            "count",
+            "decided_at",
+            "items",
+        }
+        assert states["admission"]["decided_at"] is None
+        assert set(states["admission"]["items"][0]) == {
+            "observation_id",
+            "admission_status",
+        }
+        assert states["admission"]["items"][0]["admission_status"] == "corroborated"
+        assert states["research"] == {"availability": "unavailable"}
+        external_workflow_service.get_candidate_lineage_states.assert_called_once_with(
+            run.run_id
+        )
+
+    def test_returns_404_and_calls_service_once_when_run_missing(
+        self,
+        client: TestClient,
+        external_workflow_service: MagicMock,
+    ) -> None:
+        run_id = uuid4()
+        external_workflow_service.get_candidate_lineage_states.return_value = None
+
+        response = client.get(
+            CANDIDATE_LINEAGE_STATES_TEMPLATE.format(run_id=run_id)
+        )
+
+        assert response.status_code == 404
+        assert response.json() == {"detail": "external workflow run not found"}
+        external_workflow_service.get_candidate_lineage_states.assert_called_once_with(
+            run_id
+        )
+        # Single-read contract: the route must NOT first probe get_run and
+        # cause a second repository read for the same run.
+        external_workflow_service.get_run.assert_not_called()
+
+    def test_returns_422_for_invalid_uuid(
+        self,
+        client: TestClient,
+        external_workflow_service: MagicMock,
+    ) -> None:
+        response = client.get(
+            "/api/v1/external-workflows/not-a-uuid/candidate-lineage-states"
+        )
+
+        assert response.status_code == 422
+        external_workflow_service.get_candidate_lineage_states.assert_not_called()
+        external_workflow_service.get_run.assert_not_called()
+
+    def test_response_strips_sensitive_extra_keys(
+        self,
+        client: TestClient,
+        external_workflow_service: MagicMock,
+    ) -> None:
+        run = _run()
+        external_workflow_service.get_candidate_lineage_states.return_value = {
+            "run_id": run.run_id,
+            "lineage": None,
+            "states": {
+                "archive": {
+                    "availability": "available",
+                    "producer_status": "succeeded",
+                    "intake_status": "accepted",
+                    "started_at": datetime(2026, 8, 14, 9, tzinfo=UTC),
+                    "finished_at": None,
+                },
+                "intake": {
+                    "availability": "unavailable",
+                    "count": 0,
+                    "items": [],
+                },
+                "admission": {
+                    "availability": "unavailable",
+                    "count": 0,
+                    "decided_at": None,
+                    "items": [],
+                },
+                "research": {"availability": "unavailable"},
+            },
+            # Sensitive keys the response_model whitelist must strip.
+            "raw_payload": {"secret": "value"},
+            "metadata": {"leak": "value"},
+            "path": "/tmp/leak",
+            "uri": "s3://bucket/leak.json",
+            "exception": "boom",
+            "traceback": "stack frame",
+            "decision": "approve",
+        }
+
+        response = client.get(
+            CANDIDATE_LINEAGE_STATES_TEMPLATE.format(run_id=run.run_id)
+        )
+
+        assert response.status_code == 200
+        forbidden = {
+            "raw_payload",
+            "metadata",
+            "path",
+            "uri",
+            "exception",
+            "traceback",
+            "decision",
+        }
+        body = response.json()
+
+        def _walk(value: object) -> None:
+            if isinstance(value, dict):
+                for key, nested in value.items():
+                    assert key not in forbidden, f"sensitive key {key!r} leaked"
+                    _walk(nested)
+            elif isinstance(value, list):
+                for nested in value:
+                    _walk(nested)
+
+        _walk(body)
+        assert "s3://bucket/leak.json" not in response.text
+        assert "/tmp/leak" not in response.text
+        assert "stack frame" not in response.text
+
+    def test_openapi_declaration_references_states_schema_and_is_get_only(self) -> None:
+        operations = app.openapi()["paths"][CANDIDATE_LINEAGE_STATES_TEMPLATE]
+
+        assert set(operations) == {"get"}
+
+        schema = (
+            operations["get"]["responses"]["200"]["content"]["application/json"][
+                "schema"
+            ]
+        )
+
+        assert schema["$ref"].endswith("CandidateLineageStatesResponse")
+
+
 class TestExternalWorkflowsOpenAPI:
     """The router surface is GET-only and references the contract schemas."""
 
@@ -878,6 +1100,7 @@ class TestExternalWorkflowsOpenAPI:
                 ARTIFACTS_TEMPLATE,
                 OBSERVATIONS_TEMPLATE,
                 CANDIDATE_LINEAGE_TEMPLATE,
+                CANDIDATE_LINEAGE_STATES_TEMPLATE,
             )
         }
 
@@ -887,6 +1110,7 @@ class TestExternalWorkflowsOpenAPI:
             ARTIFACTS_TEMPLATE,
             OBSERVATIONS_TEMPLATE,
             CANDIDATE_LINEAGE_TEMPLATE,
+            CANDIDATE_LINEAGE_STATES_TEMPLATE,
         }
         assert all(set(operations) == {"get"} for operations in external_paths.values())
 

@@ -98,6 +98,104 @@
         "title": "ArtifactPreviewResponse",
         "type": "object"
       },
+      "CandidateLineageAdmissionItemResponse": {
+        "properties": {
+          "admission_status": {
+            "title": "Admission Status",
+            "type": "string"
+          },
+          "observation_id": {
+            "format": "uuid",
+            "title": "Observation Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "observation_id",
+          "admission_status"
+        ],
+        "title": "CandidateLineageAdmissionItemResponse",
+        "type": "object"
+      },
+      "CandidateLineageAdmissionStateResponse": {
+        "properties": {
+          "availability": {
+            "enum": [
+              "available",
+              "unavailable",
+              "partial",
+              "conflict"
+            ],
+            "title": "Availability",
+            "type": "string"
+          },
+          "count": {
+            "minimum": 0.0,
+            "title": "Count",
+            "type": "integer"
+          },
+          "decided_at": {
+            "title": "Decided At",
+            "type": "null"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/CandidateLineageAdmissionItemResponse"
+            },
+            "title": "Items",
+            "type": "array"
+          }
+        },
+        "required": [
+          "availability",
+          "count",
+          "items"
+        ],
+        "title": "CandidateLineageAdmissionStateResponse",
+        "type": "object"
+      },
+      "CandidateLineageArchiveStateResponse": {
+        "properties": {
+          "availability": {
+            "const": "available",
+            "title": "Availability",
+            "type": "string"
+          },
+          "finished_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Finished At"
+          },
+          "intake_status": {
+            "title": "Intake Status",
+            "type": "string"
+          },
+          "producer_status": {
+            "title": "Producer Status",
+            "type": "string"
+          },
+          "started_at": {
+            "format": "date-time",
+            "title": "Started At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "availability",
+          "producer_status",
+          "intake_status",
+          "started_at"
+        ],
+        "title": "CandidateLineageArchiveStateResponse",
+        "type": "object"
+      },
       "CandidateLineageAvailabilityResponse": {
         "properties": {
           "availability": {
@@ -131,6 +229,77 @@
         "title": "CandidateLineageAvailabilityResponse",
         "type": "object"
       },
+      "CandidateLineageIntakeItemResponse": {
+        "properties": {
+          "as_of": {
+            "format": "date",
+            "title": "As Of",
+            "type": "string"
+          },
+          "observation_id": {
+            "format": "uuid",
+            "title": "Observation Id",
+            "type": "string"
+          },
+          "observed_at": {
+            "format": "date-time",
+            "title": "Observed At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "observation_id",
+          "observed_at",
+          "as_of"
+        ],
+        "title": "CandidateLineageIntakeItemResponse",
+        "type": "object"
+      },
+      "CandidateLineageIntakeStateResponse": {
+        "properties": {
+          "availability": {
+            "enum": [
+              "available",
+              "unavailable"
+            ],
+            "title": "Availability",
+            "type": "string"
+          },
+          "count": {
+            "minimum": 0.0,
+            "title": "Count",
+            "type": "integer"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/CandidateLineageIntakeItemResponse"
+            },
+            "title": "Items",
+            "type": "array"
+          }
+        },
+        "required": [
+          "availability",
+          "count",
+          "items"
+        ],
+        "title": "CandidateLineageIntakeStateResponse",
+        "type": "object"
+      },
+      "CandidateLineageResearchStateResponse": {
+        "properties": {
+          "availability": {
+            "const": "unavailable",
+            "title": "Availability",
+            "type": "string"
+          }
+        },
+        "required": [
+          "availability"
+        ],
+        "title": "CandidateLineageResearchStateResponse",
+        "type": "object"
+      },
       "CandidateLineageResponse": {
         "properties": {
           "schema_version": {
@@ -152,6 +321,58 @@
           "stages"
         ],
         "title": "CandidateLineageResponse",
+        "type": "object"
+      },
+      "CandidateLineageStatesEnvelopeResponse": {
+        "properties": {
+          "admission": {
+            "$ref": "#/components/schemas/CandidateLineageAdmissionStateResponse"
+          },
+          "archive": {
+            "$ref": "#/components/schemas/CandidateLineageArchiveStateResponse"
+          },
+          "intake": {
+            "$ref": "#/components/schemas/CandidateLineageIntakeStateResponse"
+          },
+          "research": {
+            "$ref": "#/components/schemas/CandidateLineageResearchStateResponse"
+          }
+        },
+        "required": [
+          "archive",
+          "intake",
+          "admission",
+          "research"
+        ],
+        "title": "CandidateLineageStatesEnvelopeResponse",
+        "type": "object"
+      },
+      "CandidateLineageStatesResponse": {
+        "properties": {
+          "lineage": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CandidateLineageResponse"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "run_id": {
+            "format": "uuid",
+            "title": "Run Id",
+            "type": "string"
+          },
+          "states": {
+            "$ref": "#/components/schemas/CandidateLineageStatesEnvelopeResponse"
+          }
+        },
+        "required": [
+          "run_id",
+          "states"
+        ],
+        "title": "CandidateLineageStatesResponse",
         "type": "object"
       },
       "CandidatePoolDiffEntry": {
@@ -4979,6 +5200,49 @@
           }
         },
         "summary": "Get External Workflow Candidate Lineage",
+        "tags": [
+          "external-workflows"
+        ]
+      }
+    },
+    "/api/v1/external-workflows/{run_id}/candidate-lineage-states": {
+      "get": {
+        "operationId": "get_external_workflow_candidate_lineage_states_api_v1_external_workflows__run_id__candidate_lineage_states_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Run Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CandidateLineageStatesResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get External Workflow Candidate Lineage States",
         "tags": [
           "external-workflows"
         ]

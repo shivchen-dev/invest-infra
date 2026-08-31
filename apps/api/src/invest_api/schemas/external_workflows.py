@@ -78,9 +78,66 @@ class CandidateLineageAvailabilityResponse(BaseModel):
     lineage: CandidateLineageResponse | None = None
 
 
+class CandidateLineageArchiveStateResponse(BaseModel):
+    availability: Literal["available"]
+    producer_status: str
+    intake_status: str
+    started_at: datetime
+    finished_at: datetime | None = None
+
+
+class CandidateLineageIntakeItemResponse(BaseModel):
+    observation_id: UUID
+    observed_at: datetime
+    as_of: date
+
+
+class CandidateLineageIntakeStateResponse(BaseModel):
+    availability: Literal["available", "unavailable"]
+    count: int = Field(ge=0)
+    items: list[CandidateLineageIntakeItemResponse]
+
+
+class CandidateLineageAdmissionItemResponse(BaseModel):
+    observation_id: UUID
+    admission_status: str
+
+
+class CandidateLineageAdmissionStateResponse(BaseModel):
+    availability: Literal["available", "unavailable", "partial", "conflict"]
+    count: int = Field(ge=0)
+    decided_at: None = None
+    items: list[CandidateLineageAdmissionItemResponse]
+
+
+class CandidateLineageResearchStateResponse(BaseModel):
+    availability: Literal["unavailable"]
+
+
+class CandidateLineageStatesEnvelopeResponse(BaseModel):
+    archive: CandidateLineageArchiveStateResponse
+    intake: CandidateLineageIntakeStateResponse
+    admission: CandidateLineageAdmissionStateResponse
+    research: CandidateLineageResearchStateResponse
+
+
+class CandidateLineageStatesResponse(BaseModel):
+    run_id: UUID
+    lineage: CandidateLineageResponse | None = None
+    states: CandidateLineageStatesEnvelopeResponse
+
+
 __all__ = [
+    "CandidateLineageAdmissionItemResponse",
+    "CandidateLineageAdmissionStateResponse",
+    "CandidateLineageArchiveStateResponse",
     "CandidateLineageAvailabilityResponse",
+    "CandidateLineageIntakeItemResponse",
+    "CandidateLineageIntakeStateResponse",
+    "CandidateLineageResearchStateResponse",
     "CandidateLineageResponse",
+    "CandidateLineageStatesEnvelopeResponse",
+    "CandidateLineageStatesResponse",
     "CandidateStageResponse",
     "ExternalArtifactResponse",
     "ExternalObservationResponse",

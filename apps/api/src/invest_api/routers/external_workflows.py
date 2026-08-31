@@ -13,6 +13,7 @@ from invest_api.dependencies import get_external_workflow_query_service
 from invest_api.schemas.external_workflows import (
     CandidateLineageAvailabilityResponse,
     CandidateLineageResponse,
+    CandidateLineageStatesResponse,
     ExternalArtifactResponse,
     ExternalObservationResponse,
     ExternalWorkflowRunListResponse,
@@ -197,6 +198,23 @@ def get_external_workflow_candidate_lineage(
         availability="available",
         lineage=CandidateLineageResponse.model_validate(projection),
     )
+
+
+@router.get(
+    "/{run_id}/candidate-lineage-states",
+    response_model=CandidateLineageStatesResponse,
+)
+def get_external_workflow_candidate_lineage_states(
+    run_id: UUID,
+    service: Annotated[ExternalWorkflowQueryService, Depends(get_external_workflow_query_service)],
+) -> CandidateLineageStatesResponse:
+    states = service.get_candidate_lineage_states(run_id)
+    if states is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="external workflow run not found",
+        )
+    return CandidateLineageStatesResponse.model_validate(states)
 
 
 __all__ = ["router"]

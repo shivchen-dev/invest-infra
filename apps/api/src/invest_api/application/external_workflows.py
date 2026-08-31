@@ -59,6 +59,22 @@ class ExternalWorkflowQueryService:
         metadata = getattr(run, "metadata", None)
         return project_candidate_lineage(metadata)
 
+    def get_candidate_lineage_states(self, run_id: UUID):
+        run = self._runs.get_by_id(run_id)
+        if run is None:
+            return None
+        observations = self._observations.list_by_run(run_id, limit=100, offset=0)
+        metadata = getattr(run, "metadata", None)
+        return _build_candidate_lineage_states(
+            run_id=run_id,
+            producer_status_value=run.producer_status.value,
+            intake_status_value=run.intake_status.value,
+            started_at=run.started_at,
+            finished_at=run.finished_at,
+            lineage=project_candidate_lineage(metadata),
+            observations=observations,
+        )
+
     def health(self) -> dict:
         runs = self._runs.list_recent(limit=100, offset=0)
         producer_statuses: dict[str, int] = {}
@@ -85,6 +101,73 @@ _COMMON_STAGE_FIELDS = (
     "strategy_artifact_hash",
     "as_of",
 )
+
+
+_ADMISSION_STATUS_CONFLICT = "conflict"
+
+
+def _build_candidate_lineage_states(
+    *,
+    run_id,
+    producer_status_value,
+    intake_status_value,
+    started_at,
+    finished_at,
+    lineage,
+    observations,
+):
+    intake_items = [
+        {
+            "observation_id": observation.observation_id,
+            "observed_at": observation.observed_at,
+            "as_of": observation.as_of,
+        }
+        for observation in observations
+    ]
+
+    admission_statuses = [observation.admission_status.value for observation in observations]
+    if not observations:
+        admission_availability = "unavailable"
+    elif _ADMISSION_STATUS_CONFLICT in admission_statuses:
+        admission_availability = "conflict"
+    elif len(set(admission_statuses)) > 1:
+        admission_availability = "partial"
+    else:
+        admission_availability = "available"
+
+    admission_items = [
+        {
+            "observation_id": observation.observation_id,
+            "admission_status": observation.admission_status.value,
+        }
+        for observation in observations
+    ]
+
+    return {
+        "run_id": run_id,
+        "lineage": lineage,
+        "states": {
+            "archive": {
+                "availability": "available",
+                "producer_status": producer_status_value,
+                "intake_status": intake_status_value,
+                "started_at": started_at,
+                "finished_at": finished_at,
+            },
+            "intake": {
+                "availability": "available" if observations else "unavailable",
+                "count": len(observations),
+                "items": intake_items,
+            },
+            "admission": {
+                "availability": admission_availability,
+                "count": len(observations),
+                "decided_at": None,
+                "items": admission_items,
+            },
+            "research": {"availability": "unavailable"},
+        },
+    }
 
 
 def _project_stage(stage, expected_key, extra_keys):
