@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from typing import Protocol
 from uuid import UUID
 
@@ -52,6 +52,13 @@ class ExternalWorkflowQueryService:
     def get_artifact(self, artifact_id: UUID):
         return self._artifacts.get_by_id(artifact_id)
 
+    def get_candidate_lineage(self, run_id: UUID):
+        run = self._runs.get_by_id(run_id)
+        if run is None:
+            return None
+        metadata = getattr(run, "metadata", None)
+        return project_candidate_lineage(metadata)
+
     def health(self) -> dict:
         runs = self._runs.list_recent(limit=100, offset=0)
         producer_statuses: dict[str, int] = {}
@@ -70,4 +77,69 @@ class ExternalWorkflowQueryService:
         }
 
 
-__all__ = ["ExternalWorkflowQueryService"]
+_COMMON_STAGE_FIELDS = (
+    "stage_result_id",
+    "stage_result_sha256",
+    "strategy_key",
+    "strategy_version",
+    "strategy_artifact_hash",
+    "as_of",
+)
+
+
+def _project_stage(stage, expected_key, extra_keys):
+    projected = {"stage_key": expected_key}
+    for key in _COMMON_STAGE_FIELDS:
+        value = stage.get(key)
+        if not isinstance(value, str) or not value:
+            return None
+        projected[key] = value
+    for key in extra_keys:
+        value = stage.get(key)
+        if not isinstance(value, str) or not value:
+            return None
+        projected[key] = value
+    return projected
+
+
+def project_candidate_lineage(metadata):
+    if not isinstance(metadata, Mapping):
+        return None
+    lineage = metadata.get("lineage")
+    if not isinstance(lineage, Mapping):
+        return None
+    if lineage.get("schema_version") != "candidate-lineage/1.0":
+        return None
+    stages = lineage.get("stages")
+    if (
+        not isinstance(stages, Sequence)
+        or isinstance(stages, (str, bytes, bytearray))
+        or len(stages) != 2
+    ):
+        return None
+    sector_src, stock_src = stages
+    if not isinstance(sector_src, Mapping) or not isinstance(stock_src, Mapping):
+        return None
+    if sector_src.get("stage_key") != "sector_selection":
+        return None
+    if stock_src.get("stage_key") != "stock_screening":
+        return None
+
+    sector = _project_stage(sector_src, "sector_selection", ("constituent_snapshot_sha256",))
+    if sector is None:
+        return None
+    stock = _project_stage(
+        stock_src,
+        "stock_screening",
+        ("upstream_stage_result_id", "upstream_stage_result_sha256"),
+    )
+    if stock is None:
+        return None
+
+    return {
+        "schema_version": "candidate-lineage/1.0",
+        "stages": [sector, stock],
+    }
+
+
+__all__ = ["ExternalWorkflowQueryService", "project_candidate_lineage"]

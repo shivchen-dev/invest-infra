@@ -138,6 +138,110 @@ WorkBuddy 2.0.0 candidates JSON
 - [ ] 路径、权限和原子写入策略已确认；
 - [ ] 阶段 1 的输入/输出合同无开放歧义。
 
+### 4.2 P0 增量：Candidate 2.0.0 两阶段 lineage 合同
+
+> 状态：ARCHITECTURE READY，待用户审核实施授权（2026-08-31）
+
+中心投研可视化 3C-L0 真实字段盘点确认：现有 `ExternalWorkflowRun`、
+`ExternalArtifact`、`ExternalObservation`、Admission 和 Research Workspace 已能表达
+交付、归档、摄取、准入与研究生命周期。当前唯一阻塞是 Candidate 2.0.0 没有保存
+两阶段策略和 `StageResult` 身份/hash。可视化层不得从文件名、Markdown 或前端常量
+补关系，因此先在 Stage 4D P0 增量补齐这条证据链。
+
+#### 4.2.1 架构决定
+
+1. **保持现有两文件 archive。** `.ready` 包继续只要求 `candidates.json` 和
+   `manifest.json`；`manifest.json` 继续校验 `candidates.json` 的 SHA-256 与字节数，
+   不新增 `lineage.json` 或第二套 artifact 合同。
+2. **lineage 放入现有 Candidate payload。** `candidates.json` 顶层增加 `lineage`，
+   保存两个有序 stage：`sector_selection → stock_screening`。每个 stage 包含 `stage_key`、
+   `stage_result_id`、`stage_result_sha256`、`strategy_key`、`strategy_version`、
+   `strategy_artifact_hash` 和 `as_of`；板块阶段还包含
+   `constituent_snapshot_sha256`，终端阶段必须显式绑定上游 stage ID/hash。
+3. **候选只引用终端 stage。** 每个 Candidate 继续要求非空 `symbol/reason`，并增加
+   `terminal_stage_result_id` 与 `terminal_stage_result_sha256`。二者必须与
+   顶层终端 stage 完全一致，不复制整条 lineage。
+4. **深化现有 parser seam。** 直接扩展 `parse_candidates_payload()`，集中验证 hash
+   格式、阶段顺序、上下游绑定、策略身份、as-of 一致性和候选 terminal 引用；
+   Bridge、API 与 Web 不重复实现这些规则，也不新建平行 Module。
+5. **复用现有持久化 seam。** 完整 `candidates.json` 继续由 `ExternalArtifact` 的
+   manifest/hash 证明；规范化 lineage 写入 `ExternalWorkflowRun.metadata`，候选对应的
+   terminal/upstream 引用写入 `ExternalObservation.metadata`。原始 Candidate payload
+   仍保存在 `ExternalObservation.payload`，但新的只读 projection 不直接暴露 raw payload。
+   本增量不新增表、不新增 FK、不改变 Observation→ResearchExternalEvidence→ResearchCase
+   的既有绑定路径。
+6. **Admission 时间不纳入本增量。** 现有记录没有权威决定时间时，只读 projection
+   返回 `unavailable`；不得用 `observed_at` 或数据库时间代替。Admission 时间如需补齐，
+   作为独立任务单独评估，不阻塞 Candidate lineage。
+7. **策略身份分层校验。** WorkBuddy 生成时从 active StrategyVersion API 取得
+   key/version/hash；Pipeline 摄取时只验证 archive 内部一致性与合同，不静默调用网络。
+   真实验收再以 active API、archive、PostgreSQL 和只读 API 四方对照确认。
+
+#### 4.2.2 现有 parser Interface
+
+保留现有单一入口，不增加新的公开 Interface：
+
+```text
+parse_candidates_payload(payload)
+  → CandidateIntakeResult（增加规范化 lineage）
+  → ValueError（稳定、脱敏的原因）
+```
+
+解析结果只增加：
+
+- 两个经过验证且严格有序的 stage identities/hashes；
+- 每个 Candidate 经过验证的 terminal stage reference；
+- Bridge 写入 JSONB 所需的规范化安全 projection。
+
+错误保持稳定原因，例如 `invalid_stage_order`、
+`upstream_binding_mismatch`、`strategy_identity_mismatch`、`as_of_mismatch`、
+`candidate_terminal_mismatch`；不得包含宿主机路径、raw exception、凭据或原始正文。
+
+#### 4.2.3 实施切片
+
+##### P0-A：合同、parser 与 Bridge
+
+- 更新 Candidate Intake M0 合同和 schema fixtures；
+- 扩展现有 parser，验证两阶段 lineage 和 Candidate terminal 引用；
+- Bridge 在 manifest 校验后使用同一 parser，并将规范化 lineage 写入现有 JSONB；
+- 复用现有 JSONB 保存规范化 lineage，不新增 migration；
+- 旧 Candidate 2.0.0 记录保持可读，但 lineage 明确为 `unavailable`，不做推断。
+
+验收：合法、缺字段、阶段倒序、上游错绑、策略身份错、as-of 错位、候选 terminal
+错绑、重复导入、同 run 不同内容冲突、旧记录读回和 PostgreSQL round-trip 通过。
+
+##### P0-B：只读投影与真实验收
+
+- 在现有 External Workflow/Research Workspace Reader 后增加一个有界只读 projection；
+- Archive、Intake、Admission、Research 状态分别返回；
+- 只投影 stage/strategy ID、version、hash 和 as-of，不返回 artifact URI、raw payload、
+  内部 metadata 或异常；
+- WorkBuddy 先生成板块 StageResult，再由个股阶段显式绑定；
+- 生成带顶层 lineage 的 Candidate ready archive，并完成一次真实摄取；
+- 对照 AgentOA 结果、archive、PostgreSQL、active Strategy API 与 lineage API；
+- 不启动周期自动摄取，不修改历史 Observation/Candidate/Research 数据。
+
+验收：Application/API success、unavailable、partial、conflict、404 和脱敏测试通过；
+OpenAPI drift、Ruff、架构检查通过；两条策略和 StageResult、成分快照、Candidate 与
+Research Timeline 可逐项追溯，fixture 不替代真实证据。完成后恢复中心可视化 3C-L1。
+
+#### 4.2.4 固定实施顺序与停止条件
+
+```text
+P0-A 合同、parser、Bridge
+→ P0-B 只读 projection、真实验收
+→ 中心可视化 3C-L1～L3
+```
+
+以下任一情况立即停止并重新评审，不顺带扩展：
+
+- 需要新增业务表、外键或改变 Research/Admission 状态机；
+- 需要浏览器、API Reader 或 Bridge 跨目录解析 Markdown/猜测关系；
+- WorkBuddy 无法在现有 Candidate payload 中提供可验证 lineage；
+- 需要在摄取事务中调用 WorkBuddy、active Strategy API 或其他网络来源；
+- 需要回填/重写历史 Observation、Candidate、Admission 或 Research 数据；
+- 需要启动 Dagster、周期自动摄取、部署或业务数据写入才能完成代码级验收。
+
 ## 5. 阶段 1：外部候选准入闭环
 
 对应原蓝图：D1–D3。目标是交付可重复、可诊断、可恢复的

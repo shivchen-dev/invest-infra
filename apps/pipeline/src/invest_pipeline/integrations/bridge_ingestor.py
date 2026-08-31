@@ -9,10 +9,10 @@ from __future__ import annotations
 import hashlib
 import json
 import re
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from datetime import UTC, date, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 from uuid import NAMESPACE_URL, UUID, uuid5
 
 from invest_domain.integration import (
@@ -24,7 +24,10 @@ from invest_domain.integration import (
     ProducerStatus,
 )
 
-from invest_pipeline.workbuddy_candidates import parse_candidates_payload
+from invest_pipeline.workbuddy_candidates import (
+    CandidateLineage,
+    parse_candidates_payload,
+)
 from invest_pipeline.workbuddy_candidates.projection import Resolver, project_candidates
 
 
@@ -70,6 +73,15 @@ def import_archived_candidate_run(
     source_uuid = _stable_uuid("workbuddy-run", workflow_run_id)
     artifact_uuid = _stable_uuid("workbuddy-artifact", hashlib.sha256(payload_bytes).hexdigest())
     artifact_uri = f"archive://runs/{parsed.trade_date}/{parsed.workflow_run_id}/candidates.json"
+    run_metadata: dict[str, Any] = {
+        "external_workflow_run_id": parsed.workflow_run_id,
+        "trade_date": parsed.trade_date,
+        "strategy_id": parsed.strategy_id,
+        "candidate_rules_version": "2.0.0",
+        "archive_uri": f"archive://runs/{parsed.trade_date}/{parsed.workflow_run_id}",
+    }
+    if parsed.lineage is not None:
+        run_metadata["lineage"] = _lineage_to_metadata(parsed.lineage)
     run = ExternalWorkflowRun(
         run_id=source_uuid,
         producer="workbuddy",
@@ -78,13 +90,7 @@ def import_archived_candidate_run(
         intake_status=_intake_status(parsed),
         started_at=now,
         finished_at=now,
-        metadata={
-            "external_workflow_run_id": parsed.workflow_run_id,
-            "trade_date": parsed.trade_date,
-            "strategy_id": parsed.strategy_id,
-            "candidate_rules_version": "2.0.0",
-            "archive_uri": f"archive://runs/{parsed.trade_date}/{parsed.workflow_run_id}",
-        },
+        metadata=run_metadata,
     )
     artifact = ExternalArtifact(
         artifact_id=artifact_uuid,
@@ -156,6 +162,9 @@ def import_archived_candidate_run(
     symbol_resolver = resolver or (lambda symbol: symbol)
     projection = project_candidates(parsed, symbol_resolver)
     findings = tuple(parsed.findings + projection.findings)
+    lineage_refs = (
+        _lineage_observation_refs(parsed.lineage) if parsed.lineage is not None else {}
+    )
     observations: list[ExternalObservation] = []
     for index, item in enumerate((*projection.accepted, *projection.needs_symbol_resolution)):
         status = "pending_validation" if item in projection.accepted else "needs_symbol_resolution"
@@ -163,6 +172,13 @@ def import_archived_candidate_run(
             "workbuddy-observation",
             f"{workflow_run_id}:{index}:{json.dumps(item.raw, sort_keys=True, default=str)}",
         )
+        observation_metadata = {
+            "candidate_index": index,
+            "candidate_status": status,
+            "strategy_id": parsed.strategy_id,
+            "reason": item.reason,
+        }
+        observation_metadata.update(lineage_refs)
         observation = ExternalObservation(
             observation_id=observation_id,
             run_id=source_uuid,
@@ -174,12 +190,7 @@ def import_archived_candidate_run(
             payload=item.raw if isinstance(item.raw, dict) else {"raw": item.raw},
             symbol=item.symbol,
             admission_status=AdmissionStatus.PENDING,
-            metadata={
-                "candidate_index": index,
-                "candidate_status": status,
-                "strategy_id": parsed.strategy_id,
-                "reason": item.reason,
-            },
+            metadata=observation_metadata,
         )
         existing = uow.external_observations.get_by_id(observation_id)
         observations.append(existing or uow.external_observations.add(observation))
@@ -253,6 +264,38 @@ def _intake_status(parsed) -> IntakeStatus:
     if parsed.accepted:
         return IntakeStatus.ACCEPTED
     return IntakeStatus.REJECTED
+
+
+def _lineage_to_metadata(lineage: CandidateLineage) -> dict[str, Any]:
+    """Serialize a parsed lineage into a JSON-safe run-metadata object.
+
+    Preserves the parser contract: ``schema_version`` plus exactly two ordered
+    stage objects.  Each stage exposes only the normalized fields defined by
+    ``LineageStage``; optional fields whose value is ``None`` are omitted.
+    """
+    return {
+        "schema_version": lineage.schema_version,
+        "stages": [
+            {key: value for key, value in asdict(stage).items() if value is not None}
+            for stage in lineage.stages
+        ],
+    }
+
+
+def _lineage_observation_refs(lineage: CandidateLineage) -> dict[str, str]:
+    """Return the four query-friendly lineage references for observation metadata.
+
+    Terminal refs come from the ``stock_screening`` stage; upstream refs come
+    from that stage's validated upstream binding.  Parser guarantees these
+    fields are non-empty strings when ``lineage`` is present.
+    """
+    stock = lineage.stock_screening
+    return {
+        "terminal_stage_result_id": stock.stage_result_id,
+        "terminal_stage_result_sha256": stock.stage_result_sha256,
+        "upstream_stage_result_id": cast(str, stock.upstream_stage_result_id),
+        "upstream_stage_result_sha256": cast(str, stock.upstream_stage_result_sha256),
+    }
 
 
 __all__ = ["BridgeImportResult", "import_archived_candidate_run"]

@@ -235,6 +235,14 @@ Candidate identity、末阶段策略 key/version/hash、上游 StageResult run/h
 
 **预计范围：** S，只读探索与合同确认，不修改代码、数据库或业务数据。
 
+**2026-08-31 门禁结论：** `INSUFFICIENT_FOR_3C_L1`。PostgreSQL 只读核验确认
+现有历史/验收 Candidate 2.0.0 run、artifact 和 observation 可读，但当前正式两阶段
+Candidate 尚未交付；现有合同也没有持久化 StageResult ID/hash，Admission metadata
+缺少决定时间。不得在可视化层推断或补造。StageResult 缺口已回到
+`invest-infra-stage4d-mvp-phased-execution-plan-v1.0.md` §4.2，按 P0-A/B 完成现有
+parser 深化、摄取、只读 projection 和真实验收后再恢复本切片；Admission 时间先按
+`unavailable` 展示，不与 lineage 实施捆绑。
+
 ##### Task 3C-L1：最小只读追溯投影
 
 **说明：** 仅当 3C-L0 证明现有持久化事实足够时，在既有 Research Workspace
@@ -252,6 +260,8 @@ Candidate identity、末阶段策略 key/version/hash、上游 StageResult run/h
 
 **预计范围：** M；若需要新增数据库字段、迁移或改变 Stage 4D 写入语义，立即停止，
 将缺口退回 P0 Stage 4D 主线单独规划和授权，不在可视化任务中顺带实现。
+
+**当前状态：BLOCKED_BY_STAGE4D_P0_LINEAGE。** P0-B 验收通过前不得启动实现。
 
 ##### Task 3C-L2：Candidate 与 Timeline 展示
 

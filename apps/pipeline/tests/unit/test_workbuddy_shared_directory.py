@@ -44,8 +44,9 @@ def _payload(
     schema_version: str = "2.0.0",
     candidates: list[dict] | None = None,
     status: str = "succeeded",
+    lineage: dict | None = None,
 ) -> dict:
-    return {
+    payload = {
         "schema_version": schema_version,
         "workflow_run_id": workflow_run_id,
         "trade_date": "2026-08-14",
@@ -55,6 +56,9 @@ def _payload(
         if candidates is not None
         else [{"symbol": "600000", "reason": "sector strength"}],
     }
+    if lineage is not None:
+        payload["lineage"] = lineage
+    return payload
 
 
 def test_gateway_imports_flat_candidates_files_and_ignores_legacy_audit_files(
@@ -162,6 +166,13 @@ def test_gateway_exposes_diagnostics_on_success(tmp_path: Path) -> None:
         observation.metadata["candidate_status"] for observation in outcome.result.observations
     }
     assert statuses == {"pending_validation", "needs_symbol_resolution"}
+    # Legacy payloads without lineage must NOT add lineage keys anywhere.
+    assert "lineage" not in outcome.result.run.metadata
+    for observation in outcome.result.observations:
+        for key in _LINEAGE_REFERENCE_KEYS:
+            assert key not in observation.metadata, (
+                f"legacy payload must not stamp {key!r} on observation metadata"
+            )
 
 
 def test_gateway_routes_archive_conflict_to_conflict_bucket(tmp_path: Path) -> None:
@@ -429,3 +440,104 @@ def test_gateway_paths_are_under_candidate_phase_no_obsolete_workbuddy_segment(
         "obsolete <bridge_root>/workbuddy/ candidate-intake directory must not be created"
     )
     assert (tmp_path / "candidate" / "archive" / "candidates_phase.json").is_file()
+
+
+# ---------------------------------------------------------------------------
+# Lineage persistence — Bridge carries the parser lineage into Integration
+# metadata when the payload carries the two-stage ``candidate-lineage/1.0``
+# object, and otherwise leaves the run/observation metadata untouched.
+# ---------------------------------------------------------------------------
+
+
+_LINEAGE_REFERENCE_KEYS = (
+    "terminal_stage_result_id",
+    "terminal_stage_result_sha256",
+    "upstream_stage_result_id",
+    "upstream_stage_result_sha256",
+)
+
+
+_LINEAGE = {
+    "schema_version": "candidate-lineage/1.0",
+    "stages": [
+        {
+            "stage_key": "sector_selection",
+            "stage_result_id": "sector-result-1",
+            "stage_result_sha256": "a" * 64,
+            "strategy_key": "sector-strength-v1",
+            "strategy_version": "1.0.0",
+            "strategy_artifact_hash": "b" * 64,
+            "as_of": "2026-08-14",
+            "constituent_snapshot_sha256": "c" * 64,
+        },
+        {
+            "stage_key": "stock_screening",
+            "stage_result_id": "stock-result-1",
+            "stage_result_sha256": "d" * 64,
+            "strategy_key": "stock-screen-v1",
+            "strategy_version": "1.0.0",
+            "strategy_artifact_hash": "e" * 64,
+            "as_of": "2026-08-14",
+            "upstream_stage_result_id": "sector-result-1",
+            "upstream_stage_result_sha256": "a" * 64,
+        },
+    ],
+}
+
+
+def test_gateway_persists_lineage_and_keeps_it_idempotent(tmp_path: Path) -> None:
+    """Lineage payload → normalized run metadata + four observation refs;
+    byte-identical re-import preserves the lineage metadata unchanged."""
+    stock_stage = _LINEAGE["stages"][1]
+    payload = _payload(
+        "lineage-001",
+        candidates=[
+            {
+                "symbol": "600000",
+                "reason": "板块强度共振",
+                "terminal_stage_result_id": stock_stage["stage_result_id"],
+                "terminal_stage_result_sha256": stock_stage["stage_result_sha256"],
+            }
+        ],
+        lineage=_LINEAGE,
+    )
+    source = tmp_path / "candidate" / "results"
+    source.mkdir(parents=True)
+    (source / "candidates_lineage.json").write_text(json.dumps(payload), encoding="utf-8")
+
+    gateway = SharedDirectoryWorkBuddyGateway(tmp_path)
+    uow = _Uow()
+    first = gateway.process_once(uow=uow)
+    outcome = first[0]
+    assert outcome.error is None
+    run_metadata = dict(outcome.result.run.metadata)
+    assert "lineage" in run_metadata
+    lineage = run_metadata["lineage"]
+    assert lineage["schema_version"] == "candidate-lineage/1.0"
+    sector, stock = lineage["stages"]
+    assert [s["stage_key"] for s in lineage["stages"]] == ["sector_selection", "stock_screening"]
+    assert "upstream_stage_result_id" not in sector
+    assert "constituent_snapshot_sha256" not in stock
+
+    expected_refs = {
+        "terminal_stage_result_id": stock["stage_result_id"],
+        "terminal_stage_result_sha256": stock["stage_result_sha256"],
+        "upstream_stage_result_id": stock["upstream_stage_result_id"],
+        "upstream_stage_result_sha256": stock["upstream_stage_result_sha256"],
+    }
+    first_obs_by_id = {obs.observation_id: obs for obs in outcome.result.observations}
+    for observation in first_obs_by_id.values():
+        for key, value in expected_refs.items():
+            assert observation.metadata[key] == value
+        assert "lineage" not in observation.metadata
+
+    # Byte-identical re-import must return the persisted metadata unchanged.
+    (source / "candidates_lineage.json").write_text(json.dumps(payload), encoding="utf-8")
+    rerun = gateway.process_once(uow=uow)[0]
+    assert rerun.error is None
+    assert rerun.import_idempotent is True
+    assert rerun.archive_idempotent is True
+    assert dict(rerun.result.run.metadata) == run_metadata
+    assert len(rerun.result.observations) == len(first_obs_by_id)
+    for obs in rerun.result.observations:
+        assert obs.metadata == first_obs_by_id[obs.observation_id].metadata
