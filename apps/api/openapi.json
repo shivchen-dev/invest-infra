@@ -98,6 +98,62 @@
         "title": "ArtifactPreviewResponse",
         "type": "object"
       },
+      "CandidateLineageAvailabilityResponse": {
+        "properties": {
+          "availability": {
+            "enum": [
+              "available",
+              "unavailable"
+            ],
+            "title": "Availability",
+            "type": "string"
+          },
+          "lineage": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CandidateLineageResponse"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "run_id": {
+            "format": "uuid",
+            "title": "Run Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "run_id",
+          "availability"
+        ],
+        "title": "CandidateLineageAvailabilityResponse",
+        "type": "object"
+      },
+      "CandidateLineageResponse": {
+        "properties": {
+          "schema_version": {
+            "title": "Schema Version",
+            "type": "string"
+          },
+          "stages": {
+            "items": {
+              "$ref": "#/components/schemas/CandidateStageResponse"
+            },
+            "maxItems": 2,
+            "minItems": 2,
+            "title": "Stages",
+            "type": "array"
+          }
+        },
+        "required": [
+          "schema_version",
+          "stages"
+        ],
+        "title": "CandidateLineageResponse",
+        "type": "object"
+      },
       "CandidatePoolDiffEntry": {
         "description": "One instrument entry in a candidate-pool diff bucket.\n\nCarries the raw ``instrument_id`` plus the resolved display fields\nso the Web can render the diff without making a follow-up Instrument\nlookup. ``symbol`` / ``name`` / ``exchange`` are ``None`` when the\ninstrument row is missing; ordering is deterministic - ``symbol``\nascending with ``instrument_id`` as the tiebreaker.",
         "properties": {
@@ -374,6 +430,82 @@
           "items"
         ],
         "title": "CandidatePoolLatestResponse",
+        "type": "object"
+      },
+      "CandidateStageResponse": {
+        "properties": {
+          "as_of": {
+            "title": "As Of",
+            "type": "string"
+          },
+          "constituent_snapshot_sha256": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Constituent Snapshot Sha256"
+          },
+          "stage_key": {
+            "title": "Stage Key",
+            "type": "string"
+          },
+          "stage_result_id": {
+            "title": "Stage Result Id",
+            "type": "string"
+          },
+          "stage_result_sha256": {
+            "title": "Stage Result Sha256",
+            "type": "string"
+          },
+          "strategy_artifact_hash": {
+            "title": "Strategy Artifact Hash",
+            "type": "string"
+          },
+          "strategy_key": {
+            "title": "Strategy Key",
+            "type": "string"
+          },
+          "strategy_version": {
+            "title": "Strategy Version",
+            "type": "string"
+          },
+          "upstream_stage_result_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Upstream Stage Result Id"
+          },
+          "upstream_stage_result_sha256": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Upstream Stage Result Sha256"
+          }
+        },
+        "required": [
+          "stage_key",
+          "stage_result_id",
+          "stage_result_sha256",
+          "strategy_key",
+          "strategy_version",
+          "strategy_artifact_hash",
+          "as_of"
+        ],
+        "title": "CandidateStageResponse",
         "type": "object"
       },
       "DailyBarListResponse": {
@@ -4804,6 +4936,49 @@
           }
         },
         "summary": "List External Artifacts",
+        "tags": [
+          "external-workflows"
+        ]
+      }
+    },
+    "/api/v1/external-workflows/{run_id}/candidate-lineage": {
+      "get": {
+        "operationId": "get_external_workflow_candidate_lineage_api_v1_external_workflows__run_id__candidate_lineage_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Run Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CandidateLineageAvailabilityResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get External Workflow Candidate Lineage",
         "tags": [
           "external-workflows"
         ]

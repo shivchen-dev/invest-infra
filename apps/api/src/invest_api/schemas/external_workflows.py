@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from datetime import date, datetime
-from typing import Any
+from typing import Any, Literal
 from uuid import UUID
 
 from pydantic import BaseModel, Field
@@ -54,7 +54,34 @@ class ExternalWorkflowRunListResponse(BaseModel):
     offset: int = Field(ge=0)
 
 
+class CandidateStageResponse(BaseModel):
+    stage_key: str
+    stage_result_id: str
+    stage_result_sha256: str
+    strategy_key: str
+    strategy_version: str
+    strategy_artifact_hash: str
+    as_of: str
+    constituent_snapshot_sha256: str | None = None
+    upstream_stage_result_id: str | None = None
+    upstream_stage_result_sha256: str | None = None
+
+
+class CandidateLineageResponse(BaseModel):
+    schema_version: str
+    stages: list[CandidateStageResponse] = Field(min_length=2, max_length=2)
+
+
+class CandidateLineageAvailabilityResponse(BaseModel):
+    run_id: UUID
+    availability: Literal["available", "unavailable"]
+    lineage: CandidateLineageResponse | None = None
+
+
 __all__ = [
+    "CandidateLineageAvailabilityResponse",
+    "CandidateLineageResponse",
+    "CandidateStageResponse",
     "ExternalArtifactResponse",
     "ExternalObservationResponse",
     "ExternalWorkflowRunListResponse",

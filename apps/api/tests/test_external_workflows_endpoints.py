@@ -1,9 +1,10 @@
 """Focused endpoint tests for ``/api/v1/external-workflows``.
 
-The router exposes four read-only routes
+The router exposes five read-only routes
 (``list_external_workflows``, ``get_external_workflow``,
-``list_external_artifacts`` and ``list_external_observations``)
-that proxy through :class:`invest_api.application.external_workflows.ExternalWorkflowQueryService`.
+``list_external_artifacts``, ``list_external_observations`` and
+``get_external_workflow_candidate_lineage``) that proxy through
+:class:`invest_api.application.external_workflows.ExternalWorkflowQueryService`.
 
 The tests drive the routers through ``fastapi.testclient.TestClient``
 with the application service replaced by a ``MagicMock`` so the HTTP
@@ -16,6 +17,7 @@ delegation contract against mock repositories.
 
 from __future__ import annotations
 
+import copy
 from datetime import UTC, date, datetime
 from types import MappingProxyType
 from unittest.mock import MagicMock
@@ -38,6 +40,7 @@ LIST_PATH = "/api/v1/external-workflows"
 DETAIL_TEMPLATE = "/api/v1/external-workflows/{run_id}"
 ARTIFACTS_TEMPLATE = "/api/v1/external-workflows/{run_id}/artifacts"
 OBSERVATIONS_TEMPLATE = "/api/v1/external-workflows/{run_id}/observations"
+CANDIDATE_LINEAGE_TEMPLATE = "/api/v1/external-workflows/{run_id}/candidate-lineage"
 
 HASH_A = "a" * 64
 HASH_B = "b" * 64
@@ -119,6 +122,40 @@ def _observation(
         admission_status=admission_status,
         metadata=dict(metadata or {}),
     )
+
+
+_LINEAGE_SECTOR_STAGE: dict[str, str] = {
+    "stage_key": "sector_selection",
+    "stage_result_id": "sector-result-1",
+    "stage_result_sha256": "a" * 64,
+    "strategy_key": "sector-strength-v1",
+    "strategy_version": "1.0.0",
+    "strategy_artifact_hash": "b" * 64,
+    "as_of": "2026-08-14",
+    "constituent_snapshot_sha256": "c" * 64,
+}
+
+_LINEAGE_STOCK_STAGE: dict[str, str] = {
+    "stage_key": "stock_screening",
+    "stage_result_id": "stock-result-1",
+    "stage_result_sha256": "d" * 64,
+    "strategy_key": "stock-screen-v1",
+    "strategy_version": "1.0.0",
+    "strategy_artifact_hash": "e" * 64,
+    "as_of": "2026-08-14",
+    "upstream_stage_result_id": "sector-result-1",
+    "upstream_stage_result_sha256": "a" * 64,
+}
+
+
+def _lineage_projection() -> dict:
+    return {
+        "schema_version": "candidate-lineage/1.0",
+        "stages": [
+            copy.deepcopy(_LINEAGE_SECTOR_STAGE),
+            copy.deepcopy(_LINEAGE_STOCK_STAGE),
+        ],
+    }
 
 
 @pytest.fixture()
@@ -680,6 +717,154 @@ class TestExternalObservationDiagnostics:
         assert item["reason"] is None
 
 
+class TestExternalWorkflowCandidateLineage:
+    """Coverage for the read-only candidate lineage envelope endpoint.
+
+    The endpoint proxies through ``service.get_candidate_lineage`` to
+    surface the bounded two-stage projection stamped on the run
+    metadata; when the projection is ``None`` the envelope marks the
+    lineage as ``unavailable`` rather than fabricating a value.
+    """
+
+    def test_returns_available_with_exact_shape(
+        self,
+        client: TestClient,
+        external_workflow_service: MagicMock,
+    ) -> None:
+        run = _run()
+        projection = _lineage_projection()
+        external_workflow_service.get_run.return_value = run
+        external_workflow_service.get_candidate_lineage.return_value = projection
+
+        response = client.get(CANDIDATE_LINEAGE_TEMPLATE.format(run_id=run.run_id))
+
+        assert response.status_code == 200
+        body = response.json()
+        assert set(body) == {"run_id", "availability", "lineage"}
+        assert body["run_id"] == str(run.run_id)
+        assert body["availability"] == "available"
+        lineage = body["lineage"]
+        assert set(lineage) == {"schema_version", "stages"}
+        assert lineage["schema_version"] == "candidate-lineage/1.0"
+        assert len(lineage["stages"]) == 2
+        sector, stock = lineage["stages"]
+        assert set(sector) == {
+            "stage_key",
+            "stage_result_id",
+            "stage_result_sha256",
+            "strategy_key",
+            "strategy_version",
+            "strategy_artifact_hash",
+            "as_of",
+            "constituent_snapshot_sha256",
+            "upstream_stage_result_id",
+            "upstream_stage_result_sha256",
+        }
+        assert sector["stage_key"] == "sector_selection"
+        assert sector["constituent_snapshot_sha256"] == "c" * 64
+        assert sector["upstream_stage_result_id"] is None
+        assert sector["upstream_stage_result_sha256"] is None
+        assert stock["stage_key"] == "stock_screening"
+        assert stock["upstream_stage_result_id"] == "sector-result-1"
+        assert stock["upstream_stage_result_sha256"] == "a" * 64
+        assert stock["constituent_snapshot_sha256"] is None
+        external_workflow_service.get_run.assert_called_once_with(run.run_id)
+        external_workflow_service.get_candidate_lineage.assert_called_once_with(run.run_id)
+
+    def test_returns_unavailable_when_projection_is_none(
+        self,
+        client: TestClient,
+        external_workflow_service: MagicMock,
+    ) -> None:
+        run = _run()
+        external_workflow_service.get_run.return_value = run
+        external_workflow_service.get_candidate_lineage.return_value = None
+
+        response = client.get(CANDIDATE_LINEAGE_TEMPLATE.format(run_id=run.run_id))
+
+        assert response.status_code == 200
+        body = response.json()
+        assert body == {
+            "run_id": str(run.run_id),
+            "availability": "unavailable",
+            "lineage": None,
+        }
+        external_workflow_service.get_candidate_lineage.assert_called_once_with(run.run_id)
+
+    def test_returns_404_and_does_not_query_lineage_when_run_missing(
+        self,
+        client: TestClient,
+        external_workflow_service: MagicMock,
+    ) -> None:
+        run_id = uuid4()
+        external_workflow_service.get_run.return_value = None
+
+        response = client.get(CANDIDATE_LINEAGE_TEMPLATE.format(run_id=run_id))
+
+        assert response.status_code == 404
+        assert response.json() == {"detail": "external workflow run not found"}
+        external_workflow_service.get_run.assert_called_once_with(run_id)
+        external_workflow_service.get_candidate_lineage.assert_not_called()
+
+    def test_returns_422_for_invalid_uuid(
+        self,
+        client: TestClient,
+        external_workflow_service: MagicMock,
+    ) -> None:
+        response = client.get(
+            "/api/v1/external-workflows/not-a-uuid/candidate-lineage"
+        )
+
+        assert response.status_code == 422
+        external_workflow_service.get_run.assert_not_called()
+        external_workflow_service.get_candidate_lineage.assert_not_called()
+
+    def test_available_serialized_output_excludes_sensitive_keys(
+        self,
+        client: TestClient,
+        external_workflow_service: MagicMock,
+    ) -> None:
+        run = _run()
+        projection = _lineage_projection()
+        projection["stages"][0]["uri"] = "s3://bucket/leak.json"
+        projection["stages"][0]["path"] = "/tmp/leak"
+        projection["stages"][1]["payload"] = {"leak": "value"}
+        projection["stages"][1]["exception"] = "boom"
+        projection["stages"][1]["traceback"] = "stack frame"
+        projection["stages"][1]["metadata"] = {"leak": "value"}
+        projection["stages"][1]["decision"] = "approve"
+        projection["stages"][1]["raw_payload"] = {"secret": "value"}
+        external_workflow_service.get_run.return_value = run
+        external_workflow_service.get_candidate_lineage.return_value = projection
+
+        response = client.get(CANDIDATE_LINEAGE_TEMPLATE.format(run_id=run.run_id))
+
+        assert response.status_code == 200
+        forbidden = {
+            "uri",
+            "path",
+            "payload",
+            "exception",
+            "traceback",
+            "metadata",
+            "decision",
+            "raw_payload",
+        }
+
+        def _walk(value: object) -> None:
+            if isinstance(value, dict):
+                for key, nested in value.items():
+                    assert key not in forbidden, f"sensitive key {key!r} leaked"
+                    _walk(nested)
+            elif isinstance(value, list):
+                for nested in value:
+                    _walk(nested)
+
+        _walk(response.json())
+        assert "s3://bucket/leak.json" not in response.text
+        assert "/tmp/leak" not in response.text
+
+
 class TestExternalWorkflowsOpenAPI:
     """The router surface is GET-only and references the contract schemas."""
 
@@ -692,6 +877,7 @@ class TestExternalWorkflowsOpenAPI:
                 DETAIL_TEMPLATE,
                 ARTIFACTS_TEMPLATE,
                 OBSERVATIONS_TEMPLATE,
+                CANDIDATE_LINEAGE_TEMPLATE,
             )
         }
 
@@ -700,6 +886,7 @@ class TestExternalWorkflowsOpenAPI:
             DETAIL_TEMPLATE,
             ARTIFACTS_TEMPLATE,
             OBSERVATIONS_TEMPLATE,
+            CANDIDATE_LINEAGE_TEMPLATE,
         }
         assert all(set(operations) == {"get"} for operations in external_paths.values())
 
@@ -737,6 +924,20 @@ class TestExternalWorkflowsOpenAPI:
         assert schema["type"] == "array"
         assert schema["items"]["$ref"].endswith("ExternalObservationResponse")
 
+    def test_candidate_lineage_path_references_envelope_schema(self) -> None:
+        schema = (
+            app.openapi()["paths"][CANDIDATE_LINEAGE_TEMPLATE]["get"]["responses"]["200"][
+                "content"
+            ]["application/json"]["schema"]
+        )
+
+        assert schema["$ref"].endswith("CandidateLineageAvailabilityResponse")
+
+    def test_candidate_lineage_path_is_get_only(self) -> None:
+        operations = app.openapi()["paths"][CANDIDATE_LINEAGE_TEMPLATE]
+
+        assert set(operations) == {"get"}
+
     def test_observation_response_schema_declares_bounded_diagnostics(self) -> None:
         components = app.openapi()["components"]["schemas"]
         observation_schema = components["ExternalObservationResponse"]
@@ -756,11 +957,14 @@ class TestExternalWorkflowsOpenAPI:
 
 
 __all__ = [
+    "CANDIDATE_LINEAGE_TEMPLATE",
     "LIST_PATH",
     "DETAIL_TEMPLATE",
     "ARTIFACTS_TEMPLATE",
     "OBSERVATIONS_TEMPLATE",
     "TestExternalArtifacts",
+    "TestExternalObservationDiagnostics",
+    "TestExternalWorkflowCandidateLineage",
     "TestExternalWorkflowDetail",
     "TestExternalWorkflowsList",
     "TestExternalWorkflowsOpenAPI",

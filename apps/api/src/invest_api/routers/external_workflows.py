@@ -11,6 +11,8 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from invest_api.application.external_workflows import ExternalWorkflowQueryService
 from invest_api.dependencies import get_external_workflow_query_service
 from invest_api.schemas.external_workflows import (
+    CandidateLineageAvailabilityResponse,
+    CandidateLineageResponse,
     ExternalArtifactResponse,
     ExternalObservationResponse,
     ExternalWorkflowRunListResponse,
@@ -168,6 +170,33 @@ def list_external_observations(
         _observation(item)
         for item in service.list_observations(run_id, limit=limit, offset=offset)
     ]
+
+
+@router.get(
+    "/{run_id}/candidate-lineage",
+    response_model=CandidateLineageAvailabilityResponse,
+)
+def get_external_workflow_candidate_lineage(
+    run_id: UUID,
+    service: Annotated[ExternalWorkflowQueryService, Depends(get_external_workflow_query_service)],
+) -> CandidateLineageAvailabilityResponse:
+    if service.get_run(run_id) is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="external workflow run not found",
+        )
+    projection = service.get_candidate_lineage(run_id)
+    if projection is None:
+        return CandidateLineageAvailabilityResponse(
+            run_id=run_id,
+            availability="unavailable",
+            lineage=None,
+        )
+    return CandidateLineageAvailabilityResponse(
+        run_id=run_id,
+        availability="available",
+        lineage=CandidateLineageResponse.model_validate(projection),
+    )
 
 
 __all__ = ["router"]
