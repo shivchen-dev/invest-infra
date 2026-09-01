@@ -9,7 +9,7 @@ WORKDIR /workspace/apps/pipeline
 RUN uv sync --no-dev
 
 ENV DAGSTER_HOME=/workspace/.dagster
-RUN mkdir -p /workspace/.dagster && printf '[telemetry]\nenabled = false\n' > /workspace/.dagster/dagster.yaml
+RUN mkdir -p /workspace/.dagster && printf 'telemetry:\n  enabled: false\n' > /workspace/.dagster/dagster.yaml
 
 EXPOSE 3000
 CMD ["uv", "run", "dagster", "dev", "-m", "invest_pipeline.definitions", "-h", "0.0.0.0", "-p", "3000"]

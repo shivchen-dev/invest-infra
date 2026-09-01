@@ -14,6 +14,7 @@ services:
       interval: 5s
       timeout: 3s
       retries: 20
+    restart: unless-stopped
 
   api:
     build:
@@ -27,6 +28,7 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+    restart: unless-stopped
 
   web:
     build:
@@ -39,6 +41,7 @@ services:
       - "3001:5173"
     depends_on:
       - api
+    restart: unless-stopped
 
   dagster:
     build:
@@ -60,6 +63,7 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+    restart: unless-stopped
 
 volumes:
   postgres-data:

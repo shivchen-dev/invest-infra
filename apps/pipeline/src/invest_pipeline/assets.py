@@ -63,7 +63,9 @@ from invest_pipeline.stock_universe import load_stock_universe  # noqa: F401
 # "load_stock_universe", ...)`` without ``create=True``; no asset
 # calls it after the Stage 4B dynamic-universe slice.
 
-_ETF_INPUT_SNAPSHOT_PARTITIONS = dg.DailyPartitionsDefinition(start_date="2026-07-23")
+_ETF_INPUT_SNAPSHOT_PARTITIONS = dg.DailyPartitionsDefinition(
+    start_date="2026-07-23", end_offset=1
+)
 
 
 _STOCK_MARKET_DATA_PARTITIONS = dg.DailyPartitionsDefinition(start_date="2026-07-23")

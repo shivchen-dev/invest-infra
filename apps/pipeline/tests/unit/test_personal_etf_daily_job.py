@@ -18,9 +18,12 @@ admin asset). These tests guard three contracts:
 from __future__ import annotations
 
 import unittest
+from datetime import date
 
 import dagster as dg
 from invest_pipeline.assets import (
+    _ETF_INPUT_SNAPSHOT_PARTITIONS,
+    _STOCK_MARKET_DATA_PARTITIONS,
     etf_daily_bars,
     etf_daily_bars_raw,
     etf_input_snapshot,
@@ -79,6 +82,14 @@ class PersonalEtfDailyJobSelectionTest(unittest.TestCase):
             len(job_def.asset_layer.selected_asset_keys),
             len(_EXPECTED_SELECTION),
         )
+
+
+class PersonalEtfDailyJobEndOffsetTest(unittest.TestCase):
+    def test_etf_end_offset_one_stock_end_offset_zero_today_usable(self) -> None:
+        today = date.today().isoformat()
+        self.assertEqual(_ETF_INPUT_SNAPSHOT_PARTITIONS.end_offset, 1)
+        self.assertEqual(_STOCK_MARKET_DATA_PARTITIONS.end_offset, 0)
+        self.assertTrue(_ETF_INPUT_SNAPSHOT_PARTITIONS.has_partition_key(today))
 
 
 if __name__ == "__main__":
