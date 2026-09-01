@@ -1,29 +1,25 @@
 """Focused unit tests for the ``personal_etf_daily_job`` Dagster asset job.
 
-PR-4 increment 1: the job is registered alongside the asset
-collection in :mod:`invest_pipeline.definitions` and selects exactly
-the six PR-2 / PR-3 ETF and candidate-pool assets that make up the
-personal ETF daily pipeline (excluding the ``seed_instruments``
-admin asset). These tests guard three contracts:
-
-* the job is exposed as a module-level symbol on
-  :mod:`invest_pipeline.definitions` with the right name;
-* the resolved job is registered in :data:`invest_pipeline.definitions.defs`
-  under that same name and is materially an asset job;
-* the asset selection of the resolved job contains exactly the six
-  expected asset keys — no more, no fewer, and no inadvertent
-  inclusion of ``seed_instruments``.
+Covers graph registration / ordering, the AkShare enrichment runtime
+branches (non-Cifang skip, disabled fail-closed, partial/failed raw
+rejection with no upsert, success) and the UTC-based partition
+contract.
 """
 
 from __future__ import annotations
 
 import unittest
-from datetime import date
+from collections.abc import Iterator
+from contextlib import contextmanager
+from datetime import UTC, datetime
+from unittest.mock import MagicMock, patch
 
 import dagster as dg
 from invest_pipeline.assets import (
+    EtfAkshareEnrichmentUnavailableError,
     _ETF_INPUT_SNAPSHOT_PARTITIONS,
     _STOCK_MARKET_DATA_PARTITIONS,
+    etf_akshare_daily_bars,
     etf_daily_bars,
     etf_daily_bars_raw,
     etf_input_snapshot,
@@ -32,21 +28,72 @@ from invest_pipeline.assets import (
     personal_candidate_pool,
     seed_instruments,
 )
+from invest_pipeline.config import Settings
 from invest_pipeline.definitions import defs, personal_etf_daily_job
+
+_PARTITION_KEY = "2026-07-31"
 
 _EXPECTED_SELECTION: tuple[dg.AssetsDefinition, ...] = (
     etf_instruments_raw,
     etf_instruments,
     etf_daily_bars_raw,
     etf_daily_bars,
+    etf_akshare_daily_bars,
     etf_input_snapshot,
     personal_candidate_pool,
 )
 
 
-class PersonalEtfDailyJobRegistrationTest(unittest.TestCase):
-    """Module-level registration of ``personal_etf_daily_job``."""
+@contextmanager
+def _patch_enrichment_assets(
+    *,
+    provider_key: str,
+    enabled: bool,
+    write_raw: MagicMock,
+    upsert: MagicMock,
+    symbols: tuple[str, ...] = (),
+) -> Iterator[tuple[MagicMock, MagicMock, MagicMock]]:
+    """Patch the enrichment asset's outbound dependencies.
 
+    Yields ``(engine, akshare_provider, akshare_settings_factory)``
+    so each test can assert on the relevant mocks. The helper applies
+    the eight patches shared by every runtime branch; per-test
+    variations live in the ``write_raw`` / ``upsert`` mocks and the
+    ``symbols`` tuple.
+    """
+    from invest_pipeline import assets
+
+    engine = MagicMock(name="Engine")
+    akshare_settings = MagicMock(name="AkshareSettings")
+    akshare_settings.enabled = enabled
+    akshare_provider = MagicMock(name="AkshareInstrumentProvider")
+    load_universe = MagicMock(name="load_personal_universe")
+    load_universe.return_value.symbols = symbols
+    akshare_settings_factory = MagicMock(
+        name="AkshareSettings", return_value=akshare_settings
+    )
+    with (
+        patch.object(
+            assets, "get_settings", return_value=Settings(provider_key=provider_key)
+        ),
+        patch.object(assets, "build_engine", return_value=engine),
+        patch.object(assets, "session_factory", return_value=MagicMock()),
+        patch.object(assets, "AkshareSettings", akshare_settings_factory),
+        patch.object(assets, "AkshareInstrumentProvider", akshare_provider),
+        patch.object(assets, "write_etf_daily_bars_raw", write_raw),
+        patch.object(assets, "upsert_etf_daily_bars", upsert),
+        patch.object(assets, "load_personal_universe", load_universe),
+    ):
+        yield engine, akshare_provider, akshare_settings_factory
+
+
+def _invoke_enrichment(partition_key: str = _PARTITION_KEY):
+    return etf_akshare_daily_bars.op.compute_fn.decorated_fn(
+        dg.build_asset_context(partition_key=partition_key)
+    )
+
+
+class PersonalEtfDailyJobRegistrationTest(unittest.TestCase):
     def test_module_exposes_job_with_expected_name(self) -> None:
         self.assertEqual(personal_etf_daily_job.name, "personal_etf_daily_job")
 
@@ -61,13 +108,18 @@ class PersonalEtfDailyJobRegistrationTest(unittest.TestCase):
 
 
 class PersonalEtfDailyJobSelectionTest(unittest.TestCase):
-    """Asset selection of the resolved ``personal_etf_daily_job``."""
-
-    def test_selection_is_exactly_the_six_etf_and_pool_assets(self) -> None:
+    def test_selection_is_exactly_the_seven_etf_and_pool_assets(self) -> None:
         job_def = defs.resolve_job_def("personal_etf_daily_job")
         selected_keys = set(job_def.asset_layer.selected_asset_keys)
         expected_keys = {asset.key for asset in _EXPECTED_SELECTION}
         self.assertEqual(selected_keys, expected_keys)
+
+    def test_selection_includes_akshare_enrichment_asset(self) -> None:
+        job_def = defs.resolve_job_def("personal_etf_daily_job")
+        self.assertIn(
+            etf_akshare_daily_bars.key,
+            job_def.asset_layer.selected_asset_keys,
+        )
 
     def test_selection_excludes_seed_instruments(self) -> None:
         job_def = defs.resolve_job_def("personal_etf_daily_job")
@@ -84,12 +136,237 @@ class PersonalEtfDailyJobSelectionTest(unittest.TestCase):
         )
 
 
+class PersonalCandidatePoolDependencyOrderingTest(unittest.TestCase):
+    """Pin the corrected graph: bars -> enrichment -> snapshot -> pool."""
+
+    def test_personal_candidate_pool_depends_on_akshare_enrichment(self) -> None:
+        dependency_keys = personal_candidate_pool.dependency_keys
+        self.assertIn(
+            dg.AssetKey("etf_akshare_daily_bars"),
+            dependency_keys,
+            "personal_candidate_pool must depend on etf_akshare_daily_bars "
+            "so the enrichment runs before candidate-pool publication",
+        )
+
+    def test_personal_candidate_pool_still_depends_on_etf_daily_bars(self) -> None:
+        dependency_keys = personal_candidate_pool.dependency_keys
+        self.assertIn(dg.AssetKey("etf_daily_bars"), dependency_keys)
+        self.assertIn(dg.AssetKey("etf_input_snapshot"), dependency_keys)
+
+    def test_akshare_enrichment_depends_on_cifang_daily_bars(self) -> None:
+        dependency_keys = etf_akshare_daily_bars.dependency_keys
+        self.assertIn(dg.AssetKey("etf_daily_bars"), dependency_keys)
+
+    def test_etf_input_snapshot_depends_on_akshare_enrichment(self) -> None:
+        # Without this edge the snapshot could capture pre-enrichment bars
+        # on the Cifang path, the exact regression found by real-provider
+        # acceptance.
+        dependency_keys = etf_input_snapshot.dependency_keys
+        self.assertIn(
+            dg.AssetKey("etf_akshare_daily_bars"),
+            dependency_keys,
+            "etf_input_snapshot must depend on etf_akshare_daily_bars "
+            "so the AkShare enrichment lands before the snapshot "
+            "captures core.daily_bars",
+        )
+
+
 class PersonalEtfDailyJobEndOffsetTest(unittest.TestCase):
     def test_etf_end_offset_one_stock_end_offset_zero_today_usable(self) -> None:
-        today = date.today().isoformat()
+        # UTC-based lookup keeps the partition contract stable across
+        # the Asia/Shanghai midnight boundary.
+        today = datetime.now(UTC).date().isoformat()
         self.assertEqual(_ETF_INPUT_SNAPSHOT_PARTITIONS.end_offset, 1)
         self.assertEqual(_STOCK_MARKET_DATA_PARTITIONS.end_offset, 0)
         self.assertTrue(_ETF_INPUT_SNAPSHOT_PARTITIONS.has_partition_key(today))
+
+
+class EtfAkshareEnrichmentAssetPartitionsTest(unittest.TestCase):
+    def test_enrichment_asset_uses_etf_daily_partitions(self) -> None:
+        self.assertIsInstance(
+            etf_akshare_daily_bars.partitions_def,
+            dg.DailyPartitionsDefinition,
+        )
+        self.assertIs(
+            etf_akshare_daily_bars.partitions_def,
+            etf_daily_bars.partitions_def,
+        )
+
+
+class EtfAkshareEnrichmentAssetSkippedTest(unittest.TestCase):
+    """Non-Cifang primary path: skipped, no network or DB work."""
+
+    def test_non_cifang_returns_skipped_without_network_or_db_work(self) -> None:
+        write_raw = MagicMock(name="write_etf_daily_bars_raw")
+        upsert = MagicMock(name="upsert_etf_daily_bars")
+        with _patch_enrichment_assets(
+            provider_key="fixture_dev",
+            enabled=False,
+            write_raw=write_raw,
+            upsert=upsert,
+        ) as (engine, akshare_provider, akshare_settings_factory):
+            result = _invoke_enrichment()
+
+        self.assertTrue(result.metadata["skipped"])
+        self.assertEqual(result.metadata["provider"], "fixture_dev")
+        self.assertIn("fixture_dev", result.metadata["reason"])
+        self.assertEqual(result.metadata["partition_key"], _PARTITION_KEY)
+        akshare_settings_factory.assert_not_called()
+        akshare_provider.assert_not_called()
+        write_raw.assert_not_called()
+        upsert.assert_not_called()
+        engine.dispose.assert_not_called()
+
+
+class EtfAkshareEnrichmentAssetDisabledTest(unittest.TestCase):
+    """Cifang primary with AkShare disabled: fail-closed raise."""
+
+    def test_akshare_disabled_raises_without_writing_raw_or_upsert(self) -> None:
+        write_raw = MagicMock(name="write_etf_daily_bars_raw")
+        upsert = MagicMock(name="upsert_etf_daily_bars")
+        with _patch_enrichment_assets(
+            provider_key="cifangquant",
+            enabled=False,
+            write_raw=write_raw,
+            upsert=upsert,
+        ) as (engine, akshare_provider, _factory):
+            with self.assertRaises(EtfAkshareEnrichmentUnavailableError) as ctx:
+                _invoke_enrichment()
+
+        message = str(ctx.exception)
+        self.assertIn("akshare", message.lower())
+        self.assertIn("enabled", message.lower())
+        akshare_provider.assert_not_called()
+        write_raw.assert_not_called()
+        upsert.assert_not_called()
+        engine.dispose.assert_not_called()
+
+
+class EtfAkshareEnrichmentAssetRawFetchFailedTest(unittest.TestCase):
+    """Unsuccessful AkShare raw fetch: fail-closed and no upsert."""
+
+    def test_failed_raw_fetch_raises_and_skips_upsert(self) -> None:
+        from invest_pipeline.etf_daily_bars import RawEtlResult
+
+        failed_result = RawEtlResult(
+            request_id=MagicMock(name="request_id"),
+            attempt_id=MagicMock(name="attempt_id"),
+            batch_id=None,
+            request_status="failed",
+            attempt_status="failed",
+            record_count=0,
+        )
+        write_raw = MagicMock(
+            name="write_etf_daily_bars_raw", return_value=failed_result
+        )
+        upsert = MagicMock(name="upsert_etf_daily_bars")
+
+        with _patch_enrichment_assets(
+            provider_key="cifangquant",
+            enabled=True,
+            write_raw=write_raw,
+            upsert=upsert,
+            symbols=("510300",),
+        ) as (engine, _provider, _factory):
+            with self.assertRaises(EtfAkshareEnrichmentUnavailableError) as ctx:
+                _invoke_enrichment()
+
+        message = str(ctx.exception)
+        self.assertIn("not fully successful", message)
+        self.assertIn(_PARTITION_KEY, message)
+        write_raw.assert_called_once()
+        upsert.assert_not_called()
+        engine.dispose.assert_called_once_with()
+
+    def test_partial_raw_fetch_raises_and_skips_upsert(self) -> None:
+        """``batch_id is None`` (partial success) is also fail-closed."""
+
+        from invest_pipeline.etf_daily_bars import RawEtlResult
+
+        partial_result = RawEtlResult(
+            request_id=MagicMock(name="request_id"),
+            attempt_id=MagicMock(name="attempt_id"),
+            batch_id=MagicMock(name="partial_batch_id"),
+            request_status="partial",
+            attempt_status="succeeded",
+            record_count=0,
+        )
+        write_raw = MagicMock(
+            name="write_etf_daily_bars_raw", return_value=partial_result
+        )
+        upsert = MagicMock(name="upsert_etf_daily_bars")
+
+        with _patch_enrichment_assets(
+            provider_key="cifangquant",
+            enabled=True,
+            write_raw=write_raw,
+            upsert=upsert,
+            symbols=("510300",),
+        ) as (engine, _provider, _factory):
+            with self.assertRaises(EtfAkshareEnrichmentUnavailableError):
+                _invoke_enrichment()
+
+        upsert.assert_not_called()
+        engine.dispose.assert_called_once_with()
+
+
+class EtfAkshareEnrichmentAssetSuccessTest(unittest.TestCase):
+    """Successful raw fetch: upsert with ``provider_key="akshare"``."""
+
+    def test_successful_raw_fetch_upserts_with_provider_key_akshare(self) -> None:
+        from invest_pipeline.etf_daily_bars import RawEtlResult, UpsertSummary
+
+        request_id = MagicMock(name="request_id")
+        attempt_id = MagicMock(name="attempt_id")
+        batch_id = MagicMock(name="batch_id")
+        successful_result = RawEtlResult(
+            request_id=request_id,
+            attempt_id=attempt_id,
+            batch_id=batch_id,
+            request_status="succeeded",
+            attempt_status="succeeded",
+            record_count=2,
+        )
+        write_raw = MagicMock(
+            name="write_etf_daily_bars_raw", return_value=successful_result
+        )
+        summary = UpsertSummary(inserted=2, skipped=0)
+        upsert = MagicMock(name="upsert_etf_daily_bars", return_value=summary)
+
+        captured: dict[str, object] = {}
+
+        def _capture(*args: object, **kwargs: object) -> object:
+            captured["args"] = args
+            captured.update(kwargs)
+            return summary
+
+        upsert.side_effect = _capture
+
+        with _patch_enrichment_assets(
+            provider_key="cifangquant",
+            enabled=True,
+            write_raw=write_raw,
+            upsert=upsert,
+            symbols=("510300", "510500"),
+        ) as (engine, _provider, _factory):
+            result = _invoke_enrichment()
+
+        upsert.assert_called_once()
+        self.assertEqual(captured["provider_key"], "akshare")
+        self.assertEqual(captured["dataset_key"], "etf_daily_bars")
+        self.assertEqual(
+            captured["request_key"], "daily-bars-2026-07-31-2026-07-31-510300-510500"
+        )
+        self.assertFalse(result.metadata["skipped"])
+        self.assertEqual(result.metadata["provider"], "akshare")
+        self.assertEqual(result.metadata["inserted"], 2)
+        self.assertEqual(result.metadata["total"], 2)
+        self.assertEqual(
+            result.metadata["request_key"],
+            "daily-bars-2026-07-31-2026-07-31-510300-510500",
+        )
+        self.assertEqual(result.metadata["partition_key"], _PARTITION_KEY)
+        engine.dispose.assert_called_once_with()
 
 
 if __name__ == "__main__":

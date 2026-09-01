@@ -23,6 +23,8 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from invest_pipeline.adapters import FixtureDevInstrumentProvider
+from invest_pipeline.adapters.akshare.adapter import AkshareInstrumentProvider
+from invest_pipeline.adapters.akshare.config import AkshareSettings
 from invest_pipeline.adapters.fixture_dev.adapter import deserialize_records
 from invest_pipeline.candidate_pool_service import (
     CandidatePoolSnapshotNotFoundError,
@@ -513,7 +515,7 @@ def etf_daily_bars(
 @dg.asset(
     group_name="market_data",
     compute_kind="python",
-    deps=[etf_instruments],
+    deps=[etf_instruments, "etf_akshare_daily_bars"],
     partitions_def=_ETF_INPUT_SNAPSHOT_PARTITIONS,
 )
 def etf_input_snapshot(context) -> dg.MaterializeResult:
@@ -598,10 +600,144 @@ def etf_input_snapshot(context) -> dg.MaterializeResult:
 _PERSONAL_CANDIDATE_POOL_PARTITIONS = _ETF_INPUT_SNAPSHOT_PARTITIONS
 
 
+class EtfAkshareEnrichmentUnavailableError(RuntimeError):
+    """Raised when the AkShare enrichment cannot complete for the Cifang path.
+
+    Fail-closed guard so the candidate-pool cannot publish against
+    known-incomplete amount data. The message never embeds configured
+    secrets (AkShare SDK tokens, Cifang API keys, etc.).
+    """
+
+
+_CIFANGQUANT_PROVIDER_KEY = "cifangquant"
+_AKSHARE_PROVIDER_KEY = "akshare"
+
+
+@dg.asset(
+    group_name="market_data",
+    compute_kind="python",
+    deps=[etf_daily_bars],
+    partitions_def=_ETF_INPUT_SNAPSHOT_PARTITIONS,
+)
+def etf_akshare_daily_bars(context) -> dg.MaterializeResult:
+    """AkShare daily-bar enrichment for the personal Cifang path.
+
+    Runs after :func:`etf_daily_bars` and writes an
+    ``provider_key="akshare"`` revision into ``core.daily_bars`` so the
+    latest view surfaces ``amount`` (Cifang carries volume but no
+    amount). Gated to the ``cifangquant`` primary — non-Cifang returns
+    a skipped ``MaterializeResult`` with no network or DB work. Cifang
+    path is fail-closed when AkShare is disabled or the raw request is
+    not fully successful (request status, attempt status, and batch
+    evidence must all be ``succeeded``); the engine is disposed in the
+    ``finally`` block on every path.
+    """
+
+    settings = get_settings()
+    if settings.provider_key != _CIFANGQUANT_PROVIDER_KEY:
+        context.log.info(
+            "etf_akshare_daily_bars: primary provider=%s is not "
+            "cifangquant; skipping enrichment (no network, no DB)",
+            settings.provider_key,
+        )
+        return dg.MaterializeResult(
+            metadata={
+                "skipped": True,
+                "reason": (
+                    "primary provider is "
+                    f"{settings.provider_key!r}, not cifangquant; "
+                    "AkShare enrichment is gated to the Cifang path"
+                ),
+                "provider": settings.provider_key,
+                "partition_key": context.partition_key,
+            }
+        )
+
+    akshare_settings = AkshareSettings()
+    if not akshare_settings.enabled:
+        raise EtfAkshareEnrichmentUnavailableError(
+            "akshare enrichment requires AkshareSettings.enabled=True "
+            "(INVEST_PIPELINE_AKSHARE_ENABLED); Cifang primary path "
+            "fails closed without complete amount evidence"
+        )
+
+    provider = AkshareInstrumentProvider(akshare_settings)
+    trade_date = date.fromisoformat(context.partition_key)
+    universe = load_personal_universe(settings.personal_universe_path)
+    symbols = list(universe.symbols)
+
+    engine = build_engine(settings.database_url)
+    factory = session_factory(engine)
+    try:
+        from invest_storage import SqlAlchemyUnitOfWork
+
+        raw_result = write_etf_daily_bars_raw(
+            provider,
+            factory,
+            symbols=symbols,
+            start_date=trade_date,
+            end_date=trade_date,
+            unit_of_work_factory=SqlAlchemyUnitOfWork,
+        )
+
+        if (
+            raw_result.request_status != "succeeded"
+            or raw_result.attempt_status != "succeeded"
+            or raw_result.batch_id is None
+        ):
+            raise EtfAkshareEnrichmentUnavailableError(
+                f"akshare raw fetch not fully successful for "
+                f"{trade_date.isoformat()}: attempt_status="
+                f"{raw_result.attempt_status!r}, request_status="
+                f"{raw_result.request_status!r}, record_count="
+                f"{raw_result.record_count}"
+            )
+
+        request_key = make_daily_bars_request_key(
+            trade_date, trade_date, symbols
+        )
+        summary = upsert_etf_daily_bars(
+            factory,
+            provider_key=_AKSHARE_PROVIDER_KEY,
+            dataset_key="etf_daily_bars",
+            request_key=request_key,
+            unit_of_work_factory=SqlAlchemyUnitOfWork,
+        )
+    finally:
+        engine.dispose()
+
+    context.log.info(
+        "etf_akshare_daily_bars: provider=%s inserted=%s skipped=%s "
+        "total=%s trade_date=%s raw_batch_id=%s",
+        _AKSHARE_PROVIDER_KEY,
+        summary.inserted,
+        summary.skipped,
+        summary.total,
+        trade_date.isoformat(),
+        raw_result.batch_id,
+    )
+    return dg.MaterializeResult(
+        metadata={
+            "provider": _AKSHARE_PROVIDER_KEY,
+            "skipped": False,
+            "inserted": summary.inserted,
+            "skipped_bars": summary.skipped,
+            "total": summary.total,
+            "request_key": request_key,
+            "trade_date": trade_date.isoformat(),
+            "partition_key": context.partition_key,
+            "raw_request_id": str(raw_result.request_id),
+            "raw_attempt_id": str(raw_result.attempt_id),
+            "raw_batch_id": str(raw_result.batch_id),
+            "raw_record_count": raw_result.record_count,
+        }
+    )
+
+
 @dg.asset(
     group_name="candidate_pool",
     compute_kind="python",
-    deps=[etf_input_snapshot, etf_daily_bars],
+    deps=[etf_input_snapshot, etf_daily_bars, etf_akshare_daily_bars],
     partitions_def=_PERSONAL_CANDIDATE_POOL_PARTITIONS,
 )
 def personal_candidate_pool(context) -> dg.MaterializeResult:
@@ -626,9 +762,12 @@ def personal_candidate_pool(context) -> dg.MaterializeResult:
       ``included_count`` and ``item_count`` through Dagster metadata.
 
     Depends on :func:`etf_input_snapshot` so the snapshot row exists by
-    the time this asset runs and on :func:`etf_daily_bars` so the daily
-    bars the calculator consumes are already persisted for the
-    partition date.
+    the time this asset runs, on :func:`etf_daily_bars` so the Cifang
+    daily bars the calculator consumes are already persisted for the
+    partition date, and on :func:`etf_akshare_daily_bars` so the AkShare
+    enrichment (the second provider revision that supplies the missing
+    ``amount`` column for the Cifang path) is also persisted before the
+    candidate-pool calculation publishes.
     """
 
     trade_date = date.fromisoformat(context.partition_key)

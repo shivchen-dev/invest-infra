@@ -12,6 +12,7 @@ dependencies = [
   "sqlalchemy>=2.0.51,<2.1",
   "psycopg[binary]>=3.3.4,<4",
   "httpx>=0.27,<1",
+  "akshare==1.18.81",
 ]
 
 [dependency-groups]

@@ -3,6 +3,7 @@ from __future__ import annotations
 import dagster as dg
 
 from invest_pipeline.assets import (
+    etf_akshare_daily_bars,
     etf_daily_bars,
     etf_daily_bars_raw,
     etf_input_snapshot,
@@ -31,6 +32,7 @@ personal_etf_daily_job = dg.define_asset_job(
         etf_instruments,
         etf_daily_bars_raw,
         etf_daily_bars,
+        etf_akshare_daily_bars,
         etf_input_snapshot,
         personal_candidate_pool,
     ],
@@ -61,6 +63,7 @@ defs = dg.Definitions(
         etf_input_snapshot,
         etf_daily_bars_raw,
         etf_daily_bars,
+        etf_akshare_daily_bars,
         personal_candidate_pool,
         real_exposure,
         stock_instruments_raw,
