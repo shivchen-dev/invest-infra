@@ -23,8 +23,11 @@ services:
     environment:
       DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-invest}:${POSTGRES_PASSWORD:-invest_dev_password}@postgres:5432/${POSTGRES_DB:-invest}
       API_CORS_ORIGINS: http://localhost:3001
+      STRATEGY_ARTIFACT_ROOT: /workspace/var/strategy-artifacts
     ports:
       - "8000:8000"
+    volumes:
+      - ./var/strategy-artifacts:/workspace/var/strategy-artifacts:ro
     depends_on:
       postgres:
         condition: service_healthy
