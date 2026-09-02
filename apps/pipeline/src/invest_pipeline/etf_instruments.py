@@ -69,6 +69,8 @@ class RawEtlResult:
     request_status: str
     attempt_status: str
     record_count: int
+    error_code: str | None = None
+    provider_key: str | None = None
 
 
 class _ProviderPort(Protocol):

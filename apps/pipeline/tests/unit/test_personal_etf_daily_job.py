@@ -11,14 +11,15 @@ from __future__ import annotations
 import unittest
 from collections.abc import Iterator
 from contextlib import contextmanager
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import dagster as dg
 from invest_pipeline.assets import (
-    EtfAkshareEnrichmentUnavailableError,
     _ETF_INPUT_SNAPSHOT_PARTITIONS,
     _STOCK_MARKET_DATA_PARTITIONS,
+    EtfAkshareEnrichmentUnavailableError,
     etf_akshare_daily_bars,
     etf_daily_bars,
     etf_daily_bars_raw,
@@ -91,6 +92,238 @@ def _invoke_enrichment(partition_key: str = _PARTITION_KEY):
     return etf_akshare_daily_bars.op.compute_fn.decorated_fn(
         dg.build_asset_context(partition_key=partition_key)
     )
+
+
+def _invoke_daily_asset(asset, partition_key: str = _PARTITION_KEY):
+    return asset.op.compute_fn.decorated_fn(
+        dg.build_asset_context(partition_key=partition_key)
+    )
+
+
+@contextmanager
+def _patch_daily_assets(
+    *,
+    provider_key: str,
+    baostock_enabled: bool,
+    raw_result=None,
+    primary_request=None,
+    primary_attempts=(),
+    fallback_request=None,
+):
+    from invest_pipeline import assets
+
+    provider = MagicMock(provider_key=provider_key)
+    fallback_provider = MagicMock(provider_key="baostock")
+    engine = MagicMock(name="Engine")
+    factory = MagicMock(name="session_factory")
+    settings = Settings(provider_key=provider_key)
+    settings.personal_universe_path = MagicMock()
+    universe = SimpleNamespace(symbols=("510300", "159915"))
+    requests = MagicMock()
+
+    def _request_lookup(*, provider_key, dataset_key, request_key):
+        assert dataset_key == "etf_daily_bars"
+        assert request_key == "daily-bars-2026-07-31-2026-07-31-510300-159915"
+        return fallback_request if provider_key == "baostock" else primary_request
+
+    requests.get_by_logical_key.side_effect = _request_lookup
+    attempts = MagicMock()
+    attempts.list_by_request.return_value = list(primary_attempts)
+    uow = MagicMock()
+    uow.__enter__.return_value = uow
+    uow.provider_requests = requests
+    uow.provider_attempts = attempts
+    uow_factory = MagicMock(return_value=uow)
+    baostock_settings = SimpleNamespace(enabled=baostock_enabled)
+
+    with (
+        patch.object(assets, "get_settings", return_value=settings),
+        patch.object(assets, "build_provider", return_value=provider),
+        patch.object(assets, "build_engine", return_value=engine),
+        patch.object(assets, "session_factory", return_value=factory),
+        patch.object(assets, "load_personal_universe", return_value=universe),
+        patch.object(assets, "BaostockSettings", return_value=baostock_settings),
+        patch.object(
+            assets, "BaostockEtfDailyBarsAdapter", return_value=fallback_provider
+        ) as adapter,
+        patch.object(
+            assets,
+            "write_etf_daily_bars_raw_with_fallback",
+            return_value=raw_result,
+        ) as write_with_fallback,
+        patch.object(
+            assets, "write_etf_daily_bars_raw", return_value=raw_result
+        ) as write_raw,
+        patch.object(assets, "upsert_etf_daily_bars") as upsert,
+        patch("invest_storage.SqlAlchemyUnitOfWork", uow_factory),
+    ):
+        yield SimpleNamespace(
+            provider=provider,
+            fallback_provider=fallback_provider,
+            engine=engine,
+            adapter=adapter,
+            write=write_with_fallback,
+            write_raw=write_raw,
+            upsert=upsert,
+            attempts=attempts,
+        )
+
+
+class EtfDailyBarsBaostockFallbackTest(unittest.TestCase):
+    def _raw_result(self, **overrides):
+        from invest_pipeline.etf_daily_bars import RawEtlResult
+
+        values = dict(
+            request_id=MagicMock(),
+            attempt_id=MagicMock(),
+            batch_id=MagicMock(),
+            request_status="succeeded",
+            attempt_status="succeeded",
+            record_count=2,
+            provider_key="akshare",
+        )
+        values.update(overrides)
+        return RawEtlResult(**values)
+
+    def test_raw_default_off_preserves_primary_and_actual_provider_metadata(self):
+        result = self._raw_result(provider_key=None)
+        with _patch_daily_assets(
+            provider_key="akshare", baostock_enabled=False, raw_result=result
+        ) as patched:
+            materialized = _invoke_daily_asset(etf_daily_bars_raw)
+
+        patched.adapter.assert_not_called()
+        patched.write.assert_not_called()
+        patched.write_raw.assert_called_once_with(
+            patched.provider,
+            patched.write_raw.call_args.args[1],
+            symbols=["510300", "159915"],
+            start_date=date(2026, 7, 31),
+            end_date=date(2026, 7, 31),
+            unit_of_work_factory=patched.write_raw.call_args.kwargs[
+                "unit_of_work_factory"
+            ],
+        )
+        self.assertEqual(materialized.metadata["provider"], "akshare")
+
+    def test_raw_non_akshare_never_constructs_baostock(self):
+        result = self._raw_result(provider_key="fixture_dev")
+        with _patch_daily_assets(
+            provider_key="fixture_dev", baostock_enabled=True, raw_result=result
+        ) as patched:
+            _invoke_daily_asset(etf_daily_bars_raw)
+
+        patched.adapter.assert_not_called()
+        patched.write.assert_not_called()
+        patched.write_raw.assert_called_once()
+
+    def test_raw_transient_fallback_forwards_exact_symbols_dates_and_winner(self):
+        result = self._raw_result(provider_key="baostock")
+        with _patch_daily_assets(
+            provider_key="akshare", baostock_enabled=True, raw_result=result
+        ) as patched:
+            materialized = _invoke_daily_asset(etf_daily_bars_raw)
+
+        patched.adapter.assert_called_once()
+        self.assertIs(
+            patched.write.call_args.kwargs["fallback_provider"],
+            patched.fallback_provider,
+        )
+        self.assertTrue(patched.write.call_args.kwargs["fallback_enabled"])
+        self.assertEqual(patched.write.call_args.kwargs["symbols"], ["510300", "159915"])
+        self.assertEqual(patched.write.call_args.kwargs["start_date"], date(2026, 7, 31))
+        self.assertEqual(patched.write.call_args.kwargs["end_date"], date(2026, 7, 31))
+        self.assertEqual(materialized.metadata["provider"], "baostock")
+
+    def test_downstream_primary_success_wins_over_existing_fallback(self):
+        primary = SimpleNamespace(id="primary", status="succeeded")
+        fallback = SimpleNamespace(id="fallback", status="succeeded")
+        with _patch_daily_assets(
+            provider_key="akshare",
+            baostock_enabled=True,
+            primary_request=primary,
+            fallback_request=fallback,
+        ) as patched:
+            patched.upsert.return_value = SimpleNamespace(inserted=2, skipped=0, total=2)
+            materialized = _invoke_daily_asset(etf_daily_bars)
+
+        self.assertEqual(patched.upsert.call_args.kwargs["provider_key"], "akshare")
+        self.assertEqual(materialized.metadata["provider"], "akshare")
+        patched.attempts.list_by_request.assert_not_called()
+
+    def test_downstream_transient_latest_failure_selects_successful_fallback(self):
+        primary = SimpleNamespace(id="primary", status="failed")
+        fallback = SimpleNamespace(id="fallback", status="succeeded")
+        attempts = (
+            SimpleNamespace(attempt_no=1, status="failed", error_code="BadResponse"),
+            SimpleNamespace(
+                attempt_no=2,
+                status="failed",
+                error_code="ProviderTimeoutError",
+            ),
+        )
+        with _patch_daily_assets(
+            provider_key="akshare",
+            baostock_enabled=True,
+            primary_request=primary,
+            primary_attempts=attempts,
+            fallback_request=fallback,
+        ) as patched:
+            patched.upsert.return_value = SimpleNamespace(inserted=2, skipped=0, total=2)
+            materialized = _invoke_daily_asset(etf_daily_bars)
+
+        self.assertEqual(patched.upsert.call_args.kwargs["provider_key"], "baostock")
+        self.assertEqual(materialized.metadata["provider"], "baostock")
+
+    def test_downstream_fails_closed_for_disabled_nontransient_partial_failed_or_missing(self):
+        cases = (
+            (False, "ProviderTimeoutError", SimpleNamespace(id="f", status="succeeded")),
+            (True, "ProviderAuthenticationError", SimpleNamespace(id="f", status="succeeded")),
+            (True, "ProviderTimeoutError", SimpleNamespace(id="f", status="partial")),
+            (True, "ProviderTimeoutError", SimpleNamespace(id="f", status="failed")),
+            (True, "ProviderUnavailableError", None),
+        )
+        for enabled, error_code, fallback in cases:
+            with self.subTest(enabled=enabled, error_code=error_code, fallback=fallback):
+                primary = SimpleNamespace(id="primary", status="failed")
+                attempts = (
+                    SimpleNamespace(
+                        attempt_no=1, status="failed", error_code=error_code
+                    ),
+                )
+                with _patch_daily_assets(
+                    provider_key="akshare",
+                    baostock_enabled=enabled,
+                    primary_request=primary,
+                    primary_attempts=attempts,
+                    fallback_request=fallback,
+                ) as patched:
+                    result = _invoke_daily_asset(etf_daily_bars)
+                patched.upsert.assert_not_called()
+                self.assertTrue(result.metadata["skipped_asset"])
+
+    def test_later_nontransient_primary_failure_rejects_stale_fallback_success(self):
+        primary = SimpleNamespace(id="primary", status="failed")
+        fallback = SimpleNamespace(id="fallback", status="succeeded")
+        attempts = (
+            SimpleNamespace(
+                attempt_no=1, status="failed", error_code="ProviderTimeoutError"
+            ),
+            SimpleNamespace(
+                attempt_no=2, status="failed", error_code="ProviderRateLimitError"
+            ),
+        )
+        with _patch_daily_assets(
+            provider_key="akshare",
+            baostock_enabled=True,
+            primary_request=primary,
+            primary_attempts=attempts,
+            fallback_request=fallback,
+        ) as patched:
+            result = _invoke_daily_asset(etf_daily_bars)
+
+        patched.upsert.assert_not_called()
+        self.assertTrue(result.metadata["skipped_asset"])
 
 
 class PersonalEtfDailyJobRegistrationTest(unittest.TestCase):

@@ -25,6 +25,10 @@ from sqlalchemy.orm import Session
 from invest_pipeline.adapters import FixtureDevInstrumentProvider
 from invest_pipeline.adapters.akshare.adapter import AkshareInstrumentProvider
 from invest_pipeline.adapters.akshare.config import AkshareSettings
+from invest_pipeline.adapters.baostock import (
+    BaostockEtfDailyBarsAdapter,
+    BaostockSettings,
+)
 from invest_pipeline.adapters.fixture_dev.adapter import deserialize_records
 from invest_pipeline.candidate_pool_service import (
     CandidatePoolSnapshotNotFoundError,
@@ -35,6 +39,7 @@ from invest_pipeline.config import get_settings
 from invest_pipeline.etf_daily_bars import (
     upsert_etf_daily_bars,
     write_etf_daily_bars_raw,
+    write_etf_daily_bars_raw_with_fallback,
 )
 from invest_pipeline.etf_instruments import (
     upsert_etf_instruments,
@@ -366,21 +371,37 @@ def etf_daily_bars_raw(
     try:
         from invest_storage import SqlAlchemyUnitOfWork
 
-        result = write_etf_daily_bars_raw(
-            provider,
-            factory,
-            symbols=symbols,
-            start_date=start,
-            end_date=end,
-            unit_of_work_factory=SqlAlchemyUnitOfWork,
+        baostock_settings = (
+            BaostockSettings() if provider.provider_key == "akshare" else None
         )
+        if baostock_settings is not None and baostock_settings.enabled:
+            result = write_etf_daily_bars_raw_with_fallback(
+                provider,
+                factory,
+                symbols=symbols,
+                start_date=start,
+                end_date=end,
+                fallback_provider=BaostockEtfDailyBarsAdapter(baostock_settings),
+                fallback_enabled=True,
+                unit_of_work_factory=SqlAlchemyUnitOfWork,
+            )
+        else:
+            result = write_etf_daily_bars_raw(
+                provider,
+                factory,
+                symbols=symbols,
+                start_date=start,
+                end_date=end,
+                unit_of_work_factory=SqlAlchemyUnitOfWork,
+            )
     finally:
         engine.dispose()
 
+    actual_provider_key = result.provider_key or provider.provider_key
     context.log.info(
         "etf_daily_bars_raw: provider=%s request=%s attempt=%s batch=%s "
         "status=%s records=%s window=%s..%s",
-        provider.provider_key,
+        actual_provider_key,
         result.request_id,
         result.attempt_id,
         result.batch_id,
@@ -391,7 +412,7 @@ def etf_daily_bars_raw(
     )
     return dg.MaterializeResult(
         metadata={
-            "provider": provider.provider_key,
+            "provider": actual_provider_key,
             "request_id": str(result.request_id),
             "attempt_id": str(result.attempt_id),
             "batch_id": str(result.batch_id) if result.batch_id else "",
@@ -460,13 +481,48 @@ def etf_daily_bars(
     try:
         from invest_storage import SqlAlchemyUnitOfWork
 
+        selected_provider_key = provider.provider_key
         with SqlAlchemyUnitOfWork(factory) as uow:
             stored_request = uow.provider_requests.get_by_logical_key(
                 provider_key=provider.provider_key,
                 dataset_key="etf_daily_bars",
                 request_key=request_key,
             )
+            if (
+                provider.provider_key == "akshare"
+                and BaostockSettings().enabled
+                and stored_request is not None
+                and stored_request.status == "failed"
+            ):
+                primary_attempts = uow.provider_attempts.list_by_request(
+                    stored_request.id, limit=1000
+                )
+                latest_primary_attempt = max(
+                    primary_attempts,
+                    key=lambda attempt: attempt.attempt_no,
+                    default=None,
+                )
+                if (
+                    latest_primary_attempt is not None
+                    and latest_primary_attempt.status == "failed"
+                    and latest_primary_attempt.error_code
+                    in {"ProviderTimeoutError", "ProviderUnavailableError"}
+                ):
+                    fallback_request = uow.provider_requests.get_by_logical_key(
+                        provider_key="baostock",
+                        dataset_key="etf_daily_bars",
+                        request_key=request_key,
+                    )
+                    if (
+                        fallback_request is not None
+                        and fallback_request.status == "succeeded"
+                    ):
+                        selected_provider_key = "baostock"
         if stored_request is None or stored_request.status == "failed":
+            stored_request = (
+                fallback_request if selected_provider_key == "baostock" else None
+            )
+        if stored_request is None:
             context.log.warning(
                 "etf_daily_bars: upstream attempt failed or missing for %s; "
                 "skipping core.daily_bars upsert",
@@ -479,11 +535,12 @@ def etf_daily_bars(
                     "skipped_asset": True,
                     "reason": "upstream attempt failed or missing",
                     "request_key": request_key,
+                    "provider": provider.provider_key,
                 }
             )
         summary = upsert_etf_daily_bars(
             factory,
-            provider_key=provider.provider_key,
+            provider_key=selected_provider_key,
             dataset_key="etf_daily_bars",
             request_key=request_key,
             unit_of_work_factory=SqlAlchemyUnitOfWork,
@@ -492,7 +549,9 @@ def etf_daily_bars(
         engine.dispose()
 
     context.log.info(
-        "etf_daily_bars: inserted=%s skipped=%s total=%s for window=%s..%s",
+        "etf_daily_bars: provider=%s inserted=%s skipped=%s total=%s "
+        "for window=%s..%s",
+        selected_provider_key,
         summary.inserted,
         summary.skipped,
         summary.total,
@@ -508,6 +567,7 @@ def etf_daily_bars(
             "start_date": start.isoformat(),
             "end_date": end.isoformat(),
             "partition_key": context.partition_key,
+            "provider": selected_provider_key,
         }
     )
 

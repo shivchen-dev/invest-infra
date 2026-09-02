@@ -73,7 +73,12 @@ __all__ = [
     "UpsertSummary",
     "upsert_etf_daily_bars",
     "write_etf_daily_bars_raw",
+    "write_etf_daily_bars_raw_with_fallback",
 ]
+
+_TRANSIENT_FALLBACK_ERROR_CODES = frozenset(
+    {"ProviderTimeoutError", "ProviderUnavailableError"}
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -233,6 +238,8 @@ def write_etf_daily_bars_raw(
                 request_status="failed",
                 attempt_status="failed",
                 record_count=0,
+                error_code=attempt.error_code or "unknown_error",
+                provider_key=stored_request.provider_key,
             )
 
         stored_attempt = uow.provider_attempts.add(
@@ -302,7 +309,47 @@ def write_etf_daily_bars_raw(
             request_status=request_status,
             attempt_status="succeeded",
             record_count=record_count,
+            provider_key=stored_request.provider_key,
         )
+
+
+def write_etf_daily_bars_raw_with_fallback(
+    primary_provider: _ProviderPort,
+    session_factory: SessionProvider | sessionmaker[Any],
+    *,
+    symbols: Sequence[str],
+    start_date: date,
+    end_date: date,
+    fallback_provider: _ProviderPort | None = None,
+    fallback_enabled: bool = False,
+    unit_of_work_factory: UnitOfWorkFactory = SqlAlchemyUnitOfWork,
+) -> RawEtlResult:
+    """Persist the primary attempt, then optionally try one transient fallback."""
+
+    primary = write_etf_daily_bars_raw(
+        primary_provider,
+        session_factory,
+        symbols=symbols,
+        start_date=start_date,
+        end_date=end_date,
+        unit_of_work_factory=unit_of_work_factory,
+    )
+    if (
+        not fallback_enabled
+        or fallback_provider is None
+        or primary.request_status != "failed"
+        or primary.error_code not in _TRANSIENT_FALLBACK_ERROR_CODES
+    ):
+        return primary
+
+    return write_etf_daily_bars_raw(
+        fallback_provider,
+        session_factory,
+        symbols=symbols,
+        start_date=start_date,
+        end_date=end_date,
+        unit_of_work_factory=unit_of_work_factory,
+    )
 
 
 def upsert_etf_daily_bars(
