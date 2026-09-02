@@ -6,9 +6,9 @@ stock market-data assets that make up the dedicated A-share chain —
 ``stock_instruments_raw`` → ``stock_instruments`` →
 ``stock_daily_bars_raw`` → ``stock_daily_bars`` →
 ``stock_input_snapshot`` → ``market_breadth_snapshot`` — and nothing
-else. The ETF slice must remain untouched: ``personal_etf_daily_job``
-keeps its existing six-asset selection and the new job does not
-overlap.
+else. ``personal_etf_daily_job`` now also selects the
+``etf_akshare_daily_bars`` enrichment asset on top of the original
+ETF daily slice, and the new job must still not overlap with it.
 
 The tests guard four contracts:
 
@@ -30,6 +30,7 @@ import unittest
 
 import dagster as dg
 from invest_pipeline.assets import (
+    etf_akshare_daily_bars,
     etf_daily_bars,
     etf_daily_bars_raw,
     etf_input_snapshot,
@@ -146,9 +147,15 @@ class StockMarketDataJobPartitionTest(unittest.TestCase):
 
 
 class StockMarketDataJobIsolationTest(unittest.TestCase):
-    """The new job does not disturb the existing ETF job's selection."""
+    """The new job does not disturb the existing ETF job's selection.
 
-    def test_personal_etf_daily_job_selection_is_unchanged(self) -> None:
+    ``personal_etf_daily_job`` now also selects the
+    ``etf_akshare_daily_bars`` enrichment asset, but ``real_exposure``
+    and every stock-pipeline asset must still be absent so the
+    dedicated chain stays isolated from the ETF daily slice.
+    """
+
+    def test_personal_etf_daily_job_selection_matches_registered_set(self) -> None:
         job_def = defs.resolve_job_def("personal_etf_daily_job")
         selected_keys = set(job_def.asset_layer.selected_asset_keys)
         etf_keys = {
@@ -156,6 +163,7 @@ class StockMarketDataJobIsolationTest(unittest.TestCase):
             etf_instruments.key,
             etf_daily_bars_raw.key,
             etf_daily_bars.key,
+            etf_akshare_daily_bars.key,
             etf_input_snapshot.key,
             personal_candidate_pool.key,
         }

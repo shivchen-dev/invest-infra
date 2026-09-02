@@ -8,8 +8,10 @@ The DC-3 slice ships exactly one dedicated manual job:
 * the resolved job is materialised through :data:`invest_pipeline.definitions.defs`
   and is an asset job selecting **only** the new
   :func:`invest_pipeline.real_exposure_asset.real_exposure` asset;
-* the ``personal_etf_daily_job`` selection is left untouched (no
-  accidental broadening of the existing daily slice);
+* the ``personal_etf_daily_job`` selection remains scoped to the ETF
+  daily slice — its asset set now includes the registered
+  ``etf_akshare_daily_bars`` enrichment asset, but no
+  ``real_exposure`` or stock-pipeline asset is added;
 * no schedule and no sensor is wired up to ``real_exposure_job``; the
   job is manual-only so the opt-in flag is the single source of truth
   for real-network runs.
@@ -103,11 +105,19 @@ class RealExposureJobNoScheduleTest(unittest.TestCase):
         )
 
 
-class PersonalEtfDailyJobUnchangedTest(unittest.TestCase):
-    """The pre-existing ``personal_etf_daily_job`` selection is untouched."""
+class PersonalEtfDailyJobSelectionTest(unittest.TestCase):
+    """The ``personal_etf_daily_job`` selection matches the registered ETF daily slice.
 
-    def test_personal_etf_daily_job_selection_intact(self) -> None:
+    The asset set mirrors what :mod:`invest_pipeline.definitions`
+    registers (now including the ``etf_akshare_daily_bars`` enrichment
+    asset); ``real_exposure`` and any stock-pipeline asset must still
+    be absent so the manual job stays isolated from the daily ETF
+    slice.
+    """
+
+    def test_personal_etf_daily_job_selection_matches_registered_set(self) -> None:
         from invest_pipeline.assets import (
+            etf_akshare_daily_bars,
             etf_daily_bars,
             etf_daily_bars_raw,
             etf_input_snapshot,
@@ -123,6 +133,7 @@ class PersonalEtfDailyJobUnchangedTest(unittest.TestCase):
             etf_instruments.key,
             etf_daily_bars_raw.key,
             etf_daily_bars.key,
+            etf_akshare_daily_bars.key,
             etf_input_snapshot.key,
             personal_candidate_pool.key,
         }
