@@ -1,16 +1,16 @@
 # 中心投研可视化平台 MVP 实施计划
 
 > 文档版本：v1.1
-> 文档状态：ACTIVE（本文件是中心可视化主线唯一权威实施计划）
+> 文档状态：DEFERRED（数据覆盖与 Provider 韧性 P0 收口前暂停）
 > 计划治理：`docs/plan/README.md`
 > 制定日期：2026-08-15
-> 最近更新：2026-08-31（补充 Candidate 2.0.0 只读追溯执行拆分）
+> 最近更新：2026-09-02（按计划治理暂停，原方案内容保持不变）
 > 上位蓝图：`docs/plan/archive/reference-blueprints/invest-infra-stage4d-unified-investment-workbench-integration-plan-v1.0.md`
 > 既有执行基线：`docs/plan/invest-infra-stage4d-mvp-phased-execution-plan-v1.0.md`
 
 ## 1. 决策摘要
 
-中心投研可视化平台优先推进，但不是新建第二套系统。MVP 在现有 React Web、FastAPI 只读查询、Research Dashboard、Opportunity Radar、Automation Center 和市场观察数据之上，建立统一的投研入口。
+中心投研可视化平台不是新建第二套系统。当前因 ETF 数据覆盖与 Provider 韧性调整为 P0，本计划暂停实施；恢复时仍在现有 React Web、FastAPI 只读查询、Research Dashboard、Opportunity Radar、Automation Center 和市场观察数据之上建立统一的投研入口。
 
 平台服务于以下长期研究循环：
 

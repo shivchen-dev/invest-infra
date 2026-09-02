@@ -13,8 +13,8 @@
 
 | 优先级 | 主线 | 状态 | 唯一权威实施计划 |
 |---|---|---|---|---|
-| P0 | Stage 4D 研究交付收口 | `ACTIVE` | `invest-infra-stage4d-mvp-phased-execution-plan-v1.0.md`；Gate 3 前置切片：`invest-infra-candidate-strategies-mvp-plan-v1.0.md` |
-| P1 | 中心投研可视化平台 MVP | `ACTIVE` | `invest-infra-central-research-visualization-mvp-plan-v1.0.md` |
+| P0 | ETF 数据覆盖与 Provider 韧性 | `ACTIVE` | `invest-infra-etf-data-coverage-resilience-plan-v1.0.md` |
+| P1 | Stage 4D 研究交付收口 | `ACTIVE` | `invest-infra-stage4d-mvp-phased-execution-plan-v1.0.md`；Gate 3 前置切片：`invest-infra-candidate-strategies-mvp-plan-v1.0.md` |
 
 状态解释：
 
@@ -53,7 +53,8 @@
 
 | 文档 | 治理状态 | 处理结论 |
 |---|---|---|
-| `invest-infra-central-research-visualization-mvp-plan-v1.0.md` | `ACTIVE` | 当前可视化实施方案；Slice 0–3 为 MVP，Slice 4–5 独立冻结合同和授权 |
+| `invest-infra-etf-data-coverage-resilience-plan-v1.0.md` | `ACTIVE` | 当前 P0 数据层垂直切片；按“真实探针 → 准入决策 → 最小 Adapter”三阶段执行，不预建字段路由或覆盖平台 |
+| `invest-infra-central-research-visualization-mvp-plan-v1.0.md` | `DEFERRED` | 数据覆盖与 Provider 韧性 P0 收口前暂停；不得与数据层切片混合实施 |
 | `invest-infra-stage4d-mvp-phased-execution-plan-v1.0.md` | `ACTIVE` | 当前 Stage 4D 收口权威；只处理真实联调、剩余 Research Workspace 和最终验收 |
 | `invest-infra-strategy-source-to-automation-workflow.md` | `CONTRACT_AUTHORITY` | 策略交付物和来源追溯的合同权威，不作为当前开发排期 |
 | `invest-infra-candidate-strategies-mvp-plan-v1.0.md` | `ACTIVE` | Stage 4D Gate 3 前置切片；原文恢复、两条Draft审计发布、固定两阶段人工执行 |
