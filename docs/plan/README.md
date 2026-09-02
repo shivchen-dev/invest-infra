@@ -9,17 +9,18 @@
 
 ## 1. 当前执行权威
 
-同时只保留两条实施主线，未经用户明确授权不得从其他蓝图恢复派工：
+当前只保留一条活动实施主线；已关闭的数据层计划保留在表中作为近期收口事实。未经用户明确授权不得从其他蓝图恢复派工：
 
 | 优先级 | 主线 | 状态 | 唯一权威实施计划 |
-|---|---|---|---|---|
-| P0 | ETF 数据覆盖与 Provider 韧性 | `ACTIVE` | `invest-infra-etf-data-coverage-resilience-plan-v1.0.md` |
+|---|---|---|---|
+| P0 | ETF 数据覆盖与 Provider 韧性 | `CLOSED` | `invest-infra-etf-data-coverage-resilience-plan-v1.0.md` |
 | P1 | Stage 4D 研究交付收口 | `ACTIVE` | `invest-infra-stage4d-mvp-phased-execution-plan-v1.0.md`；Gate 3 前置切片：`invest-infra-candidate-strategies-mvp-plan-v1.0.md` |
 
 状态解释：
 
 - `ACTIVE`：计划是当前有效实施边界；是否已授权、已实现或已验收，以对应证据为准；
-- 两条主线共享现有只读查询能力，但不得在同一任务中混合开发。
+- `CLOSED`：完成定义已满足且有独立验收记录；后续运行观察或新缺陷不自动恢复原计划；
+- 各主线可共享现有只读查询能力，但不得在同一任务中混合开发。
 
 ## 2. 业务定位冻结
 
@@ -56,11 +57,12 @@
 
 | 文档 | 治理状态 | 处理结论 |
 |---|---|---|
-| `invest-infra-etf-data-coverage-resilience-plan-v1.0.md` | `ACTIVE` | 当前 P0 数据层垂直切片；按“真实探针 → 准入决策 → 最小 Adapter”三阶段执行，不预建字段路由或覆盖平台 |
-| `invest-infra-central-research-visualization-mvp-plan-v1.0.md` | `DEFERRED` | 数据覆盖与 Provider 韧性 P0 收口前暂停；不得与数据层切片混合实施 |
+| `invest-infra-etf-data-coverage-resilience-plan-v1.0.md` | `CLOSED` | 已按“真实探针 → 准入决策 → 最小 Adapter”完成收口；自然调度转为非阻塞运行观察，不预建字段路由或覆盖平台 |
+| `invest-infra-central-research-visualization-mvp-plan-v1.0.md` | `DEFERRED` | 数据层 P0 已收口；仍待 Stage 4D Gate 3 与 Candidate lineage 验收后独立授权恢复，不与当前 P1 混合实施 |
 | `invest-infra-stage4d-mvp-phased-execution-plan-v1.0.md` | `ACTIVE` | 当前 Stage 4D 收口权威；只处理真实联调、剩余 Research Workspace 和最终验收 |
 | `invest-infra-strategy-source-to-automation-workflow.md` | `CONTRACT_AUTHORITY` | 策略交付物和来源追溯的合同权威，不作为当前开发排期 |
 | `invest-infra-candidate-strategies-mvp-plan-v1.0.md` | `ACTIVE` | Stage 4D Gate 3 前置切片；原文恢复、两条Draft审计发布、固定两阶段人工执行 |
+| `invest-infra-decision-feedback-loop-mvp-plan-v1.0.md` | `DRAFT` | Stage 4D Gate 3 后续候选反馈闭环；仅行动建议、T+5/T+10/T+20 前瞻观察和策略复盘，满足激活条件并经独立授权前不得实施 |
 | `archive/reference-blueprints/invest-infra-stage4d-unified-investment-workbench-integration-plan-v1.0.md` | `REFERENCE_BLUEPRINT` | Stage 4D–4G 长期蓝图；保留原文件名和完整内容，不得直接从正文派工 |
 | `invest-infra-data-collection-enhancement-plan-v1.0.md` | `REFERENCE_BLUEPRINT` | 数据采集架构参考；不作为当前全量建设承诺 |
 | `invest-infra-investment-context-provider-integration-plan.md` | `REFERENCE_BLUEPRINT` | Provider/Evidence 参考；新数据源按独立授权切片实施 |
@@ -88,7 +90,7 @@
 
 新增实施计划前必须确认：
 
-- 不能作为现有两条主线的垂直切片；
+- 不能作为现有活动主线的垂直切片；
 - 有清晰输入、输出、非目标和验收 Gate；
 - 在本索引登记治理状态；
 - 明确它替代、合并或依赖哪些旧计划。
@@ -125,6 +127,7 @@ ACTIVE
 |---|---|---|
 | `strategy-iteration` | `OPEN_CONTRACT` | 中心平台 Slice 0–3 验收后，用户独立授权 |
 | `position-discipline` | `OPEN_CONTRACT` | 确认实际持仓事实权威源后，用户独立授权 |
+| `decision-feedback-loop` | `DRAFT_PLAN` | Stage 4D Gate 3、Candidate lineage 和数据层自然调度终验通过后，用户独立授权激活 |
 
 ## 7. OpenWiki 与计划治理
 
