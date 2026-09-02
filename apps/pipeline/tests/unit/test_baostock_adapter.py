@@ -6,6 +6,7 @@ from datetime import UTC, date, datetime
 from types import SimpleNamespace
 
 import pytest
+from invest_domain.instruments.models import InstrumentId
 from invest_pipeline.adapters.baostock.adapter import (
     DATASET_KEY,
     PROVIDER_KEY,
@@ -13,6 +14,7 @@ from invest_pipeline.adapters.baostock.adapter import (
 )
 from invest_pipeline.adapters.baostock.config import BaostockSettings
 from invest_pipeline.adapters.errors import (
+    ProviderDataContractError,
     ProviderUnavailableError,
     RealProviderRequiresExplicitEnablementError,
 )
@@ -61,14 +63,15 @@ def _row(code="sh.510300", d="2026-01-05"):
     return (d, code, "1.0", "1.1", "0.95", "1.05", "100", "105.0")
 
 
-def _adapter(rows_by_code, *, enabled=True):
+def _adapter(rows_by_code, *, enabled=True, clock=None, settings=None):
     from invest_pipeline.adapters.baostock.client import BaostockClient
-    settings = BaostockSettings(enabled=enabled)
+    if settings is None:
+        settings = BaostockSettings(enabled=enabled)
     real_client = BaostockClient(settings, module=_stub_module(rows_by_code))
     real_client._test_module = real_client._injected_module  # type: ignore[attr-defined]
     return BaostockEtfDailyBarsAdapter(
         settings, client=real_client,
-        clock=lambda: datetime(2026, 1, 31, tzinfo=UTC),
+        clock=clock if clock is not None else (lambda: datetime(2026, 1, 31, tzinfo=UTC)),
     )
 
 
@@ -169,3 +172,119 @@ class TestEndToEnd:
         assert batch is None
         assert attempt.error_stage.value == "contract"
         assert attempt.error_code == "ProviderDataContractError"
+
+
+class TestSymbolResolution:
+    """``symbol_for_instrument_id`` round-trips placeholder UUIDs."""
+
+    def test_symbol_for_instrument_id_returns_bare_symbol_for_fetched_bar(
+        self,
+    ) -> None:
+        adapter = _adapter({"sh.510300": [_row()]})
+        request, attempt, batch = adapter.fetch_daily_bars(
+            symbols=["510300"],
+            start_date=date(2026, 1, 1), end_date=date(2026, 1, 31),
+        )
+        assert batch is not None and len(batch.records) == 1
+        resolved = adapter.symbol_for_instrument_id(batch.records[0].instrument_id)
+        assert resolved == "510300"
+
+    def test_symbol_for_instrument_id_returns_bare_symbol_per_exchange(
+        self,
+    ) -> None:
+        adapter = _adapter(
+            {
+                "sh.510300": [_row()],
+                "sz.159901": [_row(code="sz.159901")],
+            },
+        )
+        _, _, batch = adapter.fetch_daily_bars(
+            symbols=["510300", "159901"],
+            start_date=date(2026, 1, 1), end_date=date(2026, 1, 31),
+        )
+        assert batch is not None and len(batch.records) == 2
+        ids = {bar.instrument_id for bar in batch.records}
+        resolved = {
+            adapter.symbol_for_instrument_id(instrument_id) for instrument_id in ids
+        }
+        assert resolved == {"510300", "159901"}
+
+    def test_symbol_for_instrument_id_returns_none_for_unknown(self) -> None:
+        adapter = _adapter({})
+        # An unseeded UUID must resolve to None so the application
+        # service surfaces a hard error rather than silently picking
+        # the first cached symbol.
+        assert adapter.symbol_for_instrument_id(InstrumentId.generate()) is None
+
+    def test_symbol_for_instrument_id_returns_none_before_any_fetch(
+        self,
+    ) -> None:
+        adapter = BaostockEtfDailyBarsAdapter(BaostockSettings(enabled=True))
+        assert adapter.symbol_for_instrument_id(InstrumentId.generate()) is None
+
+
+class TestHistoryWindowGuard:
+    """``WINDOW_OUT_OF_RANGE`` is raised before the SDK is invoked."""
+
+    def test_window_within_120_days_is_accepted(self) -> None:
+        adapter = _adapter({"sh.510300": [_row()]})
+        request, attempt, batch = adapter.fetch_daily_bars(
+            symbols=["510300"],
+            start_date=date(2026, 1, 1), end_date=date(2026, 1, 31),
+        )
+        assert attempt.status.value == "succeeded"
+        assert batch is not None
+
+    def test_window_exceeding_120_days_raises_window_out_of_range(self) -> None:
+        adapter = _adapter({})
+        with pytest.raises(ProviderDataContractError) as exc:
+            adapter.fetch_daily_bars(
+                symbols=["510300"],
+                start_date=date(2025, 8, 1), end_date=date(2026, 1, 31),
+            )
+        assert exc.value.code == "WINDOW_OUT_OF_RANGE"
+        # SDK must not have been touched: the guard short-circuits before
+        # login / query / logout.
+        module = adapter._client._test_module
+        assert module.queries == []
+
+    def test_window_at_exact_120_days_is_accepted(self) -> None:
+        adapter = _adapter({"sh.510300": [_row()]})
+        # Clock at 2026-01-31; start_date at 2025-10-03 → 120-day span.
+        request, attempt, batch = adapter.fetch_daily_bars(
+            symbols=["510300"],
+            start_date=date(2025, 10, 3), end_date=date(2026, 1, 31),
+        )
+        assert attempt.status.value == "succeeded"
+        assert batch is not None
+
+    def test_window_uses_injected_clock_date(self) -> None:
+        # The guard consumes the injected clock, not wall-clock. A clock
+        # fixed to 2026-01-31 makes the same (clock-relative) 120-day
+        # window pass.
+
+        def _clock():
+            return datetime(2025, 6, 1, tzinfo=UTC)
+
+        adapter = _adapter(
+            {"sh.510300": [_row()]}, clock=_clock,
+        )
+        request, attempt, batch = adapter.fetch_daily_bars(
+            symbols=["510300"],
+            start_date=date(2025, 4, 1), end_date=date(2025, 6, 1),
+        )
+        assert attempt.status.value == "succeeded"
+
+    def test_max_history_days_respects_custom_setting(self) -> None:
+        settings = BaostockSettings(enabled=True, max_history_days=30)
+        adapter = _adapter(
+            {},
+            settings=settings,
+            clock=lambda: datetime(2026, 6, 30, tzinfo=UTC),
+        )
+        with pytest.raises(ProviderDataContractError) as exc:
+            adapter.fetch_daily_bars(
+                symbols=["510300"],
+                start_date=date(2026, 5, 1), end_date=date(2026, 6, 30),
+            )
+        assert exc.value.code == "WINDOW_OUT_OF_RANGE"

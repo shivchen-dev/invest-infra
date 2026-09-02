@@ -138,6 +138,7 @@ class TestInputValidation:
 class TestErrors:
     def test_missing_sdk_raises_provider_unavailable(self) -> None:
         client = BaostockClient(BaostockSettings())
+
         def _missing():
             raise ProviderUnavailableError("baostock", "baostock SDK not installed")
         client._resolve_module = _missing  # type: ignore[assignment]
@@ -149,6 +150,7 @@ class TestErrors:
 
     def test_query_oserror_raises_unavailable(self) -> None:
         module = _stub_module()
+
         def boom(*a, **kw):
             raise OSError("connection refused")
         module.query_history_k_data_plus = boom
@@ -159,15 +161,6 @@ class TestErrors:
                 start_date=date(2026, 1, 1), end_date=date(2026, 1, 31),
             )
 
-    def test_empty_required_payload_raises_contract_error(self) -> None:
-        client = _client_with({})
-        with pytest.raises(ProviderDataContractError) as exc:
-            client.fetch_etf_daily_bars(
-                symbols=["sh.510300"],
-                start_date=date(2026, 1, 1), end_date=date(2026, 1, 31),
-            )
-        assert exc.value.code == "EMPTY_REQUIRED_PAYLOAD"
-
     def test_malformed_row_length_raises_contract_error(self) -> None:
         client = _client_with({"sh.510300": [("short",)]})
         with pytest.raises(ProviderDataContractError) as exc:
@@ -176,6 +169,91 @@ class TestErrors:
                 start_date=date(2026, 1, 1), end_date=date(2026, 1, 31),
             )
         assert exc.value.code == "MALFORMED_HISTORY_ROW"
+
+
+class TestEmptyPayloadSemantics:
+    """``EMPTY_REQUIRED_PAYLOAD`` vs ``EMPTY_SYMBOL_PAYLOAD`` contract."""
+
+    def test_single_symbol_zero_rows_raises_empty_required(self) -> None:
+        # Single-symbol request with 0 rows stays on the historical
+        # ``EMPTY_REQUIRED_PAYLOAD`` code — there is no other symbol to
+        # name.
+        client = _client_with({})
+        with pytest.raises(ProviderDataContractError) as exc:
+            client.fetch_etf_daily_bars(
+                symbols=["sh.510300"],
+                start_date=date(2026, 1, 1), end_date=date(2026, 1, 31),
+            )
+        assert exc.value.code == "EMPTY_REQUIRED_PAYLOAD"
+
+    def test_multi_symbol_all_zero_rows_raises_empty_required(self) -> None:
+        # When every requested symbol returns 0 rows the *aggregate*
+        # payload is empty; the client falls back to
+        # ``EMPTY_REQUIRED_PAYLOAD`` rather than the per-symbol code so
+        # callers see a single root-cause.
+        client = _client_with({})
+        with pytest.raises(ProviderDataContractError) as exc:
+            client.fetch_etf_daily_bars(
+                symbols=["sh.510300", "sz.159901"],
+                start_date=date(2026, 1, 1), end_date=date(2026, 1, 31),
+            )
+        assert exc.value.code == "EMPTY_REQUIRED_PAYLOAD"
+
+    def test_multi_symbol_one_zero_rows_raises_empty_symbol_payload(
+        self,
+    ) -> None:
+        # ``sh.510300`` returns rows; ``sz.159901`` returns 0 rows → the
+        # client must surface the per-symbol offender rather than a
+        # silent partial-success ``ProviderBatch``.
+        client = _client_with({"sh.510300": [_row()]})
+        with pytest.raises(ProviderDataContractError) as exc:
+            client.fetch_etf_daily_bars(
+                symbols=["sh.510300", "sz.159901"],
+                start_date=date(2026, 1, 1), end_date=date(2026, 1, 31),
+            )
+        assert exc.value.code == "EMPTY_SYMBOL_PAYLOAD"
+        assert "sz.159901" in exc.value.message
+        assert "sh.510300" not in exc.value.message
+
+    def test_multi_symbol_multiple_zero_rows_still_aggregate_empty(
+        self,
+    ) -> None:
+        # All-zero is still ``EMPTY_REQUIRED_PAYLOAD`` because every
+        # symbol is empty; the aggregate code wins and the per-symbol
+        # branch is skipped.
+        client = _client_with({})
+        with pytest.raises(ProviderDataContractError) as exc:
+            client.fetch_etf_daily_bars(
+                symbols=["sh.510300", "sz.159901", "sh.510301"],
+                start_date=date(2026, 1, 1), end_date=date(2026, 1, 31),
+            )
+        assert exc.value.code == "EMPTY_REQUIRED_PAYLOAD"
+
+    def test_empty_symbol_payload_lists_each_offender(self) -> None:
+        client = _client_with({"sh.510301": [_row(code="sh.510301")]})
+        with pytest.raises(ProviderDataContractError) as exc:
+            client.fetch_etf_daily_bars(
+                symbols=["sh.510300", "sh.510301", "sz.159901"],
+                start_date=date(2026, 1, 1), end_date=date(2026, 1, 31),
+            )
+        assert exc.value.code == "EMPTY_SYMBOL_PAYLOAD"
+        assert "sh.510300" in exc.value.message
+        assert "sz.159901" in exc.value.message
+        # The symbol that DID return rows must NOT be named as an
+        # offender.
+        assert "sh.510301" not in exc.value.message
+
+    def test_multi_symbol_all_rows_returns_payload(self) -> None:
+        # Sanity: every symbol returning rows is the happy path —
+        # no contract error.
+        client = _client_with(
+            {"sh.510300": [_row()], "sz.159901": [_row(code="sz.159901")]},
+        )
+        response = client.fetch_etf_daily_bars(
+            symbols=["sh.510300", "sz.159901"],
+            start_date=date(2026, 1, 1), end_date=date(2026, 1, 31),
+        )
+        assert len(response.raw_payload) == 2
 
 
 class TestCursorProtocol:

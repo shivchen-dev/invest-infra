@@ -65,17 +65,21 @@ class BaostockClient:
             )
         module = self._resolve_module()
         self._invoke_login(module.login)
+        per_symbol_rows: list[tuple[str, list[dict[str, Any]]]] = []
         try:
-            merged: list[dict[str, Any]] = []
             for symbol in symbols:
-                merged.extend(
-                    self._invoke_query(
-                        module.query_history_k_data_plus,
-                        symbol=symbol, start_date=start_date, end_date=end_date,
+                per_symbol_rows.append(
+                    (
+                        symbol,
+                        self._invoke_query(
+                            module.query_history_k_data_plus,
+                            symbol=symbol, start_date=start_date, end_date=end_date,
+                        ),
                     )
                 )
         finally:
             self._invoke_logout(module.logout)
+        merged = [row for _, rows in per_symbol_rows for row in rows]
         if not merged:
             raise ProviderDataContractError(
                 "EMPTY_REQUIRED_PAYLOAD",
@@ -83,6 +87,21 @@ class BaostockClient:
                 "set; Slice-1 contract requires at least one row",
                 provider_key=_PROVIDER_KEY,
             )
+        if len(symbols) > 1:
+            empty_symbols = [
+                symbol for symbol, rows in per_symbol_rows if not rows
+            ]
+            if empty_symbols:
+                raise ProviderDataContractError(
+                    "EMPTY_SYMBOL_PAYLOAD",
+                    (
+                        "baostock.query_history_k_data_plus returned 0 rows "
+                        f"for native symbol(s) {empty_symbols!r} in a "
+                        f"multi-symbol request; Slice-1 contract rejects "
+                        f"silent partial success"
+                    ),
+                    provider_key=_PROVIDER_KEY,
+                )
         return BaostockResponse(
             operation="query_history_k_data_plus",
             raw_payload=merged,

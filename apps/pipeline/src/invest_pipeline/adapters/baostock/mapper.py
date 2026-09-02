@@ -28,6 +28,12 @@ _EXCHANGE_FROM_PREFIX = {"sh": "SSE", "sz": "SZSE"}
 
 _NUMERIC_FIELDS = ("open", "high", "low", "close", "volume", "amount")
 
+# Fields whose Domain :class:`DailyBar` rule is strictly ``> 0``. Volume
+# and amount are explicitly **not** in this set: the Domain permits zero
+# volume/amount (suspended sessions, half-day holidays), and we must not
+# weaken that allow-list at the adapter boundary.
+_OHLC_FIELDS: tuple[str, ...] = ("open", "high", "low", "close")
+
 
 @dataclass(frozen=True, slots=True)
 class BaostockDailyBarsMappingResult:
@@ -99,6 +105,24 @@ def _row_to_bar(entry: dict[str, Any], *, index: int, source: BarSource) -> Dail
     close = decimals["close"]
     volume = decimals["volume"]
     amount = decimals["amount"]
+
+    # Catch finite non-positive OHLC **before** ``DailyBar.build`` — the
+    # Domain helper would raise a plain ``ValueError`` that would
+    # otherwise escape the mapper/adapter evidence boundary. Volume and
+    # amount stay non-negative by Domain contract (suspended sessions
+    # / half-day holidays); a true negative stays
+    # ``NEGATIVE_AMOUNT``.
+    for field in _OHLC_FIELDS:
+        value = decimals[field]
+        if value.is_finite() and value <= 0:
+            raise _contract(
+                "ZERO_OR_NEGATIVE_PRICE",
+                (
+                    f"row {index} non-positive OHLC {field!r}={value!s} "
+                    f"(code={raw_code!r}); Domain requires > 0"
+                ),
+                index=index,
+            )
 
     # OHLC + non-negative volume/amount — data-quality safety.
     if not (high >= max(open_, close, low) and low <= min(open_, close, high)):

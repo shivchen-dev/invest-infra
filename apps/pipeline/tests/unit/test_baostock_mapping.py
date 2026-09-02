@@ -92,3 +92,69 @@ class TestSafetyInvariants:
             _response(rows), symbols=["sh.510300"], source=_source(UUID(int=1)),
         )
         assert a.bars[0].instrument_id == b.bars[0].instrument_id
+
+
+class TestZeroOrNegativePrice:
+    """Finite non-positive OHLC values raise ``ZERO_OR_NEGATIVE_PRICE``.
+
+    The Domain :class:`DailyBar` helper would otherwise raise a plain
+    ``ValueError`` ("must be > 0") that escapes the mapper/adapter
+    evidence boundary; the mapper MUST convert these into a
+    ``ProviderDataContractError`` with a stable contract code so the
+    application service can classify the failure as CONTRACT.
+    """
+
+    def test_zero_open_raises_contract_error(self) -> None:
+        with pytest.raises(ProviderDataContractError) as exc:
+            map_query_history_k_data_plus(
+                _response([_row(op="0.0")]),
+                symbols=["sh.510300"], source=_source(UUID(int=1)),
+            )
+        assert exc.value.code == "ZERO_OR_NEGATIVE_PRICE"
+
+    def test_negative_close_raises_contract_error(self) -> None:
+        with pytest.raises(ProviderDataContractError) as exc:
+            map_query_history_k_data_plus(
+                _response([_row(close="-0.500")]),
+                symbols=["sh.510300"], source=_source(UUID(int=1)),
+            )
+        assert exc.value.code == "ZERO_OR_NEGATIVE_PRICE"
+
+    def test_zero_high_raises_contract_error(self) -> None:
+        with pytest.raises(ProviderDataContractError) as exc:
+            map_query_history_k_data_plus(
+                _response([_row(hi="0.0")]),
+                symbols=["sh.510300"], source=_source(UUID(int=1)),
+            )
+        assert exc.value.code == "ZERO_OR_NEGATIVE_PRICE"
+
+    def test_negative_low_raises_contract_error(self) -> None:
+        with pytest.raises(ProviderDataContractError) as exc:
+            map_query_history_k_data_plus(
+                _response([_row(lo="-0.001")]),
+                symbols=["sh.510300"], source=_source(UUID(int=1)),
+            )
+        assert exc.value.code == "ZERO_OR_NEGATIVE_PRICE"
+
+    def test_volume_zero_is_still_accepted(self) -> None:
+        # Volume and amount follow a non-negative (``>= 0``) Domain
+        # contract — the mapper must NOT widen ZERO_OR_NEGATIVE_PRICE
+        # to volume/amount, otherwise suspended-session / half-day
+        # fixtures would regress.
+        result = map_query_history_k_data_plus(
+            _response([_row(vol="0", amt="0")]),
+            symbols=["sh.510300"], source=_source(UUID(int=1)),
+        )
+        assert len(result.bars) == 1
+        assert result.bars[0].volume == Decimal("0")
+
+    def test_non_finite_close_still_raises_invalid_numeric(self) -> None:
+        # The non-finite / negative split must stay intact: ``NaN`` is
+        # caught by ``INVALID_NUMERIC`` (the mapper's ``is_finite``
+        # guard), not by the new OHLC strictness check.
+        with pytest.raises(ProviderDataContractError) as exc:
+            map_query_history_k_data_plus(
+                _response([_row(close="NaN")]),
+                symbols=["sh.510300"], source=_source(UUID(int=1)),
+            )
+        assert exc.value.code == "INVALID_NUMERIC"

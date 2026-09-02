@@ -10,11 +10,13 @@ conversion to provider-native (``sh.``/``sz.``).
 from __future__ import annotations
 
 import re
+import uuid as _uuid
 from collections.abc import Callable, Sequence
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from typing import Any
 from uuid import UUID, uuid4
 
+from invest_domain.instruments.models import InstrumentId
 from invest_domain.market_data.models import (
     BarSource,
     DailyBar,
@@ -43,6 +45,7 @@ DATASET_KEY = "etf_daily_bars"
 
 _BARE_SYMBOL_RE = re.compile(r"^\d{6}$")
 _BARE_TO_NATIVE_PREFIX = {"5": "sh.", "1": "sz."}
+_NATIVE_PREFIX_TO_EXCHANGE = {"sh": "SSE", "sz": "SZSE"}
 
 _ERROR_STAGE: dict[type[ProviderError], ProviderFailureStage] = {
     ProviderUnavailableError: ProviderFailureStage.HTTP,
@@ -64,6 +67,16 @@ class BaostockEtfDailyBarsAdapter:
         self._settings = settings or BaostockSettings()
         self._client = client or BaostockClient(self._settings)
         self._clock = clock or (lambda: datetime.now(UTC))
+        # Placeholder ``InstrumentId`` cache seeded at fetch time. Keyed by
+        # the deterministic UUID5 the mapper will mint for each
+        # ``(native_symbol, exchange)`` pair; the value is the bare
+        # six-digit symbol the caller originally requested, so the
+        # application service can recover the Provider-facing business
+        # key from a returned ``DailyBar.instrument_id`` without
+        # re-running the SDK. Backwards-compatible: the mapper's UUID5
+        # derivation is mirrored verbatim here so existing
+        # ``raw_payload_hash`` / ``row_hash`` outputs are unaffected.
+        self._placeholder_cache: dict[InstrumentId, str] = {}
 
     @property
     def provider_key(self) -> str:
@@ -99,7 +112,21 @@ class BaostockEtfDailyBarsAdapter:
             created_at=self._now(),
         )
         self._guard_enabled()
+        self._guard_window(start_date)
         return self._run(request, symbols, native_symbols, start_date, end_date)
+
+    def symbol_for_instrument_id(self, instrument_id: InstrumentId) -> str | None:
+        """Return the requested bare six-digit symbol for a fetched ``InstrumentId``.
+
+        Mirrors :meth:`AkshareInstrumentProvider.symbol_for_instrument_id`
+        so the application service can recover the Provider-facing
+        business key from a returned ``DailyBar.instrument_id``. Returns
+        ``None`` when ``instrument_id`` was not produced by this adapter
+        instance — the application service surfaces that as a hard
+        ``LookupError`` rather than silently coercing an audit field.
+        """
+
+        return self._placeholder_cache.get(instrument_id)
 
     # internal ------------------------------------------------------------
 
@@ -138,6 +165,14 @@ class BaostockEtfDailyBarsAdapter:
                 request, request_id, started_at, attempt_id, exc, finished_at,
             )
 
+        # Seed the placeholder cache now that we know the SDK returned
+        # at least one row per requested symbol (the client enforces the
+        # EMPTY_SYMBOL_PAYLOAD / EMPTY_REQUIRED_PAYLOAD contract). The
+        # mapper's UUID5 derivation is mirrored here so existing bar
+        # hashes are unaffected.
+        for bare, native in zip(bare_symbols, native_symbols, strict=True):
+            self._track_placeholder(bare, native)
+
         attempt = ProviderAttempt(
             request_id=request_id, attempt_number=1,
             status=ProviderAttemptStatus.SUCCEEDED,
@@ -152,12 +187,49 @@ class BaostockEtfDailyBarsAdapter:
         )
         return request, attempt, batch
 
+    def _track_placeholder(self, bare_symbol: str, native_symbol: str) -> None:
+        """Record the mapper-minted placeholder UUID for ``bare_symbol``."""
+
+        exchange = _native_to_exchange(native_symbol)
+        digest_seed = f"{PROVIDER_KEY}|{native_symbol}|{exchange}".encode()
+        placeholder_id = InstrumentId(_uuid.uuid5(_uuid.NAMESPACE_DNS, digest_seed.hex()))
+        self._placeholder_cache[placeholder_id] = bare_symbol
+
     def _guard_enabled(self) -> None:
         if not self._settings.enabled:
             raise RealProviderRequiresExplicitEnablementError(
                 f"BaoStock fetch_daily_bars requires BaostockSettings.enabled=True "
                 f"({PROVIDER_KEY!r}); see DATA-SOURCE-MIGRATION-MATRIX.md §6 / Slice-1 "
                 "(PR-08)"
+            )
+
+    def _guard_window(self, start_date: Any) -> None:
+        """Reject requests whose window exceeds ``settings.max_history_days``.
+
+        Fail closed **before** SDK invocation so a misconfigured
+        consumer never silently causes a slow historical backfill;
+        ``WINDOW_OUT_OF_RANGE`` is the contract code the application
+        service routes against. ``start_date`` is the user's date; the
+        upper bound is the injected clock's calendar day so tests stay
+        deterministic.
+        """
+
+        max_days = self._settings.max_history_days
+        today = self._now().date()
+        span_days = (today - start_date).days if isinstance(start_date, date) else None
+        if span_days is None or span_days > max_days:
+            start_iso = (
+                start_date.isoformat()
+                if hasattr(start_date, "isoformat") else repr(start_date)
+            )
+            raise ProviderDataContractError(
+                "WINDOW_OUT_OF_RANGE",
+                (
+                    f"start_date {start_iso} is more than {max_days} days before "
+                    f"the injected clock date {today.isoformat()} "
+                    f"(span={span_days}d); BaostockSettings.max_history_days={max_days}"
+                ),
+                provider_key=PROVIDER_KEY,
             )
 
     def _now(self) -> datetime:
@@ -180,6 +252,18 @@ def _to_native(code: str) -> str:
             f"is not SSE ('5') or SZSE ('1')"
         )
     return prefix + code
+
+
+def _native_to_exchange(native_symbol: str) -> str:
+    """Derive SSE/SZSE exchange from the native prefix (mirrors the mapper)."""
+    prefix = native_symbol.split(".", 1)[0].lower()
+    exchange = _NATIVE_PREFIX_TO_EXCHANGE.get(prefix)
+    if exchange is None:
+        raise ValueError(
+            f"native baostock symbol {native_symbol!r} has no SSE/SZSE "
+            f"prefix; expected 'sh.'/'sz.'"
+        )
+    return exchange
 
 
 def _duration_ms(started: datetime, finished: datetime) -> int:
