@@ -4,6 +4,7 @@ WORKDIR /workspace
 COPY packages/domain /workspace/packages/domain
 COPY packages/storage /workspace/packages/storage
 COPY apps/pipeline /workspace/apps/pipeline
+COPY config /workspace/config
 
 WORKDIR /workspace/apps/pipeline
 RUN uv sync --no-dev
