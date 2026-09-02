@@ -9,6 +9,11 @@ slice for the personal Candidate Pool vertical slice:
   ``Adjust.NONE``.
 * Reconstruct persisted bars through the domain :class:`DailyBar` model
   so the domain invariants are re-applied before the calculator runs.
+* Compute the deterministic
+  :func:`~invest_domain.candidate_pool.fingerprint.compute_market_data_fingerprint`
+  over the exact selected bar revisions so the run can be bound to its
+  market-data identity. The helper supports an empty bar selection so a
+  ``no_data`` trade day still produces a stable, valid fingerprint.
 * Run the existing
   :class:`DefaultMinimumCandidatePoolCalculator` (no new business rules).
 * Persist one :class:`CandidatePoolRun` and all :class:`CandidatePoolItem`
@@ -17,6 +22,16 @@ slice for the personal Candidate Pool vertical slice:
 * Transition the run ``CALCULATED -> VALIDATED -> PUBLISHED`` through
   the existing repository state machine, using timezone-aware UTC
   timestamps for the terminal transition.
+
+Run identity uses the six-part natural unique key
+``(trade_date, algorithm_key, algorithm_version, parameter_hash,
+input_snapshot_id, market_data_fingerprint)``. Behaviour is safe by
+construction: an idempotent rerun with the exact same selected bar
+revisions reuses the existing ``PUBLISHED`` row (the database unique
+constraint never fires); a re-run that observes a changed selected bar
+revision, or any bar that was previously missing for the same snapshot
+and policy, gets a fresh fingerprint and therefore a new immutable
+``CandidatePoolRun`` row instead of overwriting the audit history.
 
 The slice is intentionally Dagster-free: no asset wiring, no
 publication infrastructure, no superseded state. The Dagster asset and
@@ -36,6 +51,7 @@ from uuid import UUID
 
 import yaml
 from invest_domain.candidate_pool.calculator import DefaultMinimumCandidatePoolCalculator
+from invest_domain.candidate_pool.fingerprint import compute_market_data_fingerprint
 from invest_domain.candidate_pool.models import (
     CandidatePoolPolicy,
     CandidatePoolResult,
@@ -373,22 +389,36 @@ def calculate_and_publish_candidate_pool(
        ``snapshot_date`` (no silent fallback).
     3. Read only ``trade_date`` bars with ``Adjust.NONE`` and rebuild
        them through the domain :class:`DailyBar` model.
-    4. Run :class:`DefaultMinimumCandidatePoolCalculator` against the
+    4. Compute :data:`market_data_fingerprint` over the exact selected
+       bar revisions via
+       :func:`invest_domain.candidate_pool.fingerprint.compute_market_data_fingerprint`.
+       The helper accepts an empty selection, so a ``no_data`` trade day
+       still produces a stable 64-character lowercase-hex fingerprint.
+    5. Run :class:`DefaultMinimumCandidatePoolCalculator` against the
        snapshot, bars and ``policy`` to obtain the deterministic
        result.
-    5. Look up an existing run by the ADR-0008 natural unique key
+    6. Look up an existing run by the six-part natural unique key
        ``(trade_date, algorithm_key, algorithm_version, parameter_hash,
-       input_snapshot_id)``. If one is already published, return it
-       paired with the freshly calculated result without writing
-       anything (idempotent rerun).
-    6. Otherwise, persist the run and items; verify the inserted item
+       input_snapshot_id, market_data_fingerprint)``. If one is already
+       published, return it paired with the freshly calculated result
+       without writing anything (idempotent rerun).
+    7. Otherwise, persist the run and items; verify the inserted item
        count matches the calculator result count.
-    7. Transition the run ``CALCULATED -> VALIDATED -> PUBLISHED`` with
+    8. Transition the run ``CALCULATED -> VALIDATED -> PUBLISHED`` with
        timezone-aware UTC timestamps.
 
     The returned :class:`CandidatePoolPublishResult` carries the
     terminal :class:`CandidatePoolRun` (with ``published_at`` set) and
     the pure-function :class:`CandidatePoolResult` for audit.
+
+    Safety contract:
+        * Identical selected bar revisions reuse the existing
+          :class:`CandidatePoolRun` row (the database unique constraint
+          never fires; no state-machine transitions run).
+        * A revised, or previously-missing, bar in the selection
+          produces a fresh fingerprint and therefore a new immutable
+          :class:`CandidatePoolRun` row that lives alongside the prior
+          row. The audit history is preserved instead of overwritten.
     """
 
     with uow_factory() as uow:
@@ -404,6 +434,7 @@ def calculate_and_publish_candidate_pool(
         bars = _load_bars_for_trade_date(
             uow, instrument_ids=snapshot.instrument_ids, trade_date=trade_date
         )
+        market_data_fingerprint = compute_market_data_fingerprint(bars)
         result: CandidatePoolResult = calculator.calculate(snapshot, bars, policy)
 
         existing = uow.candidate_pool_runs.get_by_natural_key(
@@ -412,6 +443,7 @@ def calculate_and_publish_candidate_pool(
             algorithm_version=policy.algorithm_version,
             parameter_hash=policy.parameter_hash,
             input_snapshot_id=snapshot.id,
+            market_data_fingerprint=market_data_fingerprint,
         )
         if existing is not None:
             uow.commit()
@@ -430,6 +462,7 @@ def calculate_and_publish_candidate_pool(
             included_count=result.summary.included_count,
             status=CandidatePoolStatus.CALCULATED,
             created_at=finished_at,
+            market_data_fingerprint=market_data_fingerprint,
         )
         persisted_run = uow.candidate_pool_runs.add(run)
         inserted = uow.candidate_pool_items.bulk_add(

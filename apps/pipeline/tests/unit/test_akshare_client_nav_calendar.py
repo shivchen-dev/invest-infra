@@ -20,6 +20,12 @@ NAV / trading-calendar client methods:
   ``pandas``-free.
 - Both methods stamp the existing canonical SHA-256 response hash
   on the returned :class:`AkshareResponse`.
+- :meth:`AkshareClient.fetch_fund_etf_hist_em` retries transient
+  ``OSError`` subclasses raised by the SDK call with deterministic
+  ``1.0`` / ``2.0`` second exponential delays while never retrying
+  non-``OSError`` exceptions or dataframe-normalisation failures; the
+  constructor validates ``max_attempts >= 1`` and accepts an injected
+  ``sleep`` callable.
 
 The tests inject a stub ``akshare`` module via the client's
 ``module=`` kwarg so CI never has the real SDK installed.
@@ -329,6 +335,192 @@ class AkshareClientFundEtfSpotEmFetchTest(unittest.TestCase):
         with self.assertRaises(ProviderBadResponseError) as ctx:
             client.fetch_fund_etf_spot_em()
         self.assertIn("upstream 503", str(ctx.exception))
+
+
+class AkshareClientFundEtfHistEmRetryTest(unittest.TestCase):
+    """:meth:`AkshareClient.fetch_fund_etf_hist_em` bounded retry contract."""
+
+    @staticmethod
+    def _hist_em_payload() -> list[dict[str, Any]]:
+        return [
+            {
+                "trade_date": "2026-07-30",
+                "open": "3.900",
+                "close": "3.910",
+                "high": "3.920",
+                "low": "3.890",
+                "volume": "10000000",
+                "amount": "39100000",
+            },
+        ]
+
+    def test_oserror_then_success_retries_with_single_delay(self) -> None:
+        calls = {"count": 0}
+        sleep_calls: list[float] = []
+
+        def _hist_em(**kwargs: Any) -> list[dict[str, Any]]:
+            calls["count"] += 1
+            if calls["count"] == 1:
+                raise ConnectionError("transient connection reset")
+            return self._hist_em_payload()
+
+        def _sleep(seconds: float) -> None:
+            sleep_calls.append(seconds)
+
+        client = AkshareClient(
+            _enabled_settings(),
+            module=SimpleNamespace(fund_etf_hist_em=_hist_em),
+            sleep=_sleep,
+        )
+        response = client.fetch_fund_etf_hist_em(
+            symbol="510300",
+            start_date=date(2026, 7, 30),
+            end_date=date(2026, 7, 30),
+        )
+        self.assertEqual(calls["count"], 2)
+        self.assertEqual(sleep_calls, [1.0])
+        assert isinstance(response, AkshareResponse)
+        self.assertEqual(response.operation, "fund_etf_hist_em")
+        self.assertEqual(len(response.raw_payload), 1)
+        self.assertEqual(len(response.raw_payload_hash), 64)
+
+    def test_persistent_oserror_exhausts_three_attempts_then_raises(self) -> None:
+        calls = {"count": 0}
+        sleep_calls: list[float] = []
+
+        def _hist_em(**kwargs: Any) -> list[dict[str, Any]]:
+            calls["count"] += 1
+            raise OSError("upstream unreachable")
+
+        def _sleep(seconds: float) -> None:
+            sleep_calls.append(seconds)
+
+        client = AkshareClient(
+            _enabled_settings(),
+            module=SimpleNamespace(fund_etf_hist_em=_hist_em),
+            sleep=_sleep,
+        )
+        with self.assertRaises(ProviderBadResponseError) as ctx:
+            client.fetch_fund_etf_hist_em(
+                symbol="510300",
+                start_date=date(2026, 7, 30),
+                end_date=date(2026, 7, 30),
+            )
+        self.assertEqual(calls["count"], 3)
+        self.assertEqual(sleep_calls, [1.0, 2.0])
+        self.assertEqual(ctx.exception.provider_key, "akshare")
+        self.assertIn("OSError", str(ctx.exception))
+        self.assertIn("upstream unreachable", str(ctx.exception))
+        self.assertIsInstance(ctx.exception.__cause__, OSError)
+
+    def test_max_attempts_four_extends_exponential_delays_before_exhaustion(self) -> None:
+        # ``max_attempts=4`` keeps the ``1.0 * 2 ** (attempt - 1)``
+        # schedule so the three retry sleeps land at
+        # ``[1.0, 2.0, 4.0]`` before the final attempt raises.
+        calls = {"count": 0}
+        sleep_calls: list[float] = []
+
+        def _hist_em(**kwargs: Any) -> list[dict[str, Any]]:
+            calls["count"] += 1
+            raise OSError("upstream unreachable")
+
+        def _sleep(seconds: float) -> None:
+            sleep_calls.append(seconds)
+
+        client = AkshareClient(
+            _enabled_settings(),
+            module=SimpleNamespace(fund_etf_hist_em=_hist_em),
+            sleep=_sleep,
+            max_attempts=4,
+        )
+        with self.assertRaises(ProviderBadResponseError) as ctx:
+            client.fetch_fund_etf_hist_em(
+                symbol="510300",
+                start_date=date(2026, 7, 30),
+                end_date=date(2026, 7, 30),
+            )
+        self.assertEqual(calls["count"], 4)
+        self.assertEqual(sleep_calls, [1.0, 2.0, 4.0])
+        self.assertEqual(ctx.exception.provider_key, "akshare")
+        self.assertIn("OSError", str(ctx.exception))
+        self.assertIsInstance(ctx.exception.__cause__, OSError)
+
+    def test_non_retryable_value_error_runs_once_without_sleep(self) -> None:
+        calls = {"count": 0}
+        sleep_calls: list[float] = []
+
+        def _hist_em(**kwargs: Any) -> list[dict[str, Any]]:
+            calls["count"] += 1
+            raise ValueError("malformed upstream schema")
+
+        def _sleep(seconds: float) -> None:
+            sleep_calls.append(seconds)
+
+        client = AkshareClient(
+            _enabled_settings(),
+            module=SimpleNamespace(fund_etf_hist_em=_hist_em),
+            sleep=_sleep,
+        )
+        with self.assertRaises(ProviderBadResponseError) as ctx:
+            client.fetch_fund_etf_hist_em(
+                symbol="510300",
+                start_date=date(2026, 7, 30),
+                end_date=date(2026, 7, 30),
+            )
+        self.assertEqual(calls["count"], 1)
+        self.assertEqual(sleep_calls, [])
+        self.assertIn("ValueError", str(ctx.exception))
+        self.assertIsInstance(ctx.exception.__cause__, ValueError)
+
+    def test_dataframe_normalization_failure_does_not_retry(self) -> None:
+        calls = {"count": 0}
+        sleep_calls: list[float] = []
+
+        def _hist_em(**kwargs: Any) -> list[dict[str, Any]]:
+            calls["count"] += 1
+            # Return a dataframe whose ``to_dict`` raises ``ValueError``
+            # so the normaliser converts it into
+            # ``ProviderBadResponseError``. The retry loop must not
+            # re-invoke the SDK because the call itself succeeded.
+            return _DataFrameRaisingOnToDict()
+
+        def _sleep(seconds: float) -> None:
+            sleep_calls.append(seconds)
+
+        client = AkshareClient(
+            _enabled_settings(),
+            module=SimpleNamespace(fund_etf_hist_em=_hist_em),
+            sleep=_sleep,
+        )
+        with self.assertRaises(ProviderBadResponseError) as ctx:
+            client.fetch_fund_etf_hist_em(
+                symbol="510300",
+                start_date=date(2026, 7, 30),
+                end_date=date(2026, 7, 30),
+            )
+        self.assertEqual(calls["count"], 1)
+        self.assertEqual(sleep_calls, [])
+        self.assertIn("not a serialisable", str(ctx.exception))
+
+    def test_invalid_max_attempts_is_rejected(self) -> None:
+        with self.assertRaises(ValueError) as ctx:
+            AkshareClient(_enabled_settings(), max_attempts=0)
+        self.assertIn("max_attempts", str(ctx.exception))
+        with self.assertRaises(ValueError) as ctx:
+            AkshareClient(_enabled_settings(), max_attempts=-1)
+        self.assertIn("max_attempts", str(ctx.exception))
+
+
+class _DataFrameRaisingOnToDict:
+    """Stub dataframe whose ``to_dict`` raises ``ValueError``.
+
+    The normaliser catches the ``ValueError`` raised here and converts
+    it into :class:`ProviderBadResponseError`; the retry loop must
+    leave the SDK call count at one because the call itself succeeded.
+    """
+
+    def to_dict(self, orient: str = "dict") -> list[dict[str, Any]]:
+        raise ValueError(f"unsupported orient={orient!r}")
 
 
 if __name__ == "__main__":

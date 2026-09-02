@@ -4,11 +4,12 @@ from __future__ import annotations
 
 from datetime import date, datetime, timezone
 from decimal import Decimal
-from uuid import UUID, uuid4
+from uuid import uuid4
 
 import pytest
-
+from invest_domain.candidate_pool.fingerprint import compute_market_data_fingerprint
 from invest_domain.candidate_pool.models import (
+    LEGACY_MARKET_DATA_FINGERPRINT,
     CalculationContext,
     CandidatePoolItem,
     CandidatePoolPolicy,
@@ -27,6 +28,10 @@ from invest_domain.candidate_pool.models import (
     SelectionCriteria,
 )
 from invest_domain.instruments.models import InstrumentId
+from invest_domain.market_data.models import BarSource, DailyBar
+from invest_domain.market_data.values import Adjust, TradingStatus
+
+from .conftest import make_bar_source
 
 
 def _default_policy() -> CandidatePoolPolicy:
@@ -480,3 +485,180 @@ class TestResultAndItem:
                 passed=True,
                 threshold=1,  # type: ignore[arg-type]
             )
+
+
+class TestMarketDataFingerprint:
+    def _make_bar(
+        self,
+        *,
+        instrument_id: InstrumentId,
+        trade_date: date,
+        revision: int = 1,
+        close: str = "3.15",
+        volume: str = "1000",
+        amount: str = "3150000",
+        trading_status: TradingStatus = TradingStatus.NORMAL,
+        source: BarSource | None = None,
+    ) -> DailyBar:
+        bar_source = source or make_bar_source()
+        if trading_status is TradingStatus.SUSPENDED:
+            return DailyBar.build(
+                instrument_id=instrument_id,
+                trade_date=trade_date,
+                open=None,
+                high=None,
+                low=None,
+                close=None,
+                prev_close=None,
+                volume=None,
+                amount=None,
+                adjustment=Adjust.NONE,
+                trading_status=trading_status,
+                source=bar_source,
+                revision=revision,
+            )
+        return DailyBar.build(
+            instrument_id=instrument_id,
+            trade_date=trade_date,
+            open=Decimal(close),
+            high=Decimal(close),
+            low=Decimal(close),
+            close=Decimal(close),
+            prev_close=Decimal(close),
+            volume=Decimal(volume),
+            amount=Decimal(amount),
+            adjustment=Adjust.NONE,
+            trading_status=trading_status,
+            source=bar_source,
+            revision=revision,
+        )
+
+    def test_order_independence(self) -> None:
+        a = self._make_bar(
+            instrument_id=InstrumentId(uuid4()), trade_date=date(2026, 7, 30)
+        )
+        b = self._make_bar(
+            instrument_id=InstrumentId(uuid4()), trade_date=date(2026, 7, 31)
+        )
+        assert compute_market_data_fingerprint([a, b]) == compute_market_data_fingerprint(
+            [b, a]
+        )
+
+    def test_deterministic_identical_input(self) -> None:
+        bar = self._make_bar(
+            instrument_id=InstrumentId(uuid4()), trade_date=date(2026, 7, 30)
+        )
+        first = compute_market_data_fingerprint([bar])
+        second = compute_market_data_fingerprint([bar])
+        assert first == second
+        assert len(first) == 64
+        assert first == first.lower()
+
+    def test_changed_revision_changes_fingerprint_with_same_row_hash(self) -> None:
+        iid = InstrumentId(uuid4())
+        shared_source = make_bar_source()
+        revision_one = self._make_bar(
+            instrument_id=iid,
+            trade_date=date(2026, 7, 30),
+            revision=1,
+            source=shared_source,
+        )
+        revision_two = self._make_bar(
+            instrument_id=iid,
+            trade_date=date(2026, 7, 30),
+            revision=2,
+            source=shared_source,
+        )
+        assert revision_one.row_hash == revision_two.row_hash
+        assert revision_one.revision != revision_two.revision
+        assert compute_market_data_fingerprint(
+            [revision_one]
+        ) != compute_market_data_fingerprint([revision_two])
+
+    def test_changed_row_content_changes_fingerprint(self) -> None:
+        iid = InstrumentId(uuid4())
+        first = self._make_bar(
+            instrument_id=iid, trade_date=date(2026, 7, 30), close="3.15"
+        )
+        second = self._make_bar(
+            instrument_id=iid, trade_date=date(2026, 7, 30), close="3.16"
+        )
+        assert first.row_hash != second.row_hash
+        assert compute_market_data_fingerprint([first]) != compute_market_data_fingerprint(
+            [second]
+        )
+
+    def test_empty_input_has_stable_fingerprint(self) -> None:
+        assert compute_market_data_fingerprint([]) == compute_market_data_fingerprint(())
+
+    def test_wrong_type_fails(self) -> None:
+        with pytest.raises(TypeError, match="DailyBar"):
+            compute_market_data_fingerprint(["not-a-bar"])  # type: ignore[list-item]
+
+    def test_duplicate_identity_fails(self) -> None:
+        iid = InstrumentId(uuid4())
+        trade_date = date(2026, 7, 30)
+        bar_a = self._make_bar(instrument_id=iid, trade_date=trade_date, revision=1)
+        bar_b = self._make_bar(instrument_id=iid, trade_date=trade_date, revision=1)
+        with pytest.raises(ValueError, match="duplicate"):
+            compute_market_data_fingerprint([bar_a, bar_b])
+
+
+class TestCandidatePoolRunMarketDataFingerprint:
+    @staticmethod
+    def _base_kwargs() -> dict[str, object]:
+        return {
+            "id": uuid4(),
+            "trade_date": date(2026, 7, 30),
+            "algorithm_key": "etf_candidate_pool",
+            "algorithm_version": "1.0.0",
+            "parameter_set_key": "default",
+            "parameter_hash": _default_policy().parameter_hash,
+            "input_snapshot_id": uuid4(),
+            "input_row_count": 100,
+            "included_count": 10,
+            "status": CandidatePoolStatus.CALCULATED,
+            "created_at": datetime(2026, 7, 30, 8, 0, 0, tzinfo=timezone.utc),
+        }
+
+    def test_default_compatibility_uses_legacy_constant(self) -> None:
+        run = CandidatePoolRun(**self._base_kwargs())
+        assert run.market_data_fingerprint == LEGACY_MARKET_DATA_FINGERPRINT
+        assert run.market_data_fingerprint == "0" * 64
+        assert len(run.market_data_fingerprint) == 64
+
+    def test_explicit_valid_fingerprint_is_accepted(self) -> None:
+        digest = ("abcdef0123456789" * 4)
+        assert len(digest) == 64
+        run = CandidatePoolRun(**self._base_kwargs(), market_data_fingerprint=digest)
+        assert run.market_data_fingerprint == digest
+
+    def test_wrong_type_is_rejected(self) -> None:
+        with pytest.raises(TypeError, match="market_data_fingerprint"):
+            CandidatePoolRun(**self._base_kwargs(), market_data_fingerprint=123)  # type: ignore[arg-type]
+
+    @pytest.mark.parametrize(
+        "value",
+        [
+            pytest.param("0" * 63, id="too-short"),
+            pytest.param("0" * 65, id="too-long"),
+            pytest.param("A" * 64, id="uppercase"),
+            pytest.param("a" * 63 + "Z", id="mixed-case"),
+            pytest.param("g" * 64, id="non-hex-letter"),
+            pytest.param("0" * 63 + "!", id="non-hex-suffix"),
+        ],
+    )
+    def test_invalid_fingerprints_are_rejected(self, value: str) -> None:
+        with pytest.raises(ValueError, match="market_data_fingerprint"):
+            CandidatePoolRun(**self._base_kwargs(), market_data_fingerprint=value)
+
+    def test_transition_to_preserves_fingerprint(self) -> None:
+        digest = "abcdef0123456789" * 4
+        run = CandidatePoolRun(**self._base_kwargs(), market_data_fingerprint=digest)
+        validated = run.transition_to(CandidatePoolStatus.VALIDATED)
+        assert validated.market_data_fingerprint == digest
+        published = validated.transition_to(
+            CandidatePoolStatus.PUBLISHED,
+            at=datetime(2026, 7, 30, 9, 0, 0, tzinfo=timezone.utc),
+        )
+        assert published.market_data_fingerprint == digest

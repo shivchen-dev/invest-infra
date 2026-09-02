@@ -49,6 +49,14 @@ _SCORE_WEIGHT_KEYS: tuple[str, ...] = (
 )
 
 
+# Placeholder digest for runs whose calculation has not yet been bound to
+# a real market-data selection. 64 lowercase hex characters (the SHA-256
+# width) so the field shape stays compatible with the digest produced
+# by :func:`invest_domain.candidate_pool.fingerprint.compute_market_data_fingerprint`
+# once storage and pipeline slices start threading the real value through.
+LEGACY_MARKET_DATA_FINGERPRINT: str = "0" * 64
+
+
 class CandidatePoolStatus(StrEnum):
     """Lifecycle states for a :class:`CandidatePoolRun`.
 
@@ -566,9 +574,10 @@ class CandidatePoolRun:
 
     Mirrors plan §5.6 (id, trade_date, algorithm_key, algorithm_version,
     parameter_set_key, parameter_hash, input_snapshot_id, status,
-    counts, timestamps). The state machine is enforced by
-    :meth:`transition`; the dataclass itself never allows an illegal
-    transition.
+    counts, timestamps) and carries ``market_data_fingerprint`` to bind
+    the run to the exact set of market-data revisions used. The state
+    machine is enforced by :meth:`transition_to`; the dataclass itself
+    never allows an illegal transition.
     """
 
     id: UUID
@@ -582,6 +591,7 @@ class CandidatePoolRun:
     included_count: int
     status: CandidatePoolStatus
     created_at: datetime
+    market_data_fingerprint: str = LEGACY_MARKET_DATA_FINGERPRINT
     finished_at: datetime | None = None
     published_at: datetime | None = None
     rejected_at: datetime | None = None
@@ -603,6 +613,7 @@ class CandidatePoolRun:
             raise ValueError("CandidatePoolRun.parameter_set_key must not be empty")
         if not self.parameter_hash.strip():
             raise ValueError("CandidatePoolRun.parameter_hash must not be empty")
+        _require_market_data_fingerprint(self.market_data_fingerprint)
         if self.input_row_count < 0:
             raise ValueError(
                 f"CandidatePoolRun.input_row_count must be >= 0, got {self.input_row_count}"
@@ -673,6 +684,7 @@ __all__ = [
     "CandidatePoolSummary",
     "EligibilityCriteria",
     "ExclusionReason",
+    "LEGACY_MARKET_DATA_FINGERPRINT",
     "LiquidityCriteria",
     "PriceQualityCriteria",
     "RiskCriteria",
@@ -705,3 +717,22 @@ def _require_non_negative_decimal(value: Decimal, *, field_name: str) -> None:
         raise ValueError(f"{field_name} must be a finite Decimal, got {value!s}")
     if value < 0:
         raise ValueError(f"{field_name} must be >= 0, got {value!s}")
+
+
+def _require_market_data_fingerprint(value: object) -> None:
+    if not isinstance(value, str):
+        raise TypeError(
+            "CandidatePoolRun.market_data_fingerprint must be a str, "
+            f"got {type(value).__name__}"
+        )
+    if len(value) != 64:
+        raise ValueError(
+            f"CandidatePoolRun.market_data_fingerprint must be exactly 64 characters, "
+            f"got {len(value)}"
+        )
+    for character in value:
+        if character not in "0123456789abcdef":
+            raise ValueError(
+                "CandidatePoolRun.market_data_fingerprint must contain only lowercase "
+                f"hexadecimal characters, got {value!r}"
+            )

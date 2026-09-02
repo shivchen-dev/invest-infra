@@ -71,6 +71,7 @@ def _make_run(
     published_at: datetime | None = None,
     rejected_at: datetime | None = None,
     rejection_reason: str | None = None,
+    market_data_fingerprint: str = "f" * 64,
 ) -> CandidatePoolRun:
     return CandidatePoolRun(
         id=run_id or uuid4(),
@@ -88,6 +89,7 @@ def _make_run(
         published_at=published_at,
         rejected_at=rejected_at,
         rejection_reason=rejection_reason,
+        market_data_fingerprint=market_data_fingerprint,
     )
 
 
@@ -109,6 +111,7 @@ def _make_run_row(
     parameter_set_key: str = "default",
     parameter_hash: str = "a" * 64,
     input_snapshot_id: UUID | None = None,
+    market_data_fingerprint: str = "f" * 64,
 ) -> MagicMock:
     """Build a mock that looks like a :class:`CandidatePoolRunRow`."""
 
@@ -121,6 +124,7 @@ def _make_run_row(
     row.parameter_set_key = parameter_set_key
     row.parameter_hash = parameter_hash
     row.input_snapshot_id = input_snapshot_id or uuid4()
+    row.market_data_fingerprint = market_data_fingerprint
     row.input_row_count = input_row_count
     row.included_count = included_count
     row.status = status
@@ -207,6 +211,9 @@ class SqlAlchemyCandidatePoolRunRepositoryMockTests(unittest.TestCase):
         self.assertEqual(added_row.parameter_set_key, run.parameter_set_key)
         self.assertEqual(added_row.parameter_hash, run.parameter_hash)
         self.assertEqual(added_row.input_snapshot_id, run.input_snapshot_id)
+        self.assertEqual(
+            added_row.market_data_fingerprint, run.market_data_fingerprint
+        )
         self.assertEqual(added_row.input_row_count, run.input_row_count)
         self.assertEqual(added_row.included_count, run.included_count)
         self.assertEqual(added_row.started_at, run.created_at)
@@ -214,6 +221,18 @@ class SqlAlchemyCandidatePoolRunRepositoryMockTests(unittest.TestCase):
         self.assertIsInstance(result, CandidatePoolRun)
         self.assertEqual(result.id, run.id)
         self.assertEqual(result.status, CandidatePoolStatus.CALCULATED)
+
+    def test_add_writes_market_data_fingerprint(self) -> None:
+        fingerprint = "1" * 64
+        run = _make_run(market_data_fingerprint=fingerprint)
+
+        result = self._repo.add(run)
+
+        added_row = self._session.add.call_args[0][0]
+        self.assertEqual(
+            added_row.market_data_fingerprint, fingerprint
+        )
+        self.assertEqual(result.market_data_fingerprint, fingerprint)
 
     def test_add_persists_quality_summary(self) -> None:
         run = _make_run()
@@ -239,7 +258,10 @@ class SqlAlchemyCandidatePoolRunRepositoryMockTests(unittest.TestCase):
 
     def test_get_by_id_returns_run_when_present(self) -> None:
         run_id = uuid4()
-        row = _make_run_row(row_id=run_id, status="validated")
+        fingerprint = "2" * 64
+        row = _make_run_row(
+            row_id=run_id, status="validated", market_data_fingerprint=fingerprint
+        )
         self._session.get.return_value = row
 
         result = self._repo.get_by_id(run_id)
@@ -249,6 +271,25 @@ class SqlAlchemyCandidatePoolRunRepositoryMockTests(unittest.TestCase):
         assert result is not None
         self.assertEqual(result.id, run_id)
         self.assertEqual(result.status, CandidatePoolStatus.VALIDATED)
+        self.assertEqual(result.market_data_fingerprint, fingerprint)
+
+    def test_row_to_candidate_pool_run_round_trips_market_data_fingerprint(
+        self,
+    ) -> None:
+        fingerprint = "3" * 64
+        run_id = uuid4()
+        row = _make_run_row(
+            row_id=run_id, status="validated", market_data_fingerprint=fingerprint
+        )
+        self._session.get.return_value = row
+
+        result = self._repo.get_by_id(run_id)
+
+        self.assertIsNotNone(result)
+        assert result is not None
+        self.assertEqual(
+            result.market_data_fingerprint, fingerprint
+        )
 
     def test_get_by_id_returns_none_when_absent(self) -> None:
         missing = uuid4()
@@ -265,12 +306,14 @@ class SqlAlchemyCandidatePoolRunRepositoryMockTests(unittest.TestCase):
 
     def test_get_by_natural_key_returns_run_when_present(self) -> None:
         snapshot_id = uuid4()
+        fingerprint = "4" * 64
         row = _make_run_row(
             status="published",
             algorithm_key="candidate_pool.v1",
             algorithm_version="v1.0",
             parameter_hash="a" * 64,
             input_snapshot_id=snapshot_id,
+            market_data_fingerprint=fingerprint,
             published_at=_utc(2026, 7, 31, 11),
         )
         scalars_mock = self._session.scalars.return_value
@@ -282,6 +325,7 @@ class SqlAlchemyCandidatePoolRunRepositoryMockTests(unittest.TestCase):
             algorithm_version="v1.0",
             parameter_hash="a" * 64,
             input_snapshot_id=snapshot_id,
+            market_data_fingerprint=fingerprint,
         )
 
         self.assertEqual(self._session.scalars.call_count, 1)
@@ -291,6 +335,7 @@ class SqlAlchemyCandidatePoolRunRepositoryMockTests(unittest.TestCase):
         self.assertEqual(result.status, CandidatePoolStatus.PUBLISHED)
         self.assertEqual(result.input_snapshot_id, snapshot_id)
         self.assertEqual(result.parameter_hash, "a" * 64)
+        self.assertEqual(result.market_data_fingerprint, fingerprint)
 
     def test_get_by_natural_key_returns_none_when_absent(self) -> None:
         scalars_mock = self._session.scalars.return_value
@@ -302,9 +347,52 @@ class SqlAlchemyCandidatePoolRunRepositoryMockTests(unittest.TestCase):
             algorithm_version="v1.0",
             parameter_hash="a" * 64,
             input_snapshot_id=uuid4(),
+            market_data_fingerprint="5" * 64,
         )
 
         self.assertEqual(self._session.scalars.call_count, 1)
+        self.assertIsNone(result)
+
+    def test_get_by_natural_key_requires_market_data_fingerprint(self) -> None:
+        scalars_mock = self._session.scalars.return_value
+        scalars_mock.first.return_value = None
+
+        with self.assertRaises(TypeError):
+            self._repo.get_by_natural_key(
+                trade_date=date(2026, 7, 31),
+                algorithm_key="candidate_pool.v1",
+                algorithm_version="v1.0",
+                parameter_hash="a" * 64,
+                input_snapshot_id=uuid4(),
+            )
+        self._session.scalars.assert_not_called()
+
+    def test_get_by_natural_key_filters_by_market_data_fingerprint(self) -> None:
+        snapshot_id = uuid4()
+        target_fingerprint = "6" * 64
+        other_fingerprint = "7" * 64
+        scalars_mock = self._session.scalars.return_value
+        scalars_mock.first.return_value = None
+
+        result = self._repo.get_by_natural_key(
+            trade_date=date(2026, 7, 31),
+            algorithm_key="candidate_pool.v1",
+            algorithm_version="v1.0",
+            parameter_hash="a" * 64,
+            input_snapshot_id=snapshot_id,
+            market_data_fingerprint=target_fingerprint,
+        )
+
+        self.assertEqual(self._session.scalars.call_count, 1)
+        stmt = self._session.scalars.call_args[0][0]
+        column_comparisons = list(stmt.whereclause.get_children())
+        fingerprints = [
+            child.right.value
+            for child in column_comparisons
+            if getattr(child.left, "name", None) == "market_data_fingerprint"
+        ]
+        self.assertEqual(fingerprints, [target_fingerprint])
+        self.assertNotIn(other_fingerprint, fingerprints)
         self.assertIsNone(result)
 
     # ------------------------------------------------------------------

@@ -2858,6 +2858,7 @@ class SqlAlchemyCandidatePoolRunRepository:
             parameter_set_key=run.parameter_set_key,
             parameter_hash=run.parameter_hash,
             input_snapshot_id=run.input_snapshot_id,
+            market_data_fingerprint=run.market_data_fingerprint,
             input_row_count=run.input_row_count,
             included_count=run.included_count,
             status=run.status.value,
@@ -2886,17 +2887,25 @@ class SqlAlchemyCandidatePoolRunRepository:
         algorithm_version: str,
         parameter_hash: str,
         input_snapshot_id: UUID,
+        market_data_fingerprint: str,
     ) -> CandidatePoolRun | None:
-        """Return the run identified by the ADR-0008 natural unique key.
+        """Return the run identified by the six-part natural unique key.
 
         The natural key
         ``(trade_date, algorithm_key, algorithm_version, parameter_hash,
-        input_snapshot_id)`` is enforced by the database unique constraint
+        input_snapshot_id, market_data_fingerprint)`` is enforced by the
+        database unique constraint
         ``uq_candidate_pool_runs_natural_key``; at most one row can match.
-        This lookup is the idempotent entry point used by the application
-        service when the same business calculation is rerun so the existing
-        ``PUBLISHED`` run can be returned instead of triggering a duplicate
-        insert.
+        ``market_data_fingerprint`` is the SHA-256 digest of the selected
+        DailyBar revisions computed via
+        :func:`invest_domain.candidate_pool.fingerprint.compute_market_data_fingerprint`
+        and is the sixth key component introduced to bind the run identity to
+        the exact market-data selection that fed it. This lookup is the
+        idempotent entry point used by the application service when the
+        same business calculation is rerun so the existing ``PUBLISHED``
+        run can be returned instead of triggering a duplicate insert; a
+        re-run with different market data is a different key and creates
+        a new row instead of overwriting the audit history.
         """
 
         stmt = (
@@ -2907,6 +2916,8 @@ class SqlAlchemyCandidatePoolRunRepository:
                 CandidatePoolRunRow.algorithm_version == algorithm_version,
                 CandidatePoolRunRow.parameter_hash == parameter_hash,
                 CandidatePoolRunRow.input_snapshot_id == input_snapshot_id,
+                CandidatePoolRunRow.market_data_fingerprint
+                == market_data_fingerprint,
             )
             .limit(1)
         )
@@ -2920,12 +2931,13 @@ class SqlAlchemyCandidatePoolRunRepository:
         limit: int = 100,
         offset: int = 0,
     ) -> Sequence[CandidatePoolRun]:
-        """Return runs in ``status`` ordered by ``trade_date`` desc then ``id`` asc.
+        """Return runs in ``status`` ordered by date and creation time descending.
 
         The descending ``trade_date`` order matches the dashboard use
-        case where the most recent trade-day must come first. An
-        unknown ``status`` value yields an empty result rather than
-        raising so the repository can be probed safely.
+        case where the most recent trade-day must come first.
+        Within a trade-day, the newest immutable recalculation comes first;
+        ``id`` is the deterministic final tiebreaker. An unknown ``status``
+        value yields an empty result rather than raising.
         """
 
         if limit < 0:
@@ -2938,6 +2950,7 @@ class SqlAlchemyCandidatePoolRunRepository:
             .where(CandidatePoolRunRow.status == status_value)
             .order_by(
                 CandidatePoolRunRow.trade_date.desc(),
+                CandidatePoolRunRow.created_at.desc(),
                 CandidatePoolRunRow.id.asc(),
             )
             .limit(limit)
@@ -3127,6 +3140,7 @@ def _row_to_candidate_pool_run(row: CandidatePoolRunRow) -> CandidatePoolRun:
         parameter_set_key=row.parameter_set_key,
         parameter_hash=row.parameter_hash,
         input_snapshot_id=row.input_snapshot_id,
+        market_data_fingerprint=row.market_data_fingerprint,
         input_row_count=row.input_row_count,
         included_count=row.included_count,
         status=CandidatePoolStatus(row.status),

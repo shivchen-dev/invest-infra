@@ -11,6 +11,10 @@ The tests cover the full PR-3 slice 1 contract:
   ``no_data``, persisted item count mismatch with the calculator.
 * Determinism: two identical invocations produce the same
   ``parameter_hash`` and the same ordered item sequence.
+* Market-data fingerprint (six-part natural key): identical selected
+  revisions stay idempotent; revised or previously-missing bars spawn
+  a fresh immutable run instead of overwriting; an empty bar selection
+  remains stable across reruns.
 
 The slice is exercised through a hand-rolled ``_FakeUnitOfWork`` that
 exposes the real repository classes wired against a
@@ -35,6 +39,7 @@ from uuid import UUID, uuid4
 import pytest
 import yaml
 from invest_domain.candidate_pool.calculator import DefaultMinimumCandidatePoolCalculator
+from invest_domain.candidate_pool.fingerprint import compute_market_data_fingerprint
 from invest_domain.candidate_pool.models import (
     CandidatePoolPolicy,
     CandidatePoolRun,
@@ -227,6 +232,7 @@ def _build_uow_factory(
             parameter_set_key=run.parameter_set_key,
             parameter_hash=run.parameter_hash,
             input_snapshot_id=run.input_snapshot_id,
+            market_data_fingerprint=run.market_data_fingerprint,
             input_row_count=run.input_row_count,
             included_count=run.included_count,
             status=run.status.value,
@@ -250,6 +256,7 @@ def _build_uow_factory(
         algorithm_version: str,
         parameter_hash: str,
         input_snapshot_id: UUID,
+        market_data_fingerprint: str,
     ) -> CandidatePoolRun | None:
         for row in persisted_rows:
             if (
@@ -258,6 +265,7 @@ def _build_uow_factory(
                 and row.algorithm_version == algorithm_version
                 and row.parameter_hash == parameter_hash
                 and row.input_snapshot_id == input_snapshot_id
+                and row.market_data_fingerprint == market_data_fingerprint
             ):
                 return CandidatePoolRun(
                     id=row.id,
@@ -267,6 +275,7 @@ def _build_uow_factory(
                     parameter_set_key=row.parameter_set_key,
                     parameter_hash=row.parameter_hash,
                     input_snapshot_id=row.input_snapshot_id,
+                    market_data_fingerprint=row.market_data_fingerprint,
                     input_row_count=row.input_row_count,
                     included_count=row.included_count,
                     status=CandidatePoolStatus(row.status),
@@ -309,6 +318,7 @@ def _build_uow_factory(
                     parameter_set_key=current.parameter_set_key,
                     parameter_hash=current.parameter_hash,
                     input_snapshot_id=current.input_snapshot_id,
+                    market_data_fingerprint=current.market_data_fingerprint,
                     input_row_count=current.input_row_count,
                     included_count=current.included_count,
                     status=CandidatePoolStatus(current.status),
@@ -1113,6 +1123,274 @@ class IdempotentRerunTest(unittest.TestCase):
         self.assertEqual(
             uow.candidate_pool_runs_repo.transition_status.call_count, 2  # type: ignore[attr-defined]
         )
+
+
+class MarketDataFingerprintTest(unittest.TestCase):
+    """Six-part natural key behaviour tied to ``compute_market_data_fingerprint``.
+
+    Each test exercises one invariant of the safe-by-construction
+    re-run contract:
+
+    * identical selected bar revisions keep a single, immutable
+      :class:`CandidatePoolRun` (idempotent rerun);
+    * changing a selected bar's ``revision`` (or materialising a bar
+      that was previously missing) produces a *new* run instead of
+      overwriting the audit history;
+    * an empty selected-bar set still yields a stable fingerprint so
+      no-data days do not regress to non-idempotent reruns.
+
+    The tests also assert that the fingerprint on the returned
+    :class:`CandidatePoolRun` matches both the value the service handed
+    to the repository's ``get_by_natural_key`` lookup and the value
+    persisted onto the row.
+    """
+
+    def test_identical_selected_revisions_remain_idempotent(self) -> None:
+        snapshot_id = uuid4()
+        instr_a = UUID("00000000-0000-0000-0000-000000000021")
+        instr_b = UUID("00000000-0000-0000-0000-000000000022")
+        snapshot = _make_snapshot_row(snapshot_id=snapshot_id, instrument_ids=[instr_a, instr_b])
+        bars_by_instrument = {
+            instr_a: _make_stored_bar(instrument_id=instr_a, revision=1),
+            instr_b: _make_stored_bar(instrument_id=instr_b, revision=1),
+        }
+        factory, uow, _ = _build_uow_factory(
+            snapshot=snapshot, daily_bars_by_instrument=bars_by_instrument
+        )
+        policy = _build_policy()
+
+        first = calculate_and_publish_candidate_pool(
+            uow_factory=factory,
+            trade_date=_TRADE_DATE,
+            snapshot_id=snapshot_id,
+            policy=policy,
+            now_factory=_fixed_now,
+        )
+        second = calculate_and_publish_candidate_pool(
+            uow_factory=factory,
+            trade_date=_TRADE_DATE,
+            snapshot_id=snapshot_id,
+            policy=policy,
+            now_factory=_fixed_now,
+        )
+
+        self.assertEqual(second.run.id, first.run.id)
+        self.assertEqual(second.run.market_data_fingerprint, first.run.market_data_fingerprint)
+        self.assertEqual(len(second.run.market_data_fingerprint), 64)
+        for char in second.run.market_data_fingerprint:
+            self.assertIn(char, "0123456789abcdef")
+        self.assertEqual(
+            uow.candidate_pool_runs_repo.add.call_count, 1  # type: ignore[attr-defined]
+        )
+        self.assertEqual(
+            uow.candidate_pool_items_repo.bulk_add.call_count, 1  # type: ignore[attr-defined]
+        )
+        self.assertEqual(
+            uow.candidate_pool_runs_repo.transition_status.call_count, 2  # type: ignore[attr-defined]
+        )
+        self.assertEqual(
+            uow.candidate_pool_runs_repo.get_by_natural_key.call_count, 2  # type: ignore[attr-defined]
+        )
+        for call in uow.candidate_pool_runs_repo.get_by_natural_key.call_args_list:  # type: ignore[attr-defined]
+            self.assertEqual(
+                call.kwargs["market_data_fingerprint"], first.run.market_data_fingerprint
+            )
+
+    def test_changing_a_selected_revision_creates_a_second_run(self) -> None:
+        snapshot_id = uuid4()
+        instr = UUID("00000000-0000-0000-0000-000000000023")
+        snapshot = _make_snapshot_row(snapshot_id=snapshot_id, instrument_ids=[instr])
+        first_bar = _make_stored_bar(instrument_id=instr, revision=1)
+        revised_bar = _make_stored_bar(instrument_id=instr, revision=2)
+        bars_by_instrument = {instr: first_bar}
+        factory, uow, _ = _build_uow_factory(
+            snapshot=snapshot, daily_bars_by_instrument=bars_by_instrument
+        )
+        policy = _build_policy()
+
+        first = calculate_and_publish_candidate_pool(
+            uow_factory=factory,
+            trade_date=_TRADE_DATE,
+            snapshot_id=snapshot_id,
+            policy=policy,
+            now_factory=_fixed_now,
+        )
+        first_fingerprint = first.run.market_data_fingerprint
+
+        # Mutate the underlying bar so the next invocation observes a
+        # revised DailyBar under the same snapshot/policy.
+        bars_by_instrument[instr] = revised_bar
+
+        second = calculate_and_publish_candidate_pool(
+            uow_factory=factory,
+            trade_date=_TRADE_DATE,
+            snapshot_id=snapshot_id,
+            policy=policy,
+            now_factory=_fixed_now,
+        )
+
+        self.assertNotEqual(second.run.id, first.run.id)
+        self.assertNotEqual(
+            second.run.market_data_fingerprint, first_fingerprint
+        )
+        self.assertEqual(
+            uow.candidate_pool_runs_repo.add.call_count, 2  # type: ignore[attr-defined]
+        )
+        self.assertEqual(
+            uow.candidate_pool_items_repo.bulk_add.call_count, 2  # type: ignore[attr-defined]
+        )
+        # Two transitions per run (CALCULATED -> VALIDATED -> PUBLISHED).
+        self.assertEqual(
+            uow.candidate_pool_runs_repo.transition_status.call_count, 4  # type: ignore[attr-defined]
+        )
+        # The lookup fingerprint the service sent to the repository on
+        # the rerun must equal the freshly computed fingerprint for the
+        # revised selection and equal the persisted run fingerprint.
+        lookup_calls = uow.candidate_pool_runs_repo.get_by_natural_key.call_args_list  # type: ignore[attr-defined]
+        self.assertEqual(len(lookup_calls), 2)
+        self.assertEqual(lookup_calls[0].kwargs["market_data_fingerprint"], first_fingerprint)
+        self.assertEqual(
+            lookup_calls[1].kwargs["market_data_fingerprint"],
+            second.run.market_data_fingerprint,
+        )
+        self.assertEqual(
+            lookup_calls[1].kwargs["market_data_fingerprint"],
+            second.run.market_data_fingerprint,
+        )
+
+    def test_previously_missing_bar_creates_a_second_run(self) -> None:
+        snapshot_id = uuid4()
+        instr = UUID("00000000-0000-0000-0000-000000000024")
+        snapshot = _make_snapshot_row(snapshot_id=snapshot_id, instrument_ids=[instr])
+        bars_by_instrument: dict[UUID, StoredDailyBar | None] = {instr: None}
+        factory, uow, _ = _build_uow_factory(
+            snapshot=snapshot, daily_bars_by_instrument=bars_by_instrument
+        )
+        policy = _build_policy()
+
+        first = calculate_and_publish_candidate_pool(
+            uow_factory=factory,
+            trade_date=_TRADE_DATE,
+            snapshot_id=snapshot_id,
+            policy=policy,
+            now_factory=_fixed_now,
+        )
+        first_fingerprint = first.run.market_data_fingerprint
+
+        # The provider now supplies a bar for the previously-missing
+        # instrument; under the old five-part key this would collide,
+        # but the six-part key binds market-data identity so the
+        # service must mint a new immutable run.
+        bars_by_instrument[instr] = _make_stored_bar(instrument_id=instr, revision=1)
+
+        second = calculate_and_publish_candidate_pool(
+            uow_factory=factory,
+            trade_date=_TRADE_DATE,
+            snapshot_id=snapshot_id,
+            policy=policy,
+            now_factory=_fixed_now,
+        )
+
+        self.assertNotEqual(second.run.id, first.run.id)
+        self.assertNotEqual(
+            second.run.market_data_fingerprint, first_fingerprint
+        )
+        self.assertEqual(
+            uow.candidate_pool_runs_repo.add.call_count, 2  # type: ignore[attr-defined]
+        )
+
+    def test_empty_selected_bar_set_stays_stable_and_idempotent(self) -> None:
+        snapshot_id = uuid4()
+        instr_a = UUID("00000000-0000-0000-0000-000000000025")
+        instr_b = UUID("00000000-0000-0000-0000-000000000026")
+        snapshot = _make_snapshot_row(snapshot_id=snapshot_id, instrument_ids=[instr_a, instr_b])
+        # Every instrument's bar is missing -> the service observes an
+        # empty selected-bar set on every invocation.
+        bars_by_instrument: dict[UUID, StoredDailyBar | None] = {instr_a: None, instr_b: None}
+        factory, uow, _ = _build_uow_factory(
+            snapshot=snapshot, daily_bars_by_instrument=bars_by_instrument
+        )
+        policy = _build_policy()
+
+        first = calculate_and_publish_candidate_pool(
+            uow_factory=factory,
+            trade_date=_TRADE_DATE,
+            snapshot_id=snapshot_id,
+            policy=policy,
+            now_factory=_fixed_now,
+        )
+        second = calculate_and_publish_candidate_pool(
+            uow_factory=factory,
+            trade_date=_TRADE_DATE,
+            snapshot_id=snapshot_id,
+            policy=policy,
+            now_factory=_fixed_now,
+        )
+
+        # The fingerprint for an empty selection is itself a valid 64-
+        # char lowercase hex digest, and the helper supports it via
+        # its generic Iterable[DailyBar] signature.
+        self.assertEqual(len(first.run.market_data_fingerprint), 64)
+        for char in first.run.market_data_fingerprint:
+            self.assertIn(char, "0123456789abcdef")
+
+        self.assertEqual(second.run.id, first.run.id)
+        self.assertEqual(
+            second.run.market_data_fingerprint,
+            first.run.market_data_fingerprint,
+        )
+        self.assertEqual(
+            uow.candidate_pool_runs_repo.add.call_count, 1  # type: ignore[attr-defined]
+        )
+        self.assertEqual(
+            uow.candidate_pool_items_repo.bulk_add.call_count, 1  # type: ignore[attr-defined]
+        )
+        self.assertEqual(
+            uow.candidate_pool_runs_repo.transition_status.call_count, 2  # type: ignore[attr-defined]
+        )
+
+        # Lookup fingerprint on both invocations equals the run's
+        # fingerprint, proving the service both uses and persists it.
+        lookup_calls = uow.candidate_pool_runs_repo.get_by_natural_key.call_args_list  # type: ignore[attr-defined]
+        self.assertEqual(len(lookup_calls), 2)
+        for call in lookup_calls:
+            self.assertEqual(
+                call.kwargs["market_data_fingerprint"],
+                first.run.market_data_fingerprint,
+            )
+        # Cross-check the helper itself agrees the empty selection
+        # yields the same fingerprint the service computed.
+        self.assertEqual(
+            compute_market_data_fingerprint([]),
+            first.run.market_data_fingerprint,
+        )
+
+
+def test_returned_run_fingerprint_matches_lookup_and_persisted_row() -> None:
+    snapshot_id = uuid4()
+    instr = UUID("00000000-0000-0000-0000-000000000027")
+    snapshot = _make_snapshot_row(snapshot_id=snapshot_id, instrument_ids=[instr])
+    factory, uow, _ = _build_uow_factory(
+        snapshot=snapshot,
+        daily_bars_by_instrument={instr: _make_stored_bar(instrument_id=instr)},
+    )
+    policy = _build_policy()
+
+    result = calculate_and_publish_candidate_pool(
+        uow_factory=factory,
+        trade_date=_TRADE_DATE,
+        snapshot_id=snapshot_id,
+        policy=policy,
+        now_factory=_fixed_now,
+    )
+
+    add_call = uow.candidate_pool_runs_repo.add.call_args  # type: ignore[attr-defined]
+    persisted_run = add_call.args[0]
+    lookup_call = uow.candidate_pool_runs_repo.get_by_natural_key.call_args  # type: ignore[attr-defined]
+
+    assert result.run.market_data_fingerprint == persisted_run.market_data_fingerprint
+    assert lookup_call.kwargs["market_data_fingerprint"] == result.run.market_data_fingerprint
+    assert len(result.run.market_data_fingerprint) == 64
 
 
 if __name__ == "__main__":

@@ -322,9 +322,11 @@ class CandidatePoolRunRow(Base):
     PR-03 introduces the ``analytics.candidate_pool_runs`` table as the
     persistent record of a candidate-pool calculation. The natural unique
     key ``(trade_date, algorithm_key, algorithm_version, parameter_hash,
-    input_snapshot_id)`` enforces that two distinct runs cannot claim
-    the same inputs and policy fingerprint - this is the guard that
-    prevents accidental double-publication.
+    input_snapshot_id, market_data_fingerprint)`` enforces that two
+    distinct runs cannot claim the same inputs, policy fingerprint and
+    market-data selection - this is the guard that prevents accidental
+    double-publication and that lets a re-run with different market data
+    create a new row instead of overwriting the audit history.
 
     The state machine is enforced by :meth:`invest_domain.candidate_pool.
     models.CandidatePoolRun.transition_to` and persisted via
@@ -355,6 +357,10 @@ class CandidatePoolRunRow(Base):
         CheckConstraint(
             "length(parameter_hash) > 0",
             name="ck_candidate_pool_runs_parameter_hash_nonempty",
+        ),
+        CheckConstraint(
+            "market_data_fingerprint ~ '^[0-9a-f]{64}$'",
+            name="ck_candidate_pool_runs_market_data_fingerprint_lower_hex64",
         ),
         CheckConstraint(
             "input_row_count >= 0",
@@ -394,6 +400,7 @@ class CandidatePoolRunRow(Base):
             "algorithm_version",
             "parameter_hash",
             "input_snapshot_id",
+            "market_data_fingerprint",
             name="uq_candidate_pool_runs_natural_key",
         ),
         Index("ix_candidate_pool_runs_status", "status"),
@@ -419,6 +426,11 @@ class CandidatePoolRunRow(Base):
             name="fk_cpool_runs_snapshot_id",
         ),
         nullable=False,
+    )
+    market_data_fingerprint: Mapped[str] = mapped_column(
+        String(64),
+        nullable=False,
+        default="0" * 64,
     )
     input_row_count: Mapped[int] = mapped_column(Integer, nullable=False)
     included_count: Mapped[int] = mapped_column(Integer, nullable=False)

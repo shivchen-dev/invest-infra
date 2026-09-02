@@ -288,7 +288,7 @@ class MigrationChainTest(unittest.TestCase):
         head_ids = all_revision_ids - referenced_down_revisions
         self.assertEqual(
             head_ids,
-            {"20260826_0023"},
+            {"20260902_0024"},
             f"expected exactly one unreferenced chain head, got {sorted(head_ids)}",
         )
 
@@ -393,7 +393,7 @@ class MigrationChainTest(unittest.TestCase):
         head_ids = all_revision_ids - referenced_down_revisions
         self.assertEqual(
             head_ids,
-            {"20260826_0023"},
+            {"20260902_0024"},
             f"expected exactly one unreferenced chain head, got {sorted(head_ids)}",
         )
 
@@ -483,7 +483,7 @@ class MigrationChainTest(unittest.TestCase):
         heads = {revision for revision, _ in revisions.values()} - {
             down_revision for _, down_revision in revisions.values() if down_revision is not None
         }
-        self.assertEqual(heads, {"20260826_0023"})
+        self.assertEqual(heads, {"20260902_0024"})
         source = (versions_directory / "20260805_0010_research_context_packs.py").read_text()
         self.assertIn('revision: str = "20260805_0010"', source)
         self.assertIn('down_revision: str | None = "20260805_0009"', source)
@@ -631,7 +631,7 @@ class MigrationChainTest(unittest.TestCase):
         head_ids = all_revision_ids - referenced_down_revisions
         self.assertEqual(
             head_ids,
-            {"20260826_0023"},
+            {"20260902_0024"},
             f"expected exactly one unreferenced chain head, got {sorted(head_ids)}",
         )
 
@@ -1031,7 +1031,7 @@ class MigrationChainTest(unittest.TestCase):
         head_ids = all_revision_ids - referenced_down_revisions
         self.assertEqual(
             head_ids,
-            {"20260826_0023"},
+            {"20260902_0024"},
             f"expected exactly one unreferenced chain head, got {sorted(head_ids)}",
         )
 
@@ -1277,8 +1277,8 @@ class MigrationChainTest(unittest.TestCase):
         head_ids = all_revision_ids - referenced_down_revisions
         self.assertEqual(
             head_ids,
-            {"20260826_0023"},
-            f"expected exactly one chain head pointing at 20260826_0023, got {sorted(head_ids)}",
+            {"20260902_0024"},
+            f"expected exactly one chain head pointing at 20260902_0024, got {sorted(head_ids)}",
         )
 
         for token in (
@@ -1365,7 +1365,7 @@ class MigrationChainTest(unittest.TestCase):
         head_ids = {r for r, _ in revisions.values()} - {
             d for _, d in revisions.values() if d is not None
         }
-        self.assertEqual(head_ids, {"20260826_0023"})
+        self.assertEqual(head_ids, {"20260902_0024"})
 
         migration_file = versions_directory / "20260826_0021_strategy_drafts.py"
         source = migration_file.read_text(encoding="utf-8")
@@ -1595,6 +1595,124 @@ class MigrationChainTest(unittest.TestCase):
             }
         )
         self.assertFalse([name for name in names if len(name) > 63])
+
+    def test_candidate_pool_market_data_fingerprint_migration(self) -> None:
+        """Pin the Slice 0 schema contract for ``20260902_0024``.
+
+        The upgrade binds ``analytics.candidate_pool_runs`` to its
+        market-data selection: nullable column append, deterministic
+        per-row ``md5()`` backfill, ``NOT NULL`` tighten,
+        lowercase-hex64 ``CHECK``, and a six-part natural unique key.
+        ``downgrade()`` reverses every step.
+        """
+        repository_root = Path(__file__).resolve().parents[1]
+        source = (
+            repository_root
+            / "apps"
+            / "migrations"
+            / "migrations"
+            / "versions"
+            / "20260902_0024_candidate_pool_market_data_fingerprint.py"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn('revision: str = "20260902_0024"', source)
+        self.assertIn('down_revision: str | None = "20260826_0023"', source)
+
+        tree = ast.parse(source)
+        upgrade_seg = ast.get_source_segment(
+            source,
+            next(
+                n for n in tree.body
+                if isinstance(n, ast.FunctionDef) and n.name == "upgrade"
+            ),
+        )
+        downgrade_seg = ast.get_source_segment(
+            source,
+            next(
+                n for n in tree.body
+                if isinstance(n, ast.FunctionDef) and n.name == "downgrade"
+            ),
+        )
+        upgrade_flat = " ".join(upgrade_seg.split())
+        downgrade_flat = " ".join(downgrade_seg.split())
+
+        # Upgrade call order: nullable add → backfill → NOT NULL → CHECK → 6-part unique.
+        upgrade_markers = (
+            "sa.Column(_COLUMN, sa.String(length=64), nullable=True)",
+            "op.execute(sa.text(_BACKFILL_SQL))",
+            "nullable=False",
+            "'^[0-9a-f]{64}$'",
+            'type_="unique"',
+            '"input_snapshot_id", _COLUMN',
+        )
+        positions = [upgrade_flat.index(marker) for marker in upgrade_markers]
+        self.assertEqual(positions, sorted(positions))
+        self.assertIn(
+            '"trade_date", "algorithm_key", "algorithm_version", "parameter_hash",',
+            upgrade_flat,
+        )
+        self.assertLess(
+            upgrade_flat.index('"trade_date"'),
+            upgrade_flat.index('"input_snapshot_id", _COLUMN'),
+        )
+
+        # Deterministic per-row backfill tokens.
+        for token in (
+            "md5('legacy:' || id::text) || md5('legacy2:' || id::text)",
+            "WHERE market_data_fingerprint IS NULL",
+        ):
+            self.assertIn(token, source)
+
+        # Downgrade call order: drop unique → recreate five-part → drop CHECK → drop column.
+        downgrade_markers = (
+            'type_="unique"',
+            '"input_snapshot_id", ],',
+            '_CHECK_NAME',
+            "op.drop_column(_TABLE, _COLUMN, schema=_SCHEMA)",
+        )
+        positions = [downgrade_flat.index(marker) for marker in downgrade_markers]
+        self.assertEqual(positions, sorted(positions))
+        self.assertLess(
+            downgrade_flat.index('"trade_date"'),
+            downgrade_flat.index('"input_snapshot_id", ],'),
+        )
+
+        # The preflight ``sa.text(_DOWNGRADE_PREFLIGHT_SQL)`` call must be
+        # the FIRST executable line of ``downgrade()`` — it appears before
+        # any ``op.drop_constraint`` / ``op.drop_column`` schema mutation
+        # and before the five-part unique constraint is recreated.
+        preflight_call_position = downgrade_flat.index("sa.text(_DOWNGRADE_PREFLIGHT_SQL)")
+        self.assertLess(preflight_call_position, positions[0])
+
+        # Preflight must reference every legacy five-part natural key column
+        # together with the bounded HAVING COUNT(*) > 1 clause.
+        for token in (
+            "GROUP BY trade_date, algorithm_key, algorithm_version, "
+            "parameter_hash, input_snapshot_id",
+            "HAVING COUNT(*) > 1",
+        ):
+            self.assertIn(token, source)
+
+        # Preflight is bounded / existence-based: a single ``SELECT EXISTS (...)``
+        # wrapped around the GROUP BY; no row payload crosses into Python.
+        self.assertIn("SELECT EXISTS (", source)
+        self.assertIn(
+            "sa.text(_DOWNGRADE_PREFLIGHT_SQL)",
+            upgrade_flat + downgrade_flat,
+        )
+
+        # No DELETE / UPDATE business-row remediation is permitted; the only
+        # UPDATE in the module is the deterministic upgrade backfill, and that
+        # lives in the module-level ``_BACKFILL_SQL`` constant, not in the
+        # ``downgrade()`` body.
+        for token in (
+            "DELETE FROM",
+            "UPDATE ANALYTICS",
+            "UPDATE CORE",
+            "UPDATE RAW",
+            "TRUNCATE",
+        ):
+            self.assertNotIn(token, downgrade_seg.upper())
 
 def _first_string_literal(call_node: ast.Call) -> str | None:
     for argument in call_node.args:

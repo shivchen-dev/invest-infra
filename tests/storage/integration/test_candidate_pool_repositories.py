@@ -193,6 +193,7 @@ def test_get_by_natural_key_returns_persisted_run(
         algorithm_version="v1.0",
         parameter_hash="a" * 64,
         input_snapshot_id=snapshot,
+        market_data_fingerprint=first.market_data_fingerprint,
     )
 
     assert fetched is not None
@@ -212,6 +213,7 @@ def test_get_by_natural_key_returns_none_when_absent(
         algorithm_version="v1.0",
         parameter_hash="a" * 64,
         input_snapshot_id=uuid4(),
+        market_data_fingerprint="0" * 64,
     )
 
     assert fetched is None

@@ -70,6 +70,7 @@ payload hashing remains canonical.
 
 from __future__ import annotations
 
+import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import date, datetime
@@ -124,6 +125,29 @@ class AkshareClient:
         :func:`_default_module_resolver`; tests inject a callable that
         returns a stub module so CI never has the real dependency
         installed.
+    sleep:
+        Optional sleep callable used by the bounded retry loop in
+        :meth:`fetch_fund_etf_hist_em`. Defaults to :func:`time.sleep`
+        so production runs schedule the documented exponential delays;
+        tests inject a recording stub to assert the exact schedule.
+    max_attempts:
+        Total SDK-call attempts allowed for
+        :meth:`fetch_fund_etf_hist_em` when a transient ``OSError``
+        subclass is raised by the SDK call. Must be a positive
+        integer; the default of ``3`` yields two retry sleeps of
+        ``1.0`` and ``2.0`` seconds before the final attempt raises;
+        larger values continue the ``1.0 * 2 ** (attempt - 1)``
+        exponential schedule. Only ``OSError`` subclasses participate
+        in the retry loop: arbitrary
+        ``requests.exceptions.Timeout`` or
+        ``requests.exceptions.ConnectionError`` values are **not**
+        covered by virtue of being ``requests`` exceptions — they only
+        participate in the retry when they happen to subclass
+        ``OSError`` (e.g. via the
+        ``requests.exceptions.RequestException`` → ``IOError`` /
+        ``OSError`` chain or through the ``urllib3`` /
+        ``requests`` wrapping of stdlib exceptions such as
+        ``http.client.RemoteDisconnected``).
     """
 
     def __init__(
@@ -132,6 +156,8 @@ class AkshareClient:
         *,
         module: ModuleType | None = None,
         module_resolver: Callable[[], ModuleType] | None = None,
+        sleep: Callable[[float], None] | None = None,
+        max_attempts: int = 3,
     ) -> None:
         if not isinstance(settings, AkshareSettings):
             raise TypeError(
@@ -143,11 +169,17 @@ class AkshareClient:
                 "AkshareClient accepts either 'module' or "
                 "'module_resolver', not both"
             )
+        if not isinstance(max_attempts, int) or isinstance(max_attempts, bool) or max_attempts < 1:
+            raise ValueError(
+                f"max_attempts must be a positive integer (got {max_attempts!r})"
+            )
         self._settings = settings
         self._injected_module = module
         self._module_resolver: Callable[[], ModuleType] = (
             module_resolver if module_resolver is not None else _default_module_resolver
         )
+        self._sleep: Callable[[float], None] = sleep if sleep is not None else time.sleep
+        self._max_attempts = max_attempts
 
     # ------------------------------------------------------------------
     # Public API
@@ -277,6 +309,28 @@ class AkshareClient:
         :attr:`AkshareSettings.adjust` so the lock is enforced
         regardless of which caller asked for the data.
 
+        Transient ``OSError`` subclasses raised by the SDK call are
+        retried up to ``max_attempts`` total calls with deterministic
+        exponential delays of ``1.0 * 2 ** (attempt - 1)`` seconds
+        (so the default of three attempts yields ``1.0`` then
+        ``2.0`` seconds before the final attempt raises). Common
+        examples that qualify include the stdlib
+        ``TimeoutError`` and ``http.client.RemoteDisconnected``
+        (the latter as wrapped by ``urllib3`` / ``requests`` into an
+        ``OSError`` subclass via ``urllib3.exceptions.ProtocolError``);
+        arbitrary ``requests.exceptions.Timeout`` or
+        ``requests.exceptions.ConnectionError`` instances are only
+        retried when they happen to subclass ``OSError``, not by
+        virtue of being ``requests`` exceptions. The retry loop
+        wraps only the SDK function call: input validation, module
+        resolution, missing-operation detection, dataframe
+        normalisation, mapping / schema / contract failures, and
+        non-``OSError`` upstream exceptions are never retried. After
+        exhaustion the same typed
+        :class:`~invest_pipeline.adapters.errors.ProviderBadResponseError`
+        with the existing scrubbed message is raised so callers can
+        surface the failure without inspecting raw SDK text.
+
         Parameters
         ----------
         symbol:
@@ -306,21 +360,34 @@ class AkshareClient:
                 "the installed SDK version may have removed or renamed "
                 f"it (akshare.__version__={getattr(module, '__version__', 'unknown')!r})",
             )
-        try:
-            dataframe = getattr(module, operation)(
-                symbol=symbol,
-                period="daily",
-                start_date=start_date.strftime("%Y%m%d"),
-                end_date=end_date.strftime("%Y%m%d"),
-                adjust=self._settings.adjust,
-            )
-        except Exception as exc:
-            raise ProviderBadResponseError(
-                _PROVIDER_KEY,
-                f"akshare.{operation}(symbol={symbol!r}) raised "
-                f"{type(exc).__name__}: "
-                f"{_scrub_message(str(exc), self._settings)}",
-            ) from exc
+        sdk_call = getattr(module, operation)
+        for attempt in range(1, self._max_attempts + 1):
+            try:
+                dataframe = sdk_call(
+                    symbol=symbol,
+                    period="daily",
+                    start_date=start_date.strftime("%Y%m%d"),
+                    end_date=end_date.strftime("%Y%m%d"),
+                    adjust=self._settings.adjust,
+                )
+            except OSError as exc:
+                if attempt >= self._max_attempts:
+                    raise ProviderBadResponseError(
+                        _PROVIDER_KEY,
+                        f"akshare.{operation}(symbol={symbol!r}) raised "
+                        f"{type(exc).__name__}: "
+                        f"{_scrub_message(str(exc), self._settings)}",
+                    ) from exc
+                self._sleep(1.0 * (2 ** (attempt - 1)))
+            except Exception as exc:
+                raise ProviderBadResponseError(
+                    _PROVIDER_KEY,
+                    f"akshare.{operation}(symbol={symbol!r}) raised "
+                    f"{type(exc).__name__}: "
+                    f"{_scrub_message(str(exc), self._settings)}",
+                ) from exc
+            else:
+                break
         records = _dataframe_to_records(dataframe, operation)
         return AkshareResponse(
             operation=operation,
