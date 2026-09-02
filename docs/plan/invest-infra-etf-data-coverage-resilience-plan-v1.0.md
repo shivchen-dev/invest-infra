@@ -7,6 +7,9 @@
 > 计划定位：先用真实证据判断备用数据源价值，再做最小接入
 > 授权边界：现有安全基线已完成；真实网络探针、代码实施、历史回填/部署分别独立授权
 
+> 方向性边界：本项目不做回测。数据覆盖验收服务于日常增量采集、当前策略所需的
+> 60/61 交易日运行窗口和故障恢复；多年历史完备度仅作为能力限制，不作为默认准入硬门槛。
+
 ## 1. 背景与决策
 
 当前系统已有 Provider Contract、请求/尝试/批次证据、日行情 revision、
@@ -38,7 +41,7 @@ Input Snapshot、CandidatePool 状态机和 StrategyVersion 治理。当前实�
 
 成功必须同时满足：
 
-1. 16 只 ETF 在有效生命周期内具备可解释的日线覆盖；
+1. 16 只 ETF 在当前策略所需的 60/61 交易日窗口内具备可解释的日线覆盖；
 2. 使用未复权口径，OHLCV/amount 字段、单位和数量级经过真实验证；
 3. 备用源只在明确的瞬时传输错误下启用；
 4. 字段缺失、单位异常、日期不足或证据不完整继续阻断发布；
@@ -49,7 +52,7 @@ Input Snapshot、CandidatePool 状态机和 StrategyVersion 治理。当前实�
 纳入：
 
 - 16 只 active ETF 的 BaoStock 只读真实探针；
-- 近期窗口和至少一个历史窗口的 OHLCV/amount 覆盖与跨源对照；
+- 当前运行窗口的 OHLCV/amount 覆盖与跨源对照；历史窗口只用于识别恢复能力边界；
 - `admit / research_only / reject` 准入结论；
 - 仅在 `admit` 后实现最小 BaoStock Adapter、错误降级和验收测试。
 
@@ -60,6 +63,7 @@ Input Snapshot、CandidatePool 状态机和 StrategyVersion 治理。当前实�
 - ETF Profile、指数成分、估值、新闻等研究数据扩展；
 - Web Run Flow、告警、交易信号、LLM 排名和策略规则调整；
 - 全量历史回填、部署、发布和生产切换。
+- 回测、收益验证、参数寻优，以及为回测目的追求多年历史全覆盖。
 
 ## 5. 三阶段实施
 
@@ -70,7 +74,7 @@ Input Snapshot、CandidatePool 状态机和 StrategyVersion 治理。当前实�
 探针范围：
 
 - 标的：当前 16 只 active ETF，分母按上市生命周期计算；
-- 窗口：近期窗口 + 至少一个历史窗口；只有异常时再扩大窗口定位；
+- 窗口：覆盖当前正式因子所需的 60/61 个交易日；历史样本仅用于标记恢复能力边界；
 - 字段：date、open、high、low、close、volume、amount；
 - 口径：`adjustflag="3"`，验证未复权；
 - 检查：覆盖率、缺失、重复、乱序、单位、数量级、耗时、空结果和错误类型；
@@ -87,7 +91,7 @@ Input Snapshot、CandidatePool 状态机和 StrategyVersion 治理。当前实�
 
 准入结论三选一：
 
-- `admit`：覆盖、未复权口径、amount 单位及独立性均可接受；
+- `admit`：当前运行窗口、未复权口径、amount 单位及独立性均可接受；多年历史缺失可作为明确能力限制；
 - `research_only`：可用于人工研究，但不满足正式候选池输入要求；
 - `reject`：关键口径或覆盖无法证明。
 
