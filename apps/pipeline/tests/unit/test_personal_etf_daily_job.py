@@ -462,9 +462,12 @@ class EtfAkshareEnrichmentAssetDisabledTest(unittest.TestCase):
             enabled=False,
             write_raw=write_raw,
             upsert=upsert,
-        ) as (engine, akshare_provider, _factory):
-            with self.assertRaises(EtfAkshareEnrichmentUnavailableError) as ctx:
-                _invoke_enrichment()
+        ) as (
+            engine,
+            akshare_provider,
+            _factory,
+        ), self.assertRaises(EtfAkshareEnrichmentUnavailableError) as ctx:
+            _invoke_enrichment()
 
         message = str(ctx.exception)
         self.assertIn("akshare", message.lower())
@@ -500,9 +503,12 @@ class EtfAkshareEnrichmentAssetRawFetchFailedTest(unittest.TestCase):
             write_raw=write_raw,
             upsert=upsert,
             symbols=("510300",),
-        ) as (engine, _provider, _factory):
-            with self.assertRaises(EtfAkshareEnrichmentUnavailableError) as ctx:
-                _invoke_enrichment()
+        ) as (
+            engine,
+            _provider,
+            _factory,
+        ), self.assertRaises(EtfAkshareEnrichmentUnavailableError) as ctx:
+            _invoke_enrichment()
 
         message = str(ctx.exception)
         self.assertIn("not fully successful", message)
@@ -535,9 +541,12 @@ class EtfAkshareEnrichmentAssetRawFetchFailedTest(unittest.TestCase):
             write_raw=write_raw,
             upsert=upsert,
             symbols=("510300",),
-        ) as (engine, _provider, _factory):
-            with self.assertRaises(EtfAkshareEnrichmentUnavailableError):
-                _invoke_enrichment()
+        ) as (
+            engine,
+            _provider,
+            _factory,
+        ), self.assertRaises(EtfAkshareEnrichmentUnavailableError):
+            _invoke_enrichment()
 
         upsert.assert_not_called()
         engine.dispose.assert_called_once_with()
