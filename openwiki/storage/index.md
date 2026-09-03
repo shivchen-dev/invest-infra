@@ -1,3 +1,0 @@
-# Files
-
-- [Storage overview](overview.md) - SQLAlchemy 2 ORM models, repositories, the SqlAlchemyUnitOfWork + SessionProvider, Provider evidence, candidate-pool and job-history contracts, ETF profile/context persistence, research lifecycle persistence (case + run + result + evidence bundle + research-external-evidence link + reverse observation lookup), the Stage 4B market observation snapshot persistence, the Stage 4C stock price-limit revision-aware persistence, the Stage 4D External Integration Workbench persistence (integration.external_workflow_runs / external_artifacts / external_observations + analytics.research_external_evidence), and DC-3 index/ETF exposure repositories under packages/storage/src/invest_storage.

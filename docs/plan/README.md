@@ -129,11 +129,7 @@ ACTIVE
 | `position-discipline` | `OPEN_CONTRACT` | 确认实际持仓事实权威源后，用户独立授权 |
 | `decision-feedback-loop` | `DRAFT_PLAN` | Stage 4D Gate 3、Candidate lineage 和数据层自然调度终验通过后，用户独立授权激活 |
 
-## 7. OpenWiki 与计划治理
-
-OpenWiki 是展示层，不是计划或派工权威。它可以展示计划、代码、测试和验收事实，但不自行决定计划状态，也不产生第二份执行计划。
-
-## 8. 维护检查
+## 7. 维护检查
 
 每次计划变化必须同步检查：
 
