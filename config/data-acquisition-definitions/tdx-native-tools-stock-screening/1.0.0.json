@@ -1,0 +1,98 @@
+{
+  "schema_version": "data-acquisition-definition/1.0",
+  "definition_key": "tdx-native-tools-stock-screening",
+  "definition_version": "1.0.0",
+  "strategy_ref": {
+    "strategy_key": "tdx-native-tools-stock-screening",
+    "strategy_version": "2.0.0",
+    "strategy_artifact_hash": "84cecfaa486815ceb6b1833a678c280503f2465484509e762a53f7218cdca944"
+  },
+  "stage": "stock_screening",
+  "allowed_connectors": [
+    "tdx-connector",
+    "westock-mcp"
+  ],
+  "dynamic_fields": [
+    "request_id",
+    "as_of",
+    "upstream_stage_result"
+  ],
+  "data_request_template": {
+    "schema_version": "workbuddy-data-request/1.0",
+    "definition_key": "tdx-native-tools-stock-screening",
+    "definition_version": "1.0.0",
+    "strategy_key": "tdx-native-tools-stock-screening",
+    "strategy_version": "2.0.0",
+    "strategy_artifact_hash": "84cecfaa486815ceb6b1833a678c280503f2465484509e762a53f7218cdca944",
+    "stage": "stock_screening",
+    "max_delivery_lag_days": 2,
+    "datasets": [
+      {
+        "dataset_key": "stock-identity",
+        "required_fields": [
+          "symbol",
+          "name",
+          "is_st",
+          "is_delisting",
+          "is_suspended",
+          "listing_date"
+        ],
+        "allowed_connectors": [
+          "tdx-connector",
+          "westock-mcp"
+        ]
+      },
+      {
+        "dataset_key": "stock-daily-bars",
+        "required_fields": [
+          "symbol",
+          "trade_date",
+          "close",
+          "volume",
+          "turnover",
+          "return"
+        ],
+        "allowed_connectors": [
+          "tdx-connector",
+          "westock-mcp"
+        ]
+      },
+      {
+        "dataset_key": "stock-fund-flow",
+        "required_fields": [
+          "symbol",
+          "zljlr_d5",
+          "zljlr_d20"
+        ],
+        "allowed_connectors": [
+          "westock-mcp",
+          "tdx-connector"
+        ]
+      }
+    ],
+    "output_contract": "workbuddy-data-bundle/1.0"
+  },
+  "output_contract": "workbuddy-data-bundle/1.0",
+  "timeout_seconds": 900,
+  "idempotency": {
+    "request_identity_fields": [
+      "request_id",
+      "definition_key",
+      "definition_version",
+      "strategy_key",
+      "strategy_version",
+      "strategy_artifact_hash",
+      "stage",
+      "as_of",
+      "upstream_stage_result"
+    ],
+    "same_request_same_content": "idempotent",
+    "same_request_different_content": "conflict"
+  },
+  "failure_handling": {
+    "retry": "manual_new_request",
+    "dataset_failure": "fail_closed",
+    "incomplete_pagination": "fail_closed",
+    "warnings": "continue_and_record"
+  }
+}

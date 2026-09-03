@@ -59,6 +59,24 @@ def _request_payload() -> dict:
     }
 
 
+def _stock_request_payload() -> dict:
+    payload = _request_payload()
+    payload.update(
+        request_id="req_20260903_stock_01",
+        definition_key="stock-market-data",
+        strategy_key="stock-screening",
+        stage="stock_screening",
+        upstream_stage_result={
+            "stage_result_id": "stage-sector-20260902-01",
+            "stage_result_sha256": "b" * 64,
+            "constituent_snapshot_sha256": "c" * 64,
+            "group": "industry",
+            "as_of": "2026-09-02",
+        },
+    )
+    return payload
+
+
 def _bundle_payload() -> dict:
     return {
         "schema_version": "workbuddy-data-bundle/1.0",
@@ -91,6 +109,116 @@ def test_data_request_from_mapping_accepts_minimal_valid_request() -> None:
     assert request.as_of.isoformat() == "2026-09-02"
     assert request.max_delivery_lag_days == 2
     assert request.datasets[0].required_fields == ("sector_code", "change_percent")
+    assert request.datasets[0].optional_fields == ()
+    assert request.upstream_stage_result is None
+
+
+def test_data_request_accepts_distinct_optional_acquisition_fields() -> None:
+    payload = _request_payload()
+    payload["datasets"][0]["optional_fields"] = ["news_annotation", "ladder_annotation"]
+
+    request = DataRequest.from_mapping(payload)
+
+    assert request.datasets[0].optional_fields == (
+        "news_annotation",
+        "ladder_annotation",
+    )
+
+
+@pytest.mark.parametrize(
+    "mutate",
+    [
+        lambda dataset: dataset.update(optional_fields=[]),
+        lambda dataset: dataset.update(optional_fields=["unsafe/field"]),
+        lambda dataset: dataset.update(optional_fields=["annotation", "annotation"]),
+        lambda dataset: dataset.update(optional_fields=["sector_code"]),
+        lambda dataset: dataset.update(
+            required_fields=["sector_code", "sector_code"]
+        ),
+    ],
+)
+def test_data_request_rejects_invalid_duplicate_or_overlapping_field_names(
+    mutate,
+) -> None:
+    payload = _request_payload()
+    mutate(payload["datasets"][0])
+
+    with pytest.raises((TypeError, ValueError)):
+        DataRequest.from_mapping(payload)
+
+
+@pytest.mark.parametrize("group", ["industry", "concept", "area"])
+def test_stock_request_requires_and_preserves_upstream_stage_result_binding(
+    group: str,
+) -> None:
+    payload = _stock_request_payload()
+    payload["upstream_stage_result"]["group"] = group
+    request = DataRequest.from_mapping(payload)
+
+    payload["upstream_stage_result"]["stage_result_id"] = "mutated"
+
+    binding = request.upstream_stage_result
+    assert binding is not None
+    assert binding.stage_result_id == "stage-sector-20260902-01"
+    assert binding.stage_result_sha256 == "b" * 64
+    assert binding.constituent_snapshot_sha256 == "c" * 64
+    assert binding.group == group
+    assert binding.as_of == request.as_of
+
+
+def test_sector_request_must_not_carry_upstream_stage_result_binding() -> None:
+    payload = _request_payload()
+    payload["upstream_stage_result"] = _stock_request_payload()[
+        "upstream_stage_result"
+    ]
+
+    with pytest.raises(
+        ValueError,
+        match="^sector_selection DataRequest must not bind an upstream StageResult$",
+    ):
+        DataRequest.from_mapping(payload)
+
+
+def test_stock_request_must_carry_upstream_stage_result_binding() -> None:
+    payload = _request_payload()
+    payload["stage"] = "stock_screening"
+
+    with pytest.raises(
+        ValueError,
+        match="^stock_screening DataRequest requires an upstream StageResult$",
+    ):
+        DataRequest.from_mapping(payload)
+
+
+@pytest.mark.parametrize(
+    ("mutate", "message"),
+    [
+        (
+            lambda binding: binding.update(stage_result_id="../unsafe"),
+            "stage_result_id",
+        ),
+        (
+            lambda binding: binding.update(stage_result_sha256="B" * 64),
+            "stage_result_sha256",
+        ),
+        (
+            lambda binding: binding.update(constituent_snapshot_sha256="short"),
+            "constituent_snapshot_sha256",
+        ),
+        (lambda binding: binding.update(group="theme"), "group"),
+        (lambda binding: binding.update(as_of="2026-09-01"), "as_of"),
+        (lambda binding: binding.pop("stage_result_id"), "fields"),
+        (lambda binding: binding.update(unexpected="value"), "fields"),
+    ],
+)
+def test_stock_request_rejects_invalid_upstream_stage_result_binding(
+    mutate, message: str
+) -> None:
+    payload = _stock_request_payload()
+    mutate(payload["upstream_stage_result"])
+
+    with pytest.raises((TypeError, ValueError), match=message):
+        DataRequest.from_mapping(payload)
 
 
 def test_connector_authority_is_frozen_and_rejects_unknown_connectors() -> None:
@@ -287,6 +415,18 @@ def test_data_bundle_preserves_immutable_pagination_evidence() -> None:
 
 def test_matching_data_bundle_with_warnings_is_ready_for_evaluation() -> None:
     request = DataRequest.from_mapping(_request_payload())
+    bundle = DataBundle.from_mapping(_bundle_payload())
+
+    assert validate_data_bundle_for_evaluation(request, bundle) is None
+
+
+def test_missing_optional_acquisition_fields_remain_ready_for_evaluation() -> None:
+    request_payload = _request_payload()
+    request_payload["datasets"][0]["optional_fields"] = [
+        "news_annotation",
+        "ladder_annotation",
+    ]
+    request = DataRequest.from_mapping(request_payload)
     bundle = DataBundle.from_mapping(_bundle_payload())
 
     assert validate_data_bundle_for_evaluation(request, bundle) is None

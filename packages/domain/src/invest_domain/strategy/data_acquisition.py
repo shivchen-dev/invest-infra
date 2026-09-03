@@ -20,6 +20,7 @@ _SAFE_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.:-]*")
 _REQUEST_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}")
 _HEX64 = re.compile(r"[0-9a-f]{64}")
 _STAGES = frozenset({"sector_selection", "stock_screening"})
+_STAGE_RESULT_GROUPS = frozenset({"industry", "concept", "area"})
 _REQUEST_FIELDS = frozenset(
     {
         "schema_version",
@@ -36,8 +37,21 @@ _REQUEST_FIELDS = frozenset(
         "output_contract",
     }
 )
+_REQUEST_FIELDS_WITH_UPSTREAM = _REQUEST_FIELDS | {"upstream_stage_result"}
 _REQUEST_DATASET_FIELDS = frozenset(
     {"dataset_key", "required_fields", "allowed_connectors"}
+)
+_REQUEST_DATASET_FIELDS_WITH_OPTIONAL = _REQUEST_DATASET_FIELDS | {
+    "optional_fields"
+}
+_UPSTREAM_STAGE_RESULT_FIELDS = frozenset(
+    {
+        "stage_result_id",
+        "stage_result_sha256",
+        "constituent_snapshot_sha256",
+        "group",
+        "as_of",
+    }
 )
 _BUNDLE_FIELDS = frozenset(
     {"schema_version", "request_id", "producer", "generated_at", "datasets", "warnings", "errors"}
@@ -109,9 +123,13 @@ def _safe_id(value: Any, name: str) -> str:
 
 
 def _request_id(value: Any) -> str:
-    result = _text(value, "request_id")
+    return _bounded_artifact_id(value, "request_id")
+
+
+def _bounded_artifact_id(value: Any, name: str) -> str:
+    result = _text(value, name)
     if _REQUEST_ID.fullmatch(result) is None:
-        raise ValueError("request_id is not a safe artifact identity")
+        raise ValueError(f"{name} is not a safe artifact identity")
     return result
 
 
@@ -217,12 +235,31 @@ def _has_sensitive_key(value: Any) -> bool:
 class _DataRequestDataset:
     dataset_key: str
     required_fields: tuple[str, ...]
+    optional_fields: tuple[str, ...]
     allowed_connectors: tuple[str, ...]
 
     @classmethod
     def from_mapping(cls, payload: Mapping[str, Any]) -> _DataRequestDataset:
         data = _mapping(payload, "DataRequest dataset")
-        _require_exact_fields(data, _REQUEST_DATASET_FIELDS, "DataRequest dataset")
+        if set(data) not in {
+            _REQUEST_DATASET_FIELDS,
+            _REQUEST_DATASET_FIELDS_WITH_OPTIONAL,
+        }:
+            raise ValueError("DataRequest dataset fields are invalid")
+        required_fields = _safe_id_tuple(
+            data.get("required_fields"), "required_fields"
+        )
+        if len(set(required_fields)) != len(required_fields):
+            raise ValueError("required_fields contains a duplicate field")
+        optional_fields = (
+            _safe_id_tuple(data["optional_fields"], "optional_fields")
+            if "optional_fields" in data
+            else ()
+        )
+        if len(set(optional_fields)) != len(optional_fields):
+            raise ValueError("optional_fields contains a duplicate field")
+        if set(required_fields) & set(optional_fields):
+            raise ValueError("required_fields and optional_fields overlap")
         allowed_connectors = _safe_id_tuple(
             data.get("allowed_connectors"), "allowed_connectors"
         )
@@ -232,8 +269,49 @@ class _DataRequestDataset:
             raise ValueError("allowed_connectors contains a duplicate connector")
         return cls(
             dataset_key=_safe_id(data.get("dataset_key"), "dataset_key"),
-            required_fields=_string_tuple(data.get("required_fields"), "required_fields"),
+            required_fields=required_fields,
+            optional_fields=optional_fields,
             allowed_connectors=allowed_connectors,
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class _UpstreamStageResultBinding:
+    stage_result_id: str
+    stage_result_sha256: str
+    constituent_snapshot_sha256: str
+    group: str
+    as_of: date
+
+    @classmethod
+    def from_mapping(
+        cls, payload: Mapping[str, Any], *, request_as_of: date
+    ) -> _UpstreamStageResultBinding:
+        data = _mapping(payload, "upstream StageResult")
+        _require_exact_fields(
+            data, _UPSTREAM_STAGE_RESULT_FIELDS, "upstream StageResult"
+        )
+        group = data.get("group")
+        if group not in _STAGE_RESULT_GROUPS:
+            raise ValueError("upstream StageResult group is unsupported")
+        as_of = _date(data.get("as_of"), "upstream StageResult as_of")
+        if as_of != request_as_of:
+            raise ValueError(
+                "upstream StageResult as_of does not match DataRequest as_of"
+            )
+        return cls(
+            stage_result_id=_bounded_artifact_id(
+                data.get("stage_result_id"), "stage_result_id"
+            ),
+            stage_result_sha256=_sha256(
+                data.get("stage_result_sha256"), "stage_result_sha256"
+            ),
+            constituent_snapshot_sha256=_sha256(
+                data.get("constituent_snapshot_sha256"),
+                "constituent_snapshot_sha256",
+            ),
+            group=group,
+            as_of=as_of,
         )
 
 
@@ -251,11 +329,13 @@ class DataRequest:
     max_delivery_lag_days: int
     datasets: tuple[_DataRequestDataset, ...]
     output_contract: str
+    upstream_stage_result: _UpstreamStageResultBinding | None
 
     @classmethod
     def from_mapping(cls, payload: Mapping[str, Any]) -> DataRequest:
         data = _mapping(payload, "DataRequest")
-        _require_exact_fields(data, _REQUEST_FIELDS, "DataRequest")
+        if set(data) not in {_REQUEST_FIELDS, _REQUEST_FIELDS_WITH_UPSTREAM}:
+            raise ValueError("DataRequest fields are invalid")
         schema_version = data.get("schema_version")
         if schema_version != DATA_REQUEST_SCHEMA_VERSION:
             raise ValueError("DataRequest.schema_version is unsupported")
@@ -265,6 +345,21 @@ class DataRequest:
         stage = data.get("stage")
         if stage not in _STAGES:
             raise ValueError("DataRequest.stage is unsupported")
+        as_of = _date(data.get("as_of"), "as_of")
+        if stage == "sector_selection":
+            if "upstream_stage_result" in data:
+                raise ValueError(
+                    "sector_selection DataRequest must not bind an upstream StageResult"
+                )
+            upstream_stage_result = None
+        else:
+            if "upstream_stage_result" not in data:
+                raise ValueError(
+                    "stock_screening DataRequest requires an upstream StageResult"
+                )
+            upstream_stage_result = _UpstreamStageResultBinding.from_mapping(
+                data["upstream_stage_result"], request_as_of=as_of
+            )
         raw_datasets = data.get("datasets")
         if not isinstance(raw_datasets, Sequence) or isinstance(
             raw_datasets, (str, bytes, bytearray)
@@ -289,12 +384,13 @@ class DataRequest:
                 data.get("strategy_artifact_hash"), "strategy_artifact_hash"
             ),
             stage=stage,
-            as_of=_date(data.get("as_of"), "as_of"),
+            as_of=as_of,
             max_delivery_lag_days=_delivery_lag_days(
                 data.get("max_delivery_lag_days")
             ),
             datasets=datasets,
             output_contract=output_contract,
+            upstream_stage_result=upstream_stage_result,
         )
 
 

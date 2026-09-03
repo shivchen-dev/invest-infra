@@ -33,6 +33,9 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from invest_api.application.admission import ObservationAdmissionCommandService
 from invest_api.application.candidate_pool import CandidatePoolQueryService
+from invest_api.application.data_acquisition_definitions import (
+    DataAcquisitionDefinitionQueryService,
+)
 from invest_api.application.data_freshness import DataFreshnessQueryService
 from invest_api.application.etf import EtfQueryService
 from invest_api.application.external_workflows import ExternalWorkflowQueryService
@@ -69,6 +72,13 @@ def get_db_session() -> Iterator[Session]:
         raise
     finally:
         session.close()
+
+
+def get_data_acquisition_definition_query_service(
+) -> DataAcquisitionDefinitionQueryService:
+    """Build the deployment-owned definition reader without database wiring."""
+
+    return DataAcquisitionDefinitionQueryService()
 
 
 def get_strategy_draft_query_service(
@@ -303,6 +313,7 @@ def get_research_center_query_service(
 
 __all__ = [
     "get_candidate_pool_query_service",
+    "get_data_acquisition_definition_query_service",
     "get_data_freshness_query_service",
     "get_db_session",
     "get_etf_query_service",

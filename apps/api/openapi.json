@@ -916,6 +916,60 @@
         "title": "DailyBarResponse",
         "type": "object"
       },
+      "DataAcquisitionDefinitionResponse": {
+        "additionalProperties": false,
+        "description": "Minimal public envelope for one deployment-owned active definition.",
+        "properties": {
+          "active": {
+            "title": "Active",
+            "type": "boolean"
+          },
+          "allowed_connectors": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Allowed Connectors",
+            "type": "array"
+          },
+          "artifact_hash": {
+            "title": "Artifact Hash",
+            "type": "string"
+          },
+          "data_request_template": {
+            "additionalProperties": true,
+            "title": "Data Request Template",
+            "type": "object"
+          },
+          "definition_key": {
+            "title": "Definition Key",
+            "type": "string"
+          },
+          "definition_version": {
+            "title": "Definition Version",
+            "type": "string"
+          },
+          "output_contract": {
+            "title": "Output Contract",
+            "type": "string"
+          },
+          "schema_version": {
+            "title": "Schema Version",
+            "type": "string"
+          }
+        },
+        "required": [
+          "schema_version",
+          "definition_key",
+          "definition_version",
+          "active",
+          "artifact_hash",
+          "allowed_connectors",
+          "data_request_template",
+          "output_contract"
+        ],
+        "title": "DataAcquisitionDefinitionResponse",
+        "type": "object"
+      },
       "DataFreshnessResponse": {
         "description": "Response envelope for the ``GET /api/v1/data-freshness`` endpoint.\n\n``status`` follows the same vocabulary the front-end uses for the\npersonal daily-job banner. ``missing_count`` is the gap between the\nactive instrument universe and the daily bars observed for\n``expected_trade_date``; it is always\n``max(0, universe_count - daily_bar_count)`` regardless of the\nhigh-level ``status`` so the UI can surface a progress bar.",
         "properties": {
@@ -4690,6 +4744,57 @@
         "summary": "Get Candidate Pool Diff",
         "tags": [
           "candidate-pool"
+        ]
+      }
+    },
+    "/api/v1/data-acquisition-definitions/{definition_key}/active": {
+      "get": {
+        "operationId": "get_active_data_acquisition_definition_api_v1_data_acquisition_definitions__definition_key__active_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "definition_key",
+            "required": true,
+            "schema": {
+              "title": "Definition Key",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DataAcquisitionDefinitionResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "404": {
+            "description": "Data acquisition definition not found"
+          },
+          "409": {
+            "description": "Data acquisition definition failed integrity validation"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "503": {
+            "description": "Data acquisition definition unavailable"
+          }
+        },
+        "summary": "Get Active Data Acquisition Definition",
+        "tags": [
+          "data-acquisition-definitions"
         ]
       }
     },

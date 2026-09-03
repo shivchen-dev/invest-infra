@@ -1,0 +1,82 @@
+{
+  "schema_version": "data-acquisition-definition/1.0",
+  "definition_key": "sector-strength-ranking",
+  "definition_version": "1.0.0",
+  "strategy_ref": {
+    "strategy_key": "sector-strength-ranking",
+    "strategy_version": "2.0.0",
+    "strategy_artifact_hash": "e05e2e191311fb3273a2f14748b7265c1cec47a37339f7a70a139a85a7bf68b2"
+  },
+  "stage": "sector_selection",
+  "allowed_connectors": [
+    "westock-mcp",
+    "tdx-connector"
+  ],
+  "dynamic_fields": [
+    "request_id",
+    "as_of"
+  ],
+  "data_request_template": {
+    "schema_version": "workbuddy-data-request/1.0",
+    "definition_key": "sector-strength-ranking",
+    "definition_version": "1.0.0",
+    "strategy_key": "sector-strength-ranking",
+    "strategy_version": "2.0.0",
+    "strategy_artifact_hash": "e05e2e191311fb3273a2f14748b7265c1cec47a37339f7a70a139a85a7bf68b2",
+    "stage": "sector_selection",
+    "max_delivery_lag_days": 2,
+    "datasets": [
+      {
+        "dataset_key": "sector-ranking",
+        "required_fields": [
+          "group",
+          "bd_code",
+          "bd_name",
+          "cje",
+          "bd_zdf",
+          "zgb"
+        ],
+        "allowed_connectors": [
+          "westock-mcp",
+          "tdx-connector"
+        ]
+      },
+      {
+        "dataset_key": "sector-constituents",
+        "required_fields": [
+          "group",
+          "bd_code",
+          "symbol",
+          "name"
+        ],
+        "allowed_connectors": [
+          "tdx-connector",
+          "westock-mcp"
+        ]
+      }
+    ],
+    "output_contract": "workbuddy-data-bundle/1.0"
+  },
+  "output_contract": "workbuddy-data-bundle/1.0",
+  "timeout_seconds": 900,
+  "idempotency": {
+    "request_identity_fields": [
+      "request_id",
+      "definition_key",
+      "definition_version",
+      "strategy_key",
+      "strategy_version",
+      "strategy_artifact_hash",
+      "stage",
+      "as_of"
+    ],
+    "same_request_same_content": "idempotent",
+    "same_request_different_content": "conflict"
+  },
+  "failure_handling": {
+    "retry": "manual_new_request",
+    "dataset_failure": "fail_closed",
+    "incomplete_pagination": "fail_closed",
+    "warnings": "continue_and_record"
+  }
+}

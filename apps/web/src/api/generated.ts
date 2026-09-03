@@ -30,6 +30,10 @@ export interface paths {
      */
     get: operations["get_candidate_pool_diff_api_v1_candidate_pool__run_id__diff_get"];
   };
+  "/api/v1/data-acquisition-definitions/{definition_key}/active": {
+    /** Get Active Data Acquisition Definition */
+    get: operations["get_active_data_acquisition_definition_api_v1_data_acquisition_definitions__definition_key__active_get"];
+  };
   "/api/v1/data-freshness": {
     /**
      * Get Data Freshness
@@ -74,6 +78,14 @@ export interface paths {
   "/api/v1/external-workflows/{run_id}/artifacts": {
     /** List External Artifacts */
     get: operations["list_external_artifacts_api_v1_external_workflows__run_id__artifacts_get"];
+  };
+  "/api/v1/external-workflows/{run_id}/candidate-lineage": {
+    /** Get External Workflow Candidate Lineage */
+    get: operations["get_external_workflow_candidate_lineage_api_v1_external_workflows__run_id__candidate_lineage_get"];
+  };
+  "/api/v1/external-workflows/{run_id}/candidate-lineage-states": {
+    /** Get External Workflow Candidate Lineage States */
+    get: operations["get_external_workflow_candidate_lineage_states_api_v1_external_workflows__run_id__candidate_lineage_states_get"];
   };
   "/api/v1/external-workflows/{run_id}/observations": {
     /** List External Observations */
@@ -249,6 +261,10 @@ export interface paths {
     /** Get Research Run Result */
     get: operations["get_research_run_result_api_v1_research_runs__run_id__result_get"];
   };
+  "/api/v1/strategies/{strategy_key}/active": {
+    /** Get Active Strategy Version */
+    get: operations["get_active_strategy_version_api_v1_strategies__strategy_key__active_get"];
+  };
   "/api/v1/strategy-drafts/{draft_id}": {
     /** Get Strategy Draft */
     get: operations["get_strategy_draft_api_v1_strategy_drafts__draft_id__get"];
@@ -325,6 +341,125 @@ export interface components {
       run_id: string;
       /** Size Bytes */
       size_bytes: number;
+    };
+    /** CandidateLineageAdmissionItemResponse */
+    CandidateLineageAdmissionItemResponse: {
+      /** Admission Status */
+      admission_status: string;
+      /**
+       * Observation Id
+       * Format: uuid
+       */
+      observation_id: string;
+    };
+    /** CandidateLineageAdmissionStateResponse */
+    CandidateLineageAdmissionStateResponse: {
+      /**
+       * Availability
+       * @enum {string}
+       */
+      availability: "available" | "unavailable" | "partial" | "conflict";
+      /** Count */
+      count: number;
+      /** Decided At */
+      decided_at?: null;
+      /** Items */
+      items: components["schemas"]["CandidateLineageAdmissionItemResponse"][];
+    };
+    /** CandidateLineageArchiveStateResponse */
+    CandidateLineageArchiveStateResponse: {
+      /**
+       * Availability
+       * @constant
+       */
+      availability: "available";
+      /** Finished At */
+      finished_at?: string | null;
+      /** Intake Status */
+      intake_status: string;
+      /** Producer Status */
+      producer_status: string;
+      /**
+       * Started At
+       * Format: date-time
+       */
+      started_at: string;
+    };
+    /** CandidateLineageAvailabilityResponse */
+    CandidateLineageAvailabilityResponse: {
+      /**
+       * Availability
+       * @enum {string}
+       */
+      availability: "available" | "unavailable";
+      lineage?: components["schemas"]["CandidateLineageResponse"] | null;
+      /**
+       * Run Id
+       * Format: uuid
+       */
+      run_id: string;
+    };
+    /** CandidateLineageIntakeItemResponse */
+    CandidateLineageIntakeItemResponse: {
+      /**
+       * As Of
+       * Format: date
+       */
+      as_of: string;
+      /**
+       * Observation Id
+       * Format: uuid
+       */
+      observation_id: string;
+      /**
+       * Observed At
+       * Format: date-time
+       */
+      observed_at: string;
+    };
+    /** CandidateLineageIntakeStateResponse */
+    CandidateLineageIntakeStateResponse: {
+      /**
+       * Availability
+       * @enum {string}
+       */
+      availability: "available" | "unavailable";
+      /** Count */
+      count: number;
+      /** Items */
+      items: components["schemas"]["CandidateLineageIntakeItemResponse"][];
+    };
+    /** CandidateLineageResearchStateResponse */
+    CandidateLineageResearchStateResponse: {
+      /**
+       * Availability
+       * @constant
+       */
+      availability: "unavailable";
+    };
+    /** CandidateLineageResponse */
+    CandidateLineageResponse: {
+      /** Schema Version */
+      schema_version: string;
+      /** Stages */
+      stages: components["schemas"]["CandidateStageResponse"][];
+    };
+    /** CandidateLineageStatesEnvelopeResponse */
+    CandidateLineageStatesEnvelopeResponse: {
+      admission: components["schemas"]["CandidateLineageAdmissionStateResponse"];
+      archive: components["schemas"]["CandidateLineageArchiveStateResponse"];
+      intake: components["schemas"]["CandidateLineageIntakeStateResponse"];
+      research: components["schemas"]["CandidateLineageResearchStateResponse"];
+    };
+    /** CandidateLineageStatesResponse */
+    CandidateLineageStatesResponse: {
+      lineage?: components["schemas"]["CandidateLineageResponse"] | null;
+      /**
+       * Run Id
+       * Format: uuid
+       */
+      run_id: string;
+      states: components["schemas"]["CandidateLineageStatesEnvelopeResponse"];
     };
     /**
      * CandidatePoolDiffEntry
@@ -449,6 +584,29 @@ export interface components {
        */
       trade_date: string;
     };
+    /** CandidateStageResponse */
+    CandidateStageResponse: {
+      /** As Of */
+      as_of: string;
+      /** Constituent Snapshot Sha256 */
+      constituent_snapshot_sha256?: string | null;
+      /** Stage Key */
+      stage_key: string;
+      /** Stage Result Id */
+      stage_result_id: string;
+      /** Stage Result Sha256 */
+      stage_result_sha256: string;
+      /** Strategy Artifact Hash */
+      strategy_artifact_hash: string;
+      /** Strategy Key */
+      strategy_key: string;
+      /** Strategy Version */
+      strategy_version: string;
+      /** Upstream Stage Result Id */
+      upstream_stage_result_id?: string | null;
+      /** Upstream Stage Result Sha256 */
+      upstream_stage_result_sha256?: string | null;
+    };
     /**
      * DailyBarListResponse
      * @description Paginated envelope for the ``GET /api/v1/etf/daily-bars`` endpoint.
@@ -507,6 +665,30 @@ export interface components {
       trading_status: string;
       /** Volume */
       volume: string | null;
+    };
+    /**
+     * DataAcquisitionDefinitionResponse
+     * @description Minimal public envelope for one deployment-owned active definition.
+     */
+    DataAcquisitionDefinitionResponse: {
+      /** Active */
+      active: boolean;
+      /** Allowed Connectors */
+      allowed_connectors: string[];
+      /** Artifact Hash */
+      artifact_hash: string;
+      /** Data Request Template */
+      data_request_template: {
+        [key: string]: unknown;
+      };
+      /** Definition Key */
+      definition_key: string;
+      /** Definition Version */
+      definition_version: string;
+      /** Output Contract */
+      output_contract: string;
+      /** Schema Version */
+      schema_version: string;
     };
     /**
      * DataFreshnessResponse
@@ -2285,6 +2467,33 @@ export interface components {
         [key: string]: unknown;
       };
     };
+    /** StrategyVersionResponse */
+    StrategyVersionResponse: {
+      /**
+       * Activated At
+       * Format: date-time
+       */
+      activated_at: string;
+      /** Active */
+      active: boolean;
+      /**
+       * Approved At
+       * Format: date-time
+       */
+      approved_at: string;
+      /** Artifact Hash */
+      artifact_hash: string;
+      /** Schema Version */
+      schema_version: string | null;
+      /** Strategy */
+      strategy: {
+        [key: string]: unknown;
+      };
+      /** Strategy Key */
+      strategy_key: string;
+      /** Version */
+      version: string;
+    };
     /** ValidationError */
     ValidationError: {
       /** Context */
@@ -2366,6 +2575,40 @@ export interface operations {
         content: {
           "application/json": components["schemas"]["HTTPValidationError"];
         };
+      };
+    };
+  };
+  /** Get Active Data Acquisition Definition */
+  get_active_data_acquisition_definition_api_v1_data_acquisition_definitions__definition_key__active_get: {
+    parameters: {
+      path: {
+        definition_key: string;
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      200: {
+        content: {
+          "application/json": components["schemas"]["DataAcquisitionDefinitionResponse"];
+        };
+      };
+      /** @description Data acquisition definition not found */
+      404: {
+        content: never;
+      };
+      /** @description Data acquisition definition failed integrity validation */
+      409: {
+        content: never;
+      };
+      /** @description Validation Error */
+      422: {
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+      /** @description Data acquisition definition unavailable */
+      503: {
+        content: never;
       };
     };
   };
@@ -2550,6 +2793,50 @@ export interface operations {
       200: {
         content: {
           "application/json": components["schemas"]["ExternalArtifactResponse"][];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  /** Get External Workflow Candidate Lineage */
+  get_external_workflow_candidate_lineage_api_v1_external_workflows__run_id__candidate_lineage_get: {
+    parameters: {
+      path: {
+        run_id: string;
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      200: {
+        content: {
+          "application/json": components["schemas"]["CandidateLineageAvailabilityResponse"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  /** Get External Workflow Candidate Lineage States */
+  get_external_workflow_candidate_lineage_states_api_v1_external_workflows__run_id__candidate_lineage_states_get: {
+    parameters: {
+      path: {
+        run_id: string;
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      200: {
+        content: {
+          "application/json": components["schemas"]["CandidateLineageStatesResponse"];
         };
       };
       /** @description Validation Error */
@@ -3074,6 +3361,40 @@ export interface operations {
         content: {
           "application/json": components["schemas"]["HTTPValidationError"];
         };
+      };
+    };
+  };
+  /** Get Active Strategy Version */
+  get_active_strategy_version_api_v1_strategies__strategy_key__active_get: {
+    parameters: {
+      path: {
+        strategy_key: string;
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      200: {
+        content: {
+          "application/json": components["schemas"]["StrategyVersionResponse"];
+        };
+      };
+      /** @description Strategy version not found */
+      404: {
+        content: never;
+      };
+      /** @description Strategy artifact failed integrity validation */
+      409: {
+        content: never;
+      };
+      /** @description Validation Error */
+      422: {
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+      /** @description Strategy artifact unavailable */
+      503: {
+        content: never;
       };
     };
   };

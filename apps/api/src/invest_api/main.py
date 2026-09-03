@@ -6,6 +6,9 @@ from fastapi.middleware.cors import CORSMiddleware
 from invest_api.config import get_settings
 from invest_api.routers.admission import router as admission_router
 from invest_api.routers.candidate_pool import router as candidate_pool_router
+from invest_api.routers.data_acquisition_definitions import (
+    router as data_acquisition_definitions_router,
+)
 from invest_api.routers.data_freshness import router as data_freshness_router
 from invest_api.routers.etf import router as etf_router
 from invest_api.routers.external_workflows import router as external_workflows_router
@@ -38,6 +41,7 @@ app.include_router(external_workflows_router)
 app.include_router(integration_health_router)
 app.include_router(opportunity_radar_router)
 app.include_router(candidate_pool_router)
+app.include_router(data_acquisition_definitions_router)
 app.include_router(admission_router)
 app.include_router(pipeline_runs_router)
 app.include_router(data_freshness_router)
