@@ -97,11 +97,14 @@
 最小职责：
 
 - 绑定 StrategyVersion、stage、`allowed_connectors`、`data_request_template` 和 `output_contract`；
+- 一个 DataRequest 可包含多个语义独立的 dataset；每个 dataset 的 `allowed_connectors`
+  按主源到 fallback 的优先顺序排列，不表示可任意择源；
 - 通过局域网 active 只读接口向固定启动 Prompt 提供结构化执行规格；
-- 记录启停状态、有效期、幂等键规则、超时和失败处理；
+- 首版只保存两个随代码发布的不可变、版本化 JSON artifact；active 表示当前部署版本
+  对该 definition key 暴露的唯一 artifact，不建立数据库聚合、迁移或管理 CLI；
+- 记录幂等键规则、超时和失败处理；
 - 不复制策略规则，不保存凭证，不直接代表 active StrategyVersion；
-- 自动化定义变更必须版本化并显式激活；
-- 禁用自动化只停止新任务，不修改历史策略和运行。
+- 定义变更创建新 artifact 版本并随受控发布切换，不原地覆盖历史版本。
 
 首版只实现板块和个股两个固定定义，不建设通用调度平台、表达式语言或任意 DAG。
 
@@ -113,6 +116,8 @@
 
 - 绑定 StrategyVersion、DataAcquisitionDefinition、DataRequest、DataBundle、InputSnapshot 和数据矩阵版本；
 - 保存原始 DataBundle、确定性 evaluator 输出、manifest、validation record 和 hash；
+- 复用现有 ExternalWorkflowRun、ExternalArtifact 和 WorkBuddy 原子归档能力，不新增
+  DataBundle 专属数据库表或第二套 manifest/归档框架；
 - 区分执行状态、交付状态、摄取状态和业务结果状态；
 - 只有完成正式摄取才形成 StageResult。
 
@@ -150,7 +155,9 @@ CIA 负责策略语义；投研系统 validation 和 RAA 审计仍是版本发�
 
 ### 6.3 数据获取与确定性执行交付
 
-WorkBuddy 只交付版本化 `DataBundle`：包含 request identity、真实 MCP 工具与参数、as_of、分页、样本量、字段、单位、原始或最小规范化数据、warning 和 error。投研系统负责 Schema、canonical JSON、hash、lineage、原子发布以及 StageResult/CandidateProposal；首版不建立覆盖所有阶段的万能业务 schema。
+WorkBuddy 只交付版本化 `DataBundle`：包含 request identity、as_of、分页、样本量、字段、单位、原始或最小规范化数据、warning 和 error。每个 dataset 按调用顺序保存结构化 attempts，attempt 是 connector、tool 和脱敏参数的唯一权威来源；最后一个 `succeeded` attempt 即该 dataset 的最终来源，不在 dataset 顶层重复同一组字段。failed attempt 只使用固定允许列表内的稳定错误码；attempt connector 不得重复，数量不得超过当前获准 connector 总数。使用 fallback 时，必须能证明优先级更高的来源已经失败。投研系统负责 Schema、canonical JSON、hash、lineage、原子发布以及 StageResult/CandidateProposal；首版不建立覆盖所有阶段的万能业务 schema。
+
+首版每个 `dataset_key` 只接受一个最终成功来源，不允许 WorkBuddy 静默拼接、覆盖或裁决多个来源。同一业务事实确需并行来源对照时，必须在 DataRequest 中拆成不同 `dataset_key`，再由对应专用 evaluator 显式处理；跨源融合、动态评分和通用路由继续延期。
 
 ## 7. 状态与门禁
 
@@ -179,14 +186,7 @@ proposal
 
 ### 7.3 自动化
 
-```text
-draft
-  → validated
-  → active
-  → paused / retired
-```
-
-只有 active StrategyVersion 与 active DataAcquisitionDefinition 的组合才能生成 DataRequest。定义暂停不改变策略版本状态；周期调度仍须独立显性授权。
+首版不建立 DataAcquisitionDefinition 生命周期状态机。只有 active StrategyVersion 与当前部署版本暴露的固定 DataAcquisitionDefinition artifact 组合才能生成 DataRequest；定义切换通过新的不可变 artifact 版本和受控发布完成。周期调度仍须独立显性授权。
 
 ### 7.4 运行和摄取
 
@@ -235,7 +235,7 @@ task_published
 
 ### Phase C：数据获取定义
 
-- DataAcquisitionDefinition、DataRequest/DataBundle 合同、版本和状态；
+- 两个静态 DataAcquisitionDefinition artifact、DataRequest/DataBundle 合同与部署版本绑定；
 - active 只读 API、固定短 Prompt、connector 白名单和交付合同绑定；
 - 只允许人工触发影子运行；周期调度必须另行显性授权。
 

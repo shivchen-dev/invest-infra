@@ -45,15 +45,31 @@ _BUNDLE_FIELDS = frozenset(
 _BUNDLE_DATASET_FIELDS = frozenset(
     {
         "dataset_key",
-        "connector",
-        "tool",
-        "parameters",
+        "attempts",
         "as_of",
         "pagination",
         "sample_count",
         "fields",
         "units",
         "records",
+    }
+)
+_LEGACY_BUNDLE_DATASET_SOURCE_FIELDS = frozenset(
+    {"connector", "tool", "parameters"}
+)
+_BUNDLE_ATTEMPT_FIELDS = frozenset(
+    {"connector", "tool", "parameters", "status", "error_code"}
+)
+_ATTEMPT_ERROR_CODES = frozenset(
+    {
+        "UPSTREAM_TIMEOUT",
+        "UPSTREAM_UNAVAILABLE",
+        "RATE_LIMITED",
+        "AUTHORIZATION_FAILED",
+        "INVALID_RESPONSE",
+        "PAGINATION_FAILED",
+        "NO_DATA",
+        "TOOL_ERROR",
     }
 )
 _SENSITIVE_KEY_TOKENS = frozenset(
@@ -212,6 +228,8 @@ class _DataRequestDataset:
         )
         if not set(allowed_connectors).issubset(APPROVED_DATA_CONNECTORS):
             raise ValueError("allowed_connectors contains an unapproved connector")
+        if len(set(allowed_connectors)) != len(allowed_connectors):
+            raise ValueError("allowed_connectors contains a duplicate connector")
         return cls(
             dataset_key=_safe_id(data.get("dataset_key"), "dataset_key"),
             required_fields=_string_tuple(data.get("required_fields"), "required_fields"),
@@ -304,11 +322,46 @@ class _DataBundlePagination:
 
 
 @dataclass(frozen=True, slots=True)
-class _DataBundleDataset:
-    dataset_key: str
+class _DataBundleAttempt:
     connector: str
     tool: str
     parameters: Mapping[str, Any]
+    status: str
+    error_code: str | None
+
+    @classmethod
+    def from_mapping(cls, payload: Mapping[str, Any]) -> _DataBundleAttempt:
+        data = _mapping(payload, "DataBundle attempt")
+        _require_exact_fields(data, _BUNDLE_ATTEMPT_FIELDS, "DataBundle attempt")
+        connector = _safe_id(data["connector"], "attempt connector")
+        if connector not in APPROVED_DATA_CONNECTORS:
+            raise ValueError("attempt connector is not approved")
+        status = data["status"]
+        if status not in {"failed", "succeeded"}:
+            raise ValueError("DataBundle attempt status is unsupported")
+        error_code = data["error_code"]
+        if status == "failed":
+            error_code = _safe_id(error_code, "attempt error_code")
+            if error_code not in _ATTEMPT_ERROR_CODES:
+                raise ValueError("DataBundle attempt error_code is unsupported")
+        elif error_code is not None:
+            raise ValueError("succeeded DataBundle attempt must not have an error_code")
+        return cls(
+            connector=connector,
+            tool=_safe_id(data["tool"], "attempt tool"),
+            parameters=_freeze_json(
+                _mapping(data["parameters"], "DataBundle attempt parameters"),
+                "DataBundle attempt parameters",
+            ),
+            status=status,
+            error_code=error_code,
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class _DataBundleDataset:
+    dataset_key: str
+    attempts: tuple[_DataBundleAttempt, ...]
     as_of: date
     pagination: _DataBundlePagination
     sample_count: int
@@ -320,10 +373,35 @@ class _DataBundleDataset:
     @classmethod
     def from_mapping(cls, payload: Mapping[str, Any]) -> _DataBundleDataset:
         data = _mapping(payload, "DataBundle dataset")
+        if _LEGACY_BUNDLE_DATASET_SOURCE_FIELDS.intersection(data):
+            raise ValueError(
+                "DataBundle dataset contains a forbidden legacy source field"
+            )
         missing = _BUNDLE_DATASET_FIELDS.difference(data)
         if missing:
             raise ValueError("DataBundle dataset fields are invalid")
-        parameters = _mapping(data["parameters"], "DataBundle dataset parameters")
+        raw_attempts = data["attempts"]
+        if not isinstance(raw_attempts, Sequence) or isinstance(
+            raw_attempts, (str, bytes, bytearray)
+        ):
+            raise TypeError("DataBundle dataset attempts must be a sequence")
+        if len(raw_attempts) > len(APPROVED_DATA_CONNECTORS):
+            raise ValueError(
+                "DataBundle dataset attempts exceeds approved connector count"
+            )
+        attempts = tuple(_DataBundleAttempt.from_mapping(item) for item in raw_attempts)
+        if not attempts:
+            raise ValueError("DataBundle dataset attempts must not be empty")
+        attempted_connectors = tuple(attempt.connector for attempt in attempts)
+        if len(set(attempted_connectors)) != len(attempted_connectors):
+            raise ValueError(
+                "DataBundle dataset attempts contains a duplicate connector"
+            )
+        succeeded = tuple(attempt for attempt in attempts if attempt.status == "succeeded")
+        if len(succeeded) > 1:
+            raise ValueError("DataBundle dataset attempts has multiple successes")
+        if succeeded and attempts[-1].status != "succeeded":
+            raise ValueError("succeeded DataBundle attempt must be last")
         units = _mapping(data["units"], "DataBundle dataset units")
         raw_records = data["records"]
         if not isinstance(raw_records, Sequence) or isinstance(
@@ -342,16 +420,10 @@ class _DataBundleDataset:
             for key, value in data.items()
             if key not in _BUNDLE_DATASET_FIELDS
         }
-        frozen_parameters = _freeze_json(parameters, "DataBundle dataset parameters")
         frozen_units = _freeze_json(units, "DataBundle dataset units")
-        connector = _safe_id(data["connector"], "connector")
-        if connector not in APPROVED_DATA_CONNECTORS:
-            raise ValueError("connector is not approved")
         return cls(
             dataset_key=_safe_id(data["dataset_key"], "dataset_key"),
-            connector=connector,
-            tool=_safe_id(data["tool"], "tool"),
-            parameters=frozen_parameters,
+            attempts=attempts,
             as_of=_date(data["as_of"], "as_of"),
             pagination=_DataBundlePagination.from_mapping(data["pagination"]),
             sample_count=sample_count,
@@ -438,8 +510,18 @@ def validate_data_bundle_for_evaluation(
 
     for dataset_key, requested in requested_by_key.items():
         delivered = bundle_by_key[dataset_key]
-        if delivered.connector not in requested.allowed_connectors:
-            raise ValueError("DataBundle dataset connector is not allowed")
+        attempted_connectors = tuple(
+            attempt.connector for attempt in delivered.attempts
+        )
+        if attempted_connectors != requested.allowed_connectors[: len(delivered.attempts)]:
+            raise ValueError(
+                "DataBundle attempt connectors must match the allowed connector prefix"
+            )
+        succeeded = tuple(
+            attempt for attempt in delivered.attempts if attempt.status == "succeeded"
+        )
+        if len(succeeded) != 1:
+            raise ValueError("DataBundle dataset must have exactly one successful attempt")
         if delivered.as_of != request.as_of:
             raise ValueError("DataBundle dataset as_of does not match DataRequest")
         if not delivered.pagination.complete:

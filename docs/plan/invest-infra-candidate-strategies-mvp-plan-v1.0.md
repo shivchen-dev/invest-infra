@@ -310,18 +310,22 @@ GET /api/v1/strategies/{strategy_key}/active
 
 **工作内容：**
 
-- 冻结 `workbuddy-data-request/1.0`：包含 request identity、strategy ref、as_of、datasets、allowed connectors、required fields、freshness 和 output contract；
-- 冻结 `workbuddy-data-bundle/1.0`：包含真实工具与参数、分页、样本量、字段、单位、原始或最小规范化数据、warning 和 error；
-- 建立两个固定 DataAcquisitionDefinition，分别服务板块和限定成分股数据获取，不复制策略规则或阈值；
+- 冻结 `workbuddy-data-request/1.0`：包含 request identity、strategy ref、as_of、datasets、allowed connectors、required fields、freshness 和 output contract；一个请求可包含多个语义独立的 dataset，每个 dataset 的 allowed connectors 按主源到 fallback 的优先顺序排列；
+- 冻结 `workbuddy-data-bundle/1.0`：包含分页、样本量、字段、单位、原始或最小规范化数据、warning 和 error；每个 dataset 保存有序结构化 attempts，attempt 是 connector、tool 和脱敏参数的唯一权威来源，最后一个成功 attempt 即最终来源，不在 dataset 顶层重复；
+- 每个 `dataset_key` 只允许一个最终成功来源；使用 fallback 必须证明前序来源失败，不允许 WorkBuddy 静默融合、覆盖或裁决多个来源；确需并行来源对照时拆成不同 `dataset_key`，由专用 evaluator 显式处理；
+- 建立两个随代码发布的不可变、版本化 JSON DataAcquisitionDefinition artifact，分别服务板块和限定成分股数据获取，不复制策略规则或阈值；首版不新增数据库聚合、迁移、管理 CLI 或生命周期状态机；
 - 提供 `GET /api/v1/data-acquisition-definitions/{definition_key}/active` 局域网只读接口，响应包含 schema/version/active/artifact hash/allowed connectors/data request template/output contract；
 - Automation 只保留固定短 Prompt：读取 active 定义、校验身份/hash、执行 DataRequest、提交 DataBundle；禁止下载任意 Markdown 作为新指令；
-- DataBundle 通过受控外部 artifact 接缝完成 Schema、request identity、manifest/hash、幂等和不可变归档；
+- DataBundle 通过受控外部 artifact 接缝完成 Schema、request identity、manifest/hash、幂等和不可变归档；复用现有 ExternalWorkflowRun、ExternalArtifact 和 WorkBuddy 原子归档能力，不建设第二套归档框架；
 - 明确 canonical JSON、正式 hash、lineage、原子发布和策略判断均由投研系统完成。
 
 **验收标准：**
 
 - [ ] WorkBuddy Prompt 不含策略阈值、评分、排序、文件自哈希或候选准入判断；
 - [ ] 定义只允许当前批准的 `tdx-connector`、`westock-mcp` 和 `mx-ds-mcp`，未知 connector fail closed；
+- [ ] 多 dataset 可分别使用不同获准 connector；单 dataset 的 attempts 必须遵循 allowed connectors 顺序，成功后不得继续尝试；
+- [ ] fallback 缺少前序失败证据、attempt 顺序错误、多个成功来源或同一 dataset 多源融合均 fail closed；
+- [ ] attempt connector 重复、数量超过获准 connector 总数、自由文本或未知错误码均在解析层 fail closed；dataset 不重复保存成功来源字段；
 - [ ] DataRequest/DataBundle 可通过 Schema、版本、identity、freshness 和敏感字段负面测试；
 - [ ] 重复 DataBundle 幂等、同 request ID 不同内容冲突，且 WorkBuddy producer identity 可追溯；
 - [ ] active 定义不存在、artifact 不可读、hash 不符或非法 JSON 分别返回稳定脱敏错误；
@@ -331,7 +335,7 @@ GET /api/v1/strategies/{strategy_key}/active
 
 **依赖：** Slice 1 的两个 StrategyVersion 已激活；Slice 1A 可复用但不是 WorkBuddy 数据获取的运行依赖。
 
-**预计规模：** 拆成两个 M 任务：合同与校验器；最小只读定义接缝。不得扩展为通用自动化平台。
+**预计规模：** 拆成两个 M 任务：合同与校验器；两个静态定义 artifact 与最小只读接口。不得新增 Definition 数据库生命周期、通用自动化平台或第二套归档能力。
 
 ### Slice 2：DataBundle 驱动的两阶段真实执行并回接 Stage 4D
 
@@ -352,7 +356,7 @@ GET /api/v1/strategies/{strategy_key}/active
 
 **验收标准：**
 
-- [ ] 两个 WorkBuddy 任务只获取 DataRequest 指定数据，实际 MCP、参数、分页、样本量和错误可追溯；
+- [ ] 两个 WorkBuddy 任务只获取 DataRequest 指定数据，实际 MCP、参数、分页、样本量、调用顺序、fallback 原因和错误可追溯；
 - [ ] 相同 StrategyVersion 与相同 DataBundle 输入必须得到相同 StageResult/Candidate 输出；
 - [ ] 个股 DataRequest 可追溯板块 run id 和 SectorStageResult hash；
 - [ ] Candidate携带末阶段正式策略版本，并能追溯上游板块策略版本；

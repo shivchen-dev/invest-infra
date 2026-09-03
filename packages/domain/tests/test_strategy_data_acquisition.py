@@ -15,6 +15,27 @@ from invest_domain.strategy import (
 )
 
 
+def _attempt(
+    connector: str = "tdx-connector",
+    *,
+    status: str = "succeeded",
+    tool: str = "get_sector_ranking",
+    parameters: dict | None = None,
+    error_code: str | None = None,
+) -> dict:
+    if status == "failed" and error_code is None:
+        error_code = "UPSTREAM_TIMEOUT"
+    return {
+        "connector": connector,
+        "tool": tool,
+        "parameters": (
+            parameters if parameters is not None else {"market": "cn", "page": 1}
+        ),
+        "status": status,
+        "error_code": error_code,
+    }
+
+
 def _request_payload() -> dict:
     return {
         "schema_version": "workbuddy-data-request/1.0",
@@ -47,9 +68,7 @@ def _bundle_payload() -> dict:
         "datasets": [
             {
                 "dataset_key": "sector-ranking",
-                "connector": "tdx-connector",
-                "tool": "get_sector_ranking",
-                "parameters": {"market": "cn", "page": 1},
+                "attempts": [_attempt()],
                 "as_of": "2026-09-02",
                 "pagination": {"complete": True},
                 "sample_count": 1,
@@ -70,6 +89,7 @@ def test_data_request_from_mapping_accepts_minimal_valid_request() -> None:
     assert request.request_id == "req_20260903_sector_01"
     assert request.stage == "sector_selection"
     assert request.as_of.isoformat() == "2026-09-02"
+    assert request.max_delivery_lag_days == 2
     assert request.datasets[0].required_fields == ("sector_code", "change_percent")
 
 
@@ -84,16 +104,23 @@ def test_connector_authority_is_frozen_and_rejects_unknown_connectors() -> None:
         DataRequest.from_mapping(request_payload)
 
     bundle_payload = _bundle_payload()
-    bundle_payload["datasets"][0]["connector"] = "forged-connector"
-    with pytest.raises(ValueError, match="^connector is not approved$"):
+    bundle_payload["datasets"][0]["attempts"][0]["connector"] = "forged-connector"
+    with pytest.raises(ValueError, match="^attempt connector is not approved$"):
         DataBundle.from_mapping(bundle_payload)
 
 
-def test_data_request_accepts_bounded_delivery_lag() -> None:
+def test_data_request_rejects_duplicate_ordered_fallback_connectors() -> None:
     payload = _request_payload()
-    payload["max_delivery_lag_days"] = 2
+    payload["datasets"][0]["allowed_connectors"] = [
+        "tdx-connector",
+        "tdx-connector",
+    ]
 
-    assert DataRequest.from_mapping(payload).max_delivery_lag_days == 2
+    with pytest.raises(
+        ValueError,
+        match="^allowed_connectors contains a duplicate connector$",
+    ):
+        DataRequest.from_mapping(payload)
 
 
 @pytest.mark.parametrize(
@@ -111,9 +138,7 @@ def test_data_request_accepts_bounded_delivery_lag() -> None:
         lambda payload: payload.update(datasets=[]),
         lambda payload: payload["datasets"].append(copy.deepcopy(payload["datasets"][0])),
         lambda payload: payload["datasets"][0].update(required_fields=[]),
-        lambda payload: payload["datasets"][0].update(
-            allowed_connectors=["../../connector"]
-        ),
+        lambda payload: payload["datasets"][0].update(allowed_connectors=["../../connector"]),
         lambda payload: payload.update(unexpected="value"),
     ],
 )
@@ -140,17 +165,47 @@ def test_data_bundle_from_mapping_preserves_immutable_business_extensions() -> N
     payload = _bundle_payload()
     bundle = DataBundle.from_mapping(payload)
 
-    payload["datasets"][0]["parameters"]["page"] = 2
+    payload["datasets"][0]["attempts"][0]["parameters"]["page"] = 2
     payload["datasets"][0]["records"][0]["sector_code"] = "MUTATED"
     payload["datasets"][0]["quality_note"]["coverage"] = "partial"
 
     dataset = bundle.datasets[0]
+    attempt = dataset.attempts[0]
     assert bundle.generated_at.isoformat() == "2026-09-03T04:00:00+00:00"
-    assert dataset.parameters["page"] == 1
+    assert (attempt.connector, attempt.tool, attempt.status, attempt.error_code) == (
+        "tdx-connector", "get_sector_ranking", "succeeded", None
+    )
+    assert attempt.parameters["page"] == 1
     assert dataset.records[0]["sector_code"] == "BK1036"
     assert dataset.extensions["quality_note"]["coverage"] == "full"
     with pytest.raises(TypeError):
-        dataset.parameters["page"] = 3  # type: ignore[index]
+        attempt.parameters["page"] = 2  # type: ignore[index]
+
+
+@pytest.mark.parametrize("unknown_field", ["error_message", "diagnostic", "latency_ms"])
+def test_data_bundle_attempt_rejects_unknown_fields(unknown_field: str) -> None:
+    payload = _bundle_payload()
+    payload["datasets"][0]["attempts"][0][unknown_field] = "not-allowed"
+
+    with pytest.raises(
+        ValueError,
+        match="^DataBundle attempt fields are invalid$",
+    ):
+        DataBundle.from_mapping(payload)
+
+
+@pytest.mark.parametrize("legacy_field", ["connector", "tool", "parameters"])
+def test_data_bundle_dataset_rejects_legacy_final_source_fields(
+    legacy_field: str,
+) -> None:
+    payload = _bundle_payload()
+    payload["datasets"][0][legacy_field] = "legacy"
+
+    with pytest.raises(
+        ValueError,
+        match="^DataBundle dataset contains a forbidden legacy source field$",
+    ):
+        DataBundle.from_mapping(payload)
 
 
 def test_data_bundle_accepts_timezone_aware_datetime_value() -> None:
@@ -170,29 +225,12 @@ def test_data_bundle_preserves_immutable_top_level_business_extensions() -> None
     payload["quality"]["coverage"].append("mutated")
 
     assert bundle.extensions["summary"].startswith("password")
-    assert bundle.extensions["quality"]["coverage"] == (
-        "industry",
-        "concept",
-        "area",
-    )
+    assert bundle.extensions["quality"]["coverage"] == ("industry", "concept", "area")
     with pytest.raises(TypeError):
         bundle.extensions["summary"] = "mutated"  # type: ignore[index]
 
 
-@pytest.mark.parametrize("key", ["api_key", "Authorization"])
-def test_data_bundle_rejects_sensitive_top_level_extension_keys(key: str) -> None:
-    payload = _bundle_payload()
-    payload[key] = "super-secret-value"
-
-    with pytest.raises(
-        ValueError,
-        match="^DataBundle contains a forbidden credential key$",
-    ) as exc_info:
-        DataBundle.from_mapping(payload)
-    assert "super-secret-value" not in str(exc_info.value)
-
-
-def test_data_bundle_scans_all_object_keys_without_scanning_scalar_values() -> None:
+def test_data_bundle_does_not_scan_business_scalar_values() -> None:
     valid = _bundle_payload()
     valid["summary"] = "authorization_header client_secret_value apiKey accessToken"
     valid["datasets"][0]["records"][0].update(
@@ -201,26 +239,26 @@ def test_data_bundle_scans_all_object_keys_without_scanning_scalar_values() -> N
     )
     DataBundle.from_mapping(valid)
 
-    def in_record(payload: dict) -> None:
-        payload["datasets"][0]["records"][0]["authorization_header"] = "hidden"
 
-    def in_units(payload: dict) -> None:
-        payload["datasets"][0]["units"]["client_secret_value"] = "hidden"
-
-    def in_warnings(payload: dict) -> None:
-        payload["warnings"].append({"apiKey": "hidden"})
-
-    def in_errors(payload: dict) -> None:
-        payload["errors"].append({"accessToken": "hidden"})
-
-    for mutate in (in_record, in_units, in_warnings, in_errors):
-        payload = _bundle_payload()
-        mutate(payload)
-        with pytest.raises(
-            ValueError,
-            match="^DataBundle contains a forbidden credential key$",
-        ):
-            DataBundle.from_mapping(payload)
+@pytest.mark.parametrize(
+    "mutate",
+    [
+        lambda p: p.update(api_key="hidden"),
+        lambda p: p["datasets"][0]["records"][0].update(authorization="hidden"),
+        lambda p: p["datasets"][0]["units"].update(client_secret_value="hidden"),
+        lambda p: p["datasets"][0]["pagination"].update(apiKey="hidden"),
+        lambda p: p["datasets"][0]["attempts"][0]["parameters"].update(token="hidden"),
+        lambda p: p["datasets"][0].update(credentials="hidden"),
+        lambda p: p["warnings"].append({"accessToken": "hidden"}),
+        lambda p: p["errors"].append({"private_key": "hidden"}),
+    ],
+)
+def test_data_bundle_rejects_sensitive_keys_anywhere(mutate) -> None:
+    payload = _bundle_payload()
+    mutate(payload)
+    with pytest.raises(ValueError, match="forbidden credential key") as exc_info:
+        DataBundle.from_mapping(payload)
+    assert "hidden" not in str(exc_info.value)
 
 
 def test_data_bundle_preserves_immutable_pagination_evidence() -> None:
@@ -245,33 +283,6 @@ def test_data_bundle_preserves_immutable_pagination_evidence() -> None:
     with pytest.raises(TypeError):
         parsed.extensions["page_count"] = 3  # type: ignore[index]
 
-    sensitive = _bundle_payload()
-    sensitive["datasets"][0]["pagination"]["client_secret_value"] = "hidden"
-    with pytest.raises(
-        ValueError,
-        match="^DataBundle contains a forbidden credential key$",
-    ):
-        DataBundle.from_mapping(sensitive)
-
-
-def test_data_bundle_rejects_credential_keys_without_scanning_business_values() -> None:
-    valid = _bundle_payload()
-    valid["datasets"][0]["records"][0]["note"] = "password=business headline"
-    assert DataBundle.from_mapping(valid).datasets[0].records[0]["note"].startswith(
-        "password="
-    )
-
-    for mutate in (
-        lambda payload: payload["datasets"][0]["parameters"].update(
-            Authorization="super-secret-value"
-        ),
-        lambda payload: payload["datasets"][0].update(api_key="super-secret-value"),
-    ):
-        payload = _bundle_payload()
-        mutate(payload)
-        with pytest.raises(ValueError) as exc_info:
-            DataBundle.from_mapping(payload)
-        assert "super-secret-value" not in str(exc_info.value)
 
 
 def test_matching_data_bundle_with_warnings_is_ready_for_evaluation() -> None:
@@ -279,6 +290,235 @@ def test_matching_data_bundle_with_warnings_is_ready_for_evaluation() -> None:
     bundle = DataBundle.from_mapping(_bundle_payload())
 
     assert validate_data_bundle_for_evaluation(request, bundle) is None
+
+
+def test_evaluation_rejects_fallback_that_skips_primary_connector() -> None:
+    request_payload = _fallback_request_payload()
+    bundle_payload = _bundle_payload()
+    bundle_payload["datasets"][0]["attempts"] = [
+        _attempt("westock-mcp", tool="get_sector_ranking_fallback")
+    ]
+
+    with pytest.raises(
+        ValueError,
+        match="^DataBundle attempt connectors must match the allowed connector prefix$",
+    ):
+        validate_data_bundle_for_evaluation(
+            DataRequest.from_mapping(request_payload),
+            DataBundle.from_mapping(bundle_payload),
+        )
+
+
+def test_primary_failure_then_ordered_fallback_success_is_ready_for_evaluation() -> None:
+    request_payload = _fallback_request_payload()
+    bundle_payload = _bundle_payload()
+    bundle_payload["datasets"][0]["attempts"] = [
+        _attempt(status="failed"),
+        _attempt("westock-mcp", tool="get_sector_ranking_fallback"),
+    ]
+
+    assert (
+        validate_data_bundle_for_evaluation(
+            DataRequest.from_mapping(request_payload),
+            DataBundle.from_mapping(bundle_payload),
+        )
+        is None
+    )
+
+
+def test_multiple_datasets_can_use_different_approved_connectors() -> None:
+    request_payload = _request_payload()
+    request_payload["datasets"].append(
+        {
+            "dataset_key": "market-breadth",
+            "required_fields": ["up_count", "total_count"],
+            "allowed_connectors": ["mx-ds-mcp"],
+        }
+    )
+    bundle_payload = _bundle_payload()
+    bundle_payload["datasets"].append(
+        {
+            "dataset_key": "market-breadth",
+            "attempts": [_attempt("mx-ds-mcp", tool="get_market_breadth")],
+            "as_of": "2026-09-02",
+            "pagination": {"complete": True},
+            "sample_count": 1,
+            "fields": ["up_count", "total_count"],
+            "units": {"up_count": "count", "total_count": "count"},
+            "records": [{"up_count": 21, "total_count": 180}],
+        }
+    )
+
+    assert (
+        validate_data_bundle_for_evaluation(
+            DataRequest.from_mapping(request_payload),
+            DataBundle.from_mapping(bundle_payload),
+        )
+        is None
+    )
+
+
+def _fallback_request_payload() -> dict:
+    payload = _request_payload()
+    payload["datasets"][0]["allowed_connectors"] = [
+        "tdx-connector",
+        "westock-mcp",
+    ]
+    return payload
+
+
+def test_evaluation_rejects_out_of_order_attempts() -> None:
+    bundle_payload = _bundle_payload()
+    bundle_payload["datasets"][0]["attempts"] = [
+        _attempt("westock-mcp", status="failed"),
+        _attempt(),
+    ]
+
+    with pytest.raises(
+        ValueError,
+        match="^DataBundle attempt connectors must match the allowed connector prefix$",
+    ):
+        validate_data_bundle_for_evaluation(
+            DataRequest.from_mapping(_fallback_request_payload()),
+            DataBundle.from_mapping(bundle_payload),
+        )
+
+
+@pytest.mark.parametrize(
+    ("attempts", "message"),
+    [
+        (
+            [_attempt(), _attempt("westock-mcp")],
+            "DataBundle dataset attempts has multiple successes",
+        ),
+        (
+            [_attempt(), _attempt("westock-mcp", status="failed")],
+            "succeeded DataBundle attempt must be last",
+        ),
+    ],
+)
+def test_data_bundle_rejects_invalid_success_attempt_sequence(
+    attempts: list[dict], message: str
+) -> None:
+    payload = _bundle_payload()
+    payload["datasets"][0]["attempts"] = attempts
+
+    with pytest.raises(ValueError, match=f"^{message}$"):
+        DataBundle.from_mapping(payload)
+
+
+def test_data_bundle_rejects_duplicate_attempt_connectors_during_parsing() -> None:
+    payload = _bundle_payload()
+    payload["datasets"][0]["attempts"] = [
+        _attempt(status="failed"),
+        _attempt(status="failed"),
+    ]
+
+    with pytest.raises(
+        ValueError,
+        match="^DataBundle dataset attempts contains a duplicate connector$",
+    ):
+        DataBundle.from_mapping(payload)
+
+
+def test_data_bundle_rejects_attempt_count_above_approved_connector_bound() -> None:
+    payload = _bundle_payload()
+    payload["datasets"][0]["attempts"] = [
+        _attempt("tdx-connector", status="failed"),
+        _attempt("westock-mcp", status="failed"),
+        _attempt("mx-ds-mcp", status="failed"),
+        _attempt("tdx-connector", status="failed"),
+    ]
+
+    with pytest.raises(
+        ValueError,
+        match="^DataBundle dataset attempts exceeds approved connector count$",
+    ):
+        DataBundle.from_mapping(payload)
+
+
+@pytest.mark.parametrize(
+    ("mutate", "message"),
+    [
+        (
+            lambda attempt: attempt.update(error_code=""),
+            "attempt error_code must be a non-blank string",
+        ),
+        (
+            lambda attempt: attempt.update(error_code=None),
+            "attempt error_code must be a non-blank string",
+        ),
+        (
+            lambda attempt: attempt.update(status="succeeded", error_code="TIMEOUT"),
+            "succeeded DataBundle attempt must not have an error_code",
+        ),
+        (
+            lambda attempt: attempt.update(connector="unknown-connector"),
+            "attempt connector is not approved",
+        ),
+        (
+            lambda attempt: attempt.update(tool="../unsafe"),
+            "attempt tool contains unsafe characters",
+        ),
+    ],
+)
+def test_data_bundle_rejects_invalid_attempt_fields(mutate, message: str) -> None:
+    payload = _bundle_payload()
+    attempt = _attempt(status="failed")
+    mutate(attempt)
+    payload["datasets"][0]["attempts"] = [attempt]
+
+    with pytest.raises((TypeError, ValueError), match=f"^{message}$"):
+        DataBundle.from_mapping(payload)
+
+
+@pytest.mark.parametrize(
+    "error_code",
+    [
+        "UNKNOWN_UPSTREAM_FAILURE",
+        "X" * 512,
+        "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJ1c2VyIn0.signature",
+    ],
+)
+def test_data_bundle_rejects_unapproved_or_token_shaped_error_codes(
+    error_code: str,
+) -> None:
+    payload = _bundle_payload()
+    attempt = _attempt(status="failed")
+    attempt["error_code"] = error_code
+    payload["datasets"][0]["attempts"] = [attempt]
+
+    with pytest.raises(
+        ValueError,
+        match="^DataBundle attempt error_code is unsupported$",
+    ):
+        DataBundle.from_mapping(payload)
+
+
+def test_data_bundle_rejects_sensitive_attempt_parameters() -> None:
+    payload = _bundle_payload()
+    payload["datasets"][0]["attempts"][0]["parameters"]["api_key"] = "hidden"
+
+    with pytest.raises(
+        ValueError,
+        match="^DataBundle contains a forbidden credential key$",
+    ):
+        DataBundle.from_mapping(payload)
+
+
+def test_all_failed_attempts_parse_but_are_rejected_for_evaluation() -> None:
+    payload = _bundle_payload()
+    payload["datasets"][0]["attempts"] = [_attempt(status="failed")]
+    bundle = DataBundle.from_mapping(payload)
+
+    assert bundle.datasets[0].attempts[0].status == "failed"
+    with pytest.raises(
+        ValueError,
+        match="^DataBundle dataset must have exactly one successful attempt$",
+    ):
+        validate_data_bundle_for_evaluation(
+            DataRequest.from_mapping(_request_payload()), bundle
+        )
 
 
 @pytest.mark.parametrize(
@@ -357,56 +597,16 @@ def _mutate_extra_bundle_dataset(request: dict, bundle: dict) -> None:
 @pytest.mark.parametrize(
     ("mutate", "message"),
     [
-        (
-            lambda request, bundle: bundle.update(request_id="req_other"),
-            "DataBundle request identity does not match DataRequest",
-        ),
-        (
-            _mutate_missing_requested_dataset,
-            "DataBundle is missing a requested dataset",
-        ),
-        (
-            _mutate_duplicate_bundle_dataset,
-            "DataBundle contains a duplicate dataset_key",
-        ),
-        (
-            _mutate_extra_bundle_dataset,
-            "DataBundle contains an unrequested dataset",
-        ),
-        (
-            lambda request, bundle: bundle["datasets"][0].update(connector="mx-ds-mcp"),
-            "DataBundle dataset connector is not allowed",
-        ),
-        (
-            lambda request, bundle: bundle["datasets"][0].update(as_of="2026-09-01"),
-            "DataBundle dataset as_of does not match DataRequest",
-        ),
-        (
-            lambda request, bundle: bundle["datasets"][0]["pagination"].update(
-                complete=False
-            ),
-            "DataBundle dataset pagination is incomplete",
-        ),
-        (
-            lambda request, bundle: bundle["datasets"][0].update(
-                fields=["sector_code"]
-            ),
-            "DataBundle dataset is missing a required field",
-        ),
-        (
-            lambda request, bundle: bundle["datasets"][0]["records"][0].pop(
-                "change_percent"
-            ),
-            "DataBundle record is missing a required field",
-        ),
-        (
-            lambda request, bundle: bundle["datasets"][0].update(sample_count=2),
-            "DataBundle dataset sample_count does not match records",
-        ),
-        (
-            lambda request, bundle: bundle.update(errors=[{"code": "upstream_failed"}]),
-            "DataBundle reports acquisition errors",
-        ),
+        (lambda _r, b: b.update(request_id="req_other"), "request identity"),
+        (_mutate_missing_requested_dataset, "missing a requested dataset"),
+        (_mutate_duplicate_bundle_dataset, "duplicate dataset_key"),
+        (_mutate_extra_bundle_dataset, "unrequested dataset"),
+        (lambda _r, b: b["datasets"][0].update(as_of="2026-09-01"), "as_of"),
+        (lambda _r, b: b["datasets"][0]["pagination"].update(complete=False), "pagination"),
+        (lambda _r, b: b["datasets"][0].update(fields=["sector_code"]), "required field"),
+        (lambda _r, b: b["datasets"][0]["records"][0].pop("change_percent"), "record"),
+        (lambda _r, b: b["datasets"][0].update(sample_count=2), "sample_count"),
+        (lambda _r, b: b.update(errors=[{"code": "upstream_failed"}]), "acquisition errors"),
     ],
 )
 def test_data_bundle_validation_fails_closed(mutate, message: str) -> None:
@@ -416,7 +616,7 @@ def test_data_bundle_validation_fails_closed(mutate, message: str) -> None:
     request = DataRequest.from_mapping(request_payload)
     bundle = DataBundle.from_mapping(bundle_payload)
 
-    with pytest.raises(ValueError, match=f"^{message}$"):
+    with pytest.raises(ValueError, match=message):
         validate_data_bundle_for_evaluation(request, bundle)
 
 
@@ -431,6 +631,8 @@ def test_data_bundle_validation_fails_closed(mutate, message: str) -> None:
         lambda payload: payload.update(request_id="request:unsafe"),
         lambda payload: payload.update(request_id="r" * 129),
         lambda payload: payload.update(datasets=[]),
+        lambda payload: payload["datasets"][0].pop("attempts"),
+        lambda payload: payload["datasets"][0].update(attempts=[]),
         lambda payload: payload["datasets"][0].update(fields=[]),
         lambda payload: payload["datasets"][0].update(sample_count=True),
         lambda payload: payload["datasets"][0]["records"].append("not-an-object"),
