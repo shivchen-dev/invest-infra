@@ -14,7 +14,7 @@
 | 优先级 | 主线 | 状态 | 唯一权威实施计划 |
 |---|---|---|---|
 | P0 | ETF 数据覆盖与 Provider 韧性 | `CLOSED` | `invest-infra-etf-data-coverage-resilience-plan-v1.0.md` |
-| P1 | Stage 4D 研究交付收口 | `ACTIVE` | `invest-infra-stage4d-mvp-phased-execution-plan-v1.0.md`；Gate 3 前置切片：`invest-infra-candidate-strategies-mvp-plan-v1.0.md` |
+| P1 | Stage 4D 研究交付收口 | `ACTIVE` | `invest-infra-stage4d-mvp-phased-execution-plan-v1.0.md`；Gate 3 前置切片：`invest-infra-candidate-strategies-mvp-plan-v1.0.md`（WorkBuddy DataBundle → invest-infra 专用 evaluator → 内部 Candidate handoff） |
 
 状态解释：
 
@@ -59,9 +59,9 @@
 |---|---|---|
 | `invest-infra-etf-data-coverage-resilience-plan-v1.0.md` | `CLOSED` | 已按“真实探针 → 准入决策 → 最小 Adapter”完成收口；自然调度转为非阻塞运行观察，不预建字段路由或覆盖平台 |
 | `invest-infra-central-research-visualization-mvp-plan-v1.0.md` | `DEFERRED` | 数据层 P0 已收口；仍待 Stage 4D Gate 3 与 Candidate lineage 验收后独立授权恢复，不与当前 P1 混合实施 |
-| `invest-infra-stage4d-mvp-phased-execution-plan-v1.0.md` | `ACTIVE` | 当前 Stage 4D 收口权威；只处理真实联调、剩余 Research Workspace 和最终验收 |
-| `invest-infra-strategy-source-to-automation-workflow.md` | `CONTRACT_AUTHORITY` | 策略交付物和来源追溯的合同权威，不作为当前开发排期 |
-| `invest-infra-candidate-strategies-mvp-plan-v1.0.md` | `ACTIVE` | Stage 4D Gate 3 前置切片；原文恢复、两条Draft审计发布、固定两阶段人工执行 |
+| `invest-infra-stage4d-mvp-phased-execution-plan-v1.0.md` | `ACTIVE` | 当前 Stage 4D 收口权威；Gate 3 采用 WorkBuddy DataBundle → invest-infra 确定性执行，只处理真实联调、剩余 Research Workspace 和最终验收 |
+| `invest-infra-strategy-source-to-automation-workflow.md` | `CONTRACT_AUTHORITY` | CIA 策略、RAA 审计、WorkBuddy 数据供给和 invest-infra 确定性执行的合同权威，不作为当前开发排期 |
+| `invest-infra-candidate-strategies-mvp-plan-v1.0.md` | `ACTIVE` | Stage 4D Gate 3 前置切片；Gate A/B 已完成，当前执行 DataRequest/DataBundle、两个专用 evaluator 和固定两阶段人工验收 |
 | `invest-infra-decision-feedback-loop-mvp-plan-v1.0.md` | `DRAFT` | Stage 4D Gate 3 后续候选反馈闭环；仅行动建议、T+5/T+10/T+20 前瞻观察和策略复盘，满足激活条件并经独立授权前不得实施 |
 | `archive/reference-blueprints/invest-infra-stage4d-unified-investment-workbench-integration-plan-v1.0.md` | `REFERENCE_BLUEPRINT` | Stage 4D–4G 长期蓝图；保留原文件名和完整内容，不得直接从正文派工 |
 | `invest-infra-data-collection-enhancement-plan-v1.0.md` | `REFERENCE_BLUEPRINT` | 数据采集架构参考；不作为当前全量建设承诺 |

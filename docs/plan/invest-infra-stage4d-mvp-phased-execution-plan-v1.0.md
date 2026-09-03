@@ -24,6 +24,23 @@
 
 若真实样本尚不可用，只记录为 Gate 1 阻塞项，不用模拟样本替代真实验收。
 
+## 0.2 Gate 3 数据执行边界修正（2026-09-03）
+
+Gate 1/2 和已完成的策略治理事实继续有效。Gate 3 不再要求 MiniMax-M3 通过长 Prompt 解释正式策略并自行生成 StageResult/Candidate，改为：
+
+```text
+invest-infra 生成 DataRequest
+→ WorkBuddy 调用获准金融 MCP 并交付 DataBundle
+→ invest-infra 校验并由板块/个股两个专用 evaluator 确定性计算
+→ StageResult + Candidate 2.0.0
+→ 内部可信接缝创建待准入 Observation
+→ 既有 Admission / Evidence / Research
+```
+
+首版不建设通用策略语言、通用 DAG、完整自动化平台或周期调度。WorkBuddy Automation 只允许固定短启动 Prompt；任何创建、修改、启停或调度仍须用户单独显性授权。
+
+既有 WorkBuddy Candidate 2.0.0 Shared Directory Intake 继续作为外部候选兼容路径，不删除、不改写历史事实。新路径从 WorkBuddy DataBundle 入站，系统生成的 Candidate 不得回绕该 Bridge 或伪装成 `producer=workbuddy`；DataBundle 与 Candidate 的生产者身份和 provenance 分开保存。
+
 ## 1. 目标
 
 将 Stage 4D 从横跨合同、存储、Pipeline、API、Web 和 Research 的大任务，拆成四个可独立验收、逐阶段放行的纵向阶段：
@@ -46,10 +63,11 @@
 ### 2.1 MVP 包含
 
 ```text
-WorkBuddy 2.0.0 candidates JSON
-→ Candidate Intake
-→ 不可变归档
-→ ExternalWorkflowRun / Artifact / Observation
+WorkBuddy DataBundle
+→ invest-infra 专用 evaluator
+→ Candidate 2.0.0 candidates JSON
+→ 内部可信 Candidate handoff
+→ ExternalObservation
 → Opportunity Radar / Automation Center
 → Observation Admission
 → Research Case / Evidence
@@ -77,15 +95,13 @@ WorkBuddy 2.0.0 candidates JSON
 ## 3. 依赖图
 
 ```text
-合同 / ADR / 真实样本 / 路径权限
-  └─ Candidate Intake → ExternalObservation 准入合同
-       └─ Domain + Migration + Repository
-            └─ Artifact Bridge + Ingestor + SharedDirectory Adapter
-                 └─ Query API + Artifact Preview + Integration Health
-                      └─ Dashboard + Opportunity Radar + Automation Center
-                           └─ Observation Admission
-                                └─ Research Case + Evidence + Research Run / Result
-                                     └─ Research Workspace 统一时间线
+已完成兼容路径：WorkBuddy Candidate → SharedDirectory Adapter → ExternalObservation
+
+当前 Gate 3 路径：DataRequest → WorkBuddy DataBundle → 专用 evaluator
+  └─ StageResult / CandidateProposal → 内部可信 handoff → ExternalObservation
+       └─ Observation Admission
+            └─ Research Case + Evidence + Research Run / Result
+                 └─ Research Workspace 统一时间线
 ```
 
 ## 4. 阶段 0：合同与现场前置验证
@@ -140,7 +156,7 @@ WorkBuddy 2.0.0 candidates JSON
 
 ### 4.2 P0 增量：Candidate 2.0.0 两阶段 lineage 合同
 
-> 状态：ARCHITECTURE READY，待用户审核实施授权（2026-08-31）
+> 状态：兼容路径代码已实现（2026-08-31）；原定由 WorkBuddy 生成正式 Candidate 的真实验收已被 2026-09-03 DataBundle 路径取代
 
 中心投研可视化 3C-L0 真实字段盘点确认：现有 `ExternalWorkflowRun`、
 `ExternalArtifact`、`ExternalObservation`、Admission 和 Research Workspace 已能表达
@@ -173,9 +189,12 @@ WorkBuddy 2.0.0 candidates JSON
 6. **Admission 时间不纳入本增量。** 现有记录没有权威决定时间时，只读 projection
    返回 `unavailable`；不得用 `observed_at` 或数据库时间代替。Admission 时间如需补齐，
    作为独立任务单独评估，不阻塞 Candidate lineage。
-7. **策略身份分层校验。** WorkBuddy 生成时从 active StrategyVersion API 取得
-   key/version/hash；Pipeline 摄取时只验证 archive 内部一致性与合同，不静默调用网络。
-   真实验收再以 active API、archive、PostgreSQL 和只读 API 四方对照确认。
+7. **兼容入口只作内部一致性校验。** 现有 WorkBuddy Candidate archive 摄取只验证
+   payload/manifest 内部一致性与合同，不静默调用网络，也不从文件名或 Markdown 补身份。
+8. **新旧入口分离。** 已完成的 `parse_candidates_payload()` 与
+   `import_archived_candidate_run()` 保持 WorkBuddy 外部候选兼容语义；新 evaluator 生成的
+   CandidateProposal 通过内部 Application 接缝创建 Observation，不写回共享目录，也不标记为
+   WorkBuddy 产物。两条路径最终复用同一 Admission 服务，不复用错误的生产者身份。
 
 #### 4.2.2 现有 parser Interface
 
@@ -216,28 +235,29 @@ parse_candidates_payload(payload)
 - Archive、Intake、Admission、Research 状态分别返回；
 - 只投影 stage/strategy ID、version、hash 和 as-of，不返回 artifact URI、raw payload、
   内部 metadata 或异常；
-- WorkBuddy 先生成板块 StageResult，再由个股阶段显式绑定；
-- 生成带顶层 lineage 的 Candidate ready archive，并完成一次真实摄取；
-- 对照 AgentOA 结果、archive、PostgreSQL、active Strategy API 与 lineage API；
+- 兼容入口的 lineage 只读投影继续保留；
+- 原定“WorkBuddy 直接生成正式 Candidate ready archive”的真实验收取消，不再作为 Gate 3 输入方案；
+- 新 DataBundle → evaluator → 内部 Candidate handoff 验收以候选策略 MVP 计划的 Slice 1B/2 为唯一依据；
 - 不启动周期自动摄取，不修改历史 Observation/Candidate/Research 数据。
 
-验收：Application/API success、unavailable、partial、conflict、404 和脱敏测试通过；
-OpenAPI drift、Ruff、架构检查通过；两条策略和 StageResult、成分快照、Candidate 与
-Research Timeline 可逐项追溯，fixture 不替代真实证据。完成后恢复中心可视化 3C-L1。
+验收：现有 Application/API success、unavailable、partial、conflict、404 和脱敏测试继续通过；
+新路径最终需使两条策略、DataBundle、StageResult、成分快照、Candidate 与 Research Timeline
+可逐项追溯，fixture 不替代真实证据。完成 Gate 3 后再独立决定是否恢复中心可视化 3C-L1。
 
 #### 4.2.4 固定实施顺序与停止条件
 
 ```text
-P0-A 合同、parser、Bridge
-→ P0-B 只读 projection、真实验收
-→ 中心可视化 3C-L1～L3
+已完成：P0-A 合同、parser、Bridge → P0-B 只读 projection
+当前：候选策略 Slice 1B/2 → Gate 3 真实验收
+后续：中心可视化 3C-L1～L3（独立授权）
 ```
 
 以下任一情况立即停止并重新评审，不顺带扩展：
 
 - 需要新增业务表、外键或改变 Research/Admission 状态机；
 - 需要浏览器、API Reader 或 Bridge 跨目录解析 Markdown/猜测关系；
-- WorkBuddy 无法在现有 Candidate payload 中提供可验证 lineage；
+- 两个专用 evaluator 无法在现有 Candidate payload 中生成可验证 lineage；
+- 新路径必须复用外部 Candidate Bridge 或伪造 `producer=workbuddy` 才能进入 Admission；
 - 需要在摄取事务中调用 WorkBuddy、active Strategy API 或其他网络来源；
 - 需要回填/重写历史 Observation、Candidate、Admission 或 Research 数据；
 - 需要启动 Dagster、周期自动摄取、部署或业务数据写入才能完成代码级验收。
@@ -357,7 +377,7 @@ legacy 1.1.x 不在当前入口、测试队列或后续 Web 工作台范围内�
 
 对应原蓝图：D7–D8。目标是完成 `Observation → Admission → Evidence → Research Case → Research Run/Result → 统一时间线`。JiuwenSwarm 已停止采用，不再作为本阶段依赖或验收对象。
 
-真实 WorkBuddy 验收前置依赖：先完成 `invest-infra-candidate-strategies-mvp-plan-v1.0.md`，将既有板块强度与通达信个股筛选交付纳入 Draft → RAA 审计 → CIA 批准 → StrategyVersion 发布激活，再以两个正式版本执行固定两阶段候选发现。该切片属于 Stage 4D P0，不新增并行主线。
+真实 WorkBuddy 验收前置依赖：先完成 `invest-infra-candidate-strategies-mvp-plan-v1.0.md`。既有 Draft → RAA 审计 → CIA 批准 → StrategyVersion 发布激活已经完成；当前只推进 DataRequest/DataBundle、两个专用 evaluator 和固定两阶段候选发现。该切片属于 Stage 4D P0，不新增并行主线。
 
 ### 7.1 交付任务
 
@@ -421,7 +441,9 @@ Gate 3 准入契约冻结如下：
 - [ ] 正常主链路端到端通过；
 - [ ] 蓝图第 25.10 节异常场景全部有测试或手工验收证据；
 - [ ] Fake WorkBuddy、Fake ResearchRunner E2E 通过；
-- [ ] 真实 WorkBuddy 手工验收通过；
+- [ ] 真实 WorkBuddy 两次 MCP DataBundle 手工验收通过；
+- [ ] 两个专用 evaluator 对相同版本和输入产生可重复的 StageResult/Candidate；
+- [ ] WorkBuddy 不解释策略、不生成正式 hash/lineage、不决定 CandidateAdmission；
 - [ ] 现有全量测试无回归；
 - [ ] 运行手册、架构文档和 OpenAPI client 已同步。
 
@@ -452,6 +474,7 @@ Gate 3 准入契约冻结如下：
 | 风险 | 暴露阶段 | 控制 |
 |---|---|---|
 | 真实 WorkBuddy 输出不稳定 | 阶段 0 | 真实样本先验收，Schema/Adapter 隔离差异 |
+| WorkBuddy 长 Prompt 超出 MiniMax-M3 稳定执行边界 | 阶段 0/3 | 固定短 Prompt + 结构化 DataRequest；策略计算、hash 和 lineage 下沉到专用 evaluator |
 | 状态语义混用 | 阶段 1 | producer/intake/admission 分字段和领域约束 |
 | 重复或损坏消息 | 阶段 1 | hash、幂等键、原子 claim、archive/rejected |
 | UI 先于闭环膨胀 | 阶段 2 | 只做只读三页面，Gate 1 后启动 |
