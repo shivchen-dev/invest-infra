@@ -16,6 +16,16 @@ ARTIFACT = {
     "version_candidate": "2.0.0",
     "rules": [{"id": rule} for rule in ("R-A1", "R-A3", "R-A4", "R-A5")],
 }
+SCOPED_ARTIFACT = {
+    **ARTIFACT,
+    "rules": [{"id": rule} for rule in ("R-A1", "R-A4", "R-A5")],
+    "profile": {
+        "name": "industry-concept-cje-bd-zdf",
+        "groups": ["industry", "concept"],
+        "disabled_rules": ["R-A3"],
+        "zgb": False,
+    },
+}
 
 
 def _request() -> dict:
@@ -120,6 +130,28 @@ def _bundle() -> dict:
     }
 
 
+def _scoped_request() -> dict:
+    request = _request()
+    request["datasets"][0]["required_fields"].remove("zgb")
+    return request
+
+
+def _scoped_bundle(*, include_area: bool = False) -> dict:
+    bundle = _bundle()
+    ranking = bundle["datasets"][0]
+    ranking["fields"].remove("zgb")
+    if not include_area:
+        ranking["records"] = [row for row in ranking["records"] if row["group"] != "area"]
+        bundle["datasets"][1]["records"] = [
+            row for row in bundle["datasets"][1]["records"] if row["group"] != "area"
+        ]
+    for row in ranking["records"]:
+        row.pop("zgb")
+    for dataset in bundle["datasets"]:
+        dataset["sample_count"] = len(dataset["records"])
+    return bundle
+
+
 def test_deterministic_ranking_hashes_groups_and_constant_tie_break() -> None:
     first = evaluate_sector_bundle(_request(), _bundle(), strategy_artifact=ARTIFACT)
     second = evaluate_sector_bundle(_request(), _bundle(), strategy_artifact=ARTIFACT)
@@ -143,6 +175,34 @@ def test_mapping_and_domain_inputs_have_stable_stage_identity() -> None:
         strategy_artifact=ARTIFACT,
     )
     assert mapping_result == domain_result
+
+
+def test_scoped_profile_uses_only_cje_and_bd_zdf_deterministically() -> None:
+    bundle = _scoped_bundle()
+    next(row for row in bundle["datasets"][0]["records"] if row["bd_code"] == "A").update(cje=50, bd_zdf=0)
+    first = evaluate_sector_bundle(_scoped_request(), bundle, strategy_artifact=SCOPED_ARTIFACT)
+    second = evaluate_sector_bundle(_scoped_request(), copy.deepcopy(bundle), strategy_artifact=SCOPED_ARTIFACT)
+    assert first == second
+    assert first["groups"] == ["concept", "industry"]
+    assert all("zgb" not in row for row in first["rankings"])
+    industry = [row for row in first["rankings"] if row["group"] == "industry"]
+    assert [(row["bd_code"], row["score"]) for row in industry] == [("B", 1), ("A", 0)]
+
+
+def test_scoped_profile_rejects_area_data() -> None:
+    with pytest.raises(SectorEvaluationError, match="rejects area"):
+        evaluate_sector_bundle(_scoped_request(), _scoped_bundle(include_area=True), strategy_artifact=SCOPED_ARTIFACT)
+
+
+@pytest.mark.parametrize("mutation", ["missing_area", "missing_zgb"])
+def test_default_profile_still_requires_all_groups_and_zgb(mutation: str) -> None:
+    bundle = _bundle()
+    if mutation == "missing_area":
+        bundle["datasets"][0]["records"] = [row for row in bundle["datasets"][0]["records"] if row["group"] != "area"]
+    else:
+        bundle["datasets"][0]["records"][0].pop("zgb")
+    with pytest.raises(SectorEvaluationError):
+        evaluate_sector_bundle(_request(), bundle, strategy_artifact=ARTIFACT)
 
 
 @pytest.mark.parametrize("zgb", ["bad", "-1/2", "2/1", "1/0"])

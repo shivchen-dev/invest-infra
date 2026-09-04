@@ -21,6 +21,7 @@ STRATEGY_VERSION = "2.0.0"
 STRATEGY_ARTIFACT_HASH = "e05e2e191311fb3273a2f14748b7265c1cec47a37339f7a70a139a85a7bf68b2"
 _SCHEMA_VERSION = "invest-infra-stage-result/1.0"
 _GROUPS = frozenset({"industry", "concept", "area"})
+_SCOPED_PROFILE = "industry-concept-cje-bd-zdf"
 _ZGB = re.compile(r"([0-9]+)/([0-9]+)")
 _REQUIRED_RULE_IDS = frozenset({"R-A1", "R-A3", "R-A4", "R-A5"})
 
@@ -47,7 +48,7 @@ def _parse_inputs(request: object, bundle: object) -> tuple[DataRequest, DataBun
     return parsed_request, parsed_bundle
 
 
-def _validate_strategy(request: DataRequest, artifact: object) -> None:
+def _validate_strategy(request: DataRequest, artifact: object) -> frozenset[str]:
     if (
         request.strategy_key != STRATEGY_KEY
         or request.strategy_version != STRATEGY_VERSION
@@ -68,13 +69,25 @@ def _validate_strategy(request: DataRequest, artifact: object) -> None:
         rule_ids = frozenset(item.get("id") for item in rules if isinstance(item, Mapping))
     else:
         rule_ids = frozenset()
-    if (
-        strategy_key != STRATEGY_KEY
-        or strategy_version != STRATEGY_VERSION
-        or artifact_hash != STRATEGY_ARTIFACT_HASH
-        or not _REQUIRED_RULE_IDS.issubset(rule_ids)
-    ):
+    if strategy_key != STRATEGY_KEY or strategy_version != STRATEGY_VERSION or artifact_hash != STRATEGY_ARTIFACT_HASH:
         raise _fail("reviewed strategy artifact does not match approved rules")
+    profile = artifact.get("profile")
+    if profile is None:
+        if not _REQUIRED_RULE_IDS.issubset(rule_ids):
+            raise _fail("reviewed strategy artifact does not match approved rules")
+        return _GROUPS
+    if not isinstance(profile, Mapping):
+        raise _fail("reviewed strategy artifact does not match approved profile")
+    if (
+        profile.get("name") != _SCOPED_PROFILE
+        or profile.get("groups") != ["industry", "concept"]
+        or profile.get("disabled_rules") != ["R-A3"]
+        or profile.get("zgb") is not False
+        or not {"R-A1", "R-A4", "R-A5"}.issubset(rule_ids)
+        or "R-A3" in rule_ids
+    ):
+        raise _fail("reviewed strategy artifact does not match approved profile")
+    return frozenset(profile["groups"])
 
 
 def _text(value: object) -> str:
@@ -128,13 +141,17 @@ def _datasets(bundle: DataBundle) -> dict[str, Any]:
     return by_key
 
 
-def _ranking_rows(dataset: Any, as_of: str) -> dict[str, list[dict[str, Any]]]:
+def _ranking_rows(
+    dataset: Any, as_of: str, groups: frozenset[str]
+) -> dict[str, list[dict[str, Any]]]:
     grouped: dict[str, list[dict[str, Any]]] = {}
     seen: set[tuple[str, str]] = set()
     for raw in dataset.records:
         try:
             group = raw["group"]
-            if group not in _GROUPS:
+            if group == "area" and groups != _GROUPS:
+                raise _fail("scoped sector profile rejects area data")
+            if group not in _GROUPS or group not in groups:
                 raise _fail("sector data contains an invalid record")
             bd_code = _text(raw["bd_code"])
             key = (group, bd_code)
@@ -144,27 +161,29 @@ def _ranking_rows(dataset: Any, as_of: str) -> dict[str, list[dict[str, Any]]]:
             record_as_of = raw.get("as_of", as_of)
             if record_as_of != as_of:
                 raise _fail("sector data contains mixed dates")
-            match = _ZGB.fullmatch(_text(raw["zgb"]))
-            if match is None:
-                raise _fail("sector data contains malformed zgb")
-            limit_up_count, total_count = (int(item) for item in match.groups())
-            if total_count <= 0 or limit_up_count > total_count:
-                raise _fail("sector data contains malformed zgb")
-            grouped.setdefault(group, []).append(
-                {
+            row: dict[str, Any] = {
                     "group": group,
                     "bd_code": bd_code,
                     "bd_name": _text(raw["bd_name"]),
                     "cje": _decimal(raw["cje"], positive=True),
                     "bd_zdf": _decimal(raw["bd_zdf"]),
-                    "limit_up_count": limit_up_count,
-                    "total_count": total_count,
-                    "ratio": Decimal(limit_up_count) / Decimal(total_count),
                 }
-            )
+            if groups == _GROUPS:
+                match = _ZGB.fullmatch(_text(raw["zgb"]))
+                if match is None:
+                    raise _fail("sector data contains malformed zgb")
+                limit_up_count, total_count = (int(item) for item in match.groups())
+                if total_count <= 0 or limit_up_count > total_count:
+                    raise _fail("sector data contains malformed zgb")
+                row.update(
+                    limit_up_count=limit_up_count,
+                    total_count=total_count,
+                    ratio=Decimal(limit_up_count) / Decimal(total_count),
+                )
+            grouped.setdefault(group, []).append(row)
         except KeyError:
             raise _fail("sector data contains an invalid record") from None
-    if set(grouped) != _GROUPS:
+    if set(grouped) != groups:
         raise _fail("sector ranking data must contain every approved group")
     return grouped
 
@@ -225,10 +244,10 @@ def evaluate_sector_bundle(
     """Validate and deterministically evaluate one sector-selection bundle."""
 
     parsed_request, parsed_bundle = _parse_inputs(request, bundle)
-    _validate_strategy(parsed_request, strategy_artifact)
+    groups = _validate_strategy(parsed_request, strategy_artifact)
     datasets = _datasets(parsed_bundle)
     as_of = parsed_request.as_of.isoformat()
-    grouped = _ranking_rows(datasets["sector-ranking"], as_of)
+    grouped = _ranking_rows(datasets["sector-ranking"], as_of, groups)
     selected_rows = {
         group: sorted(rows, key=lambda row: (-row["cje"], row["bd_code"]))[:20]
         for group, rows in grouped.items()
@@ -241,16 +260,18 @@ def evaluate_sector_bundle(
     rankings: list[dict[str, object]] = []
     for group in sorted(selected_rows):
         rows = selected_rows[group]
-        ratio_min, ratio_max = min(row["ratio"] for row in rows), max(row["ratio"] for row in rows)
         cje_min, cje_max = min(row["cje"] for row in rows), max(row["cje"] for row in rows)
         zdf_min, zdf_max = min(row["bd_zdf"] for row in rows), max(row["bd_zdf"] for row in rows)
+        ratio_min, ratio_max = (min(row["ratio"] for row in rows), max(row["ratio"] for row in rows)) if groups == _GROUPS else (None, None)
         scored = []
         for row in rows:
-            score = (
-                Decimal("0.40") * _normalize(row["ratio"], ratio_min, ratio_max)
-                + Decimal("0.30") * _normalize(row["cje"], cje_min, cje_max)
-                + Decimal("0.30") * _normalize(row["bd_zdf"], zdf_min, zdf_max)
-            )
+            if groups == _GROUPS:
+                score = (Decimal("0.40") * _normalize(row["ratio"], ratio_min, ratio_max)
+                         + Decimal("0.30") * _normalize(row["cje"], cje_min, cje_max)
+                         + Decimal("0.30") * _normalize(row["bd_zdf"], zdf_min, zdf_max))
+            else:
+                score = (Decimal("0.50") * _normalize(row["cje"], cje_min, cje_max)
+                         + Decimal("0.50") * _normalize(row["bd_zdf"], zdf_min, zdf_max))
             scored.append((score, row))
         scored.sort(key=lambda item: (-item[0], item[1]["bd_code"]))
         for rank, (score, row) in enumerate(scored, 1):
@@ -262,14 +283,17 @@ def evaluate_sector_bundle(
                     "bd_name": row["bd_name"],
                     "cje_cny": _json_number(row["cje"]),
                     "bd_zdf_percent": _json_number(row["bd_zdf"]),
-                    "limit_up_count": row["limit_up_count"],
-                    "total_count": row["total_count"],
-                    "limit_up_ratio": _json_number(row["ratio"]),
-                    "exuberant_flag": row["ratio"] > Decimal("0.10"),
                     "score": _json_number(score),
                     "constituent_snapshot_sha256": constituents[group]["sha256"],
                 }
             )
+            if groups == _GROUPS:
+                rankings[-1].update(
+                    limit_up_count=row["limit_up_count"],
+                    total_count=row["total_count"],
+                    limit_up_ratio=_json_number(row["ratio"]),
+                    exuberant_flag=row["ratio"] > Decimal("0.10"),
+                )
 
     content: dict[str, object] = {
         "schema_version": _SCHEMA_VERSION,
