@@ -2,7 +2,7 @@
 
 > 治理状态：`ACTIVE`
 > 制定日期：2026-08-26
-> 当前执行修订：2026-09-03；Gate A/B 已完成，Gate C 改为 WorkBuddy 数据供给、invest-infra 确定性执行
+> 当前执行修订：2026-09-05；Gate A/B 已完成，Gate C 增加当前 Dataset 来源准入切片，仍由 invest-infra 确定性执行
 > 计划定位：Stage 4D Gate 3 的前置垂直切片；用户已于 2026-08-26 明确授权实施
 > 合同依据：`invest-infra-strategy-source-to-automation-workflow.md`
 
@@ -20,10 +20,10 @@
 → ARC 通过受控 CLI 摄取两份 StrategyAudit
 → CIA 分别批准并发布、激活两个 StrategyVersion
 → 投研系统发布板块 DataRequest
-→ WorkBuddy 调 MCP 交付板块 DataBundle
+→ 使用已准入的投研系统预采集数据，缺口才由 WorkBuddy 调 MCP 交付 DataBundle
 → 投研系统板块 evaluator 生成 SectorStageResult
 → 投研系统发布限定成分股 DataRequest
-→ WorkBuddy 调 MCP 交付个股 DataBundle
+→ 使用已准入的投研系统预采集数据，缺口才由 WorkBuddy 调 MCP 交付 DataBundle
 → 投研系统个股 evaluator 生成 StockStageResult + Candidate 2.0.0
 → 内部可信接缝创建待准入 Observation → CandidateAdmission
 → Evidence → ResearchCase → ResearchRun/Result → Timeline
@@ -50,7 +50,7 @@
 - 两个保存不可变 `strategy.json`、来源和 validation 的 `StrategyDraft`；
 - 两份通过 AgentOA 交付并由投研系统摄取的不可变 `StrategyAudit`；
 - 两个最小、不可变、可查询和可激活的 `StrategyVersion`；
-- 板块阶段和个股阶段各一次人工 AgentOA WorkBuddy 数据获取任务；
+- 板块阶段和个股阶段各一次可信数据输入；仅数据缺口通过人工 AgentOA WorkBuddy 获取任务补充；
 - 两份可复算的 DataBundle，以及投研系统生成的一份同时追溯两个正式策略版本和上游 StageResult 的 Candidate 2.0.0；
 - 两个固定范围的专用 evaluator 和两个最小 active DataAcquisitionDefinition 只读接缝；
 - 与现有 Admission、Evidence 和 Research 链路的真实联调；既有 WorkBuddy Candidate Intake 仅保留为外部兼容入口。
@@ -337,15 +337,47 @@ GET /api/v1/strategies/{strategy_key}/active
 
 **预计规模：** 拆成两个 M 任务：合同与校验器；两个静态定义 artifact 与最小只读接口。不得新增 Definition 数据库生命周期、通用自动化平台或第二套归档能力。
 
-### Slice 2：DataBundle 驱动的两阶段真实执行并回接 Stage 4D
+### Slice 1C：当前 Dataset 来源准入与预采集决策
 
-**目标：** 用两个正式策略版本和两次真实 MCP 数据获取，按固定顺序由投研系统确定性完成候选发现，解除 Gate 3 输入阻塞。
+**目标：** 只为 Gate C 当前正式策略所需 Dataset 建立可复算的数据来源事实，决定哪些数据继续由 WorkBuddy 按需获取、哪些值得由投研系统最小预采集；不建设通用数据平台。
+
+**当前执行口径：**
+
+- `sector-strength-ranking` 的收窄方案仅保留 `industry`、`concept`，暂停 `area` 和 `zgb/R-A3`；
+- 收窄方案必须形成新的不可变 StrategyVersion、经 RAA 审计并由 CIA/用户明确激活后才生效；现有 active v2.0.0 不原地改写；
+- 在新版本激活前，本 Slice 只做只读来源盘点、探针和准入决策，不生成正式 Candidate。
+
+**工作内容：**
+
+- 建立当前 Dataset 的只读 `Provider / Connector / Tool / Dataset` 矩阵，区分声明、可构造、已接线、已探测和生产准入；
+- 只探测板块排行、Industry/Concept 成分快照及当前正式字段的覆盖率、`as_of`、分页、频率限制、授权边界和字段语义；
+- 对每个 Dataset 形成 `admit / research_only / reject` 决定，明确主源、fallback、交叉验证源和停止条件；
+- 若某 Dataset 被 `admit` 且大规模重复采集收益明确，才设计一个复用既有 `raw.provider_requests / attempts / batches`、hash 和幂等能力的最小预采集切片；
+- 明确投研系统预采集数据进入 evaluator 的可信接缝；不得为满足现有 WorkBuddy DataBundle 路径而伪装 `producer=workbuddy`。
+
+**验收标准：**
+
+- [ ] 矩阵与 Catalog、Factory、Dagster wiring、现有 fallback 和 WorkBuddy 探针逐项一致，不把声明能力当作生产能力；
+- [ ] Industry/Concept 的来源、字段、覆盖率、时点、限流和授权均有真实证据，未知项明确为 unknown；
+- [ ] 每个 Dataset 的准入结论和停止条件可独立复核；数据不足时保持 `BLOCKED`；
+- [ ] 未证明需要预采集前，不新增通用限流、checkpoint、全局 routing、监控平台或对象存储；
+- [ ] TDX 股票日线、ETF/BaoStock fallback 等已完成能力只作为事实引用，不重新实施。
+
+**验证：** 只读矩阵结构校验、真实探针报告与 hash、敏感信息扫描、现有代码/计划交叉核对；预采集若获准，另按一个 Dataset 一个垂直切片独立授权和验收。
+
+**依赖：** Slice 1B 已完成；正式执行依赖新的收窄 StrategyVersion 通过 RAA/CIA 治理并激活。
+
+**预计规模：** 首轮为 S 级只读事实与准入任务；任何代码实施另立单 Dataset M 级垂直切片。
+
+### Slice 2：可信数据输入驱动的两阶段真实执行并回接 Stage 4D
+
+**目标：** 用两个正式策略版本和两个阶段的可信数据输入，按固定顺序由投研系统确定性完成候选发现，解除 Gate 3 输入阻塞。
 
 **工作内容：**
 
 - ARC 查询两条策略和两个数据获取定义的当前 active 版本及 artifact；
-- 投研系统生成板块 DataRequest，通过 AgentOA 人工要求 WorkBuddy 调 MCP 返回板块排行、逐股成分和全市场涨停等 DataBundle；
-- 投研系统校验 DataBundle，并由板块专用 evaluator 按正式 StrategyVersion 计算 `limit_up_count/zgb`、排序和 SectorStageResult；
+- 投研系统按 Slice 1C 的来源准入结论生成板块 DataRequest；系统已有可信预采集数据时直接走内部输入接缝，缺口才通过 AgentOA 要求 WorkBuddy 按需调 MCP 返回 DataBundle；
+- 投研系统校验输入，并由板块专用 evaluator 严格按当前 active StrategyVersion 的字段和规则生成排序与 SectorStageResult；不得继续硬编码已暂停的 `area` 或 `zgb/R-A3`；
 - 仅在 SectorStageResult 合法时，针对其限定成分股生成第二个 DataRequest；
 - WorkBuddy 返回行情、资金、北向、财务和必要旁证 DataBundle，不解释策略或决定候选；
 - 投研系统个股专用 evaluator 按正式 StrategyVersion 生成 StockStageResult 和 Candidate 2.0.0，并绑定上游 StageResult；
@@ -356,7 +388,7 @@ GET /api/v1/strategies/{strategy_key}/active
 
 **验收标准：**
 
-- [ ] 两个 WorkBuddy 任务只获取 DataRequest 指定数据，实际 MCP、参数、分页、样本量、调用顺序、fallback 原因和错误可追溯；
+- [ ] 需要 WorkBuddy 补数时，任务只获取 DataRequest 指定数据，实际 MCP、参数、分页、样本量、调用顺序、fallback 原因和错误可追溯；
 - [ ] 相同 StrategyVersion 与相同 DataBundle 输入必须得到相同 StageResult/Candidate 输出；
 - [ ] 个股 DataRequest 可追溯板块 run id 和 SectorStageResult hash；
 - [ ] Candidate携带末阶段正式策略版本，并能追溯上游板块策略版本；
@@ -369,7 +401,7 @@ GET /api/v1/strategies/{strategy_key}/active
 
 **验证：** DataBundle fixtures、两个 evaluator 的规则边界和重复执行测试；AgentOA、archive、数据库、active API 与 API/Web Timeline 多方读回；Stage 4D focused 和全量回归。
 
-**依赖：** Slice 1B。
+**依赖：** Slice 1B、Slice 1C，以及收窄策略版本完成 RAA/CIA 治理并明确激活。
 
 **预计规模：** 拆成板块和个股两个 M 垂直切片，每个先完成 DataBundle → evaluator → StageResult，再进入下一阶段；不建设通用规则引擎。
 
@@ -382,6 +414,8 @@ Slice 1 分别审计、CIA批准、两个 Version 发布激活
   ↓ Gate B：两份审计有效且系统可查询两个激活版本
 Slice 1B DataRequest/DataBundle 与 active 数据获取定义
   ↓ Gate B2：WorkBuddy 只承担可验证的 MCP 数据获取
+Slice 1C 当前 Dataset 来源准入与预采集决策
+  ↓ Gate B2A：来源、字段、时点、限流和可信输入接缝可证明
 Slice 2 两阶段确定性执行与 Stage 4D 回接
   ↓ Gate C：首批候选策略 MVP 完成
 ```
@@ -402,12 +436,20 @@ Slice 2 两阶段确定性执行与 Stage 4D 回接
 - 投研系统能按两个`strategy_key`分别返回唯一激活版本及artifact hash；
 - 未批准、未激活或冲突版本均不能被任务引用。
 
+### Gate B2A：当前 Dataset 来源可准入
+
+- Industry/Concept 当前所需 Dataset 的来源、字段、覆盖率、时点、限流和授权边界有真实证据；
+- 每个 Dataset 均有 `admit / research_only / reject` 结论，未准入数据不得进入 evaluator；
+- 系统预采集与 WorkBuddy 外部补数的 producer、hash 和 lineage 分开保存；
+- 未满足准入条件时保持 `BLOCKED`，不得通过通用平台建设或静默多源拼接绕过。
+
 ### Gate C：真实链路通过
 
-- WorkBuddy 按两个 DataRequest 完成真实 MCP 数据获取，DataBundle 字段、时间、来源和调用证据可验证；
+- 两个阶段均具备可验证的可信输入；需要 WorkBuddy 补数时，DataBundle 字段、时间、来源和调用证据可验证；
+- 投研系统预采集数据若被使用，必须来自 Slice 1C 已准入的 Dataset，并保留独立 provider、batch、hash 和质量证据；不得冒充 WorkBuddy 数据；
 - 投研系统两个专用 evaluator 按正式 StrategyVersion 确定性生成 SectorStageResult、StockStageResult 和 Candidate；
 - 下游任务显式引用已校验上游StageResult，不依赖文件名或Markdown猜测；
-- Candidate 2.0.0可追溯两个策略版本、两个AgentOA任务和原始 DataBundle artifact，且生产者身份不混用；
+- Candidate 2.0.0可追溯两个策略版本、各阶段实际输入 artifact/batch，以及存在时的 AgentOA 任务和原始 DataBundle；生产者身份不混用；
 - Stage 4D Admission 及 Research 链路形成证据，或产生符合合同的合法空结果；
 - focused/full tests、迁移检查、OpenAPI drift、Web typecheck/build 和 `git diff --check` 通过。
 

@@ -71,6 +71,7 @@
 | `invest-infra-stage4b-market-intelligence-foundation-plan.md` | `COMPLETED` | 既有实现和验收记录已完成；保留为实现依据 |
 | `invest-infra-stage4c-core-data-layer-integration-plan.md` | `COMPLETED_WITH_DEFERRED_ITEMS` | MVP 已验收；延期项不自动进入当前主线 |
 | `invest-infra-v2-all-data-sources-integration-plan.md` | `DEFERRED` | 不执行“大而全”数据源接入；按真实研究问题单独授权 |
+| `invest-infra-data-source-governance-and-precollection-plan-v0.1.md` | `DRAFT` | 跨策略数据治理长期候选；Stage 4D 当前 Dataset 来源准入只以候选策略计划 Slice 1C 为权威，Gate C 后方可独立授权激活 |
 | `invest-infra-workbuddy-daily-report-governance-mvp-plan-v1.0.md` | `MERGED_REFERENCE` | 已完成合同和实现事实保留；剩余接入并入 Stage 4D 收口 |
 
 ## 4. 动态事实来源
