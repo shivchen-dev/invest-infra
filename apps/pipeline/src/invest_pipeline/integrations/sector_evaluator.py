@@ -69,7 +69,11 @@ def _validate_strategy(request: DataRequest, artifact: object) -> frozenset[str]
         rule_ids = frozenset(item.get("id") for item in rules if isinstance(item, Mapping))
     else:
         rule_ids = frozenset()
-    if strategy_key != STRATEGY_KEY or strategy_version != STRATEGY_VERSION or artifact_hash != STRATEGY_ARTIFACT_HASH:
+    if (
+        strategy_key != STRATEGY_KEY
+        or strategy_version != STRATEGY_VERSION
+        or artifact_hash != STRATEGY_ARTIFACT_HASH
+    ):
         raise _fail("reviewed strategy artifact does not match approved rules")
     profile = artifact.get("profile")
     if profile is None:
@@ -162,12 +166,12 @@ def _ranking_rows(
             if record_as_of != as_of:
                 raise _fail("sector data contains mixed dates")
             row: dict[str, Any] = {
-                    "group": group,
-                    "bd_code": bd_code,
-                    "bd_name": _text(raw["bd_name"]),
-                    "cje": _decimal(raw["cje"], positive=True),
-                    "bd_zdf": _decimal(raw["bd_zdf"]),
-                }
+                "group": group,
+                "bd_code": bd_code,
+                "bd_name": _text(raw["bd_name"]),
+                "cje": _decimal(raw["cje"], positive=True),
+                "bd_zdf": _decimal(raw["bd_zdf"]),
+            }
             if groups == _GROUPS:
                 match = _ZGB.fullmatch(_text(raw["zgb"]))
                 if match is None:
@@ -262,16 +266,23 @@ def evaluate_sector_bundle(
         rows = selected_rows[group]
         cje_min, cje_max = min(row["cje"] for row in rows), max(row["cje"] for row in rows)
         zdf_min, zdf_max = min(row["bd_zdf"] for row in rows), max(row["bd_zdf"] for row in rows)
-        ratio_min, ratio_max = (min(row["ratio"] for row in rows), max(row["ratio"] for row in rows)) if groups == _GROUPS else (None, None)
+        ratio_min, ratio_max = (
+            (min(row["ratio"] for row in rows), max(row["ratio"] for row in rows))
+            if groups == _GROUPS
+            else (None, None)
+        )
         scored = []
         for row in rows:
             if groups == _GROUPS:
-                score = (Decimal("0.40") * _normalize(row["ratio"], ratio_min, ratio_max)
-                         + Decimal("0.30") * _normalize(row["cje"], cje_min, cje_max)
-                         + Decimal("0.30") * _normalize(row["bd_zdf"], zdf_min, zdf_max))
+                score = (
+                    Decimal("0.40") * _normalize(row["ratio"], ratio_min, ratio_max)
+                    + Decimal("0.30") * _normalize(row["cje"], cje_min, cje_max)
+                    + Decimal("0.30") * _normalize(row["bd_zdf"], zdf_min, zdf_max)
+                )
             else:
-                score = (Decimal("0.50") * _normalize(row["cje"], cje_min, cje_max)
-                         + Decimal("0.50") * _normalize(row["bd_zdf"], zdf_min, zdf_max))
+                score = Decimal("0.50") * _normalize(row["cje"], cje_min, cje_max) + Decimal(
+                    "0.50"
+                ) * _normalize(row["bd_zdf"], zdf_min, zdf_max)
             scored.append((score, row))
         scored.sort(key=lambda item: (-item[0], item[1]["bd_code"]))
         for rank, (score, row) in enumerate(scored, 1):

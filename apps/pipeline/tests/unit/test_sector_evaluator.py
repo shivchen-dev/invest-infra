@@ -179,9 +179,13 @@ def test_mapping_and_domain_inputs_have_stable_stage_identity() -> None:
 
 def test_scoped_profile_uses_only_cje_and_bd_zdf_deterministically() -> None:
     bundle = _scoped_bundle()
-    next(row for row in bundle["datasets"][0]["records"] if row["bd_code"] == "A").update(cje=50, bd_zdf=0)
+    next(row for row in bundle["datasets"][0]["records"] if row["bd_code"] == "A").update(
+        cje=50, bd_zdf=0
+    )
     first = evaluate_sector_bundle(_scoped_request(), bundle, strategy_artifact=SCOPED_ARTIFACT)
-    second = evaluate_sector_bundle(_scoped_request(), copy.deepcopy(bundle), strategy_artifact=SCOPED_ARTIFACT)
+    second = evaluate_sector_bundle(
+        _scoped_request(), copy.deepcopy(bundle), strategy_artifact=SCOPED_ARTIFACT
+    )
     assert first == second
     assert first["groups"] == ["concept", "industry"]
     assert all("zgb" not in row for row in first["rankings"])
@@ -191,14 +195,18 @@ def test_scoped_profile_uses_only_cje_and_bd_zdf_deterministically() -> None:
 
 def test_scoped_profile_rejects_area_data() -> None:
     with pytest.raises(SectorEvaluationError, match="rejects area"):
-        evaluate_sector_bundle(_scoped_request(), _scoped_bundle(include_area=True), strategy_artifact=SCOPED_ARTIFACT)
+        evaluate_sector_bundle(
+            _scoped_request(), _scoped_bundle(include_area=True), strategy_artifact=SCOPED_ARTIFACT
+        )
 
 
 @pytest.mark.parametrize("mutation", ["missing_area", "missing_zgb"])
 def test_default_profile_still_requires_all_groups_and_zgb(mutation: str) -> None:
     bundle = _bundle()
     if mutation == "missing_area":
-        bundle["datasets"][0]["records"] = [row for row in bundle["datasets"][0]["records"] if row["group"] != "area"]
+        bundle["datasets"][0]["records"] = [
+            row for row in bundle["datasets"][0]["records"] if row["group"] != "area"
+        ]
     else:
         bundle["datasets"][0]["records"][0].pop("zgb")
     with pytest.raises(SectorEvaluationError):
