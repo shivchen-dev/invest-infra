@@ -91,7 +91,7 @@ Catalog 证据：
 - `tdx_offline` 明确只声明股票日线，排除 block 能力；虽然 runtime Factory 仍视为 catalog-only，但日线已由专用 Dagster asset fallback 接线，不能据此推断 Sector Dataset 可用：`apps/pipeline/src/invest_pipeline/provider_catalog.py:396-429`、`apps/pipeline/src/invest_pipeline/assets.py:1094-1310`。
 - `hithink` 是 disabled、catalog-only 的 reserved provider，且未声明板块成员：`apps/pipeline/src/invest_pipeline/provider_catalog.py:364-392`。
 - runtime-supported 集合只由 `has_runtime_factory_adapter=True` 派生，且不等同所有专用 asset fallback 的实际 wiring：`apps/pipeline/src/invest_pipeline/provider_catalog.py:497-541`。
-- 股票 runtime factory 当前只接受 Tushare：`apps/pipeline/src/invest_pipeline/provider_factory.py:196-214`；runtime registry 也明确 TDX 尚未接线：`apps/pipeline/src/invest_pipeline/provider_runtime_registry.py:221-238`。
+- 股票 runtime factory 当前只接受 Tushare：`apps/pipeline/src/invest_pipeline/provider_factory.py:196-214`；TDX Sector Dataset 尚无 factory 分支或专用接线。
 
 Tushare 相关接口的既有实测显示：当前账户对 `index_classify`、`index_member` 等最小请求无权限；概念候选仍需独立验证权限、历史和口径。见 `docs/research/tdx-and-market-intelligence-data-source-capability-research-2026-08-11.md:82-101`、`:120-131`。这是当前凭据状态，不代表平台永久不具备能力。
 
@@ -200,7 +200,7 @@ westock 正向证据：2026-09-04 早期探针曾得到 Industry top20 字段 20
 
 **本轮不批准预采集。** 原因不是预采集没有价值，而是两个 Dataset 尚无准入来源：现在落库只会把不可信时点、截断和跨分类拼接固化成系统事实。
 
-来源获准后，第一候选应是 `sector-constituents` 的每日收盘快照，因为它时点敏感、历史无法事后可靠补齐，且会被排序和下游股票筛选重复使用。届时只做单 Dataset 垂直切片，并复用现有 request/attempt/batch、hash 和幂等能力；不新建通用限流、checkpoint、全局路由或对象存储。该边界与 `docs/plan/invest-infra-candidate-strategies-mvp-plan-v1.0.md:340-370` 及长期 DRAFT `docs/plan/invest-infra-data-source-governance-and-precollection-plan-v0.1.md:14-22`、`:33-50` 一致。
+来源获准后，第一候选应是 `sector-constituents` 的每日收盘快照，因为它时点敏感、历史无法事后可靠补齐，且会被排序和下游股票筛选重复使用。届时只做单 Dataset 垂直切片，并复用现有 request/attempt/batch、hash 和幂等能力；不新建通用限流、checkpoint、全局路由或对象存储。该边界与 `docs/plan/invest-infra-candidate-strategies-mvp-plan-v1.0.md` 的 Slice 1C，以及当前 ACTIVE 的 `docs/plan/invest-infra-target-dataset-source-admission-plan-v1.0.md` 的 DS-0～DS-2 和延期边界一致。
 
 ## 10. 下一步最小任务
 
@@ -216,7 +216,6 @@ westock 正向证据：2026-09-04 早期探针曾得到 Industry top20 字段 20
 
 - `apps/pipeline/src/invest_pipeline/provider_catalog.py`
 - `apps/pipeline/src/invest_pipeline/provider_factory.py`
-- `apps/pipeline/src/invest_pipeline/provider_runtime_registry.py`
 - `apps/pipeline/src/invest_pipeline/provider_routing/datasets.py`
 - `apps/pipeline/src/invest_pipeline/provider_routing/selection.py`
 - `apps/pipeline/src/invest_pipeline/provider_quality.py`

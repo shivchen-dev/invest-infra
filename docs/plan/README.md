@@ -9,16 +9,18 @@
 
 ## 1. 当前执行权威
 
-当前只保留一条活动实施主线；已关闭的数据层计划保留在表中作为近期收口事实。未经用户明确授权不得从其他蓝图恢复派工：
+当前只保留一条 P0 实施权威，但它在 Gate DS-FM 前处于 `BLOCKED`；Stage 4D 因其数据源前置 Gate 阻塞而暂停。已关闭的数据层计划保留在表中作为近期收口事实。未经用户明确授权不得从其他蓝图恢复派工：
 
 | 优先级 | 主线 | 状态 | 唯一权威实施计划 |
 |---|---|---|---|
-| P0 | ETF 数据覆盖与 Provider 韧性 | `CLOSED` | `invest-infra-etf-data-coverage-resilience-plan-v1.0.md` |
-| P1 | Stage 4D 研究交付收口 | `ACTIVE` | `invest-infra-stage4d-mvp-phased-execution-plan-v1.0.md`；Gate 3 前置切片：`invest-infra-candidate-strategies-mvp-plan-v1.0.md`（WorkBuddy DataBundle → invest-infra 专用 evaluator → 内部 Candidate handoff） |
+| P0 | 目标 Dataset 来源准入 | `BLOCKED` | `invest-infra-target-dataset-source-admission-plan-v1.0.md`；DS-0M 四源核证已完成，WorkBuddy 1.0 语义足够，但尚无可准入单一路径；此前不得启动 DS-C0/DS-1 |
+| P1 | Stage 4D 研究交付收口 | `BLOCKED` | `invest-infra-stage4d-mvp-phased-execution-plan-v1.0.md`；Gate 3 前置：`invest-infra-candidate-strategies-mvp-plan-v1.0.md`（等待 v2.1.0 策略治理及 Gate B2A） |
+| P2 | ETF 数据覆盖与 Provider 韧性 | `CLOSED` | `invest-infra-etf-data-coverage-resilience-plan-v1.0.md` |
 
 状态解释：
 
 - `ACTIVE`：计划是当前有效实施边界；是否已授权、已实现或已验收，以对应证据为准；
+- `BLOCKED`：计划仍然有效，但不得实施阻塞 Gate 之后的任务；满足显式恢复条件后再转回 `ACTIVE`；
 - `CLOSED`：完成定义已满足且有独立验收记录；后续运行观察或新缺陷不自动恢复原计划；
 - 各主线可共享现有只读查询能力，但不得在同一任务中混合开发。
 
@@ -59,9 +61,9 @@
 |---|---|---|
 | `invest-infra-etf-data-coverage-resilience-plan-v1.0.md` | `CLOSED` | 已按“真实探针 → 准入决策 → 最小 Adapter”完成收口；自然调度转为非阻塞运行观察，不预建字段路由或覆盖平台 |
 | `invest-infra-central-research-visualization-mvp-plan-v1.0.md` | `DEFERRED` | 数据层 P0 已收口；仍待 Stage 4D Gate 3 与 Candidate lineage 验收后独立授权恢复，不与当前 P1 混合实施 |
-| `invest-infra-stage4d-mvp-phased-execution-plan-v1.0.md` | `ACTIVE` | 当前 Stage 4D 收口权威；Gate 3 采用 WorkBuddy DataBundle → invest-infra 确定性执行，只处理真实联调、剩余 Research Workspace 和最终验收 |
+| `invest-infra-stage4d-mvp-phased-execution-plan-v1.0.md` | `BLOCKED` | 已完成事实继续有效；Gate 3 后续等待 v2.1.0 策略治理及 Gate B2A，满足后再恢复实施 |
 | `invest-infra-strategy-source-to-automation-workflow.md` | `CONTRACT_AUTHORITY` | CIA 策略、RAA 审计、WorkBuddy 数据供给和 invest-infra 确定性执行的合同权威，不作为当前开发排期 |
-| `invest-infra-candidate-strategies-mvp-plan-v1.0.md` | `ACTIVE` | Stage 4D Gate 3 前置切片；Gate A/B 已完成，当前执行 DataRequest/DataBundle、两个专用 evaluator 和固定两阶段人工验收 |
+| `invest-infra-candidate-strategies-mvp-plan-v1.0.md` | `BLOCKED` | Stage 4D Gate 3 前置切片；等待 v2.1.0 治理及 Gate B2A，均通过后方可恢复、激活策略并开始 Slice 2 |
 | `invest-infra-decision-feedback-loop-mvp-plan-v1.0.md` | `DRAFT` | Stage 4D Gate 3 后续候选反馈闭环；仅行动建议、T+5/T+10/T+20 前瞻观察和策略复盘，满足激活条件并经独立授权前不得实施 |
 | `archive/reference-blueprints/invest-infra-stage4d-unified-investment-workbench-integration-plan-v1.0.md` | `REFERENCE_BLUEPRINT` | Stage 4D–4G 长期蓝图；保留原文件名和完整内容，不得直接从正文派工 |
 | `invest-infra-data-collection-enhancement-plan-v1.0.md` | `REFERENCE_BLUEPRINT` | 数据采集架构参考；不作为当前全量建设承诺 |
@@ -71,7 +73,7 @@
 | `invest-infra-stage4b-market-intelligence-foundation-plan.md` | `COMPLETED` | 既有实现和验收记录已完成；保留为实现依据 |
 | `invest-infra-stage4c-core-data-layer-integration-plan.md` | `COMPLETED_WITH_DEFERRED_ITEMS` | MVP 已验收；延期项不自动进入当前主线 |
 | `invest-infra-v2-all-data-sources-integration-plan.md` | `DEFERRED` | 不执行“大而全”数据源接入；按真实研究问题单独授权 |
-| `invest-infra-data-source-governance-and-precollection-plan-v0.1.md` | `DRAFT` | 跨策略数据治理长期候选；Stage 4D 当前 Dataset 来源准入只以候选策略计划 Slice 1C 为权威，Gate C 后方可独立授权激活 |
+| `invest-infra-target-dataset-source-admission-plan-v1.0.md` | `BLOCKED` | DS-0M 四源核证已完成但无可准入单一路径；先关闭许可/频控并对一个候选做全量只读探针，再由 Gate 选路；不预建双 Adapter、跨 Provider fallback 或通用供给平台 |
 | `invest-infra-workbuddy-daily-report-governance-mvp-plan-v1.0.md` | `MERGED_REFERENCE` | 已完成合同和实现事实保留；剩余接入并入 Stage 4D 收口 |
 
 ## 4. 动态事实来源

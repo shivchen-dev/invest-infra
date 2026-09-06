@@ -1,12 +1,14 @@
 # Stage 4D MVP 分阶段执行计划
 
 > 文档版本：v1.0
-> 文档状态：ACTIVE（当前范围为 Stage 4D 收口）
+> 文档状态：BLOCKED（等待 v2.1.0 策略治理及 Gate B2A）
 > 计划治理：`docs/plan/README.md`
 > 制定日期：2026-08-14
 > 上位蓝图：`docs/plan/archive/reference-blueprints/invest-infra-stage4d-unified-investment-workbench-integration-plan-v1.0.md`
 > 当前范围：Stage 4D MVP（D0–D5 + D7–D8）
 > 后续承接：中心投研可视化平台的业务定位、信息架构与新增实施任务，以 `docs/plan/invest-infra-central-research-visualization-mvp-plan-v1.0.md` 为准；本计划已完成的只读工作台事实继续有效，不再扩展为回测、自动交易或通用流程平台。
+
+> 2026-09-06 修订：当前唯一活动前置主线为 `invest-infra-target-dataset-source-admission-plan-v1.0.md`。本计划已完成事实继续有效，但 Gate 3 后续实现须等待目标 Dataset 选定单一采集路径、完成必要的 evaluator 内部收敛并通过 Gate B2A，以及 v2.1.0 策略治理通过。
 
 ## 0.1 当前执行修正（2026-08-23）
 
@@ -29,17 +31,18 @@
 Gate 1/2 和已完成的策略治理事实继续有效。Gate 3 不再要求 MiniMax-M3 通过长 Prompt 解释正式策略并自行生成 StageResult/Candidate，改为：
 
 ```text
-invest-infra 生成 DataRequest
-→ WorkBuddy 调用获准金融 MCP 并交付 DataBundle
-→ invest-infra 校验并由板块/个股两个专用 evaluator 确定性计算
+目标 Dataset Gate 选定 WorkBuddy 或单一 Provider 路径
+→ WorkBuddy：DataRequest/DataBundle 1.0；Provider：ProviderRequest/Attempt/Batch
+→ invest-infra 通过 evaluator 私有板块输入不变量校验并组装 Industry/Concept
+→ 板块/个股两个专用 evaluator 只消费已验证的单值输入；旁证按需记录
 → StageResult + Candidate 2.0.0
 → 内部可信接缝创建待准入 Observation
 → 既有 Admission / Evidence / Research
 ```
 
-首版不建设通用策略语言、通用 DAG、完整自动化平台或周期调度。WorkBuddy Automation 只允许固定短启动 Prompt；任何创建、修改、启停或调度仍须用户单独显性授权。
+首版不建设双路径并行接入、跨 Provider fallback、公开通用组装接口、通用策略语言、通用 DAG、完整自动化平台或周期调度。WorkBuddy Automation 只允许固定短启动 Prompt；任何创建、修改、启停或调度仍须用户单独显性授权。
 
-既有 WorkBuddy Candidate 2.0.0 Shared Directory Intake 继续作为外部候选兼容路径，不删除、不改写历史事实。新路径从 WorkBuddy DataBundle 入站，系统生成的 Candidate 不得回绕该 Bridge 或伪装成 `producer=workbuddy`；DataBundle 与 Candidate 的生产者身份和 provenance 分开保存。
+既有 WorkBuddy Candidate 2.0.0 Shared Directory Intake 继续作为外部候选兼容路径，不删除、不改写历史事实。新路径从 Gate 入选的 DataBundle 或 ProviderBatch 入站，系统生成的 Candidate 不得回绕该 Bridge 或伪装上游生产者；上游输入与 Candidate 的生产者身份和 provenance 分开保存。
 
 ## 1. 目标
 
@@ -63,7 +66,8 @@ invest-infra 生成 DataRequest
 ### 2.1 MVP 包含
 
 ```text
-WorkBuddy DataBundle
+Gate 入选的 DataBundle 1.0 或 ProviderBatch
+→ evaluator 私有板块输入不变量
 → invest-infra 专用 evaluator
 → Candidate 2.0.0 candidates JSON
 → 内部可信 Candidate handoff
@@ -97,7 +101,7 @@ WorkBuddy DataBundle
 ```text
 已完成兼容路径：WorkBuddy Candidate → SharedDirectory Adapter → ExternalObservation
 
-当前 Gate 3 路径：DataRequest → WorkBuddy DataBundle → 专用 evaluator
+当前 Gate 3 路径：Gate 入选的单一采集路径 → evaluator 私有板块输入不变量 → 专用 evaluator
   └─ StageResult / CandidateProposal → 内部可信 handoff → ExternalObservation
        └─ Observation Admission
             └─ Research Case + Evidence + Research Run / Result
@@ -237,11 +241,11 @@ parse_candidates_payload(payload)
   内部 metadata 或异常；
 - 兼容入口的 lineage 只读投影继续保留；
 - 原定“WorkBuddy 直接生成正式 Candidate ready archive”的真实验收取消，不再作为 Gate 3 输入方案；
-- 新 DataBundle → evaluator → 内部 Candidate handoff 验收以候选策略 MVP 计划的 Slice 1B/2 为唯一依据；
+- 入选输入 → evaluator → 内部 Candidate handoff 验收以候选策略 MVP 计划的 Slice 1C/2 为唯一依据；
 - 不启动周期自动摄取，不修改历史 Observation/Candidate/Research 数据。
 
 验收：现有 Application/API success、unavailable、partial、conflict、404 和脱敏测试继续通过；
-新路径最终需使两条策略、DataBundle、StageResult、成分快照、Candidate 与 Research Timeline
+新路径最终需使两条策略、DataBundle 或 ProviderBatch、StageResult、成分快照、Candidate 与 Research Timeline
 可逐项追溯，fixture 不替代真实证据。完成 Gate 3 后再独立决定是否恢复中心可视化 3C-L1。
 
 #### 4.2.4 固定实施顺序与停止条件
@@ -377,7 +381,7 @@ legacy 1.1.x 不在当前入口、测试队列或后续 Web 工作台范围内�
 
 对应原蓝图：D7–D8。目标是完成 `Observation → Admission → Evidence → Research Case → Research Run/Result → 统一时间线`。JiuwenSwarm 已停止采用，不再作为本阶段依赖或验收对象。
 
-真实 WorkBuddy 验收前置依赖：先完成 `invest-infra-candidate-strategies-mvp-plan-v1.0.md`。既有 Draft → RAA 审计 → CIA 批准 → StrategyVersion 发布激活已经完成；当前只推进 DataRequest/DataBundle、两个专用 evaluator 和固定两阶段候选发现。该切片属于 Stage 4D P0，不新增并行主线。
+真实数据验收前置依赖：先完成 `invest-infra-candidate-strategies-mvp-plan-v1.0.md`。既有 Draft → RAA 审计 → CIA 批准 → StrategyVersion 发布激活已经完成；当前须先由目标 Dataset 计划选定一条采集路径，按需完成 evaluator 私有收敛、单路径接入和双次 shadow，再执行两个专用 evaluator 的固定两阶段候选发现。WorkBuddy 路径复用 DataRequest/DataBundle 1.0；仅在证据证明无法表达时另行评审 2.0。该切片属于 Stage 4D P0，不新增并行主线。
 
 ### 7.1 交付任务
 
@@ -441,7 +445,7 @@ Gate 3 准入契约冻结如下：
 - [ ] 正常主链路端到端通过；
 - [ ] 蓝图第 25.10 节异常场景全部有测试或手工验收证据；
 - [ ] Fake WorkBuddy、Fake ResearchRunner E2E 通过；
-- [ ] 真实 WorkBuddy 两次 MCP DataBundle 手工验收通过；
+- [ ] 两个阶段的真实多源输入手工验收通过，各 Dataset 的 Connector、真实上游、来源和 hash 可追溯；内部 Provider 只有在另行批准接入后才纳入验收；
 - [ ] 两个专用 evaluator 对相同版本和输入产生可重复的 StageResult/Candidate；
 - [ ] WorkBuddy 不解释策略、不生成正式 hash/lineage、不决定 CandidateAdmission；
 - [ ] 现有全量测试无回归；

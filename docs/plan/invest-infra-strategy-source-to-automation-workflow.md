@@ -19,11 +19,10 @@
   → RAA 审计（按风险要求）
   → CIA 人工批准、拒绝或退回修改
   → immutable StrategyVersion
-  → DataAcquisitionDefinition
-  → 人工显式激活
-  → 投研系统生成版本化 DataRequest
-  → WorkBuddy 调用获准 MCP 并生成 DataBundle
-  → 投研系统校验 DataBundle，由专用 evaluator 计算并原子归档
+  → 目标 Dataset Gate 选定一条采集路径
+  → WorkBuddy 路径：候选 DataAcquisitionDefinition 经 shadow 验收后发布
+  → Provider 路径：单一获准 Provider 配置经 shadow 验收后启用
+  → 投研系统校验实际 DataBundle 或 ProviderBatch，由专用 evaluator 计算并归档
   → StageResult / StrategyRun
   → 下游工作流或 CandidateAdmission
 ```
@@ -97,8 +96,9 @@
 最小职责：
 
 - 绑定 StrategyVersion、stage、`allowed_connectors`、`data_request_template` 和 `output_contract`；
-- 一个 DataRequest 可包含多个语义独立的 dataset；每个 dataset 的 `allowed_connectors`
-  按主源到 fallback 的优先顺序排列，不表示可任意择源；
+- 一个 DataRequest 可包含多个语义独立的 dataset；1.0 合同中，每个 dataset 的
+  `allowed_connectors` 按主源到 fallback 的优先顺序排列；当前多源覆盖优先拆成
+  多个语义独立 dataset，不把 2.0 合同作为默认前置；
 - 通过局域网 active 只读接口向固定启动 Prompt 提供结构化执行规格；
 - 首版只保存两个随代码发布的不可变、版本化 JSON artifact；active 表示当前部署版本
   对该 definition key 暴露的唯一 artifact，不建立数据库聚合、迁移或管理 CLI；
@@ -128,7 +128,7 @@
 1. 源文档登记模块：接收原始文档与元数据，返回不可变 StrategySourceDocument。
 2. 能力评估模块：接收 source document 和矩阵版本，发布评估任务并返回 StrategyCapabilityAssessment。
 3. 策略治理模块：接收提案交付物，完成 validation、审计、决定和不可变版本创建。
-4. 数据获取与执行模块：接收 active StrategyVersion 和 DataAcquisitionDefinition，生成 DataRequest、摄取 DataBundle，并用专用 evaluator 返回 StageResult。
+4. 数据获取与执行模块：接收 active StrategyVersion 和 Gate 入选采集配置，摄取 DataBundle 或 ProviderBatch，通过 evaluator 的板块输入不变量返回 StageResult；一次运行只执行一条采集路径。
 
 模块之间只传正式对象身份和 artifact 引用，不传数据库行结构，不通过 Markdown 文本或共享目录文件名猜测业务状态。
 
@@ -155,9 +155,13 @@ CIA 负责策略语义；投研系统 validation 和 RAA 审计仍是版本发�
 
 ### 6.3 数据获取与确定性执行交付
 
-WorkBuddy 只交付版本化 `DataBundle`：包含 request identity、as_of、分页、样本量、字段、单位、原始或最小规范化数据、warning 和 error。每个 dataset 按调用顺序保存结构化 attempts，attempt 是 connector、tool 和脱敏参数的唯一权威来源；最后一个 `succeeded` attempt 即该 dataset 的最终来源，不在 dataset 顶层重复同一组字段。failed attempt 只使用固定允许列表内的稳定错误码；attempt connector 不得重复，数量不得超过当前获准 connector 总数。使用 fallback 时，必须能证明优先级更高的来源已经失败。投研系统负责 Schema、canonical JSON、hash、lineage、原子发布以及 StageResult/CandidateProposal；首版不建立覆盖所有阶段的万能业务 schema。
+WorkBuddy 只交付版本化 `DataBundle`：包含 request identity、as_of、分页、样本量、字段、单位、原始或最小规范化数据、warning 和 error。投研系统负责 Schema、canonical JSON、hash、lineage、原子发布、确定性组装以及 StageResult/CandidateProposal；不建立覆盖所有阶段的万能业务 schema。
 
-首版每个 `dataset_key` 只接受一个最终成功来源，不允许 WorkBuddy 静默拼接、覆盖或裁决多个来源。同一业务事实确需并行来源对照时，必须在 DataRequest 中拆成不同 `dataset_key`，再由对应专用 evaluator 显式处理；跨源融合、动态评分和通用路由继续延期。
+`workbuddy-data-request/1.0` 与 `workbuddy-data-bundle/1.0` 保持单 Dataset 单成功源语义：每个 dataset 按调用顺序保存 attempts，最后一个 `succeeded` attempt 是该 dataset 的最终来源，使用 fallback 必须证明前序来源失败。多个来源贡献不同业务范围时，优先拆成多个语义独立 dataset，由版本化 DataAcquisitionDefinition 冻结字段、时点、来源顺序和组装要求，再由板块专用纯函数确定性组装。
+
+目标 Dataset Gate 若选中内部 Provider，则沿现有 `ProviderRequest/ProviderAttempt/ProviderBatch` 证据链执行，不伪装成 Connector，也不写入 DataAcquisitionDefinition。`ProviderAttempt` 不代表跨 Provider fallback；切换 Provider 需要人工批准的新请求/运行。
+
+首轮旁证只作为 shadow 诊断，不强制独立 Dataset 或 `CrossCheckReport`。只有真实证据证明需要稳定复算/审计时才正式化；不平均、不覆盖，也不把并列值传给只接受单值字段的 evaluator。只有真实证据证明同一逻辑记录必须同时携带多个来源且 1.0 无法正确表达时，才另行评审 DataRequest/DataBundle 2.0；跨源动态评分、自动权重和通用路由继续延期。
 
 ## 7. 状态与门禁
 
@@ -186,7 +190,7 @@ proposal
 
 ### 7.3 自动化
 
-首版不建立 DataAcquisitionDefinition 生命周期状态机。只有 active StrategyVersion 与当前部署版本暴露的固定 DataAcquisitionDefinition artifact 组合才能生成 DataRequest；定义切换通过新的不可变 artifact 版本和受控发布完成。周期调度仍须独立显性授权。
+首版不建立 DataAcquisitionDefinition 生命周期状态机。候选 Definition 只通过显式文件/hash 做 shadow 验收，不进入 active catalog；Gate 通过并获独立授权后才随受控发布切换。只有 active StrategyVersion 与 active Definition 才能生成正式 DataRequest。Provider 路径按自身显式启用配置执行；周期调度仍须独立显性授权。
 
 ### 7.4 运行和摄取
 
@@ -211,8 +215,8 @@ task_published
 2. 评估通达信、金融 MCP、投研 API 和 fallback 的实际数据覆盖；
 3. CIA 分别形成板块强度与通达信个股筛选 StrategyProposal，并显式列出对原文的所有工程化补充、阈值和偏离；
 4. 完成 validation、所需审计和 CIA 批准，创建两个不可变 StrategyVersion；
-5. 创建两个最小 DataAcquisitionDefinition，并通过 active 只读 API 提供结构化规格；
-6. WorkBuddy 获取板块数据并提交 DataBundle，投研系统板块专用 evaluator 生成 SectorStageResult；
+5. 目标 Dataset Gate 为板块阶段选定 WorkBuddy 或单一 Provider 路径并完成 shadow；
+6. 发布/启用入选路径，投研系统板块专用 evaluator 生成 SectorStageResult；
 7. 以已校验 SectorStageResult 生成个股 DataRequest；
 8. WorkBuddy 获取限定成分股数据并提交 DataBundle，投研系统个股专用 evaluator 生成 StockStageResult 和 CandidateProposal；
 9. 投研系统通过内部可信接缝为 CandidateProposal 创建待准入 Observation，经 CandidateAdmission 形成 CandidateEntry 或可解释空结果。
@@ -233,15 +237,16 @@ task_published
 - 系统 validation、RAA 审计和 CIA 决定；
 - 创建并显式激活不可变 StrategyVersion。
 
-### Phase C：数据获取定义
+### Phase C：入选采集路径
 
-- 两个静态 DataAcquisitionDefinition artifact、DataRequest/DataBundle 合同与部署版本绑定；
-- active 只读 API、固定短 Prompt、connector 白名单和交付合同绑定；
+- 先由目标 Dataset Gate 选定一条路径，不并行预建 WorkBuddy 与 Provider 两套入口；
+- WorkBuddy 路径才创建候选 Definition，并在 shadow 通过后绑定 active 只读 API、固定短 Prompt、connector 白名单和交付合同；
+- Provider 路径只实现单一入选 Adapter 和显式配置，不新增统一 Source Registry 或跨 Provider fallback；
 - 只允许人工触发影子运行；周期调度必须另行显性授权。
 
 ### Phase D：运行与摄取
 
-- 发布 DataRequest、WorkBuddy 获取数据、DataBundle 校验；
+- 执行入选路径并校验 DataBundle 或 ProviderBatch；
 - 原子认领、不可变归档、幂等入库和恢复；
 - 两个专用 evaluator 形成 StrategyRun/StageResult。
 
@@ -257,7 +262,7 @@ task_published
 - WorkBuddy 不能创建或激活正式 StrategyVersion；
 - `legacy_unapproved/test_only/non_authoritative` 策略和报告不能激活、不能创建正式候选；
 - 数据获取定义不复制策略业务规则，并可独立暂停；
-- 只有 active 策略与 active 数据获取定义组合能生成 DataRequest；
+- 只有 active 策略与 active WorkBuddy Definition 组合能生成正式 DataRequest；Provider 路径须有对应 Gate 决定和显式启用配置；
 - WorkBuddy 只交付 DataBundle，不决定正式 StageResult、CandidateProposal 或 CandidateAdmission；
 - DataBundle 保留 `producer=workbuddy`，系统生成的 CandidateProposal 保留 `producer=invest-infra`；不得借用外部 Candidate Bridge 混淆生产者；
 - 运行成功不替代交付、摄取和业务结果状态；
