@@ -1,7 +1,7 @@
 # invest-infra 目标 Dataset 多源供给准入实施计划 v1.0
 
 > 治理状态：`ACTIVE`
-> 当前检查点：`READY_FOR_DS-1`（DS-C0 已完成；生产准入仍待 Gate B2A）
+> 当前检查点：`WAITING_FOR_V2.1_GOVERNANCE`（DS-C0 已完成；DS-1 等待已治理、未激活的 v2.1.0 StrategyVersion 与 artifact hash）
 > 制定日期：2026-09-05
 > 当前修订：2026-09-06；冻结个人非商业投研用途，改为“Dataset 主轴管理、固定多源配方、按需收敛、验证后再发布”
 > 当前定位：Stage 4D Gate B2A 的唯一数据源准入实施计划
@@ -226,7 +226,7 @@ Gate DS-FM 只确认“能否执行 shadow”，不等于生产准入。历史�
 
 **验证：** 入选来源真实小样本、缺失/冲突/乱序负面测试、sector evaluator focused tests 和 Pipeline 回归。
 
-**依赖：** DS-C0。
+**依赖：** DS-C0；`sector-strength-ranking` v2.1.0 已完成 CIA/RAA 治理并形成不可变但未激活的 StrategyVersion 与 artifact hash。DS-1 不得绑定旧 v2.0.0，也不得伪造未来版本身份。
 
 **预计规模：** M，单一垂直切片不超过 5 个文件；若超出则暂停并重新拆分。
 
@@ -268,6 +268,8 @@ DS-0M 多源贡献矩阵 + 个人非商业场景 + WorkBuddy 1.0 判定
 Gate DS-FM：冻结 WorkBuddy Dataset 固定多源配方
   ↓
 DS-C0：characterization + 必要时私有 evaluator 收敛
+  ↓
+v2.1.0 CIA/RAA 治理 → 不可变、未激活 StrategyVersion + artifact hash
   ↓
 DS-1：只接入冻结的 Dataset 配方
   ↓
