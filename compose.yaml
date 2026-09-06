@@ -55,6 +55,7 @@ services:
     environment:
       DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-invest}:${POSTGRES_PASSWORD:-invest_dev_password}@postgres:5432/${POSTGRES_DB:-invest}
       DAGSTER_HOME: /workspace/.dagster
+      INVEST_PIPELINE_SECRETS_DIR: /run/secrets/invest-infra
       INVEST_PIPELINE_WORKBUDDY_BRIDGE_ROOT: /shared/workbuddy
       INVEST_PIPELINE_WORKBUDDY_SOURCE_DIR: /shared/workbuddy/candidate/results
       INVEST_PIPELINE_WORKBUDDY_AUTO_SCHEDULE_ENABLED: "false"
@@ -63,6 +64,7 @@ services:
     volumes:
       - dagster-home:/workspace/.dagster
       - /home/claw/windows-ltsc/shared:/shared
+      - ${INVEST_PIPELINE_SECRETS_DIR:-/home/claw/invest-secrets}:/run/secrets/invest-infra:ro
     depends_on:
       postgres:
         condition: service_healthy
