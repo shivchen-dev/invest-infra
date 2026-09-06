@@ -46,7 +46,7 @@ Acceptance criteria:
 
 Verification: ADR/领域模型评审通过，现有 ExternalObservation 与 Research 对象可复用，不新增重复聚合。
 
-权威入口和完整生命周期见 `docs/plan/invest-infra-strategy-source-to-automation-workflow.md`。
+权威入口和完整生命周期见 `docs/governance/invest-infra-strategy-source-to-automation-workflow.md`。
 
 ### Task S0.2：冻结跨阶段任务合同
 

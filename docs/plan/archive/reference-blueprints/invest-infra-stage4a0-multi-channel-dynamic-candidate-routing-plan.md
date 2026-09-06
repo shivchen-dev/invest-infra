@@ -1,11 +1,11 @@
 # invest-infra 动态 ETF 多渠道筛选实施计划
 
 > 文档版本：v1.0  
-> 文档状态：Draft for Review  
+> 归档状态：`DEFERRED_REFERENCE`（候选策略合同已由现行计划替代，不得直接派工）
 > 制定日期：2026-08-03  
 > 适用仓库：`shivchen-dev/invest-infra`  
 > 建议阶段名称：**Stage 4A-0 — Multi-Channel Dynamic Candidate Routing**  
-> 后续依赖：完成后再实施 `invest-infra-stage4a-final-closure-sprint-plan-v1.1.md`
+> 历史后续依赖：`../completed/invest-infra-stage4a-final-closure-sprint-plan-v1.1.md`
 > 建设原则：确定性筛选、多渠道输入、统一融合、可审计、轻量化、不做参数寻优  
 
 ---

@@ -2,33 +2,23 @@
 
 > 治理状态：`BLOCKED`
 > 制定日期：2026-08-26
-> 当前执行修订：2026-09-06；Gate A/B 已完成，等待目标 Dataset 计划选定单一采集路径并通过 Gate B2A
+> 当前执行修订：2026-09-06；历史 v2.0.0 Gate A/B 已完成，v2.1.0 与 Gate B2A 仍待验收
 > 计划定位：Stage 4D Gate 3 的前置垂直切片；用户已于 2026-08-26 明确授权实施
-> 合同依据：`invest-infra-strategy-source-to-automation-workflow.md`
+> 合同依据：`../governance/invest-infra-strategy-source-to-automation-workflow.md`
 > 数据源前置：`invest-infra-target-dataset-source-admission-plan-v1.0.md`
 
 ## 1. 目标
 
 当前 Gate 3 的真实阻塞不是缺少完整策略平台。DataRequest/DataBundle 合同与 evaluator 接缝已经存在或部分实现；生产阻塞是 `sector-ranking` 和 `sector-constituents` 均无生产准入来源，Gate B2A 为 `BLOCKED`，且收窄后的板块策略尚未形成不可变 active 版本。
 
-当前准入事实为：`sector-ranking=research_only`、`sector-constituents=research_only`、预采集未获准，禁止生成正式 Candidate。目标 Dataset 的探针、准入决定和最小运行时守卫只由 `invest-infra-target-dataset-source-admission-plan-v1.0.md` 承担，本计划不再维护第二套来源矩阵或准入流程。v2.1.0 提案及 CIA/RAA 审核可与数据源计划并行；Gate B2A 阻塞期间 v2.1.0 保持 inactive。只有策略治理路径和 Gate B2A 均通过后，才可显式激活 v2.1.0，并发布 WorkBuddy Definition 或启用 Provider 配置中的入选路径，再开始 Slice 2 正式执行。
+当前准入事实为：`sector-ranking=research_only`、`sector-constituents=research_only`、预采集未获准，禁止生成正式 Candidate。目标 Dataset 的探针、准入决定和最小运行时守卫只由 `invest-infra-target-dataset-source-admission-plan-v1.0.md` 承担，本计划不再维护第二套来源矩阵或准入流程。v2.1.0 提案及 CIA/RAA 审核可与数据源计划并行；Gate B2A 阻塞期间 v2.1.0 保持 inactive。只有策略治理路径和 Gate B2A 均通过后，才可显式激活 v2.1.0，并发布已冻结配方的 WorkBuddy Definition，再开始 Slice 2 正式执行。
 
 ```text
-恢复并核验两篇头条原文
-→ 两条 StrategyDraft 入库并固化既有工程化 artifact
-→ RAA 通过只读 API 分别审核
-→ AgentOA 分别回传 audit.json
-→ ARC 通过受控 CLI 摄取两份 StrategyAudit
-→ CIA 分别批准并发布、激活两个历史 v2.0.0 StrategyVersion
-→ v2.1.0 提案及 CIA/RAA 审核，与目标 Dataset 来源可行性和单路径准入守卫实施并行
-→ 策略治理获批且 Gate B2A 通过
-→ 显式激活 v2.1.0，并发布/启用 Gate 选定的板块采集路径
-→ WorkBuddy 路径：发布 DataRequest 1.0 并摄取 DataBundle 1.0
-→ Provider 路径：执行单一获准 ProviderRequest/Attempt/Batch
-→ 投研系统按同一板块输入不变量生成 SectorStageResult
-→ 投研系统发布限定成分股 DataRequest
-→ 按该阶段 DataAcquisitionDefinition 采集并验证输入
-→ 投研系统个股 evaluator 生成 StockStageResult + Candidate 2.0.0
+v2.1.0 提案及 CIA/RAA 审核 ───────────────────────────────┐
+目标 Dataset DS-C0/DS-1/DS-2 → Gate B2A ────────────────┤
+                                                          ↓ 两项均通过
+激活 v2.1.0 与匹配 Definition → 两阶段 DataRequest/DataBundle
+→ SectorStageResult → StockStageResult → Candidate 2.0.0
 → 内部可信接缝创建待准入 Observation → CandidateAdmission
 → Evidence → ResearchCase → ResearchRun/Result → Timeline
 ```
@@ -54,7 +44,7 @@
 - 两个保存不可变 `strategy.json`、来源和 validation 的 `StrategyDraft`；
 - 两份通过 AgentOA 交付并由投研系统摄取的不可变 `StrategyAudit`；
 - 两个最小、不可变、可查询和可激活的 `StrategyVersion`；
-- 板块阶段和个股阶段各一次可信数据输入；板块阶段只使用 Gate 选定的一条采集路径；
+- 板块阶段和个股阶段各一次可信数据输入；板块阶段只使用 Gate 冻结的确定性 Dataset 配方；
 - 入选来源的可复算 artifact/batch，以及投研系统生成的一份同时追溯两个正式策略版本和上游 StageResult 的 Candidate 2.0.0；
 - 两个固定范围的专用 evaluator；仅 WorkBuddy 路径需要相应 active DataAcquisitionDefinition；
 - 与现有 Admission、Evidence 和 Research 链路的真实联调；既有 WorkBuddy Candidate Intake 仅保留为外部兼容入口。
@@ -86,260 +76,30 @@
 
 已归档 `source-document.json` 保存标题、URL和 `content_sha256`，但没有完整原文正文。Slice 0 必须先从既有归档找回或重新提取正文：若重新提取内容与原 hash 不同，必须并列保留旧hash与新快照并交由CIA确认，禁止把变化后的网页静默解释为原始内容。
 
-## 4. 最小设计
+## 4. 已完成治理基线
 
-### 4.1 不可变策略 artifact
+领域对象、角色、状态与交付合同由 [策略源到自动化治理合同](../governance/invest-infra-strategy-source-to-automation-workflow.md) 统一定义，本计划不再复制。
 
-策略业务内容保存在不可变 artifact 中，不复制成大量数据库字段。
+| 基线 | 当前事实 | 证据 |
+|---|---|---|
+| StrategyDraft / Gate A | 两条源文与不可变 Draft 已登记并验收 | [Slice 0 / Gate A](../validation/candidate-strategies-slice0-gate-a-20260826.md) |
+| StrategyAudit / StrategyVersion | 早期审计曾要求修订；后续治理发布、激活与 active 只读接口已进入代码基线 | [早期审计记录](../validation/candidate-strategies-slice1-audit-ingestion-20260826.md)；提交 `25b5e24`、`a934513`、`e603403` |
+| 数据获取合同 | DataRequest/DataBundle 1.0、静态 Definition 与只读接口已实现 | 提交 `9035c97`、`a9b288f` |
 
-首版 `strategy.json` 只要求：
-
-| 字段 | 用途 |
-|---|---|
-| `schema_version` | 解释合同版本 |
-| `strategy_key` | 稳定策略身份 |
-| `version` | 不可变业务版本 |
-| `name` | 人工识别 |
-| `market_scope` | 限定板块或沪深股票市场及标的范围 |
-| `as_of_policy` | 数据截止时间规则，防止未来数据泄漏 |
-| `rules` | CIA 确认的筛选与解释规则 |
-| `required_data` | DataRequest 所需数据、字段、时间和单位口径 |
-| `candidate_contract` | Candidate 2.0.0 输出要求 |
-| `failure_conditions` | 数据不足或规则不可执行时的停止条件 |
-| `source_refs` | 原始业务材料引用与 hash |
-
-业务扩展字段默认允许；只有身份、版本、完整性和安全解释失败才阻断登记。
-
-### 4.2 最小 StrategyDraft
-
-策略在审核前先入库为 `StrategyDraft`，不得直接创建 `StrategyVersion`：
-
-| 字段 | 约束 |
-|---|---|
-| `draft_id` | 系统稳定身份 |
-| `strategy_key` | 待发布策略身份 |
-| `proposed_version` | 目标版本，不代表已发布 |
-| `artifact_ref` | 不可变 `strategy.json` 引用 |
-| `artifact_hash` | SHA-256，入库后不可修改 |
-| `source_refs` | 原始业务材料引用与 hash |
-| `validation_result` | 系统确定性校验结果 |
-| `created_at` | 系统登记时间 |
-
-RAA 通过只读接口读取完整待审内容：
-
-```http
-GET /api/v1/strategy-drafts/{draft_id}
-```
-
-接口返回 `strategy.json` 内容、source refs、artifact hash、validation 结果和已有审计摘要；不暴露宿主机绝对路径或凭证。
-
-### 4.3 最小 StrategyAudit 记录
-
-RAA 通过 AgentOA 交付 `audit.json`。AgentOA 是传输通道，ARC 使用受控 CLI 完成校验和正式摄取。
-
-审计记录最少保存：
-
-| 字段 | 约束 |
-|---|---|
-| `audit_id` | 系统稳定身份 |
-| `draft_id` | 绑定待审策略 |
-| `artifact_hash` | 必须与当前 Draft 完全一致 |
-| `agentoa_task_id` | 审计任务追溯 |
-| `auditor` | 必须为授权 RAA 身份 |
-| `verdict` | `pass / changes_required / reject` |
-| `findings` | 结构化审计发现 |
-| `limitations` | 审计限制 |
-| `report_ref/report_hash` | 原始审计报告及 SHA-256 |
-| `audited_at` | 审计时间 |
-
-重复报告按 `(draft_id, artifact_hash, agentoa_task_id)` 幂等。Draft 内容或 hash 变化后，旧审计不能用于发布新版本。
-
-审计 `pass` 只表示当前 Draft 的规则、数据和执行边界满足受控运行要求，不表示策略收益已经验证。不得要求回测区间、样本量、收益基准、Rank IC 或收益通过阈值，也不得因系统没有回测能力而阻断审核。
-
-### 4.4 最小 StrategyVersion 聚合
-
-数据库只新增一个正式聚合，保存：
-
-| 字段 | 约束 |
-|---|---|
-| `strategy_id` | 系统稳定身份 |
-| `strategy_key` | 每条策略稳定且唯一 |
-| `version` | 与 `strategy_key` 联合唯一 |
-| `artifact_ref` | 不可变策略 JSON 引用 |
-| `artifact_hash` | SHA-256，登记后不可修改 |
-| `source_hashes` | 原始业务材料 hash 引用 |
-| `decision_ref` | CIA 决定证据引用 |
-| `audit_id` | 必须引用当前 Draft 的有效 `pass` 审计 |
-| `approved_at` | CIA 批准时间 |
-| `activated_at` | 人工激活时间；未激活为空 |
-| `created_at` | 系统登记时间 |
-
-不在首版建立通用状态机。可执行条件只有：
-
-```text
-artifact hash 有效
-AND audit_id 指向当前 hash 的 pass 审计
-AND decision_ref 有效
-AND approved_at 非空
-AND activated_at 非空
-```
-
-版本发布后不可修改。业务语义变化时创建新版本，不覆盖旧版本。
-
-### 4.5 最小接口与命令
-
-策略模块只暴露四个业务能力：
-
-```text
-register_draft(...)
-publish_approved_version(decision, decision_ref, decision_hash)
-activate_version(strategy_id, version)
-get_active_version(strategy_key)
-```
-
-StrategyVersion 管理 CLI 的发布入口仅接收 CIA 决策文件、不可变决策引用及 AgentOA 提供的可信 SHA-256；Draft/Audit 身份、策略 key/version、artifact hash 和批准人授权由决策、数据库记录及服务配置推导，不由操作者重复输入。RAA 只读 API 位于 Draft 查询接缝；首版不提供 RAA 写 API。ARC 使用受控管理 CLI 摄取 `audit.json`，CLI 调用同一领域校验能力，不复制规则。artifact 校验、hash、审计有效性、唯一性、不可变性和激活约束隐藏在模块内部。
-
-```bash
-python -m invest_pipeline.strategy_version_cli publish \
-  --decision-json-file <decision.json> \
-  --decision-ref <immutable-agentoa-ref> \
-  --expected-decision-sha256 <trusted-agentoa-sha256>
-```
+历史 v2.0.0 的完成事实不自动批准 v2.1.0。收窄策略仍须创建新的不可变版本并完成 CIA/RAA 治理。
 
 ## 5. 实施切片
 
-### Slice 0：恢复原文并登记两条 StrategyDraft
+### 已完成切片：Slice 0–1B
 
-**目标：** 恢复两篇源文正文，核对既有工程化交付，将两条待审策略正式入库，并为 RAA 提供唯一只读审核入口。
+| 切片 | 结论 |
+|---|---|
+| Slice 0 | 两条 StrategyDraft 与 Gate A 已完成 |
+| Slice 1 | 历史 v2.0.0 的审计、发布与人工激活能力已形成实现基线 |
+| Slice 1A | active StrategyVersion 局域网只读接口已实现 |
+| Slice 1B | DataRequest/DataBundle 1.0、两个静态 Definition 和只读接口已实现 |
 
-**工作内容：**
-
-- 找回既有提取正文；确实缺失时重新提取两篇头条文章并生成新快照和hash；
-- 对照原文、现有能力评估、`strategy.json`、`strategy.md` 和 `validation.json`；
-- 复算现有manifest和全部artifact hash，不重新发明策略内容；
-- 将两套既有工程化交付分别登记为不可变 `StrategyDraft`；
-- 提供 `GET /api/v1/strategy-drafts/{draft_id}` 只读接口。
-
-能力评估和工程化提案仍以不可变 artifact 保存，不分别建设数据库模型。
-
-**验收标准：**
-
-- [x] 两篇原文正文可读取，旧hash与当前快照关系明确；
-- [x] 两条策略的 key、版本、市场范围、规则和数据口径分别明确；
-- [x] manifest与现有策略交付hash复算一致；
-- [x] 两条Draft入库后内容和hash不可原地修改；
-- [x] RAA能通过API分别读取完整策略、来源、能力评估和validation结果。
-
-**验证：** JSON schema/fixture、hash、repository 和只读 API tests；RAA 身份实际读回。
-
-**依赖：** 无。
-
-**预计规模：** 拆成两个 M 任务，每个不超过 5 个文件：Draft 领域/存储；只读 API。
-
-### Slice 1：分别审计并发布两个 StrategyVersion
-
-**目标：** 通过AgentOA分别完成两条策略的RAA审计，经正式摄取和CIA逐条批准后发布、激活两个版本。
-
-**工作内容：**
-
-- ARC通过AgentOA分别发布绑定`draft_id + artifact_hash`的审计任务；
-- RAA通过只读API逐条审核并分别交付`audit.json`；
-- ARC使用受控CLI分别校验、摄取两份不可变`StrategyAudit`；
-- 对 `changes_required` 中涉及回测区间、样本量、收益指标或回测通过阈值的要求，按本计划明确排除，不纳入新 Draft 或复审门禁；
-- CIA对两条通过审计的当前Draft分别作出决定；
-- 新增最小 `StrategyVersion`，实现发布、人工激活和按 `strategy_key` 查询；
-- 校验 Draft hash、有效审计、CIA 决定、版本唯一性和不可变性；
-- 保留本机管理 CLI 查询能力，供 ARC 验收和治理操作使用；跨平台任务发布读取由 Slice 1A 的局域网公共只读接口提供。
-
-**验收标准：**
-
-- [ ] AgentOA 完成不等于审计入库成功；
-- [ ] hash 不符、任务身份不符、非 RAA 提交或非 pass 审计均不能发布版本；
-- [ ] RAA pass 只证明受控可执行，不宣称或暗示收益有效性；
-- [ ] 审核、发布和激活均不依赖不存在的回测模块或回测指标；
-- [ ] 未经 CIA 批准或未激活版本不能作为执行依据；
-- [ ] 每条key/version重复登记幂等，冲突内容失败；
-- [ ] 已登记版本不能原地修改；
-- [ ] 本机 CLI 查询返回正式 artifact 引用和 hash，而不是裸字符串。
-
-**验证：** audit ingestion、domain、repository、migration 和 focused CLI/query tests；AgentOA、审计记录、CIA决定和版本四方读回。
-
-**依赖：** Slice 0。
-
-**预计规模：** 拆成三个 M 任务，每个不超过 5 个文件：Audit 摄取；Version 领域/存储；发布/查询入口。
-
-### Slice 1A：提供 active StrategyVersion 局域网公共只读接口
-
-**目标：** 让 CIA、RAA、ARC 及受信治理客户端通过局域网读取权威 active 策略，不依赖本机 CLI、宿主机路径或共享目录策略副本；WorkBuddy 数据任务不以读取完整策略为运行前提。
-
-**唯一接口：**
-
-```http
-GET /api/v1/strategies/{strategy_key}/active
-```
-
-**工作内容：**
-
-- 新增一个正式策略查询模块，复用现有 StrategyVersion repository 和 strategy artifact reader；
-- 只读取指定 key 当前唯一 active StrategyVersion；
-- 读取正式 `strategy.json` 原始字节，复算 SHA-256 并严格解析为 JSON object；
-- 响应只包含 schema version、strategy identity、version、active 状态、artifact hash、完整 strategy 内容和必要时间字段；
-- 不返回 artifact_ref、宿主机路径、Decision、Audit、批准人、凭证或数据库结构；
-- 不新增应用层登录，读取范围继续由现有局域网部署边界控制；
-- 固定错误语义：不存在为 404、artifact 不可读为 503、hash 或 JSON 完整性失败为 409，错误正文必须脱敏。
-
-**首版明确延期：**
-
-- 历史版本读取、策略列表、搜索、批量接口和写接口；
-- ETag、304 和专用缓存策略；
-- 独立 artifact 下载 URL、前端页面和共享目录策略副本。
-
-**验收标准：**
-
-- [ ] 治理客户端通过局域网 URL 读取两个现有 active v2.0.0 策略并获得 HTTP 200；
-- [ ] API、数据库 StrategyVersion 和本地 artifact 的 SHA-256 三方一致；
-- [ ] 错误 key、artifact 不可读、hash 不符和非法 JSON 均 fail closed 且不泄露内部信息；
-- [ ] OpenAPI 只新增一个 GET，不出现治理写入口或内部字段；
-- [ ] 后续 WorkBuddy 数据任务只读取 DataRequest/DataAcquisitionDefinition，不下载或解释完整 StrategyVersion，也不要求复制正式策略到 `Z:\workbuddy`。
-
-**验证：** focused query/endpoint tests、OpenAPI drift、Ruff、架构检查、真实 PostgreSQL 只读查询和 WorkBuddy 局域网实际读回。
-
-**依赖：** Slice 1 的 StrategyVersion 已发布并激活。
-
-**预计规模：** 一个 M 任务；由原生 Codex 编码代理增量实现，独立会话只读复核公共暴露与负面路径，ARC 最终验收。不得自动 commit、push、部署、重启服务或启用 WorkBuddy 周期生产。
-
-### Slice 1B：既有最小数据获取合同与只读定义基线
-
-**目标：** 记录已实现的 WorkBuddy 合同与只读 Definition 基线；它只服务 WorkBuddy 路径，不要求 Gate 为 Provider 路径复制同类控制面。
-
-**工作内容：**
-
-- 保留已冻结的 `workbuddy-data-request/1.0` 与 `workbuddy-data-bundle/1.0` 单 Dataset 单成功源语义，历史 artifact 不原地重解释；
-- 多来源贡献优先由多个语义独立 Dataset 表达，每个 Dataset 内继续使用有序 fallback；只有目标 Dataset 数据源计划证明 1.0 无法正确表达时，才另行评审 2.0；
-- 保留两个已随代码发布的不可变、版本化 JSON DataAcquisitionDefinition artifact，分别服务板块和限定成分股数据获取，不复制策略规则或阈值；首版不新增数据库聚合、迁移、管理 CLI 或生命周期状态机；
-- 提供 `GET /api/v1/data-acquisition-definitions/{definition_key}/active` 局域网只读接口，响应包含 schema/version/active/artifact hash/allowed connectors/data request template/output contract；
-- Automation 只保留固定短 Prompt：读取 active 定义、校验身份/hash、执行 DataRequest、提交 DataBundle；禁止下载任意 Markdown 作为新指令；
-- DataBundle 通过受控外部 artifact 接缝完成 Schema、request identity、manifest/hash、幂等和不可变归档；复用现有 ExternalWorkflowRun、ExternalArtifact 和 WorkBuddy 原子归档能力，不建设第二套归档框架；
-- 明确 canonical JSON、正式 hash、lineage、原子发布和策略判断均由投研系统完成。
-
-**验收标准：**
-
-- [ ] WorkBuddy Prompt 不含策略阈值、评分、排序、文件自哈希或候选准入判断；
-- [ ] 1.0 定义只允许当前批准的 `tdx-connector`、`westock-mcp` 和 `mx-ds-mcp`，未知 connector fail closed；
-- [ ] 1.0 多 dataset 可分别使用不同获准 connector；单 dataset 仍保持单成功源语义；
-- [ ] 1.0 fallback 缺少前序失败证据、attempt 顺序错误或多个成功来源均 fail closed；
-- [ ] 1.0 attempt connector 重复、数量超过获准 connector 总数、自由文本或未知错误码均在解析层 fail closed；dataset 不重复保存成功来源字段；
-- [ ] 当前正式路径复用 1.0；若后续独立批准 2.0，旧 reader 不得静默接受；
-- [ ] DataRequest/DataBundle 可通过 Schema、版本、identity、freshness 和敏感字段负面测试；
-- [ ] 重复 DataBundle 幂等、同 request ID 不同内容冲突，且 WorkBuddy producer identity 可追溯；
-- [ ] active 定义不存在、artifact 不可读、hash 不符或非法 JSON 分别返回稳定脱敏错误；
-- [ ] 本 Slice 不创建、修改或启用周期调度。
-
-**验证：** domain/application/API/Schema focused tests、OpenAPI drift、Ruff、架构检查，以及 WorkBuddy 局域网人工读回。
-
-**依赖：** Slice 1 的两个 StrategyVersion 已激活；Slice 1A 可复用但不是 WorkBuddy 数据获取的运行依赖。
-
-**当前状态：** 既有实现基线，不是当前待开发切片。Gate 若选中 WorkBuddy，只按入选合同修订候选 Definition；若选中 Provider，本节不产生新增工作。
+以上切片不再派工；当前只允许继续 Slice 1C 和 Slice 2。
 
 ### Slice 1C：消费 Gate B2A 准入结果
 
@@ -350,20 +110,20 @@ GET /api/v1/strategies/{strategy_key}/active
 - `sector-strength-ranking` 的收窄方案仅保留 `industry`、`concept`，暂停 `area` 和 `zgb/R-A3`；
 - 收窄方案的 v2.1.0 提案及 CIA/RAA 审核可与目标 Dataset 数据源计划并行推进；现有 active v2.0.0 不原地改写；
 - 当前 `sector-ranking=research_only`、`sector-constituents=research_only`，Gate B2A 为 `BLOCKED`，预采集未获准；v2.1.0 保持 inactive，禁止生成正式 Candidate；
-- 只有策略治理路径和 Gate B2A 均通过后，才可显式激活 v2.1.0，并发布 WorkBuddy Definition 或启用 Provider 配置中的入选路径。
+- 只有策略治理路径和 Gate B2A 均通过后，才可显式激活 v2.1.0，并发布已冻结配方的 WorkBuddy Definition。
 
 **工作内容：**
 
 - 读取目标 Dataset 数据源计划的 Gate B2A 验收证据与入选路径 artifact/batch；
 - 核对策略要求的 Dataset、必需覆盖分区、字段、`as_of`、停止条件与入选路径合同一致；
-- 在策略治理也通过后激活 v2.1.0；WorkBuddy 路径发布候选 Definition，Provider 路径启用获准运行配置；
+- 在策略治理也通过后激活 v2.1.0，并发布已冻结配方的候选 WorkBuddy Definition；
 - 保持系统预采集与 WorkBuddy 补数的 producer、hash 和 lineage 分离，不伪装数据生产者。
 
 **验收标准：**
 
 - [ ] Gate B2A 已由数据源计划独立验收，目标业务输入均由未过期、人工批准的来源集合覆盖；
 - [ ] v2.1.0 与入选路径的 Dataset、字段、时点和 contract version 精确一致；
-- [ ] WorkBuddy 路径的 DataAcquisitionDefinition 或 Provider 路径的显式运行配置与 Gate 决定一致；
+- [ ] WorkBuddy DataAcquisitionDefinition 与 Gate 冻结的 Dataset 配方一致；
 - [ ] Gate B2A 未通过或策略治理未通过时，本计划继续 `BLOCKED`。
 
 **验证：** Gate B2A 验收包、策略 artifact 与入选路径 artifact/batch/config 的 identity/version/hash 交叉校验。
@@ -379,7 +139,7 @@ GET /api/v1/strategies/{strategy_key}/active
 **工作内容：**
 
 - ARC 查询两条策略及 Gate B2A 入选采集路径的当前 active 配置和 artifact；
-- 板块阶段只执行入选路径：WorkBuddy 使用 DataRequest/DataBundle 1.0；Provider 使用单一获准 ProviderRequest/Attempt/Batch；
+- 板块阶段只执行已冻结 WorkBuddy Dataset 配方，使用 DataRequest/DataBundle 1.0；Provider 候选不进入本轮运行；
 - 投研系统复用现有 evaluator 兼容接口或其私有板块输入核心，校验并组装 Industry/Concept；旁证仅在真实需要时生成诊断；
 - 仅在 SectorStageResult 合法时，针对其限定成分股生成第二个 DataRequest；
 - WorkBuddy 返回行情、资金、北向、财务和必要旁证 DataBundle，不解释策略或决定候选；
@@ -409,40 +169,15 @@ GET /api/v1/strategies/{strategy_key}/active
 
 **预计规模：** 拆成板块和个股两个 M 垂直切片，每个先完成入选输入 → evaluator → StageResult，再进入下一阶段；不建设通用规则引擎。
 
-## 6. 依赖与验收 Gate
+## 6. 当前依赖与验收 Gate
 
-```text
-Slice 0 原文恢复与两条 Draft 入库
-  ↓ Gate A：RAA 可通过 API 审核两条当前 Draft
-Slice 1 分别审计、CIA批准、两个 Version 发布激活
-  ↓ Gate B：两份审计有效且系统可查询两个激活版本
-Slice 1B DataRequest/DataBundle 与 active 数据获取定义
-  ↓ Gate B2：WorkBuddy 只承担可验证的 MCP 数据获取
-以上接缝已存在或部分实现，不构成以下两项的顺序依赖：
-v2.1.0 提案 → CIA/RAA 审核 → 策略治理获批 ────────────────────────┐
-目标 Dataset 数据源计划 DS-0M..DS-2 → Gate B2A ──────────────────┤ 可并行；当前 BLOCKED
-                                                                    ↓ 两项前置均通过
-显式激活 v2.1.0 → 发布/启用匹配的入选采集路径
-  ↓
-Slice 2 两阶段确定性执行与 Stage 4D 回接
-  ↓ Gate C：首批候选策略 MVP 完成
-```
+当前只剩两个并行前置：v2.1.0 策略治理、目标 Dataset Gate B2A。两项均通过后才可激活匹配版本并开始 Slice 2。
 
-### Gate A：策略可审核
+### 已完成 Gate：历史 v2.0.0 Gate A/B
 
-- 两篇原文快照、既有内容hash及当前提取差异可解释；
-- 两条策略的业务规则、数据口径、失败条件和输出要求明确；
-- 两个StrategyDraft、strategy artifact和source refs的引用与hash可复算；
-- RAA可通过投研系统API读取两条完整待审内容；
-- 数据不可得时明确 `blocked`，不猜测或补造。
-
-### Gate B：策略可引用
-
-- 两个StrategyVersion均不可变且已人工激活；
-- 两份StrategyAudit分别绑定当前Draft hash、AgentOA任务和RAA身份，verdict均为`pass`；
-- CIA分别作出有效决定；
-- 投研系统能按两个`strategy_key`分别返回唯一激活版本及artifact hash；
-- 未批准、未激活或冲突版本均不能被任务引用。
+- Gate A 的 Draft、来源与 hash 验收见 [Slice 0 / Gate A](../validation/candidate-strategies-slice0-gate-a-20260826.md)。
+- [早期审计记录](../validation/candidate-strategies-slice1-audit-ingestion-20260826.md)只描述当时的 `changes_required` 状态；后续 StrategyVersion 发布、激活和只读查询能力已由提交 `25b5e24`、`a934513`、`e603403` 落地。
+- 这些历史完成事实不替代 v2.1.0 的新提案、审计和批准。
 
 ### Gate B2A：当前 Dataset 来源可准入
 

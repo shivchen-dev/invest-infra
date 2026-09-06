@@ -134,7 +134,7 @@ systemd 托管的服务不得再由 Compose 重复启动，具体冲突规则见
 详细决策见 `docs/ARCHITECTURE.md`、`docs/ARCHITECTURE-GOVERNANCE.md`、
 [`docs/runbooks/runtime-ports.md`](docs/runbooks/runtime-ports.md)、
 `docs/adr/` 和
-`docs/plan/invest-infra-stage4a-final-closure-sprint-plan-v1.1.md`。
+`docs/plan/archive/completed/invest-infra-stage4a-final-closure-sprint-plan-v1.1.md`。
 
 当前计划入口与治理规则统一见
 [`docs/plan/README.md`](docs/plan/README.md)；不得根据历史任务包恢复派工。

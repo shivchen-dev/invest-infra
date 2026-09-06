@@ -2,7 +2,7 @@
 
 > 版本：v1.0
 > 日期：2026-08-03
-> 状态：Approved for incremental implementation
+> 归档状态：`DEFERRED_REFERENCE`（不执行“大而全”接入；新数据源按目标 Dataset 独立授权）
 
 ## 1. 目标
 

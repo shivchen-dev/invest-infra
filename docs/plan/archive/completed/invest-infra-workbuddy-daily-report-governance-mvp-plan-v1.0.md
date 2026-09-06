@@ -1,7 +1,7 @@
 # WorkBuddy 候选线索治理 MVP 实施计划
 
 > 文档版本：v2.0
-> 文档状态：Frozen for Implementation
+> 归档状态：`MERGED_REFERENCE`（合同与实现事实保留；后续接入并入 Stage 4D）
 > 日期：2026-08-14
 > 生产规则：`WORKBUDDY-REPORT-RULES.md` 2.0.0
 

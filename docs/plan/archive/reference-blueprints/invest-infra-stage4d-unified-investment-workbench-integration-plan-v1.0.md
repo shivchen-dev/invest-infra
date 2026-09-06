@@ -1,7 +1,7 @@
 # invest-infra：WorkBuddy + JiuwenSwarm 统一投资驾驶舱与 ETF 投资闭环总蓝图
 
 > 文档版本：v1.2
-> 文档状态：Draft for Review
+> 归档状态：`REFERENCE_BLUEPRINT`（Stage 4D–4G 长期设计基线，不得直接派工）
 > 制定日期：2026-08-13
 > 适用仓库：`shivchen-dev/invest-infra`
 > 当前代码基线：`main` / `907d296bfe503b4f937af73643beb2f2f349cce0`
@@ -2290,7 +2290,7 @@ StrategyEvaluation
 StrategyChangeProposal
 ```
 
-策略库的正式入口不是直接创建 Strategy，而是登记用户交给 CIA 或 ARC 的原始 StrategySourceDocument。完整的源文档、能力评估、策略工程化、审核、自动化执行和摄取流程以 `docs/plan/invest-infra-strategy-source-to-automation-workflow.md` 为准。
+策略库的正式入口不是直接创建 Strategy，而是登记用户交给 CIA 或 ARC 的原始 StrategySourceDocument。完整的源文档、能力评估、策略工程化、审核、自动化执行和摄取流程以 `docs/governance/invest-infra-strategy-source-to-automation-workflow.md` 为准。
 
 首批策略类型：
 

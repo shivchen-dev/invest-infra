@@ -1,10 +1,10 @@
 # 中心投研可视化平台 MVP 实施计划
 
 > 文档版本：v1.1
-> 文档状态：DEFERRED（数据覆盖与 Provider 韧性 P0 收口前暂停）
+> 归档状态：`DEFERRED`（等待 Stage 4D Gate 3 与 Candidate lineage 验收后重新授权）
 > 计划治理：`docs/plan/README.md`
 > 制定日期：2026-08-15
-> 最近更新：2026-09-02（按计划治理暂停，原方案内容保持不变）
+> 最近更新：2026-09-06（归档暂停，原方案内容保持不变）
 > 上位蓝图：`docs/plan/archive/reference-blueprints/invest-infra-stage4d-unified-investment-workbench-integration-plan-v1.0.md`
 > 既有执行基线：`docs/plan/invest-infra-stage4d-mvp-phased-execution-plan-v1.0.md`
 

@@ -1,7 +1,7 @@
 # invest-infra Stage 4B Market Intelligence Foundation
 
 > 文档版本：v2.0
-> 状态：Architecture and implementation plan
+> 归档状态：`COMPLETED`（既有实现与验收已完成，不再派工）
 > 基线：GitHub/Gitee `main`，`8caff0225ff9443b251d31a2f80664e67061af85`
 > 前置：Stage 4A 已完成代码级验收；环境级治理收口仍按 Final Acceptance 报告执行
 

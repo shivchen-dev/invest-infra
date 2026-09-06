@@ -8,7 +8,7 @@
 
 当前有效计划入口：
 
-- Provider 接入收口：`docs/plan/invest-infra-v2-all-data-sources-integration-plan.md`
-- Stage 4A-0：`docs/plan/invest-infra-stage4a0-multi-channel-dynamic-candidate-routing-plan.md`
+- Provider 接入收口：`docs/plan/archive/reference-blueprints/invest-infra-v2-all-data-sources-integration-plan.md`
+- Stage 4A-0：`docs/plan/archive/reference-blueprints/invest-infra-stage4a0-multi-channel-dynamic-candidate-routing-plan.md`
 - Stage 4A：`docs/plan/invest-infra-stage4a-merged-implementation-plan-v1.1.md`
-- Stage 4B 蓝图：`docs/plan/invest-infra-data-collection-enhancement-plan-v1.0.md`
+- Stage 4B 蓝图：`docs/plan/archive/reference-blueprints/invest-infra-data-collection-enhancement-plan-v1.0.md`

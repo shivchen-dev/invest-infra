@@ -1,5 +1,8 @@
 # 投研策略源文档到自动化执行工作流设计
 
+> 治理状态：`CONTRACT_AUTHORITY`
+> 文档定位：策略源、审核、数据获取与确定性执行的规范合同；不作为开发排期或动态进度权威。
+
 ## 1. 目的
 
 定义投研策略从用户原始文档进入投研系统，到 CIA 形成策略提案、RAA 独立审计、WorkBuddy 按结构化数据请求调用 MCP，再由投研系统确定性执行和摄取入库的唯一主流程。
@@ -19,9 +22,9 @@
   → RAA 审计（按风险要求）
   → CIA 人工批准、拒绝或退回修改
   → immutable StrategyVersion
-  → 目标 Dataset Gate 选定一条采集路径
+  → 目标 Dataset Gate 冻结一条确定性 Dataset 来源配方
   → WorkBuddy 路径：候选 DataAcquisitionDefinition 经 shadow 验收后发布
-  → Provider 路径：单一获准 Provider 配置经 shadow 验收后启用
+  → 当前配方：WorkBuddy DataRequest/DataBundle 1.0；Provider 仅保留候选绑定
   → 投研系统校验实际 DataBundle 或 ProviderBatch，由专用 evaluator 计算并归档
   → StageResult / StrategyRun
   → 下游工作流或 CandidateAdmission
@@ -215,7 +218,7 @@ task_published
 2. 评估通达信、金融 MCP、投研 API 和 fallback 的实际数据覆盖；
 3. CIA 分别形成板块强度与通达信个股筛选 StrategyProposal，并显式列出对原文的所有工程化补充、阈值和偏离；
 4. 完成 validation、所需审计和 CIA 批准，创建两个不可变 StrategyVersion；
-5. 目标 Dataset Gate 为板块阶段选定 WorkBuddy 或单一 Provider 路径并完成 shadow；
+5. 目标 Dataset Gate 为板块阶段冻结 WorkBuddy 固定多源配方并完成 shadow；
 6. 发布/启用入选路径，投研系统板块专用 evaluator 生成 SectorStageResult；
 7. 以已校验 SectorStageResult 生成个股 DataRequest；
 8. WorkBuddy 获取限定成分股数据并提交 DataBundle，投研系统个股专用 evaluator 生成 StockStageResult 和 CandidateProposal；
@@ -239,9 +242,9 @@ task_published
 
 ### Phase C：入选采集路径
 
-- 先由目标 Dataset Gate 选定一条路径，不并行预建 WorkBuddy 与 Provider 两套入口；
+- 先由目标 Dataset Gate 冻结确定性 Dataset 配方；当前只实施 WorkBuddy，不并行预建 Provider 入口；
 - WorkBuddy 路径才创建候选 Definition，并在 shadow 通过后绑定 active 只读 API、固定短 Prompt、connector 白名单和交付合同；
-- Provider 路径只实现单一入选 Adapter 和显式配置，不新增统一 Source Registry 或跨 Provider fallback；
+- Provider 只保留候选绑定；本阶段不实现 Provider Adapter、统一 Source Registry 或跨 Provider fallback；
 - 只允许人工触发影子运行；周期调度必须另行显性授权。
 
 ### Phase D：运行与摄取

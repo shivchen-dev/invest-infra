@@ -32,7 +32,7 @@ research/results/510300_data_report_v1.0_20260824.md
 
 - `docs/plan/README.md`：当前计划与治理入口；
 - `docs/plan/invest-infra-stage4d-mvp-phased-execution-plan-v1.0.md`：当前 Stage 4D 权威计划；
-- `docs/plan/invest-infra-workbuddy-daily-report-governance-mvp-plan-v1.0.md`：WorkBuddy 2.0.0 候选合同与 legacy 退出声明。
+- `docs/plan/archive/completed/invest-infra-workbuddy-daily-report-governance-mvp-plan-v1.0.md`：WorkBuddy 2.0.0 候选合同与 legacy 退出声明。
 
 未对共享目录执行改写或补包操作。
 

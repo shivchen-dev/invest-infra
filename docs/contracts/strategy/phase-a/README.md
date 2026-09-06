@@ -4,7 +4,7 @@
 
 Design templates for review. They are not frozen JSON Schemas and do not create formal strategy state.
 
-These contracts implement the first slice of `docs/plan/invest-infra-strategy-source-to-automation-workflow.md`:
+These contracts implement the first slice of `docs/governance/invest-infra-strategy-source-to-automation-workflow.md`:
 
 ```text
 StrategySourceDocument

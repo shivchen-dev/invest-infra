@@ -2,7 +2,7 @@
 
 > 验收日期：2026-09-02
 > 结论：`PASS / CLOSED`
-> 权威计划：`docs/plan/invest-infra-etf-data-coverage-resilience-plan-v1.0.md`
+> 历史计划：`docs/plan/archive/completed/invest-infra-etf-data-coverage-resilience-plan-v1.0.md`
 
 ## 1. 验收范围
 

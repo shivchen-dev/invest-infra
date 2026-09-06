@@ -13,8 +13,8 @@
 
 ## 当前计划入口
 
-- Stage 4A 收尾：`docs/plan/invest-infra-stage4a-final-closure-sprint-plan-v1.1.md`
-- Provider 接入：`docs/plan/invest-infra-investment-context-provider-integration-plan.md`
-- 数据采集层增强 / Stage 4B 蓝图：`docs/plan/invest-infra-data-collection-enhancement-plan-v1.0.md`
-- Stage 4A-0 候选路由：`docs/plan/invest-infra-stage4a0-multi-channel-dynamic-candidate-routing-plan.md`
-- V2 数据源接入：`docs/plan/invest-infra-v2-all-data-sources-integration-plan.md`
+- Stage 4A 收尾：`docs/plan/archive/completed/invest-infra-stage4a-final-closure-sprint-plan-v1.1.md`
+- Provider 接入：`docs/plan/archive/reference-blueprints/invest-infra-investment-context-provider-integration-plan.md`
+- 数据采集层增强 / Stage 4B 蓝图：`docs/plan/archive/reference-blueprints/invest-infra-data-collection-enhancement-plan-v1.0.md`
+- Stage 4A-0 候选路由：`docs/plan/archive/reference-blueprints/invest-infra-stage4a0-multi-channel-dynamic-candidate-routing-plan.md`
+- V2 数据源接入：`docs/plan/archive/reference-blueprints/invest-infra-v2-all-data-sources-integration-plan.md`

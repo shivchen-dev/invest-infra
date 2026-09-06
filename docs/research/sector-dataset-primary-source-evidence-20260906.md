@@ -8,23 +8,23 @@
 
 ## 1. 结论摘要
 
-四源核证没有发现可以直接通过 Gate DS-FM 的生产来源。当前结论是：
+四源核证没有发现可单独生产准入的万能来源，但既有覆盖报告已证明 WorkBuddy 固定多源配方具备 shadow 可执行性。当前结论是：
 
-1. **Tushare TDX 板块组**（`tdx_index + tdx_daily + tdx_member`）是官方文档层唯一接近同时覆盖两个 Dataset 的单一路径；**Tushare DC 板块组**可覆盖 Industry/Concept 排名与 Concept 成分，但 `dc_member` 官方页面没有证明 Industry 成分；
-2. **TDX Connector** 可核证具名板块行情和具名板块分页成分，但没有 Industry/Concept 全集枚举，且成分时点不显式；
-3. **WeStock MCP** 可核证 Industry/Concept 排名字段与清单，但 ranking 的历史 `date` 静默失效；成分接口的 `symbol` 错误，替代工具又排除 ST/北交所并发生截断；
+1. **WorkBuddy 固定配方**可进入 shadow：WeStock 提供 latest 排行和显式日期成分名称，TDX 在请求已绑定板块内恢复证券代码；既有 11 组、371 条联合快照可复算；
+2. **TDX Connector** 可核证具名板块行情和具名板块分页成分，但没有 Industry/Concept 全集枚举，且成分时点不显式，因此只承担 symbol repair 或旁证；
+3. **WeStock MCP** 可核证 Industry/Concept 排名字段与清单；ranking 的历史 `date` 静默失效，所以只支持 latest shadow；成分接口的 `symbol` 错误，必须由冻结 TDX repair 补齐；
 4. **MX-DS MCP** 只核证了具名申万 Industry 的行情和一个 180 行成分样本；未核证 Industry 全集、Concept、稳定板块代码、分页与许可。
 
-Tushare TDX 组覆盖 Industry / Concept，能提供显式 `trade_date`、板块代码/名称、涨跌幅、成交额及带交易所后缀的证券代码。DC 组的排名覆盖 Industry / Concept，但成员页只确认 Concept。相比 WeStock/TDX Connector，两组在已确认范围内避免了“排名日期静默失效”和“成分 symbol 错位”，但当前账户曾观测到目标接口权限阻断，尚未得到真实全量响应。
+Tushare TDX 组在文档层覆盖 Industry / Concept，能提供显式 `trade_date`、板块代码/名称、涨跌幅、成交额及带交易所后缀的证券代码；当前账户的 `40203` 只阻断该候选绑定。它不否定 WorkBuddy 配方已经证明的数据集覆盖。
 
-但当前只能判为**具备进一步探针价值的候选**，不能据公开文档直接进入生产：
+Tushare 当前只能判为**具备进一步探针价值的候选**，不能据公开文档直接进入生产：
 
-- 投研系统集中凭证存在且基础 `stock_basic` 调用成功；既有最小认证探针曾观测到 TDX/DC 六个目标接口均返回 Tushare 业务码 `40203`。因未保留可复算的脱敏响应，本轮把它记为 `blocked_observed`，不提升为完整 B 级证据；
+- 投研系统集中凭证已只读挂载到 Dagster。2026-09-06 最新最小探针到达 Tushare 业务层，`tdx_index`、`tdx_daily` 均返回业务码 `40203`；`tdx_member` 因入口失败按 fail-closed 规则跳过。脱敏执行证据见 `tushare-tdx-minimal-live-probe-20260906.md`；
 - 文档没有证明指定日期的全量规模、重复 hash、分类修订规则和历史起点（TDX）；
 - Tushare 数据服务协议把许可限定为个人、不可转让、非商业、有期限、仅个人查看；没有明确授权自动化生产入库、团队共享或再分发；
 - 协议还明确第三方数据的使用与收费由第三方解释，TDX/DC 上游许可仍是独立 `unknown`。
 
-因此：**Gate DS-FM 仍为 `BLOCKED`。** 本轮关闭了四源的真实能力边界、已知分类命名空间和 Tushare 平台级许可/频次事实；仍未关闭“任一单源可完整交付两个 Dataset”“真实全量与重复 hash”“明确自动化留存许可”三个准入条件。
+因此：**Gate DS-FM 已为 `READY_FOR_DS-C0`，Gate B2A 仍为 `BLOCKED`。** DS-C0 应把成分输入拆为 WeStock membership 与 TDX symbol-map 两个单来源采集 Dataset，再由 evaluator 窄 join；真实全量、重复 hash、频控和自动化留存许可仍须在生产准入前关闭。
 
 ## 2. 当前合同基线
 
@@ -84,7 +84,7 @@ Tushare TDX 组覆盖 Industry / Concept，能提供显式 `trade_date`、板块
 | TDX Connector | 具名 Industry/Concept quote 字段可用；无原生全集 | 具名 Industry 可分页；Concept 有 symbol/name 但无显式板块码 | 通达信 Industry `881xxx`、Concept `880xxx`；版本 unknown | quote 显式 `HQDate/HQTime`；成分仅隐含当前 | `pageNo/pageSize/meta.total` 只证明具名板块分页；分类全集 unknown | QPS、日配额、退避 unknown | 全部 unknown | `research_only`；不能单源交付两个 Dataset |
 | WeStock MCP | Industry 124 和 Concept 802 的字段样本已核证；ranking 日期不可信 | 原生成分日期可用但 symbol 错；替代工具缺 ST/BJ 且截断 | 申万二级 `pt018...`；聚源概念 `pt02.../indus_...`；版本 unknown | ranking 无可信显式时点；constituent 日期显式 | `limit` 曾静默不生效；Concept 大板块截断，无完整分页证明 | QPS、日配额、退避 unknown | 全部 unknown | `corroborator only`；两个 Dataset 均不准入 |
 | MX-DS MCP | 仅具名申万 Industry 的 `成交额/涨跌幅`；全集查询为空；Concept unknown | 仅一个具名申万 Industry 180 行样本；Concept unknown | 样本为申万 Industry，证券码 `.SH/.SZ`；稳定板块 code/version unknown | 具名行情日期显式；成分快照时点隐含 | Industry/Concept 全集、分页、重复 hash unknown | QPS、日配额、退避 unknown | 全部 unknown | `corroborator only`；不可作单一主源或 fallback |
-| Tushare TDX 组 | 文档覆盖 Industry/Concept、代码/名称、涨跌幅、成交额 | 文档覆盖 Industry/Concept、证券代码/名称 | TDX `ts_code + idx_type`；类型含行业/概念，版本策略 unknown | 显式 `trade_date` | 1000/3000 单次上限；可按日期/代码分片，无 offset；全量未实测 | 页面无逐接口规则；平台常规数据规则可参考 | 个人、不可转让、非商业、个人查看 confirmed；自动化留存 unknown；分发未获授权 | 文档候选；当前账户 `40203` 为 `blocked_observed` |
+| Tushare TDX 组 | 文档覆盖 Industry/Concept、代码/名称、涨跌幅、成交额 | 文档覆盖 Industry/Concept、证券代码/名称 | TDX `ts_code + idx_type`；类型含行业/概念，版本策略 unknown | 显式 `trade_date` | 1000/3000 单次上限；可按日期/代码分片，无 offset；全量未实测 | 页面无逐接口规则；平台常规数据规则可参考 | 个人、不可转让、非商业、个人查看 confirmed；自动化留存 unknown；分发未获授权 | 文档候选；当前账户最新实测 `tdx_index/tdx_daily` 均为 `40203` |
 | Tushare DC 组 | 文档覆盖 Industry/Concept、代码/名称、涨跌幅、成交额 | Concept confirmed；Industry unknown，`dc_member` 页面只描述概念板块/概念代码 | DC `ts_code + idx_type`；排名类型含行业/概念，成员分类范围未证明，版本策略 unknown | 显式 `trade_date` | 5000/2000/5000 单次上限；无成员计数基准，全量未实测 | 同上 | 同上；东方财富上游权利另为 unknown | Concept 文档候选；不能单源覆盖四个目标 Dataset；历史 `40203` 为 `blocked_observed` |
 
 ### 4.2 TDX Connector（R-TWM-1、R-WES-1、R-WES-2）
@@ -127,7 +127,7 @@ Tushare TDX 组覆盖 Industry / Concept，能提供显式 `trade_date`、板块
 
 ### 5.2 尚未确认项（unknown）
 
-- **实际可访问性**：2026-09-06 既有脱敏最小探针中基础 `stock_basic` 成功，但 `tdx_index / tdx_daily / tdx_member` 均返回业务码 `40203`。本轮未读取凭证，也未重放；因响应正文未留存，状态为 `blocked_observed`。
+- **实际可访问性**：2026-09-06 最新脱敏探针通过容器内 `CredentialStore` 懒加载凭证；`tdx_index`、`tdx_daily` 到达业务层后均返回 `40203`，0 行。`tdx_member` 因 `tdx_index` 失败按规则跳过；TDX 组当前不可访问。
 - **历史起点**：三个页面支持日期参数，但未声明最早可用日期。
 - **全量分页**：页面没有 offset/page 参数。虽然可以按日期、板块代码分片，仍需证明：当日板块数不超过 1000、单板块成分不超过 3000、所有 `idx_count` 与成员数一致。
 - **分类修订**：没有说明板块代码复用、改名、删除、新增及历史修订政策。
@@ -242,7 +242,7 @@ Tushare 官方[数据服务协议](https://tushare.pro/document/1?doc_id=405)明
 | 显式 `as_of` | confirmed：`trade_date` | confirmed：`trade_date` |
 | 历史起点 | unknown | confirmed：行情始于 2020 |
 | 全集/分页 | possible，未实测 | possible，未实测 |
-| 实际账户权限 | blocked_observed：三个接口曾返回 `40203`，待可复算存档 | blocked_observed：三个接口曾返回 `40203`，待可复算存档 |
+| 实际账户权限 | blocked：最新探针 `tdx_index/tdx_daily` 返回 `40203`；`tdx_member` 按规则跳过 | blocked_observed：三个接口曾返回 `40203`，待重新探针 |
 | 生产许可 | blocked/unknown | blocked/unknown |
 
 TDX Connector 只有具名板块能力，WeStock 缺可信 ranking 时点，MX 缺全集与 Concept，三者均不能替代上表的完整文档候选。**结论：** Tushare 两条路径均值得做最小认证探针，但尚未达到生产准入结论。
@@ -258,7 +258,7 @@ TDX Connector 只有具名板块能力，WeStock 缺可信 ranking 时点，MX �
 | 显式 `as_of` | confirmed：`trade_date` | confirmed：`trade_date` |
 | 历史起点 | unknown | confirmed：2024-12-20 |
 | 全量对账 | 可用 `idx_count` 设计对账，未实测 | 无计数字段，需额外基准 |
-| 实际账户权限 | blocked_observed：三个接口曾返回 `40203`，待可复算存档 | blocked_observed：三个接口曾返回 `40203`，待可复算存档 |
+| 实际账户权限 | blocked：最新入口探针返回 `40203`，未扩大到成员调用 | blocked_observed：三个接口曾返回 `40203`，待重新探针 |
 | 生产许可 | blocked/unknown | blocked/unknown |
 
 TDX Connector 的成分时点、WeStock 的 symbol/完整度、MX 的全集/Concept 均未闭合。**结论：** Tushare TDX 文档路径因 `idx_count` 对账能力更强，适合作为第一探针；Tushare DC 可作为独立候选，不得与 TDX 静默拼成单源。
@@ -307,28 +307,28 @@ TDX Connector 的成分时点、WeStock 的 symbol/完整度、MX 的全集/Conc
 
 ### 11.1 认证探针结果（2026-09-06）
 
-既有探针通过 `CredentialStore` 在进程内懒加载集中凭证；命令、输出和报告均未包含凭证值。本轮没有读取或重放凭证。既有结果只记录 HTTP 状态、Tushare 业务码、行数及稳定分类：
+最新探针通过 Dagster 容器内 `CredentialStore` 懒加载集中凭证；命令、输出和报告均未包含凭证值。结果只记录 HTTP 状态、Tushare 业务码、行数、稳定分类和响应指纹：
 
 | 接口 | HTTP | 业务码 | 结果 |
 |---|---:|---:|---|
 | `stock_basic`（SSE/L，仅 `ts_code`） | 200 | 0 | 成功，2316 行；证明集中凭证有效 |
-| `tdx_index` | 200 | 40203 | 目标接口权限拒绝 |
-| `tdx_daily` | 200 | 40203 | 目标接口权限拒绝 |
-| `tdx_member` | 200 | 40203 | 目标接口权限拒绝 |
+| `tdx_index` | 200 | 40203 | 最新探针目标接口权限拒绝，0 行；响应 SHA-256 `692367c710209ba07571721d425bb914a981db25822b13ae4afe69b5206b9676` |
+| `tdx_daily` | 200 | 40203 | 最新探针目标接口权限拒绝，0 行；响应 SHA-256 `d7830384d022b18bb9e460b1dba69333940521ef7f0e4366b12e917fd5bd2033` |
+| `tdx_member` | — | — | 最新探针按 fail-closed 规则跳过；历史曾观测 `40203` |
 | `dc_index` | 200 | 40203 | 目标接口权限拒绝 |
 | `dc_daily` | 200 | 40203 | 目标接口权限拒绝 |
 | `dc_member` | 200 | 40203 | 目标接口权限拒绝 |
 
-注：`dc_index` 的 HTTP 状态同样为 200；表格保留统一脱敏输出，不保存响应正文。由于缺少脱敏原始响应与独立 hash，该表只能证明“曾观测到阻断”，不能满足 B 级可复算要求。
+注：`dc_index` 的 HTTP 状态同样为 200；DC 三接口仍是历史观察。最新 TDX 响应只保留指纹和脱敏摘要，不保存原始正文。
 
 ### 11.2 当前运行态复核（2026-09-06）
 
 - 宿主机集中凭证目录存在，目录权限为 `0700`，已登记凭证文件权限为 `0600`；宿主机 `CredentialStore` 能解析 Tushare 凭证，但不输出其值。
-- 当前运行中的 Dagster Compose 容器没有集中凭证挂载，容器内 `TushareSettings().resolved_token()` 返回空；工作树已增加只读挂载与 `INVEST_PIPELINE_SECRETS_DIR=/run/secrets/invest-infra`，但尚未重建/部署，不能把静态配置视为运行态已生效。
-- 宿主机和现有 Dagster 容器对 `https://api.tushare.pro` 的 TLS 握手均失败（`ConnectError`）；请求没有到达 Tushare 业务鉴权层，因此本轮没有产生新的业务码、行数或可复算响应 hash。
-- 当前阻塞顺序应记录为：`runtime credential mount pending deployment` + `egress TLS blocked`；历史 `40203` 仍是旧观测，不能描述为本轮结果。
+- Dagster Compose 容器已重建，`/run/secrets/invest-infra` 为只读 bind mount；容器内凭证状态为 `present`，未输出值。
+- Dagster HTTP 3000 返回 200，definitions 可导入；API、Web、Postgres、MinIO 容器未被重启。
+- 宿主机和容器均能成功完成 TLS 1.2 协商与证书校验，但存在间歇性 EOF。最新 API 探针经有限重试到达业务层，因此当前阻塞已收敛为目标接口权限 `40203`，不是凭证挂载或纯网络不可达。
 
-## 12. Gate DS-FM 关闭项与阻塞项
+## 12. Gate DS-FM 结论与 Gate B2A 剩余项
 
 ### 12.1 本轮关闭的未知项
 
@@ -340,18 +340,19 @@ TDX Connector 的成分时点、WeStock 的 symbol/完整度、MX 的全集/Conc
 | Tushare 使用目的 | 个人、非商业、不可转让、个人查看已由 A 级协议关闭；自动化和留存没有被该措辞关闭 |
 | 当前仓库消费合同 | 已由 C 级源码关闭：两个 Dataset 必须同 `as_of`、全组齐备、稳定身份、唯一且成分与入选板块绑定 |
 
-### 12.2 仍阻塞 Gate DS-FM 的未知项
+### 12.2 仍阻塞 Gate B2A 的生产准入项
 
-1. **没有单一路径完成真实全量证明。** TDX/WeStock/MX 均存在结构性缺口；Tushare 尚无目标接口的可复算响应。
+1. **WorkBuddy 固定配方尚未完成双次 shadow。** 既有调查已证明 WeStock 排行字段覆盖及 WeStock + TDX 成分快照可获取；仍需按冻结配方复核 latest 行数、完整度和重复 hash。
 2. **分页和完整性未闭合。** 需要同一收盘日的 Industry/Concept 全集、逐板块成员计数、截断信号和两次规范化 SHA-256。
 3. **分类治理未闭合。** 四源均缺足以支持生产的版本、改名、合并、代码复用和历史修订政策证据。
 4. **频控未闭合。** TDX、WeStock、MX 的 QPS/日配额/Retry-After 全部 unknown；Tushare 目标接口是否受单独规则覆盖仍 unknown。
 5. **许可未闭合。** TDX、WeStock、MX 的个人自动化、持久化与分发条款 unknown；Tushare 只明确个人非商业查看，自动化/长期留存 unknown，分发未获授权，第三方上游权利 unknown。
-6. **Tushare 访问仍阻断。** 既有探针曾返回 `40203`；本轮宿主机凭证可解析，但当前容器未挂载凭证，且宿主机/容器均在 TLS 握手阶段失败。必须先由 Ops 验证出口，再重建 Dagster 使只读挂载生效，之后才能取得新的脱敏、可复算响应存档。
+6. **Tushare TDX 候选绑定仍阻断。** 凭证挂载、Dagster 健康和基本 TLS 出口已恢复并验收；最新 `tdx_index/tdx_daily` 探针明确返回 `40203`。该结果只阻断 Tushare Provider 候选，不阻断现有 WorkBuddy 配方的 shadow 实施。
 
 ```text
-selected_runtime_path = none
-admitted_decision = not_made
-Gate DS-FM = BLOCKED
-next_allowed_action = close license/rate-limit evidence and run one selected source's minimal read-only full-snapshot probe
+selected_runtime_path = WorkBuddy DataRequest/DataBundle 1.0
+selected_dataset_recipe = WeStock ranking + WeStock constituents + TDX symbol repair
+Gate DS-FM = READY_FOR_DS-C0
+Gate B2A = BLOCKED
+next_allowed_action = implement the fixed Dataset bindings and run two latest shadow executions; keep Tushare as an independent blocked candidate
 ```

@@ -1,5 +1,7 @@
 # invest-infra Investment Context Provider 接入实施计划 v1.0
 
+> 归档状态：`REFERENCE_BLUEPRINT`（Provider/Evidence 参考；不得直接派工）
+
 ## 目标
 
 将中证指数、巨潮资讯、集思录、天天基金、理杏仁、Go-Goal 等数据源接入 invest-infra，形成 AI 投资研判所需的 Investment Context Layer。

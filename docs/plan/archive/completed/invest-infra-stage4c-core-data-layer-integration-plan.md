@@ -1,7 +1,7 @@
 # invest-infra Stage 4C：日频市场状态闭环实施计划
 
 > 文档版本：v1.1（收敛版）
-> 状态：已验收，待用户关闭
+> 归档状态：`COMPLETED_WITH_DEFERRED_ITEMS`（MVP 已验收；延期项不自动恢复）
 > 实现基线：`7b3468d`（已推送）
 > 前置：Stage 4B 的 A 股日线主备链路、Market Temperature 与既有 Market Breadth 能力
 

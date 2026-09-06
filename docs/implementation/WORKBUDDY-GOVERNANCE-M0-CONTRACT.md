@@ -2,7 +2,7 @@
 
 > 状态：RETIRED（历史 report-audit contract，仅保留归档参考）
 > 日期：2026-08-13
-> 对应计划：`docs/plan/invest-infra-workbuddy-daily-report-governance-mvp-plan-v1.0.md`
+> 历史计划：`docs/plan/archive/completed/invest-infra-workbuddy-daily-report-governance-mvp-plan-v1.0.md`
 > 生产规则：`WORKBUDDY-REPORT-RULES.md` 1.1.2
 > 兼容规则版本：`1.1.1`、`1.1.2`（显式矩阵）
 

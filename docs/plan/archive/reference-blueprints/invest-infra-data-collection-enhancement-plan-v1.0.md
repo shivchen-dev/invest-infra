@@ -1,5 +1,7 @@
 # invest-infra 数据采集层增强实施计划 v1.0
 
+> 归档状态：`REFERENCE_BLUEPRINT`（架构参考，不作为当前全量建设承诺）
+>
 > 目标：将 invest-infra 从 ETF 行情基础设施升级为 AI 投资研判数据底座
 
 ## 1. 背景

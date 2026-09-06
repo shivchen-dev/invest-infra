@@ -1,7 +1,7 @@
 # invest-infra Stage 4A Final Closure Sprint 实施方案
 
 > 文档版本：v1.1  
-> 状态：Revised for Implementation  
+> 归档状态：`REFERENCE_HISTORY`（Stage 4A 历史收口依据，不再派工）
 > 基线：`3ebeedd` (`fix(web): resolve API host for LAN access`)  
 > 目标：完成 Stage 4A 收尾验收，并为 Stage 4B 提供稳定输入契约
 
