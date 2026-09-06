@@ -1,11 +1,11 @@
 # invest-infra 目标 Dataset 多源供给准入实施计划 v1.0
 
 > 治理状态：`ACTIVE`
-> 当前检查点：`READY_FOR_DS-C0`（Gate DS-FM 已冻结 WorkBuddy 固定多源配方；生产准入仍待 Gate B2A）
+> 当前检查点：`READY_FOR_DS-1`（DS-C0 已完成；生产准入仍待 Gate B2A）
 > 制定日期：2026-09-05
 > 当前修订：2026-09-06；冻结个人非商业投研用途，改为“Dataset 主轴管理、固定多源配方、按需收敛、验证后再发布”
 > 当前定位：Stage 4D Gate B2A 的唯一数据源准入实施计划
-> 授权记录：用户于 2026-09-06 明确用途为个人投资研究参考，并明确授权“修正”本计划；代码实现仍须独立授权、派工和验收
+> 授权记录：用户于 2026-09-06 明确用途为个人投资研究参考，并明确授权“修正”及按建议推进；DS-C0 已完成受控派工与 ARC 独立验收
 
 ## 1. 业务目标
 
@@ -192,23 +192,25 @@ Gate DS-FM 已选中 WorkBuddy 固定配方；DS-1 只生成与该配方一致�
 
 Gate DS-FM 只确认“能否执行 shadow”，不等于生产准入。历史时点、全集/分页、来源许可、频控和两次运行确定性在 Gate B2A 前必须关闭；任一运行无法满足请求时继续 fail closed。当前不实现 Provider Adapter；只有未来新证据推翻 1.0 判断时，才独立评审 2.0。
 
-### Slice DS-C0：固定配方的最小代码收敛
+### Slice DS-C0：固定配方的最小代码收敛（已完成）
 
 **目标：** 先用 characterization tests 冻结现有行为，再让 evaluator 接受三个单来源采集 Dataset，并在内部生成兼容的 canonical `sector-constituents`。
 
 **验收标准：**
 
-- [ ] 现有 `evaluate_sector_bundle()` 正常、负面和确定性行为由测试固定且保持兼容；
-- [ ] 保留 `evaluate_sector_bundle()` 入口与 StageResult 输出合同；
-- [ ] 每个采集 Dataset 恰好一个成功 Connector，分别保留 attempt/artifact/hash lineage；
-- [ ] membership 与 symbol-map 只按请求绑定分类和规范化名称确定性 join；缺失、重复、歧义或多余映射全部 fail closed；
-- [ ] 不新增通用注册表、公开组装框架或 Provider Adapter。
+- [x] 现有 `evaluate_sector_bundle()` 正常、负面和确定性行为由测试固定且保持兼容；
+- [x] 保留 `evaluate_sector_bundle()` 入口与 StageResult 输出合同；
+- [x] 每个采集 Dataset 恰好一个成功 Connector，分别保留 attempt/artifact/hash lineage；
+- [x] membership 与 symbol-map 只按请求绑定分类和规范化名称确定性 join；缺失、重复、歧义或多余映射全部 fail closed；
+- [x] 不新增通用注册表、公开组装框架或 Provider Adapter。
+
+**完成证据（2026-09-06）：** evaluator 同时兼容旧二 Dataset 和冻结的三 Dataset 输入；名称按 NFKC + 去全部空白规范化，并在同一 `(group, bd_code)` 内 join。focused evaluator/CLI 为 29 passed，Pipeline 全量为 2756 passed、1 skipped；Ruff、架构边界、复杂度预算和 diff 检查通过。
 
 **验证：** sector evaluator/CLI characterization tests、受影响 Pipeline 回归、Ruff、架构检查和 diff 审查。
 
 **依赖：** Gate DS-FM 已冻结 WorkBuddy 固定多源配方。
 
-**预计规模：** S；优先只修改候选 Definition、sector evaluator 和 focused tests，超出 4 个文件须暂停复核。
+**实际规模：** S；只修改 sector evaluator 与 focused tests，未新增模块或公共接口。
 
 ### Slice DS-1：入选 Dataset 配方垂直接入
 

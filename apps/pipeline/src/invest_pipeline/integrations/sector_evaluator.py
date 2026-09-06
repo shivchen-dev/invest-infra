@@ -6,6 +6,7 @@ import hashlib
 import json
 import math
 import re
+import unicodedata
 from collections.abc import Mapping, Sequence
 from decimal import Decimal, InvalidOperation
 from typing import Any
@@ -24,6 +25,14 @@ _GROUPS = frozenset({"industry", "concept", "area"})
 _SCOPED_PROFILE = "industry-concept-cje-bd-zdf"
 _ZGB = re.compile(r"([0-9]+)/([0-9]+)")
 _REQUIRED_RULE_IDS = frozenset({"R-A1", "R-A3", "R-A4", "R-A5"})
+_LEGACY_DATASETS = frozenset({"sector-ranking", "sector-constituents"})
+_THREE_DATASETS = frozenset(
+    {
+        "sector-ranking",
+        "sector-constituent-memberships",
+        "sector-constituent-symbol-map",
+    }
+)
 
 
 class SectorEvaluationError(ValueError):
@@ -140,9 +149,53 @@ def _sha256(value: object) -> str:
 
 def _datasets(bundle: DataBundle) -> dict[str, Any]:
     by_key = {dataset.dataset_key: dataset for dataset in bundle.datasets}
-    if set(by_key) != {"sector-ranking", "sector-constituents"}:
+    if set(by_key) not in {_LEGACY_DATASETS, _THREE_DATASETS}:
         raise _fail("required sector datasets are missing or unexpected")
     return by_key
+
+
+def _join_name(value: object) -> str:
+    normalized = unicodedata.normalize("NFKC", _text(value))
+    return "".join(character for character in normalized if not character.isspace())
+
+
+def _joined_constituents(
+    memberships: Any,
+    symbol_map: Any,
+    as_of: str,
+    selected: Mapping[str, set[str]],
+) -> list[dict[str, str]]:
+    indexed: list[dict[tuple[str, str, str], Mapping[str, Any]]] = []
+    for dataset in (memberships, symbol_map):
+        by_identity: dict[tuple[str, str, str], Mapping[str, Any]] = {}
+        for raw in dataset.records:
+            try:
+                group = raw["group"]
+                bd_code = _text(raw["bd_code"])
+                if group not in selected or bd_code not in selected[group]:
+                    raise _fail("constituent identity does not match emitted sectors")
+                if raw.get("as_of", as_of) != as_of:
+                    raise _fail("constituent data contains mixed dates")
+                identity = (group, bd_code, _join_name(raw["name"]))
+                if identity in by_identity:
+                    raise _fail("constituent mapping contains a duplicate or ambiguous identity")
+                by_identity[identity] = raw
+            except KeyError:
+                raise _fail("constituent data contains an invalid record") from None
+        indexed.append(by_identity)
+
+    membership_by_identity, symbol_by_identity = indexed
+    if membership_by_identity.keys() != symbol_by_identity.keys():
+        raise _fail("constituent mapping is missing or contains extra records")
+    return [
+        {
+            "group": identity[0],
+            "bd_code": identity[1],
+            "symbol": _text(symbol_by_identity[identity]["symbol"]),
+            "name": _text(membership["name"]),
+        }
+        for identity, membership in membership_by_identity.items()
+    ]
 
 
 def _ranking_rows(
@@ -193,11 +246,11 @@ def _ranking_rows(
 
 
 def _constituents(
-    dataset: Any, as_of: str, selected: Mapping[str, set[str]]
+    records: Sequence[Mapping[str, Any]], as_of: str, selected: Mapping[str, set[str]]
 ) -> dict[str, dict[str, object]]:
     rows_by_group: dict[str, list[dict[str, str]]] = {group: [] for group in selected}
     seen: set[tuple[str, str, str]] = set()
-    for raw in dataset.records:
+    for raw in records:
         try:
             group = raw["group"]
             bd_code = _text(raw["bd_code"])
@@ -259,7 +312,16 @@ def evaluate_sector_bundle(
     selected_codes = {
         group: {row["bd_code"] for row in rows} for group, rows in selected_rows.items()
     }
-    constituents = _constituents(datasets["sector-constituents"], as_of, selected_codes)
+    if "sector-constituents" in datasets:
+        constituent_rows = datasets["sector-constituents"].records
+    else:
+        constituent_rows = _joined_constituents(
+            datasets["sector-constituent-memberships"],
+            datasets["sector-constituent-symbol-map"],
+            as_of,
+            selected_codes,
+        )
+    constituents = _constituents(constituent_rows, as_of, selected_codes)
 
     rankings: list[dict[str, object]] = []
     for group in sorted(selected_rows):

@@ -56,12 +56,14 @@ def _request() -> dict:
     }
 
 
-def _dataset(key: str, fields: list[str], records: list[dict]) -> dict:
+def _dataset(
+    key: str, fields: list[str], records: list[dict], *, connector: str = "tdx-connector"
+) -> dict:
     return {
         "dataset_key": key,
         "attempts": [
             {
-                "connector": "tdx-connector",
+                "connector": connector,
                 "tool": "get_data",
                 "parameters": {},
                 "status": "succeeded",
@@ -128,6 +130,46 @@ def _bundle() -> dict:
         "warnings": [],
         "errors": [],
     }
+
+
+def _three_dataset_input() -> tuple[dict, dict]:
+    request = _request()
+    bundle = _bundle()
+    legacy = bundle["datasets"].pop()
+    request["datasets"].pop()
+    request["datasets"].extend(
+        [
+            {
+                "dataset_key": "sector-constituent-memberships",
+                "required_fields": ["group", "bd_code", "name"],
+                "allowed_connectors": ["westock-mcp"],
+            },
+            {
+                "dataset_key": "sector-constituent-symbol-map",
+                "required_fields": ["group", "bd_code", "symbol", "name"],
+                "allowed_connectors": ["tdx-connector"],
+            },
+        ]
+    )
+    memberships = [
+        {key: row[key] for key in ("group", "bd_code", "name")} for row in legacy["records"]
+    ]
+    bundle["datasets"].extend(
+        [
+            _dataset(
+                "sector-constituent-memberships",
+                ["group", "bd_code", "name"],
+                memberships,
+                connector="westock-mcp",
+            ),
+            _dataset(
+                "sector-constituent-symbol-map",
+                ["group", "bd_code", "symbol", "name"],
+                [dict(row) for row in legacy["records"]],
+            ),
+        ]
+    )
+    return request, bundle
 
 
 def _scoped_request() -> dict:
@@ -291,3 +333,48 @@ def test_requires_reviewed_artifact_without_file_or_network_access(
         _request(), _bundle(), strategy_artifact=copy.deepcopy(ARTIFACT)
     )
     assert result["status"] == "SUCCEEDED"
+
+
+def test_three_dataset_result_equals_equivalent_legacy_result() -> None:
+    expected = evaluate_sector_bundle(_request(), _bundle(), strategy_artifact=ARTIFACT)
+    request, bundle = _three_dataset_input()
+
+    assert evaluate_sector_bundle(request, bundle, strategy_artifact=ARTIFACT) == expected
+
+
+def test_three_dataset_join_normalizes_nfkc_and_all_unicode_whitespace() -> None:
+    request, bundle = _three_dataset_input()
+    memberships = bundle["datasets"][1]["records"]
+    symbol_map = bundle["datasets"][2]["records"]
+    memberships[0]["name"] = "Ｂ\u3000e\u2003t\ta"
+    symbol_map[0]["name"] = "Beta"
+
+    result = evaluate_sector_bundle(request, bundle, strategy_artifact=ARTIFACT)
+
+    assert result["constituents"]["industry"]["rows"][1]["name"] == "Ｂ\u3000e\u2003t\ta"
+
+
+def test_three_dataset_missing_mapping_fails_closed() -> None:
+    request, bundle = _three_dataset_input()
+    symbol_map = bundle["datasets"][2]
+    symbol_map["records"].pop()
+    symbol_map["sample_count"] -= 1
+
+    with pytest.raises(SectorEvaluationError):
+        evaluate_sector_bundle(request, bundle, strategy_artifact=ARTIFACT)
+
+
+@pytest.mark.parametrize("mutation", ["duplicate", "ambiguous", "extra"])
+def test_three_dataset_duplicate_ambiguous_or_extra_mapping_fails_closed(mutation: str) -> None:
+    request, bundle = _three_dataset_input()
+    symbol_map = bundle["datasets"][2]
+    added = dict(symbol_map["records"][0])
+    if mutation == "ambiguous":
+        added.update(symbol="OTHER", name="Ｂ e t a")
+    elif mutation == "extra":
+        added.update(bd_code="EXTRA", symbol="EXTRA", name="Extra")
+    symbol_map["records"].append(added)
+    symbol_map["sample_count"] += 1
+
+    with pytest.raises(SectorEvaluationError):
+        evaluate_sector_bundle(request, bundle, strategy_artifact=ARTIFACT)
