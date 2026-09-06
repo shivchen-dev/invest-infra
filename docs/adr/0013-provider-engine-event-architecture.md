@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted for Phase 0 / implementation gated by checkpoints
+Accepted for Phase 0 / Registry slice retired 2026-09-06
 
 ## Date
 
@@ -24,17 +24,17 @@ Provider catalog、routing、factory、Dagster 编排与 Repository/UoW 已分�
 
 - catalog 是 Provider 声明与 capability 的唯一权威源；
 - routing 是 dataset 到 Provider 的选择策略唯一权威源；
-- factory/Registry 是 adapter 构造的唯一运行时入口；Registry 必须复用 catalog、
-  routing 和既有 factory 逻辑，不维护第二份清单；
+- factory 是 adapter 构造的唯一运行时入口，并复用 catalog 与 routing 的权威声明；
 - Dagster 是作业图与调度的唯一权威源；Engine 不替代 Dagster；
 - PipelineRun 及 raw/core/analytics 表是持久化运行事实；
 - Event Dispatcher 只传递已经发生的批次结果，不参与事实恢复、重放或调度。
 
-### 2. Registry / Engine 首版边界
+### 2. Factory / Engine 首版边界
 
-首版 `ProviderRuntimeRegistry` 只提供 Provider 解析与声明查询，内部复用既有
-选择、显式启用、凭据门禁和 adapter 构造。它不提供动态插件扫描、运行时卸载、
-全局 singleton 或自动 fallback。
+`ProviderRuntimeRegistry` 曾作为 Provider 解析与声明查询的薄封装，但没有形成
+独立生命周期或新的业务能力。2026-09-06 已将唯一生产调用点收敛回既有
+`build_stock_provider(settings)` 并删除该模块，避免 catalog、factory、Registry
+形成重复控制层。不得以兼容名义恢复同类 pass-through wrapper。
 
 首版 Application Engine 只服务 `stock_daily_bars_by_trade_date`，负责 preflight、
 运行冲突检查、Provider 解析、主备执行、结果归类和 PipelineRun 终态；request /
@@ -54,8 +54,8 @@ Event Dispatcher。候选消费者包括运行审计/PipelineRun 与 Provider qu
 
 ## Rollback
 
-Registry 迁移先保持旧 factory 入口作为兼容适配器，单个调用点可恢复为直接
-factory 调用。Engine 迁移可将 Asset/CLI 切回原服务调用。事件层通过 No-op
+Provider 构造保持直接 factory 调用；如需回滚具体 Provider 接线，只回滚对应
+factory 分支和调用点，不恢复已退役 Registry。Engine 迁移可将 Asset/CLI 切回原服务调用。事件层通过 No-op
 Dispatcher 回滚并删除接线；不新增数据库结构，且不得出现“数据已回滚但发布
 成功事件”的状态。
 

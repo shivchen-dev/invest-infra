@@ -134,7 +134,7 @@ class StockAssetsSourceWiringTest(unittest.TestCase):
 
     def test_stock_daily_bars_raw_uses_by_trade_date_provider_path(self) -> None:
         body = _asset_body("stock_daily_bars_raw")
-        self.assertIn("ProviderRuntimeRegistry().resolve_stock(settings).provider", body)
+        self.assertIn("build_stock_provider(settings)", body)
         self.assertIn("write_stock_daily_bars_raw_with_tdx_fallback", body)
         # ``stock_daily_bars_raw`` must surface the by-date dataset_key
         # in metadata so an operator can audit which logical-request
@@ -247,23 +247,22 @@ class StockAssetsRuntimeWiringTest(unittest.TestCase):
             f"{asset_name} must pass a Settings instance to build_stock_provider",
         )
 
-    def _invoke_raw_and_capture_registry(self) -> dg.MaterializeResult:
-        registry = MagicMock()
-        registry.resolve_stock.side_effect = RuntimeError("STOP_AFTER_RESOLVE_STOCK")
+    def _invoke_raw_and_capture_factory(self) -> dg.MaterializeResult:
+        factory = MagicMock(side_effect=RuntimeError("STOP_AFTER_BUILD_STOCK_PROVIDER"))
         context = MagicMock()
         context.partition_key = _HISTORICAL_PARTITION
-        with patch("invest_pipeline.assets.ProviderRuntimeRegistry", return_value=registry):
+        with patch("invest_pipeline.assets.build_stock_provider", factory):
             result = _underlying_callable("stock_daily_bars_raw")(context)
-        registry.resolve_stock.assert_called_once()
-        self.assertIsInstance(registry.resolve_stock.call_args.args[0], Settings)
+        factory.assert_called_once()
+        self.assertIsInstance(factory.call_args.args[0], Settings)
         self.assertEqual(result.metadata["request_status"], "failed")
         return result
 
     def test_stock_instruments_raw_invokes_build_stock_provider(self) -> None:
         self._assert_factory_called_with_settings("stock_instruments_raw")
 
-    def test_stock_daily_bars_raw_invokes_registry_with_settings(self) -> None:
-        self._invoke_raw_and_capture_registry()
+    def test_stock_daily_bars_raw_invokes_build_stock_provider_with_settings(self) -> None:
+        self._invoke_raw_and_capture_factory()
 
     def test_stock_daily_bars_invokes_build_stock_provider(self) -> None:
         self._assert_factory_called_with_settings("stock_daily_bars")
@@ -317,12 +316,8 @@ class StockDailyBarsByTradeDateAssetWiringTest(unittest.TestCase):
             patch.object(assets, "session_factory", lambda _engine: MagicMock()),
             patch.object(
                 assets,
-                "ProviderRuntimeRegistry",
-                return_value=SimpleNamespace(
-                    resolve_stock=lambda _settings: SimpleNamespace(
-                        provider=MagicMock(provider_key="fixture_dev")
-                    )
-                ),
+                "build_stock_provider",
+                return_value=MagicMock(provider_key="fixture_dev"),
             ),
             patch(
                 "invest_pipeline.stock_daily_bars.write_stock_daily_bars_raw_with_tdx_fallback",
@@ -382,12 +377,8 @@ class StockDailyBarsByTradeDateAssetWiringTest(unittest.TestCase):
             patch.object(assets, "session_factory", lambda _engine: MagicMock()),
             patch.object(
                 assets,
-                "ProviderRuntimeRegistry",
-                return_value=SimpleNamespace(
-                    resolve_stock=lambda _settings: SimpleNamespace(
-                        provider=MagicMock(provider_key="fixture_dev")
-                    )
-                ),
+                "build_stock_provider",
+                return_value=MagicMock(provider_key="fixture_dev"),
             ),
             patch(
                 "invest_pipeline.stock_daily_bars.write_stock_daily_bars_raw_with_tdx_fallback",
