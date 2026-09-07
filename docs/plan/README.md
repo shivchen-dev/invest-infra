@@ -11,7 +11,7 @@
 
 | 优先级 | 主线 | 治理状态 | 当前检查点 | 唯一实施计划 |
 |---|---|---|---|---|
-| P0 | 目标 Dataset 来源准入 | `ACTIVE` | `READY_FOR_DS-C0`；实施 Dataset 绑定并执行双次 shadow，生产准入仍待 Gate B2A | [`invest-infra-target-dataset-source-admission-plan-v1.0.md`](invest-infra-target-dataset-source-admission-plan-v1.0.md) |
+| P0 | 目标 Dataset 来源准入 | `BLOCKED` | Gate DS-FM 未通过；本地已有 DS-C0 相关实现须按 v1.1 重新核对，禁止进入 DS-1 | [`invest-infra-target-dataset-source-admission-plan-v1.0.md`](invest-infra-target-dataset-source-admission-plan-v1.0.md) |
 | P1 | Stage 4D 研究交付收口 | `BLOCKED` | 等待 v2.1.0 策略治理及 Gate B2A | [`invest-infra-stage4d-mvp-phased-execution-plan-v1.0.md`](invest-infra-stage4d-mvp-phased-execution-plan-v1.0.md)；前置切片见 [`invest-infra-candidate-strategies-mvp-plan-v1.0.md`](invest-infra-candidate-strategies-mvp-plan-v1.0.md) |
 
 策略源、审核、数据获取与确定性执行的规范合同见 [`../governance/invest-infra-strategy-source-to-automation-workflow.md`](../governance/invest-infra-strategy-source-to-automation-workflow.md)，它不承担开发排期或动态进度。
