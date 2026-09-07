@@ -2,6 +2,7 @@
 
 > 治理状态：`CONTRACT_AUTHORITY`
 > 文档定位：策略源、审核、数据获取与确定性执行的规范合同；不作为开发排期或动态进度权威。
+> 跨计划校准：2026-09-07（共同基线 `8610418`）；删除动态选路假设，保留既有领域/协议合同及历史记录，不授予实现或生产权限。
 
 ## 1. 目的
 
@@ -22,13 +23,17 @@
   → RAA 审计（按风险要求）
   → CIA 人工批准、拒绝或退回修改
   → immutable StrategyVersion
-  → 目标 Dataset Gate 冻结一条确定性 Dataset 来源配方
-  → WorkBuddy 路径：候选 DataAcquisitionDefinition 经 shadow 验收后发布
-  → 当前配方：WorkBuddy DataRequest/DataBundle 1.0；Provider 仅保留候选绑定
+  → 目标 Dataset Gate 按证据确认一条执行路径及其确定性采集映射
+  → 已审核、获准影子的目标 artifact + matching evaluator（策略未激活）
+  → 入选路径 shadow 验收通过
+  → 策略治理、数据 Gate 及独立授权满足后发布/启用与激活
+  → WorkBuddy 使用 DataRequest/DataBundle 1.0；仅 Provider 入选时使用其自身证据链
   → 投研系统校验实际 DataBundle 或 ProviderBatch，由专用 evaluator 计算并归档
   → StageResult / StrategyRun
   → 下游工作流或 CandidateAdmission
 ```
+
+具体采用哪条路径、当前 Gate 状态与历史决定的适用性，只由 [现行计划入口](../plan/README.md) 及 [来源准入计划](../plan/invest-infra-target-dataset-source-admission-plan-v1.0.md) 所引用的记录确定。本合同不重复维护“当前已冻结 WorkBuddy”或“Provider 永不入选”等动态结论。单一路径可以有多个获准采集 Dataset 和实际来源，不能据此预建双路径或伪造一个成功来源。
 
 交付物到达、WorkBuddy 状态成功、HTTP 200 或文件出现都不代表正式入库成功。只有投研系统完成合同校验、artifact 归档和数据库事务后，才形成正式 StageResult。
 
@@ -117,8 +122,8 @@
 
 最小职责：
 
-- 绑定 StrategyVersion、DataAcquisitionDefinition、DataRequest、DataBundle、InputSnapshot 和数据矩阵版本；
-- 保存原始 DataBundle、确定性 evaluator 输出、manifest、validation record 和 hash；
+- 绑定实际策略身份、输入快照和来源记录；WorkBuddy 路径引用对应 Definition/Request/Bundle，Provider 路径引用自身 Request/Attempt/Batch。数据矩阵版本或外部任务身份仅在实际适用时引用，不伪造另一条路径的对象；
+- 保存实际原始输入、确定性 evaluator 输出、适用 manifest/validation record 和 hash，区分上游数据生产者、系统 StageResult/Candidate 生产者及其关联；
 - 复用现有 ExternalWorkflowRun、ExternalArtifact 和 WorkBuddy 原子归档能力，不新增
   DataBundle 专属数据库表或第二套 manifest/归档框架；
 - 区分执行状态、交付状态、摄取状态和业务结果状态；
@@ -133,7 +138,7 @@
 3. 策略治理模块：接收提案交付物，完成 validation、审计、决定和不可变版本创建。
 4. 数据获取与执行模块：接收 active StrategyVersion 和 Gate 入选采集配置，摄取 DataBundle 或 ProviderBatch，通过 evaluator 的板块输入不变量返回 StageResult；一次运行只执行一条采集路径。
 
-模块之间只传正式对象身份和 artifact 引用，不传数据库行结构，不通过 Markdown 文本或共享目录文件名猜测业务状态。
+模块之间只传已验证的对象身份和 artifact 引用，不传数据库行结构，不通过 Markdown 文本或共享目录文件名猜测业务状态。上面的 active 要求适用于正式执行；受控影子按第 7.3 节验证未激活 artifact，不将其伪装成 active 对象。
 
 ## 6. 交付合同
 
@@ -195,6 +200,10 @@ proposal
 
 首版不建立 DataAcquisitionDefinition 生命周期状态机。候选 Definition 只通过显式文件/hash 做 shadow 验收，不进入 active catalog；Gate 通过并获独立授权后才随受控发布切换。只有 active StrategyVersion 与 active Definition 才能生成正式 DataRequest。Provider 路径按自身显式启用配置执行；周期调度仍须独立显性授权。
 
+影子所需目标数据要求、已审核且获准影子的不可变 artifact、匹配 evaluator 与测试由候选策略任务提前交接；实际内容按既有规则核验 hash。影子显式绑定输入、实现和请求身份，仅保存隔离的验收归档与结果，不发布 active Definition、不激活策略、不创建正式 Candidate 或推进 Admission/Research。缺少受控入口时属于待实施缺口，不能通过临时激活或默认 hash 绕过。
+
+正式发布/激活需同时具备策略治理通过、入选来源数据 Gate 通过及各自明确授权。影子不依赖先 active，正式入口也不因存在影子例外而接受未激活版本。交接时点见 [候选策略 Slice 1C](../plan/invest-infra-candidate-strategies-mvp-plan-v1.0.md)，不新增通用状态机。
+
 ### 7.4 运行和摄取
 
 ```text
@@ -218,8 +227,8 @@ task_published
 2. 评估通达信、金融 MCP、投研 API 和 fallback 的实际数据覆盖；
 3. CIA 分别形成板块强度与通达信个股筛选 StrategyProposal，并显式列出对原文的所有工程化补充、阈值和偏离；
 4. 完成 validation、所需审计和 CIA 批准，创建两个不可变 StrategyVersion；
-5. 目标 Dataset Gate 为板块阶段冻结 WorkBuddy 固定多源配方并完成 shadow；
-6. 发布/启用入选路径，投研系统板块专用 evaluator 生成 SectorStageResult；
+5. 来源任务确认板块阶段执行路径；策略任务在 shadow 前交付已审核、获准影子的目标 artifact/evaluator，完成入选路径的 shadow；
+6. 策略治理、来源 Gate 和独立授权满足后发布/启用入选路径并激活策略，投研系统板块专用 evaluator 生成正式 SectorStageResult；
 7. 以已校验 SectorStageResult 生成个股 DataRequest；
 8. WorkBuddy 获取限定成分股数据并提交 DataBundle，投研系统个股专用 evaluator 生成 StockStageResult 和 CandidateProposal；
 9. 投研系统通过内部可信接缝为 CandidateProposal 创建待准入 Observation，经 CandidateAdmission 形成 CandidateEntry 或可解释空结果。
@@ -238,13 +247,13 @@ task_published
 
 - StrategyProposal/Revision 摄取；
 - 系统 validation、RAA 审计和 CIA 决定；
-- 创建并显式激活不可变 StrategyVersion。
+- 形成不可变策略身份并交付匹配 evaluator 供获准 shadow 使用；正式激活等待数据 Gate 和独立授权，不在此处提前激活。
 
 ### Phase C：入选采集路径
 
-- 先由目标 Dataset Gate 冻结确定性 Dataset 配方；当前只实施 WorkBuddy，不并行预建 Provider 入口；
+- 先由目标 Dataset Gate 确认一条执行路径及确定性采集映射，复用已验证的实现；实际选择由决定记录给出，不并行预建两条入口；
 - WorkBuddy 路径才创建候选 Definition，并在 shadow 通过后绑定 active 只读 API、固定短 Prompt、connector 白名单和交付合同；
-- Provider 只保留候选绑定；本阶段不实现 Provider Adapter、统一 Source Registry 或跨 Provider fallback；
+- 仅在 Provider 确实入选且获准实施时适配单一来源；未入选则不建设。两条路径均不新增统一 Source Registry 或跨 Provider 自动 fallback；
 - 只允许人工触发影子运行；周期调度必须另行显性授权。
 
 ### Phase D：运行与摄取

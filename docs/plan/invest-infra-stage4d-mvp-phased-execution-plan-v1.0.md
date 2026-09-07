@@ -8,15 +8,17 @@
 > 当前范围：Stage 4D MVP（D0–D5 + D7–D8）
 > 后续参考：中心投研可视化平台的业务定位与信息架构保留在 `docs/plan/archive/deferred/invest-infra-central-research-visualization-mvp-plan-v1.0.md`；恢复实施前必须重新授权。本计划已完成的只读工作台事实继续有效，不再扩展为回测、自动交易或通用流程平台。
 
-> 2026-09-06 修订：当前唯一活动前置主线为 `invest-infra-target-dataset-source-admission-plan-v1.0.md`。本计划已完成事实继续有效；目标 Dataset 已冻结 WorkBuddy 固定多源配方，可实施 DS-C0/DS-1 和双次 shadow。Gate 3 正式执行仍须等待 Gate B2A 与 v2.1.0 策略治理通过。
+> 2026-09-07 跨计划校准（共同基线 `8610418`）：历史 WorkBuddy 固定组合与 DS-C0 实现保留，但当前来源适用性依来源计划 v1.1 复核；DS-FM 未解除，禁止直接进入 DS-1。目标 artifact/evaluator 由候选策略 Slice 1C-A 在 DS-2 前交接；Gate 3 正式执行仍等待策略治理、B2A 及独立发布/激活授权。本补丁不重开已完成阶段。
 
 ## 0. 当前执行边界
 
 Gate 1/2 和已完成的策略治理事实继续有效。Gate 3 不再要求 MiniMax-M3 通过长 Prompt 解释正式策略并自行生成 StageResult/Candidate，改为：
 
 ```text
-目标 Dataset Gate 冻结 WorkBuddy Dataset 固定多源配方
-→ WorkBuddy DataRequest/DataBundle 1.0 执行冻结的多 Connector 配方
+来源主线复核 DS-FM → 既有 DS-C0 差异验收 → DS-1
+→ 候选策略 Slice 1C-A 交接未激活目标 artifact/evaluator → DS-2 → B2A
+→ 策略治理及独立授权满足后，正式执行 Gate 入选的一条路径
+→ WorkBuddy：DataRequest/DataBundle 1.0；仅 Provider 入选时：自身请求/尝试/批次链
 → invest-infra 通过 evaluator 私有板块输入不变量校验并组装 Industry/Concept
 → 板块/个股两个专用 evaluator 只消费已验证的单值输入；旁证按需记录
 → StageResult + Candidate 2.0.0
@@ -104,7 +106,7 @@ Gate 入选的 DataBundle 1.0 或 ProviderBatch
 
 已完成的 WorkBuddy Candidate 2.0.0 Shared Directory Intake 保留为外部候选兼容入口，不删除、不改写历史事实。Gate 3 新路径必须遵守以下边界：
 
-- Gate 入选的 DataBundle 由投研系统专用 evaluator 生成 StageResult 和 Candidate；
+- Gate 入选的 DataBundle 或 ProviderBatch 由投研系统专用 evaluator 生成 StageResult 和 Candidate；不因上游访问路径改变系统计算职责；
 - 系统生成的 Candidate 通过内部可信接缝进入 Admission，不回绕外部 Candidate Bridge，不伪装上游生产者；
 - 上游输入、StageResult、Candidate 和 Research 对象分别保存 producer、version、hash 与 lineage；
 - 摄取事务不调用 WorkBuddy、active Strategy API 或其他网络来源；
@@ -115,7 +117,7 @@ Gate 入选的 DataBundle 1.0 或 ProviderBatch
 
 对应原蓝图：D7–D8。目标是完成 `Observation → Admission → Evidence → Research Case → Research Run/Result → 统一时间线`。JiuwenSwarm 已停止采用，不再作为本阶段依赖或验收对象。
 
-真实数据验收前置依赖：先完成 `invest-infra-candidate-strategies-mvp-plan-v1.0.md`。既有 Draft → RAA 审计 → CIA 批准 → StrategyVersion 发布激活已经完成；当前须按目标 Dataset 计划已冻结的 WorkBuddy 固定配方完成必要的 evaluator 私有收敛、Dataset 绑定和双次 shadow，再执行两个专用 evaluator 的固定两阶段候选发现。WorkBuddy 路径复用 DataRequest/DataBundle 1.0；仅在证据证明无法表达时另行评审 2.0。该切片属于 Stage 4D P0，不新增并行主线。
+真实数据验收前置由 [候选策略计划](invest-infra-candidate-strategies-mvp-plan-v1.0.md) 与 [来源准入计划](invest-infra-target-dataset-source-admission-plan-v1.0.md) 分工交付。历史 v2.0.0 治理事实继续有效，不自动批准 v2.1.0。候选策略 1C-A 先交付影子所需目标 artifact/evaluator；来源主线复用已有 DS-C0 并完成差异验收、DS-1/DS-2 和 B2A；随后 1C-B 按独立授权发布/激活，Slice 2 才正式执行。WorkBuddy 1.0 或已获批 Provider 按各自合同供给，不预建双路径，不新增并行主线。
 
 ### 5.1 已完成代码基线
 
@@ -123,20 +125,29 @@ Gate 3 的自动化能力已经落地：服务端 Admission 计算验证事实�
 
 ### 5.2 剩余交付
 
-1. 完成目标 Dataset 计划的 DS-C0、DS-1、双次 shadow 与 Gate B2A；
-2. 完成并激活获批的 v2.1.0 策略与匹配的 WorkBuddy Definition；
+1. 由来源计划复核 DS-FM、复用并验收既有 DS-C0 差异，完成 DS-1；由候选策略 1C-A 在 DS-2 前交付目标 artifact/evaluator，再完成两次真实采集、各自重放与 B2A；
+2. 策略治理和 B2A 均通过后，按独立授权发布/启用入选路径并激活 v2.1.0；个股阶段仍须核验自身正式数据合同，不以板块 B2A 代替；
 3. 使用新生成的 Candidate 完成 `Admission → Evidence → Research Case → Research Run/Result → Timeline` 真实手工联调；
 4. 执行 Gate 3 全量回归、构建、异常矩阵和最终演示。
 
 既有 rejected Observation 不回写、不重置；历史 WorkBuddy 报告不作为当前 Gate 3 输入。
+
+### 5.3 向只读研究中心与后续观察交付
+
+本阶段对新生成的 Candidate 验证既有合同所承诺的持久化追溯：两个实际策略版本及 hash、各阶段 StageResult ID/hash、as_of、上游输入身份/来源、Candidate 生产者与 Admission/Research 关联。优先从现有归档、存储和只读接口交叉读回，不新增第二套 lineage 仓库或为 UI 发明字段。
+
+数据上游 WorkBuddy/Provider 与系统 StageResult/Candidate 的生产者分开；外部任务 ID 只在实际存在时保留。交付、归档、摄取、准入及研究完成分别展示；合法空结果、拒绝和缺失不能伪装正常研究闭环。必需追溯缺口回到负责的候选/Stage 4D 切片按原授权边界处理，不能交给前端推断；可选显示字段保留 unavailable。
+
+下游只读研究中心、反馈闭环仍按 [归档恢复要求](archive/README.md) 重新授权；本阶段不提前建设它们，也不证明前瞻观察所需市场数据已经就绪。
 
 ### Gate 3：Stage 4D MVP 完成
 
 - [ ] 正常主链路端到端通过；
 - [ ] 蓝图第 25.10 节异常场景全部有测试或手工验收证据；
 - [ ] Fake WorkBuddy、Fake ResearchRunner E2E 通过；
-- [ ] 两个阶段的真实多源输入手工验收通过，各 Dataset 的 Connector、真实上游、来源和 hash 可追溯；内部 Provider 只有在另行批准接入后才纳入验收；
-- [ ] 两个专用 evaluator 对相同版本和输入产生可重复的 StageResult/Candidate；
+- [ ] 两阶段各自所需真实输入验收通过；板块仅使用 B2A 获批路径，个股按自身正式合同核验。实际 Connector/Provider、真实上游、范围和 hash 可追溯，不强制为满足“多源”而增加来源；
+- [ ] 两个专用 evaluator 按相同策略、映射/实现版本及原请求/归档重放可复现；不同 request_id 不要求完整运行 hash 相同；
+- [ ] 第 5.3 节的必需 Candidate/StageResult lineage 已从持久化及只读入口读回，不以影子结果或 WorkBuddy 交付成功代替；
 - [ ] WorkBuddy 不解释策略、不生成正式 hash/lineage、不决定 CandidateAdmission；
 - [ ] 现有全量测试无回归；
 - [ ] 运行手册、架构文档和 OpenAPI client 已同步。

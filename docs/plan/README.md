@@ -11,10 +11,12 @@
 
 | 优先级 | 主线 | 治理状态 | 当前检查点 | 唯一实施计划 |
 |---|---|---|---|---|
-| P0 | 目标 Dataset 来源准入 | `BLOCKED` | Gate DS-FM 未通过；本地已有 DS-C0 相关实现须按 v1.1 重新核对，禁止进入 DS-1 | [`invest-infra-target-dataset-source-admission-plan-v1.0.md`](invest-infra-target-dataset-source-admission-plan-v1.0.md) |
-| P1 | Stage 4D 研究交付收口 | `BLOCKED` | 等待 v2.1.0 策略治理及 Gate B2A | [`invest-infra-stage4d-mvp-phased-execution-plan-v1.0.md`](invest-infra-stage4d-mvp-phased-execution-plan-v1.0.md)；前置切片见 [`invest-infra-candidate-strategies-mvp-plan-v1.0.md`](invest-infra-candidate-strategies-mvp-plan-v1.0.md) |
+| P0 | 目标 Dataset 来源准入 | `BLOCKED` | Gate DS-FM 按合并基线待复核；保留既有 WorkBuddy 组合和 DS-C0，只读核对 v1.1 差异，禁止进入 DS-1 | [`invest-infra-target-dataset-source-admission-plan-v1.0.md`](invest-infra-target-dataset-source-admission-plan-v1.0.md) |
+| P1 | Stage 4D 研究交付收口 | `BLOCKED` | Slice 1C-A 可在明确授权下交付影子前策略/evaluator；正式执行等待策略治理、B2A 与发布/激活授权 | [`invest-infra-stage4d-mvp-phased-execution-plan-v1.0.md`](invest-infra-stage4d-mvp-phased-execution-plan-v1.0.md)；前置切片见 [`invest-infra-candidate-strategies-mvp-plan-v1.0.md`](invest-infra-candidate-strategies-mvp-plan-v1.0.md) |
 
 策略源、审核、数据获取与确定性执行的规范合同见 [`../governance/invest-infra-strategy-source-to-automation-workflow.md`](../governance/invest-infra-strategy-source-to-automation-workflow.md)，它不承担开发排期或动态进度。
+
+跨计划衔接统一见 [来源准入计划第 7 节](invest-infra-target-dataset-source-admission-plan-v1.0.md)。2026-09-07 以 `8610418` 校准：保留历史 Gate/实现事实，来源适用性由同一决定记录确认；本补丁不批准来源、不恢复 DS-1、不激活策略。
 
 ## 2. 状态与事实来源
 
