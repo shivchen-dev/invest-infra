@@ -11,7 +11,7 @@
 
 | 优先级 | 主线 | 治理状态 | 当前检查点 | 唯一实施计划 |
 |---|---|---|---|---|
-| P0 | 目标 Dataset 来源准入 | `BLOCKED` | Gate DS-FM 按合并基线待复核；保留既有 WorkBuddy 组合和 DS-C0，只读核对 v1.1 差异，禁止进入 DS-1 | [`invest-infra-target-dataset-source-admission-plan-v1.0.md`](invest-infra-target-dataset-source-admission-plan-v1.0.md) |
+| P0 | 目标 Dataset 来源准入 | `BLOCKED` | v1.1 差异已只读复核；保留既有 WorkBuddy 组合和 DS-C0，待闭合分类/单位/时点/完整度/使用条件及策略交接，禁止进入 DS-1 | [`invest-infra-target-dataset-source-admission-plan-v1.0.md`](invest-infra-target-dataset-source-admission-plan-v1.0.md) |
 | P1 | Stage 4D 研究交付收口 | `BLOCKED` | Slice 1C-A 可在明确授权下交付影子前策略/evaluator；正式执行等待策略治理、B2A 与发布/激活授权 | [`invest-infra-stage4d-mvp-phased-execution-plan-v1.0.md`](invest-infra-stage4d-mvp-phased-execution-plan-v1.0.md)；前置切片见 [`invest-infra-candidate-strategies-mvp-plan-v1.0.md`](invest-infra-candidate-strategies-mvp-plan-v1.0.md) |
 
 策略源、审核、数据获取与确定性执行的规范合同见 [`../governance/invest-infra-strategy-source-to-automation-workflow.md`](../governance/invest-infra-strategy-source-to-automation-workflow.md)，它不承担开发排期或动态进度。
